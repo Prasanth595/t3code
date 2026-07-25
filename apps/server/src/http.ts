@@ -254,6 +254,13 @@ export const layerHttpCompression = HttpRouter.middleware(HttpMiddleware.compres
   global: true,
 });
 
+/** Minimal readiness endpoint for container orchestrators. */
+export const layerHealthRoute = HttpRouter.add(
+  "GET",
+  "/healthz",
+  Effect.succeed(HttpServerResponse.json({ status: "ok" })),
+);
+
 export const layerBrowserApiCors = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
