@@ -30,6 +30,7 @@ squashfs-root/
 /audits/
 dist-electron/
 .electron-runtime/
+.codegraph/index.db
 .showcase/
 apps/mobile/.showcase/
 apps/mobile/.generated/
