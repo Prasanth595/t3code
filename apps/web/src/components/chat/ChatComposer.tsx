@@ -351,6 +351,12 @@ import {
 } from "./composerThreadImport";
 import { isTimelineScrollTarget } from "./timelineScrollTarget";
 import {
+  ComposerSpeechButton,
+  ComposerSpeechStatus,
+  resolveSpeechPresentation,
+} from "./ComposerSpeechButton";
+import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
   shouldCollapseComposerForScrollKey,
@@ -3759,6 +3765,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
   });
+  const speechPresentation = resolveSpeechPresentation(speechInput.state, speechInput.progress);
   const voiceSendDisabledReason = speechInput.blocksSubmission
     ? "Finish or discard voice input before sending"
     : sendDisabledReason;
@@ -4828,7 +4835,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable !== null ||
     composerSubmissionError !== null ||
     providerInputSubmissionError !== null ||
-    hasImageAttachmentAttention;
+    hasImageAttachmentAttention ||
+    speechInput.state.phase !== "idle";
   const isComposerResting = shouldUseRestingComposerLayout({
     isExistingThread: routeKind === "server" && activeThreadId !== null,
     isMobileViewport,
@@ -7272,7 +7280,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isComposerResting && "hidden",
                   )}
                 >
-                  {composerControlsCollapsed ? null : composerControls}
+                  {speechPresentation.status ? (
+                    <ComposerSpeechStatus
+                      state={speechInput.state}
+                      progress={speechInput.progress}
+                      level={speechInput.level}
+                      onCancel={() => void speechInput.cancel()}
+                    />
+                  ) : composerControlsCollapsed ? null : (
+                    composerControls
+                  )}
                 </div>
 
                 <div
@@ -7325,7 +7342,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <ComposerSpeechButton
                       state={speechInput.state}
                       progress={speechInput.progress}
-                      level={speechInput.level}
                       disabled={
                         isConnecting || projectSelectionRequired || pendingUserInputs.length > 0
                       }
@@ -7334,6 +7350,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onCancel={() => void speechInput.cancel()}
                     />
                   ) : null}
+                  {speechPresentation.showsSend ? (
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
@@ -7391,6 +7408,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   />
+                  ) : null}
                 </div>
               </div>
             )}
