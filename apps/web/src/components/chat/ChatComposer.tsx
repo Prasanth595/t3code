@@ -1343,6 +1343,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 });
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  showActions?: boolean;
   compact: boolean;
   canOperateThread: boolean;
   activeContextWindow: ContextWindowSnapshot | null;
@@ -1396,6 +1397,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.showActions !== false ? (
       <ComposerPrimaryActions
         compact={props.compact}
         canOperateThread={props.canOperateThread}
@@ -1425,6 +1427,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         keepFullHistory={props.keepFullHistory}
         onToggleKeepFullHistory={props.onToggleKeepFullHistory}
       />
+      ) : null}
     </>
   );
 });
@@ -7388,8 +7391,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       />
                     </>
                   ) : null}
-                  {speechPresentation.showsSend ? (
                   <ComposerFooterPrimaryActions
+                    showActions={speechPresentation.showsSend}
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
                     canOperateThread={canOperateThread}
                     activeContextWindow={
@@ -7446,7 +7449,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ? { onCompactContext: compactThreadContextStable }
                       : {})}
                   />
-                  ) : null}
                 </div>
               </div>
             )}
