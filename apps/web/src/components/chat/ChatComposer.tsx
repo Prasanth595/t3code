@@ -7282,6 +7282,39 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   )}
                 >
                   {composerControlsInStrip ? null : composerControls}
+                  {showComposerAttachAction && speechPresentation.status ? (
+                    <>
+                      <input
+                        ref={attachmentInputRef}
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={(event) => {
+                          const files = Array.from(event.currentTarget.files ?? []);
+                          event.currentTarget.value = "";
+                          void addComposerAttachments(files);
+                          focusComposer();
+                        }}
+                      />
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              onPointerDown={(event) => event.preventDefault()}
+                              onClick={() => attachmentInputRef.current?.click()}
+                              aria-label="Attach files"
+                            />
+                          }
+                        >
+                          <PaperclipIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup>Attach files</TooltipPopup>
+                      </Tooltip>
+                    </>
+                  ) : null}
                   {speechPresentation.status ? (
                     <ComposerSpeechStatus
                       state={speechInput.state}
@@ -7300,7 +7333,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   }
                   className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
                 >
-                  {showComposerAttachAction ? (
+                  {showComposerAttachAction && !speechPresentation.status ? (
                     <>
                       <input
                         ref={attachmentInputRef}
@@ -7339,10 +7372,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ) : null}
                   {speechInput.available ? (
                     <>
-                      <ComposerSpeechCancelButton
-                        state={speechInput.state}
-                        onCancel={() => void speechInput.cancel()}
-                      />
                       <ComposerSpeechButton
                         state={speechInput.state}
                         progress={speechInput.progress}
@@ -7351,6 +7380,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         }
                         onStart={() => void speechInput.start()}
                         onStop={() => void speechInput.stop()}
+                        onCancel={() => void speechInput.cancel()}
+                      />
+                      <ComposerSpeechCancelButton
+                        state={speechInput.state}
                         onCancel={() => void speechInput.cancel()}
                       />
                     </>
