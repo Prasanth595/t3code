@@ -1,6 +1,11 @@
 import { HOSTED_APP_CHANNEL } from "~/branding";
 import { isElectron } from "~/env";
-import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import {
+  buildSearchQueryForms,
+  isMacPlatform,
+  isWindowsPlatform,
+  normalizeSearchText,
+} from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@t3tools/contracts";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -1127,13 +1132,20 @@ export function filterAvailableSettingsSearchItems(
   );
 }
 
+/** Ranks here are compared highest first and never leave the 0 to 5 range below. */
+const LAYOUT_MATCH_RANK_PENALTY = 10;
+
 export function searchSettings(
   query: string,
   items: ReadonlyArray<SettingsSearchItem> = SETTINGS_SEARCH_ITEMS,
 ): ReadonlyArray<SettingsSearchItem> {
   const normalizedQuery = normalizeSearchText(query);
   if (normalizedQuery.length === 0) return [];
-  const queryTokens = normalizedQuery.split(" ");
+  const searchForms = buildSearchQueryForms({
+    query,
+    normalizedQuery,
+    layoutRankPenalty: LAYOUT_MATCH_RANK_PENALTY,
+  });
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
 
   return items
@@ -1149,22 +1161,25 @@ export function searchSettings(
         normalizeSearchText(SETTINGS_SECTION_LABELS[item.to]),
         ...(item.searchTerms ?? []).map(normalizeSearchText),
       ];
-      if (!queryTokens.every((token) => fields.some((field) => field.includes(token)))) return [];
+      const form = searchForms.find((candidate) =>
+        candidate.queryTokens.every((token) => fields.some((field) => field.includes(token))),
+      );
+      if (form === undefined) return [];
 
-      const exactPhraseField = fields.findIndex((field) => field.includes(normalizedQuery));
-      const rank =
-        title === normalizedQuery
+      const exactPhraseField = fields.findIndex((field) => field.includes(form.normalizedQuery));
+      const matchRank =
+        title === form.normalizedQuery
           ? 5
-          : title.startsWith(normalizedQuery)
+          : title.startsWith(form.normalizedQuery)
             ? 4
-            : title.includes(normalizedQuery)
+            : title.includes(form.normalizedQuery)
               ? 3
-              : queryTokens.every((token) => title.includes(token))
+              : form.queryTokens.every((token) => title.includes(token))
                 ? 2
                 : exactPhraseField >= 0
                   ? 1
                   : 0;
-      return [{ item, index, rank }];
+      return [{ item, index, rank: matchRank - form.rankPenalty }];
     })
     .toSorted(
       (left, right) =>

@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import { Alert } from "react-native";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
+import { expandQueryAcrossKeyboardLayouts } from "@t3tools/shared/keyboardLayouts";
 import { pullRequestComposerContext, threadComposerContext } from "../../lib/composerContext";
 import { uuidv4 } from "../../lib/uuid";
 import {
@@ -59,8 +60,15 @@ function composerSelectionAtEnd(draftMessage: string): ComposerEditorSelection {
   return { start: draftMessage.length, end: draftMessage.length };
 }
 
+/** Matches when any form of the query is contained in `value`. */
+function matchesAnyQueryForm(value: string, queryForms: ReadonlyArray<string>): boolean {
+  const lowercased = value.toLowerCase();
+  return queryForms.some((queryForm) => lowercased.includes(queryForm));
+}
+
 export function buildComposerSlashCommandItems(input: {
-  readonly query: string;
+  /** What was typed, followed by its keyboard layout variants. */
+  readonly queryForms: ReadonlyArray<string>;
   readonly atMessageStart: boolean;
   readonly hasThread: boolean;
   readonly hasCompactableConversation?: boolean;
@@ -72,7 +80,7 @@ export function buildComposerSlashCommandItems(input: {
     "driver" | "slashCommands" | "showInteractionModeToggle"
   > | null;
 }): ComposerCommandItem[] {
-  const query = input.query.toLowerCase();
+  const queryForms = input.queryForms.map((queryForm) => queryForm.toLowerCase());
   const allowInteractionMode =
     input.allowInteractionMode && input.selectedProviderStatus?.showInteractionModeToggle !== false;
   const builtIn = [
@@ -99,14 +107,16 @@ export function buildComposerSlashCommandItems(input: {
     },
   ] satisfies ComposerCommandItem[];
   const items: ComposerCommandItem[] = builtIn.filter(
-    (item) => item.command.includes(query) && (item.command === "model" || allowInteractionMode),
+    (item) =>
+      matchesAnyQueryForm(item.command, queryForms) &&
+      (item.command === "model" || allowInteractionMode),
   );
 
   // Providers expand commands only at the start of a message. T3 commands
   // change local state and do not have this restriction.
   if (!input.atMessageStart) return items;
   for (const command of input.selectedProviderStatus?.slashCommands ?? []) {
-    if (!command.name.toLowerCase().includes(query)) continue;
+    if (!matchesAnyQueryForm(command.name, queryForms)) continue;
     if (command.name === "compact" && !input.hasCompactableConversation) continue;
     // T3's own limits command is answered by the thread composer; New Task has
     // nowhere to show it. A provider's same-named command is left alone.
@@ -382,10 +392,14 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "slash-command") {
-      const q = trigger.query.toLowerCase();
+      const query = trigger.query.toLowerCase();
+      // Expanded once for the whole menu, so commands and the skills below
+      // accept the same forms and a query typed on a non-Latin keyboard layout
+      // still reaches their Latin names.
+      const queryForms = [query, ...expandQueryAcrossKeyboardLayouts(query)];
       const visibleSkills = getProviderSkillsForSlashMenu(skills, true);
       const commandItems = buildComposerSlashCommandItems({
-        query: q,
+        queryForms,
         atMessageStart: trigger.rangeStart === 0,
         hasThread,
         hasCompactableConversation,
@@ -403,7 +417,7 @@ export function useComposerCommandMenu({
       });
 
       const skillItems = visibleSkills
-        .filter((skill) => matchesSlashSkillQuery(skill, q))
+        .filter((skill) => matchesSlashSkillQuery(skill, queryForms))
         .map((skill) => ({
           id: `skill:${skill.name}`,
           type: "skill" as const,
