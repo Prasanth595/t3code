@@ -433,16 +433,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
-  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(
-    () =>
-      new Set<ProviderInstanceId>(
+  const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(() => {
+    // Auto-expand the legacy group only when the active model actually lives
+    // there. A favorited legacy model is hoisted into the main list, so
+    // expanding the group for it would open an unrelated section.
+    const activeIsFavorite = favorites.some(
+      (fav) => fav.provider === props.activeInstanceId && fav.model === activeModelSlug,
+    );
+    return new Set<ProviderInstanceId>(
+      !activeIsFavorite &&
         modelOptionsByInstance
           .get(props.activeInstanceId)
           ?.some((model) => model.slug === activeModelSlug && model.isLegacy)
-          ? [props.activeInstanceId]
-          : [],
-      ),
-  );
+        ? [props.activeInstanceId]
+        : [],
+    );
+  });
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
   const [searchHeight, setSearchHeight] = useState(0);
