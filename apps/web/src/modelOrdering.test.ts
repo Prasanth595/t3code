@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { ProviderInstanceId } from "@t3tools/contracts";
 
 import {
+  partitionLegacyModels,
   providerModelKey,
   sortModelsForProviderInstance,
   sortProviderModelItems,
@@ -48,5 +49,31 @@ describe("model ordering", () => {
         instanceOrder: [CODEX_WORK_ID, CLAUDE_ID],
       }).map((item) => item.slug),
     ).toEqual(["gpt-5.4-mini", "gpt-5.5", "crest-alpha", "claude-opus-4-6"]);
+  });
+
+  describe("partitionLegacyModels", () => {
+    const models = [
+      { slug: "opus-5" },
+      { slug: "sonnet-5" },
+      { slug: "opus-4-8", isLegacy: true },
+      { slug: "haiku-3", isLegacy: true },
+    ];
+
+    it("keeps a favorited legacy model in the main list instead of the legacy group", () => {
+      const { current, legacy } = partitionLegacyModels(
+        models,
+        (model) => model.slug === "opus-4-8",
+      );
+
+      expect(current.map((model) => model.slug)).toEqual(["opus-5", "sonnet-5", "opus-4-8"]);
+      expect(legacy.map((model) => model.slug)).toEqual(["haiku-3"]);
+    });
+
+    it("returns legacy models to the legacy group once unfavorited", () => {
+      const { current, legacy } = partitionLegacyModels(models, () => false);
+
+      expect(current.map((model) => model.slug)).toEqual(["opus-5", "sonnet-5"]);
+      expect(legacy.map((model) => model.slug)).toEqual(["opus-4-8", "haiku-3"]);
+    });
   });
 });
