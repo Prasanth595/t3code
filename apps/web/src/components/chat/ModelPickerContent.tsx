@@ -433,12 +433,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
+  const favoritesSet = (() => {
+    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
+  })();
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(() => {
     // Auto-expand the legacy group only when the active model actually lives
     // there. A favorited legacy model is hoisted into the main list, so
     // expanding the group for it would open an unrelated section.
-    const activeIsFavorite = favorites.some(
-      (fav) => fav.provider === props.activeInstanceId && fav.model === activeModelSlug,
+    const activeIsFavorite = favoritesSet.has(
+      providerModelKey(props.activeInstanceId, activeModelSlug),
     );
     return new Set<ProviderInstanceId>(
       !activeIsFavorite &&
@@ -525,9 +528,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const lockedProvider = props.lockedProvider;
   const lockedContinuationGroupKey = props.lockedContinuationGroupKey;
   const canOpenProviderSetup = onOpenProviderSetup !== undefined;
-  const favoritesSet = (() => {
-    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  })();
 
   const entryByInstanceId = new Map(instanceEntries.map((entry) => [entry.instanceId, entry]));
   const matchesLockedProvider = (

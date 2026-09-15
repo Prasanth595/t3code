@@ -75,5 +75,34 @@ describe("model ordering", () => {
       expect(current.map((model) => model.slug)).toEqual(["opus-5", "sonnet-5"]);
       expect(legacy.map((model) => model.slug)).toEqual(["opus-4-8", "haiku-3"]);
     });
+
+    it("returns empty partitions for an empty list", () => {
+      const { current, legacy } = partitionLegacyModels([], () => false);
+
+      expect(current).toEqual([]);
+      expect(legacy).toEqual([]);
+    });
+
+    it("treats an explicit isLegacy: false as a current model", () => {
+      const { current, legacy } = partitionLegacyModels(
+        [{ slug: "opus-5", isLegacy: false }],
+        () => false,
+      );
+
+      expect(current.map((model) => model.slug)).toEqual(["opus-5"]);
+      expect(legacy).toEqual([]);
+    });
+
+    it("leaves the legacy group empty when every legacy model is favorited", () => {
+      const { current, legacy } = partitionLegacyModels(models, (model) => model.isLegacy === true);
+
+      expect(current.map((model) => model.slug)).toEqual([
+        "opus-5",
+        "sonnet-5",
+        "opus-4-8",
+        "haiku-3",
+      ]);
+      expect(legacy).toEqual([]);
+    });
   });
 });
