@@ -32,7 +32,8 @@ type TextGenerationOp =
   | "generatePrContent"
   | "generateBranchName"
   | "generateThreadTitle"
-  | "generateReviewGuide";
+  | "generateReviewGuide"
+  | "generateTranscriptionPostProcessing";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -87,6 +88,16 @@ export const make = Effect.gen(function* () {
               ));
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
+        ),
+      ),
+    generateTranscriptionPostProcessing: (input) =>
+      resolveInstance(
+        registry,
+        "generateTranscriptionPostProcessing",
+        input.modelSelection.instanceId,
+      ).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generateTranscriptionPostProcessing(input),
         ),
       ),
   });
