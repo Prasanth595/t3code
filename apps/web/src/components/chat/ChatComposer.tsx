@@ -368,8 +368,6 @@ import {
 } from "./composerScrollGesture";
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { observeResize } from "~/lib/observeResize";
-import { ComposerSpeechButton } from "./ComposerSpeechButton";
-import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 
 
 function ComposerVideoThumbnail({ file }: { file: File }) {
