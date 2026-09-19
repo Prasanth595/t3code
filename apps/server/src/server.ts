@@ -710,7 +710,6 @@ const layerMakeRoutes = Layer.mergeAll(
   Layer.provide(ServerBrowser.layer.pipe(Layer.provide(DesktopBrowserChannel.layer))),
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(SpeechService.layer.pipe(Layer.provide(layerServerSettings))),
-  Layer.provide(TextGeneration.layer),
   Layer.provide(layerServerSettings),
   Layer.provide(PreviewAutomationBroker.layer),
   Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
