@@ -165,6 +165,10 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
   };
 }
 
+function hubAccountKey(sourceId: string, accountId: string): string {
+  return `${encodeURIComponent(sourceId)}:${encodeURIComponent(accountId)}`;
+}
+
 /** Personal and team subscriptions may share an email, even when one quota probe fails. */
 function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySet<string> {
   const identities = new Map<string, string>();
@@ -173,7 +177,7 @@ function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySe
     for (const account of source.accounts) {
       const key = accountKey(account.driver, account.email);
       if (!key) continue;
-      const identity = `${source.id}:${account.id}`;
+      const identity = hubAccountKey(source.id, account.id);
       const previous = identities.get(key);
       if (previous !== undefined && previous !== identity) ambiguous.add(key);
       identities.set(key, identity);
@@ -323,7 +327,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         : source.label;
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
-        const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+        const key = `${hubAccountKey(source.id, account.id)}${account.workspaceId ? `:${encodeURIComponent(account.workspaceId)}` : ""}`;
         const resolved = resolveKey(account);
         merge(resolved && !ambiguous.has(resolved) ? resolved : key, {
           key,
@@ -802,7 +806,7 @@ export function collectProviderUsageLimits(
       const key = resolveKey(account);
       if (key && !ambiguous.has(key) && nativeAccounts.has(key)) continue;
       accounts.push({
-        id: `${source.id}:${account.id}`,
+        id: hubAccountKey(source.id, account.id),
         driver: account.driver,
         label: `${source.label} · ${account.id}`,
         sourceLabel: "CLI Proxy",
