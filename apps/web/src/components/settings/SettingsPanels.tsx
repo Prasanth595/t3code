@@ -101,7 +101,7 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
-import { isMacPlatform } from "../../lib/utils";
+import { isMacPlatform, randomUUID } from "../../lib/utils";
 import { useEnvironmentProviders } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -3355,7 +3355,7 @@ export function GeneralSettingsPanel() {
                     variant="outline"
                     onClick={() => {
                       const prompt = {
-                        id: crypto.randomUUID(),
+                        id: randomUUID(),
                         name: "New prompt",
                         prompt: selectedSpeechPrompt.prompt,
                       };
