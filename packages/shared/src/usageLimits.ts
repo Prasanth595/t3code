@@ -187,6 +187,8 @@ function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySe
  * reported. Matching emails or credentials across environments name one
  * account, unless they name different workspaces. Its quota is one bucket, so
  * counting it twice would misstate what is left.
+ * Distinct hub identities sharing an account key stay separate. An ambiguous
+ * native login stays separate too, so credits never route to an arbitrary hub.
  */
 export interface LimitAccount {
   readonly key: string;
