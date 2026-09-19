@@ -165,6 +165,23 @@ function accountKeyResolver(reports: Iterable<AccountReport>) {
   };
 }
 
+/** Personal and team subscriptions may share an email, even when one quota probe fails. */
+function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySet<string> {
+  const identities = new Map<string, string>();
+  const ambiguous = new Set<string>();
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      const key = accountKey(account.driver, account.email);
+      if (!key) continue;
+      const identity = `${source.id}:${account.id}`;
+      const previous = identities.get(key);
+      if (previous !== undefined && previous !== identity) ambiguous.add(key);
+      identities.set(key, identity);
+    }
+  }
+  return ambiguous;
+}
+
 /**
  * One subscription account as the pooled views see it, whichever way it was
  * reported. Matching emails or credentials across environments name one
@@ -200,6 +217,11 @@ export interface LimitAccount {
  * native instances supply names and environment labels.
  */
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
+  const ambiguous = ambiguousHubAccountKeys(
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
+    ),
+  );
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -300,7 +322,8 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       for (const account of source.accounts) {
         if (limitsNotice(account.usageLimits) !== null) continue;
         const key = `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
-        merge(resolveKey(account) ?? key, {
+        const resolved = resolveKey(account);
+        merge(resolved && !ambiguous.has(resolved) ? resolved : key, {
           key,
           driver: account.driver,
           displayName: account.email ? null : account.id.replace(/\.json$/i, ""),
@@ -700,6 +723,7 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
+  const ambiguous = ambiguousHubAccountKeys(sources);
   const native = providersWithLimits(providers).filter(
     (provider) => provider.driver === selected.driver,
   );
@@ -725,6 +749,7 @@ export function collectProviderUsageLimits(
       .filter(
         ({ account }) =>
           key !== null &&
+          !ambiguous.has(key) &&
           resolveKey(account) === key &&
           account.usageLimits.resetCredits &&
           !limitsNotice(account.usageLimits),
@@ -773,7 +798,7 @@ export function collectProviderUsageLimits(
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = resolveKey(account);
-      if (key && nativeAccounts.has(key)) continue;
+      if (key && !ambiguous.has(key) && nativeAccounts.has(key)) continue;
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
