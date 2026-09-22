@@ -1123,7 +1123,7 @@ export function mergeRefusalHint(state: {
     return "Some checks are failing, and the branch rules may require them to pass.";
   }
   if (state.checksState === "pending") {
-    return "Some checks are still running, and the branch rules may require them to pass.";
+    return "Some checks are still running or awaiting action, and the branch rules may require them to pass.";
   }
   // Mergeable with nothing failing, yet refused: a branch rule the page cannot see, such as an
   // approval from someone other than the author, signed commits, or resolved conversations.
