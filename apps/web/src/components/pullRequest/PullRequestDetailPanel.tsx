@@ -155,6 +155,7 @@ import {
   pullRequestCheckoutCommand,
   pullRequestFindingKey,
   pullRequestHandoffLabels,
+  mergeRefusalHint,
   PULL_REQUEST_MERGE_METHOD_LABELS,
   readableFailure,
   readPullRequestDetailSnapshot,
@@ -913,7 +914,13 @@ export function PullRequestDetailPanel({
       const hint =
         updateMethod === "rebase"
           ? UPDATE_BRANCH_REBASE_FAILURE_HINT
-          : ACTION_FAILURE_HINTS[action];
+          : action === "merge" && detail !== null
+            ? (mergeRefusalHint({
+                mergeability: detail.mergeability,
+                reviewDecision: sharedSummary?.reviewDecision,
+                checksState,
+              }) ?? ACTION_FAILURE_HINTS.merge)
+            : ACTION_FAILURE_HINTS[action];
       toastManager.add({
         type: "error",
         title: ACTION_FAILURE_LABELS[action],
