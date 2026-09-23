@@ -46,7 +46,7 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
-import { SpeechCustomWords, SpeechPostProcessingPrompts } from "./speech.ts";
+import { SpeechAcceleration, SpeechCustomWords, SpeechPostProcessingPrompts } from "./speech.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1079,6 +1079,7 @@ export const ServerSettings = Schema.Struct({
   speechModelId: Schema.String.pipe(
     Schema.withDecodingDefault(Effect.succeed("handy-computer/parakeet-unified-en-0.6b-gguf")),
   ),
+  speechAcceleration: SpeechAcceleration.pipe(Schema.withDecodingDefault(Effect.succeed("auto"))),
   speechCustomWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   speechRemoveFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   speechPostProcessingEnabled: Schema.Boolean.pipe(
@@ -1433,6 +1434,7 @@ export const ServerSettingsPatch = Schema.Struct({
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   speechModelId: Schema.optionalKey(Schema.String),
+  speechAcceleration: Schema.optionalKey(SpeechAcceleration),
   speechCustomWords: Schema.optionalKey(SpeechCustomWords),
   speechRemoveFillerWords: Schema.optionalKey(Schema.Boolean),
   speechPostProcessingEnabled: Schema.optionalKey(Schema.Boolean),
