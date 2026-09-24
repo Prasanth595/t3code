@@ -1,3 +1,4 @@
+import { VoiceInputSetup } from "./VoiceInputSetup";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -7376,6 +7377,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       ) : null}
                     </>
                   ) : null}
+                  <VoiceInputSetup
+                    open={speechInput.setup.open}
+                    step={speechInput.setup.step}
+                    status={speechInput.status}
+                    model={speechInput.setup.model}
+                    downloading={speechInput.setup.downloading}
+                    error={speechInput.setup.error}
+                    onOpenChange={speechInput.setup.setOpen}
+                    onDownload={() => void speechInput.setup.download()}
+                    onCancelDownload={() => void speechInput.setup.cancelDownload()}
+                    onStartRecording={() => void speechInput.setup.startRecording()}
+                  />
                   <div
                     className={cn("contents", speechPresentation.showsConfirm && "[&>*]:-order-1")}
                   >
