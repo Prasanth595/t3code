@@ -116,6 +116,7 @@ interface SourceControlTextGenerationSettings {
   readonly style: SourceControlWritingStyleSettings;
 }
 
+/** Adds the attempted model and picker to a generation failure, preserving its diagnostic and cause. */
 function withTextGenerationContext(
   error: TextGenerationError,
   settings: SourceControlTextGenerationSettings,
