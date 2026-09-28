@@ -68,6 +68,7 @@ import {
 import { browserResponsiveViewportForToggle, useBrowserDefaults } from "~/browser/browserDefaults";
 import { BrowserDeviceToolbar } from "~/browser/BrowserDeviceToolbar";
 import { BROWSER_DEVICE_TOOLBAR_HEIGHT } from "~/browser/browserViewportLayout";
+import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
@@ -227,6 +228,7 @@ export function PreviewView({
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
   const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
   const desktopOverlay = tabId ? (previewState.desktopByTabId[tabId] ?? null) : null;
+  const layoutZoomFactor = useBrowserLayoutZoomFactor(desktopOverlay?.zoomFactor ?? 1);
   const navStatus = snapshot?.navStatus ?? { _tag: "Idle" as const };
   const url = navStatus._tag === "Idle" ? "" : navStatus.url;
   const loading = desktopOverlay?.loading ?? navStatus._tag === "Loading";
@@ -422,7 +424,7 @@ export function PreviewView({
       browserResponsiveViewportForToggle({
         defaults: browserDefaults,
         panelRect,
-        zoomFactor: serverOwnsRendering ? serverZoomFactor : desktopOverlay?.zoomFactor,
+        zoomFactor: serverOwnsRendering ? serverZoomFactor : layoutZoomFactor,
       }),
     ).catch(() => undefined);
   };
@@ -1122,7 +1124,7 @@ export function PreviewView({
         !activeRecordingTabIds.has(runtimeTabId) ? (
           <AgentBrowserCursor
             tabId={runtimeTabId}
-            zoomFactor={desktopOverlay.zoomFactor}
+            zoomFactor={layoutZoomFactor}
             controller={controller}
           />
         ) : null}
