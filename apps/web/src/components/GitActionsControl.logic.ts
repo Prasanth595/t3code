@@ -1,4 +1,6 @@
 import type {
+  EnvironmentId,
+  ProjectId,
   GitRunStackedActionResult,
   GitStackedAction,
   VcsStatusResult,
@@ -6,6 +8,39 @@ import type {
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import {
+  derivePhysicalProjectKey,
+  derivePhysicalProjectKeyFromPath,
+  type ProjectGroupingSettings,
+} from "../logicalProject";
+import { buildPhysicalToLogicalProjectKeyMap } from "../sidebarProjectGrouping";
+import type { Project } from "../types";
+
+/** Keeps a missing checkout identifiable so Settings rejects it instead of editing environment defaults. */
+export function resolveGitActionSettingsScope(input: {
+  environmentId: EnvironmentId;
+  projectId: ProjectId | undefined;
+  gitCwd: string;
+  projects: readonly Project[];
+  groupingSettings: ProjectGroupingSettings;
+}) {
+  const settingsProject = input.projects.find(
+    (project) =>
+      project.environmentId === input.environmentId &&
+      (input.projectId ? project.id === input.projectId : project.workspaceRoot === input.gitCwd),
+  );
+  const checkout = settingsProject
+    ? derivePhysicalProjectKey(settingsProject)
+    : derivePhysicalProjectKeyFromPath(input.environmentId, input.gitCwd);
+  const project = settingsProject
+    ? buildPhysicalToLogicalProjectKeyMap({
+        projects: input.projects,
+        settings: input.groupingSettings,
+        primaryEnvironmentId: input.environmentId,
+      }).get(checkout)
+    : undefined;
+  return { machine: input.environmentId, project, checkout };
+}
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
