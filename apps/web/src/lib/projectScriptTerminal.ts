@@ -13,18 +13,17 @@ export function resolveProjectScriptTerminal(input: {
   readonly runningTerminalIds: ReadonlyArray<string>;
   readonly preferNewTerminal: boolean;
 }): { readonly terminalId: string; readonly isNew: boolean } {
-  const drawerTerminalIds = input.drawerTerminalIds.filter(
-    (terminalId) => !input.panelTerminalIds.has(terminalId),
-  );
-  const baseTerminalId = drawerTerminalIds.includes(input.activeTerminalId)
-    ? input.activeTerminalId
-    : drawerTerminalIds[0];
-  if (
-    baseTerminalId !== undefined &&
-    !input.preferNewTerminal &&
-    !input.runningTerminalIds.includes(baseTerminalId)
-  ) {
-    return { terminalId: baseTerminalId, isNew: false };
+  if (!input.preferNewTerminal) {
+    const idleDrawerTerminalIds = input.drawerTerminalIds.filter(
+      (terminalId) =>
+        !input.panelTerminalIds.has(terminalId) && !input.runningTerminalIds.includes(terminalId),
+    );
+    const baseTerminalId = idleDrawerTerminalIds.includes(input.activeTerminalId)
+      ? input.activeTerminalId
+      : idleDrawerTerminalIds[0];
+    if (baseTerminalId !== undefined) {
+      return { terminalId: baseTerminalId, isNew: false };
+    }
   }
   return { terminalId: nextTerminalId(input.allocatableTerminalIds), isNew: true };
 }

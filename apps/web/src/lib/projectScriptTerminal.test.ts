@@ -45,6 +45,18 @@ describe("resolveProjectScriptTerminal", () => {
     ).toEqual({ terminalId: "term-2", isNew: false });
   });
 
+  it("reuses another idle drawer terminal when the active one is busy", () => {
+    expect(
+      resolveProjectScriptTerminal({
+        ...base,
+        drawerTerminalIds: ["term-1", "term-2"],
+        activeTerminalId: "term-1",
+        allocatableTerminalIds: ["term-1", "term-2"],
+        runningTerminalIds: ["term-1"],
+      }),
+    ).toEqual({ terminalId: "term-2", isNew: false });
+  });
+
   it("allocates a new terminal when the drawer terminal is busy", () => {
     expect(
       resolveProjectScriptTerminal({
