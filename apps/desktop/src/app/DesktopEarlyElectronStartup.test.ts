@@ -306,16 +306,18 @@ describe("Linux device scale across update relaunches", () => {
 
   for (const value of ["", "garbage", "0", "-1", "Infinity", "NaN"]) {
     it(`ignores invalid persisted scale ${JSON.stringify(value)}`, () => {
+      const applied: Array<[string, string]> = [];
       restoreEarlyLinuxDeviceScaleFactor({
         ...input,
         commandLine: {
           hasSwitch: () => false,
           getSwitchValue: () => "",
-          appendSwitch: () => assert.fail("invalid scale applied"),
+          appendSwitch: (name, scale) => applied.push([name, scale]),
         },
         readFileString: () => value,
         writeFileString: () => assert.fail("unexpected write"),
       });
+      assert.deepEqual(applied, []);
     });
   }
 
