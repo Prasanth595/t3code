@@ -556,7 +556,7 @@ export function matchesShortcutModifiers(
   );
 }
 
-export function matchesShortcut(
+function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
   platform: string,
