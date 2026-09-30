@@ -543,7 +543,7 @@ export function resolveEventKeys(event: ShortcutEventLike): Set<string> {
 export function matchesShortcutModifiers(
   event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
-  platform = navigator.platform,
+  platform: string,
 ): boolean {
   const useMetaForMod = /mac/i.test(platform);
   const expectedMeta = shortcut.metaKey || (shortcut.modKey && useMetaForMod);
@@ -559,7 +559,7 @@ export function matchesShortcutModifiers(
 export function matchesShortcut(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
-  platform = navigator.platform,
+  platform: string,
 ): boolean {
   if (
     !/mac/i.test(platform) &&
