@@ -1,3 +1,4 @@
+import type { EnvironmentId } from "@t3tools/contracts";
 import type {
   AnnotationSide,
   CodeViewDiffItem,
@@ -72,6 +73,7 @@ function appendAnnotationEntry(
 }
 
 interface AnnotatableCodeViewProps {
+  environmentId?: EnvironmentId;
   codeViewKey: string;
   files: ReadonlyArray<{
     fileDiff: FileDiffMetadata;
@@ -103,6 +105,7 @@ interface DiffSelectionContext {
 }
 
 export function AnnotatableCodeView({
+  environmentId,
   codeViewKey,
   files,
   sectionId,
@@ -273,6 +276,13 @@ export function AnnotatableCodeView({
           >
             {annotation.metadata.entries.map((entry) => (
               <DiffCommentAnnotation
+                {...(environmentId ? { environmentId } : {})}
+                ownerKey={JSON.stringify([
+                  environmentId,
+                  composerDraftTarget,
+                  codeViewKey,
+                  entry.id,
+                ])}
                 key={entry.id}
                 kind={entry.kind}
                 rangeLabel={entry.rangeLabel}

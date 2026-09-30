@@ -1,3 +1,6 @@
+import { DesktopPreviewAnnotationVoiceEventSchema } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
+
 import type {
   DesktopBridge,
   DesktopPreviewOpenLinkEvent,
@@ -12,6 +15,8 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
+
+const decodeAnnotationVoice = Schema.decodeUnknownOption(DesktopPreviewAnnotationVoiceEventSchema);
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -360,7 +365,20 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         tabId,
         enabled,
       }),
-    pickElement: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId }),
+    annotationVoice: {
+      onEvent: (listener) => {
+        const onEvent = (_event: Electron.IpcRendererEvent, tabId: string, value: unknown) => {
+          const event = decodeAnnotationVoice(value);
+          if (event._tag === "Some") listener(tabId, event.value);
+        };
+        ipcRenderer.on(IpcChannels.PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL, onEvent);
+        return () => ipcRenderer.off(IpcChannels.PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL, onEvent);
+      },
+      update: (state) =>
+        ipcRenderer.invoke(IpcChannels.PREVIEW_ANNOTATION_VOICE_STATE_CHANNEL, state),
+    },
+    pickElement: (tabId, voice) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, { tabId, voice }),
     cancelPickElement: (tabId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, { tabId }),
     captureScreenshot: (tabId) =>
