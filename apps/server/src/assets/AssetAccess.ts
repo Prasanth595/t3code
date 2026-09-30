@@ -876,7 +876,21 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => null),
     );
-    return faviconPath === claims.filePath ? yield* projectFaviconAsset(faviconPath) : null;
+    if (faviconPath !== claims.filePath) return null;
+    const asset = yield* projectFaviconAsset(faviconPath);
+    if (asset?.kind !== "file") return asset;
+    // Stream from the descriptor opened here, like host media, so a path swapped
+    // after this check cannot change what the response serves.
+    const file = yield* openMediaFile(faviconPath).pipe(
+      Effect.tapError((cause) =>
+        Effect.logError("Failed to open external project favicon.", {
+          filePath: faviconPath,
+          cause,
+        }),
+      ),
+      Effect.orElseSucceed(() => null),
+    );
+    return file ? ({ ...asset, file } satisfies ResolvedAsset) : null;
   }
 
   if (claims.kind === "github-media") {
