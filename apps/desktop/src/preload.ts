@@ -1,9 +1,7 @@
-import { DesktopPreviewAnnotationVoiceEventSchema } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-
 import type {
   DesktopBridge,
   DesktopPreviewOpenLinkEvent,
+  DesktopPreviewAnnotationVoiceEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
   DesktopPreviewRecordingFrame,
@@ -15,8 +13,6 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 
 import * as IpcChannels from "./ipc/channels.ts";
 import { mergeLegacyLocalStorage } from "./legacyLocalStorageMerge.ts";
-
-const decodeAnnotationVoice = Schema.decodeUnknownOption(DesktopPreviewAnnotationVoiceEventSchema);
 
 const SNAP_SHOT_EVENT_TYPES = new Set([
   "requested",
@@ -368,8 +364,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     annotationVoice: {
       onEvent: (listener) => {
         const onEvent = (_event: Electron.IpcRendererEvent, tabId: string, value: unknown) => {
-          const event = decodeAnnotationVoice(value);
-          if (event._tag === "Some") listener(tabId, event.value);
+          if (typeof value !== "object" || value === null) return;
+          listener(tabId, value as DesktopPreviewAnnotationVoiceEvent);
         };
         ipcRenderer.on(IpcChannels.PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL, onEvent);
         return () => ipcRenderer.off(IpcChannels.PREVIEW_ANNOTATION_VOICE_EVENT_CHANNEL, onEvent);
