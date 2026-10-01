@@ -4300,6 +4300,7 @@ describe("PreviewManager", () => {
           freezesEditor: true,
           blocksSubmission: true,
           level: 0,
+          shortcutLabel: "Ctrl+D",
           draft: { text: "Tighten spacing", cursor: 15 },
         };
         yield* manager.updateAnnotationVoice(state);
