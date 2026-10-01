@@ -714,7 +714,6 @@ function resolvePullRequest(
   return manager.resolvePullRequest(input);
 }
 
-/** Invokes PR thread preparation through the configured test manager. */
 function preparePullRequestThread(
   manager: GitManager.GitManager["Service"],
   input: GitPreparePullRequestThreadInput,
@@ -722,7 +721,6 @@ function preparePullRequestThread(
   return manager.preparePullRequestThread(input);
 }
 
-/** Builds a scoped Git manager with configurable provider responses and captured CLI calls. */
 function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   sourceControlProvider?: SourceControlProvider["Service"];
