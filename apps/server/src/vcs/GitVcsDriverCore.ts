@@ -1419,13 +1419,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           );
           const expectedTarget =
             previousTarget.exitCode === 0 ? previousTarget.stdout.trim() : GIT_ZERO_OID;
+          // A zero unpack limit bypasses Git's pack-size threshold and can select loose objects.
+          // Use one so every nonempty transfer is indexed as a pack in the isolated directory.
           const fetchArgs = [
             "--git-dir",
             temporaryRoot,
             "-c",
             `include.path=${path.join(gitCommonDir, "config")}`,
             "-c",
-            "fetch.unpackLimit=0",
+            "fetch.unpackLimit=1",
             "fetch",
             "--quiet",
             "--no-tags",
@@ -1484,7 +1486,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               "--git-dir",
               gitCommonDir,
               "-c",
-              "fetch.unpackLimit=0",
+              "fetch.unpackLimit=1",
               "fetch",
               "--quiet",
               "--no-tags",

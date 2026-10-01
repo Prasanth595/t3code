@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - realpathSync.native resolves Windows 8.3 short names, which the Effect realPath does not.
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
+import * as NodeHttp from "node:http";
+import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, it, describe } from "@effect/vitest";
@@ -2789,6 +2792,144 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.equal(isolatedFetchCount, 2);
         }),
       ),
+    );
+
+    it.effect("cleans partial packs after repeated status fetch timeouts", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const originalUpstream = yield* git(cwd, [
+          "rev-parse",
+          `refs/remotes/origin/${initialBranch}`,
+        ]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.writeFile(path.join(updater, "large.bin"), NodeCrypto.randomBytes(1024 * 1024));
+        yield* git(updater, ["add", "large.bin"]);
+        yield* git(updater, ["commit", "-m", "large remote object"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+
+        // Serve real upload-pack output but withhold its tail so Git's index-pack stays in progress.
+        const server = NodeHttp.createServer((request, response) => {
+          if (request.method === "GET") {
+            response.setHeader("Content-Type", "application/x-git-upload-pack-advertisement");
+            response.end(
+              Buffer.concat([
+                Buffer.from("001e# service=git-upload-pack\n0000"),
+                NodeChildProcess.execFileSync("git", [
+                  "upload-pack",
+                  "--stateless-rpc",
+                  "--advertise-refs",
+                  remote,
+                ]),
+              ]),
+            );
+            return;
+          }
+          const chunks: Buffer[] = [];
+          request.on("data", (chunk: Buffer) => chunks.push(chunk));
+          request.on("end", () => {
+            const pack = NodeChildProcess.execFileSync(
+              "git",
+              ["upload-pack", "--stateless-rpc", remote],
+              {
+                input: Buffer.concat(chunks),
+                maxBuffer: 4 * 1024 * 1024,
+              },
+            );
+            response.setHeader("Content-Type", "application/x-git-upload-pack-result");
+            response.write(pack.subarray(0, pack.length - 64 * 1024));
+          });
+        });
+        yield* Effect.acquireRelease(
+          Effect.promise(
+            () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+          ),
+          () =>
+            Effect.sync(() => {
+              server.closeAllConnections();
+              server.close();
+            }),
+        );
+        const address = server.address();
+        assert.isNotNull(address);
+        if (address === null || typeof address === "string")
+          return yield* Effect.die("expected TCP listener");
+        yield* git(cwd, ["remote", "set-url", "origin", `http://127.0.0.1:${address.port}/repo`]);
+        const commonDir = path.resolve(cwd, yield* git(cwd, ["rev-parse", "--git-common-dir"]));
+        const isolatedRoot = path.join(commonDir, "objects", "t3-status-fetch");
+        const otherPack = path.join(commonDir, "objects", "pack", "tmp_pack_other_operation");
+        yield* fs.makeDirectory(path.dirname(otherPack), { recursive: true });
+        yield* fs.writeFileString(otherPack, "another operation's data");
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const partialPackWritten = yield* Deferred.make<string>();
+          const handles: ChildProcessSpawner.ChildProcessHandle[] = [];
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              const objectDirectory = ChildProcess.isStandardCommand(command)
+                ? command.options.env?.GIT_OBJECT_DIRECTORY
+                : undefined;
+              if (objectDirectory !== undefined) {
+                yield* Effect.callback<string>((resume) => {
+                  const watcher = NodeFS.watch(
+                    path.join(objectDirectory, "pack"),
+                    (_event, filename) => {
+                      if (!filename?.startsWith("tmp_pack_")) return;
+                      const partialPack = path.join(objectDirectory, "pack", filename);
+                      if (
+                        (NodeFS.statSync(partialPack, { throwIfNoEntry: false })?.size ?? 0) > 0
+                      ) {
+                        resume(Effect.succeed(partialPack));
+                      }
+                    },
+                  );
+                  return Effect.sync(() => watcher.close());
+                }).pipe(
+                  Effect.flatMap((partialPack) =>
+                    Deferred.succeed(partialPackWritten, partialPack),
+                  ),
+                  Effect.forkScoped({ startImmediately: true }),
+                );
+              }
+              const handle = yield* delegate.spawn(command);
+              if (objectDirectory !== undefined) handles.push(handle);
+              return handle;
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(ServerConfigLayer),
+          );
+          const refresh = yield* driver
+            .statusDetailsRemote(cwd)
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const partialPack = yield* Deferred.await(partialPackWritten);
+          assert.isAbove(Number((yield* fs.stat(partialPack)).size), 0);
+          assert.equal(handles.length, 1);
+          assert.isTrue(yield* handles[0]!.isRunning);
+          yield* TestClock.adjust("5 seconds");
+          const status = yield* Fiber.join(refresh);
+          assert.isFalse(yield* handles[0]!.isRunning);
+          assert.isFalse(yield* fs.exists(partialPack));
+          assert.deepStrictEqual(yield* fs.readDirectory(isolatedRoot), []);
+          assert.equal(yield* fs.readFileString(otherPack), "another operation's data");
+          assert.equal(
+            yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+            originalUpstream,
+          );
+          assert.equal(status.behindCount, 0);
+        }
+      }),
     );
 
     it.effect("cleans the isolated repository when alternate setup fails", () =>
