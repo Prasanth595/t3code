@@ -6,13 +6,16 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationProjectShell,
-  type OrchestrationThreadShell,
+  type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
 import { vi } from "vite-plus/test";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import { makeRawThreadShell } from "../../test-fixtures";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import type { AgentActivityRowProps } from "../../widgets/AgentActivity";
@@ -36,52 +39,32 @@ const project: OrchestrationProjectShell = {
   updatedAt: NOW,
 };
 
-function thread(overrides: Partial<OrchestrationThreadShell> = {}): OrchestrationThreadShell {
-  return {
+function thread(overrides: Partial<OrchestrationV2ThreadShell> = {}): OrchestrationV2ThreadShell {
+  return makeRawThreadShell({
     id: ThreadId.make("thread"),
     projectId: project.id,
     title: "Task",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    pullRequests: [],
-    latestTurn: null,
-    createdAt: NOW,
-    updatedAt: NOW,
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    session: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
+    createdAt: DateTime.makeUnsafe(NOW),
+    updatedAt: DateTime.makeUnsafe(NOW),
     ...overrides,
-  };
-}
-
-function session(status: NonNullable<OrchestrationThreadShell["session"]>["status"]) {
-  return {
-    threadId: ThreadId.make("thread"),
-    status,
-    providerName: "codex",
-    runtimeMode: "full-access" as const,
-    activeTurnId: null,
-    lastError: null,
-    updatedAt: NOW,
-  };
+  });
 }
 
 function shell(
-  threads: ReadonlyArray<OrchestrationThreadShell>,
+  threads: ReadonlyArray<OrchestrationV2ThreadShell>,
   status: EnvironmentShellState["status"] = "live",
 ): EnvironmentShellState {
   return {
     status,
     error: Option.none(),
-    snapshot: Option.some({ projects: [project], threads, snapshotSequence: 1, updatedAt: NOW }),
+    snapshot: Option.some({
+      projects: [project],
+      threads,
+      archivedThreads: [],
+      snapshotSequence: 1,
+      schemaVersion: 1,
+    }),
   };
 }
 
@@ -153,7 +136,7 @@ describe("live widget activity", () => {
   it("expires terminal rows without a catalog or shell update", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW_MS);
-    const h = harness(shell([thread({ session: session("ready") })]), Date.now);
+    const h = harness(shell([thread({ status: "completed" })]), Date.now);
     const stop = h.registry.mount(h.atom);
     try {
       expect(
@@ -182,9 +165,9 @@ describe("live widget activity", () => {
       { immediate: true },
     );
     try {
-      h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ session: session("starting") })]));
-      h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ session: session("running") })]));
-      h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ session: session("ready") })]));
+      h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ status: "starting" })]));
+      h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ status: "running" })]));
+      h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ status: "completed" })]));
       h.registry.set(h.shellAtoms(ENVIRONMENT), shell([]));
       expect(seen).toEqual([[], ["starting"], ["running"], ["completed"], []]);
       expect(h.registry.get(h.atom).has(ENVIRONMENT)).toBe(true);
@@ -197,15 +180,12 @@ describe("live widget activity", () => {
   it.each(["cached", "synchronizing", "empty"] as const)(
     "does not claim authority from %s shells",
     (status) => {
-      const h = harness(shell([thread({ session: session("running") })], status));
+      const h = harness(shell([thread({ status: "running" })], status));
       try {
         expect(h.registry.get(h.atom).has(ENVIRONMENT)).toBe(false);
         h.registry.set(h.shellAtoms(ENVIRONMENT), shell([]));
         expect(h.registry.get(h.atom).get(ENVIRONMENT)).toEqual([]);
-        h.registry.set(
-          h.shellAtoms(ENVIRONMENT),
-          shell([thread({ session: session("running") })], status),
-        );
+        h.registry.set(h.shellAtoms(ENVIRONMENT), shell([thread({ status: "running" })], status));
         expect(h.registry.get(h.atom).has(ENVIRONMENT)).toBe(false);
       } finally {
         h.registry.dispose();
@@ -214,7 +194,7 @@ describe("live widget activity", () => {
   );
 
   it("drops ownership when the environment is removed", () => {
-    const h = harness(shell([thread({ session: session("running") })]));
+    const h = harness(shell([thread({ status: "running" })]));
     try {
       expect(h.registry.get(h.atom).size).toBe(1);
       h.registry.set(h.catalog, { isReady: true, entries: new Map() });
@@ -225,7 +205,7 @@ describe("live widget activity", () => {
   });
 
   it("drops ownership when the environment is switched off", () => {
-    const h = harness(shell([thread({ session: session("running") })]));
+    const h = harness(shell([thread({ status: "running" })]));
     try {
       const catalog = h.registry.get(h.catalog);
       const entry = catalog.entries.get(ENVIRONMENT);
@@ -243,18 +223,32 @@ describe("live widget activity", () => {
   it("keeps current attention and recent failures, not old completed history or orphan threads", () => {
     const h = harness(
       shell([
-        thread({ id: ThreadId.make("approval"), hasPendingApprovals: true }),
-        thread({ id: ThreadId.make("input"), hasPendingUserInput: true }),
-        thread({ id: ThreadId.make("failure"), session: session("error") }),
+        thread({
+          id: ThreadId.make("approval"),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("approval"),
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+        thread({
+          id: ThreadId.make("input"),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("input"),
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+        thread({ id: ThreadId.make("failure"), status: "failed" }),
         thread({
           id: ThreadId.make("old"),
-          session: session("ready"),
-          updatedAt: "2026-09-05T11:00:00.000Z",
+          status: "completed",
+          updatedAt: DateTime.makeUnsafe("2026-09-05T11:00:00.000Z"),
         }),
         thread({
           id: ThreadId.make("orphan"),
           projectId: ProjectId.make("missing"),
-          session: session("running"),
+          status: "running",
         }),
       ]),
     );

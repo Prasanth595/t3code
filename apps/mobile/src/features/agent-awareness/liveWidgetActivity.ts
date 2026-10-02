@@ -5,7 +5,7 @@ import {
 import type { EnvironmentShellState } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/relay";
-import { projectThreadAwareness } from "@t3tools/shared/agentAwareness";
+import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom } from "effect/unstable/reactivity";
@@ -49,7 +49,7 @@ export function createLiveWidgetActivitiesAtom(input: {
       for (const thread of snapshot.threads) {
         const project = projects.get(thread.projectId);
         if (!project) continue;
-        const state = projectThreadAwareness({ environmentId, project, thread });
+        const state = projectThreadAwarenessV2({ environmentId, project, thread });
         if (!state) continue;
         if (
           (state.phase === "completed" || state.phase === "failed") &&
