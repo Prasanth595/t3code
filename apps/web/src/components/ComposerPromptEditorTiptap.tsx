@@ -351,8 +351,7 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
         <div className="space-y-3 p-2 text-sm">
           <p className="font-medium">{skillLabel}</p>
           <p>
-            {skill?.description ??
-              skillDescription ??
+            {(skill ? skill.description : skillDescription) ??
               "No description is available for this skill."}
           </p>
           {skill?.path ? (
@@ -761,11 +760,34 @@ const ComposerMarkersExtension = Extension.create({
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
+  const { onChange: onPromptChange } = props;
+  const [selection, setSelection] = useState<{
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+  } | null>(null);
+  const onChange: ComposerPromptEditorProps["onChange"] = (
+    value,
+    cursor,
+    expandedCursor,
+    ...rest
+  ) => {
+    setSelection({ value, cursor, expandedCursor });
+    onPromptChange(value, cursor, expandedCursor, ...rest);
+  };
   // Extensions are creation-time, so changing text mode remounts the editor.
+  // Keep the exact Markdown caret across that remount: the collapsed cursor
+  // cannot represent positions inside an unknown `$name` rendered as text.
   return (
     <ComposerPromptEditorTiptapInner
       key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
       {...props}
+      initialExpandedCursor={
+        selection?.value === props.value && selection.cursor === props.cursor
+          ? selection.expandedCursor
+          : expandCollapsedComposerCursor(props.value, props.cursor, props.literalText)
+      }
+      onChange={onChange}
     />
   );
 }
@@ -896,7 +918,9 @@ function createComposerExtensions(richText: boolean) {
 const RICH_TEXT_EXTENSIONS = createComposerExtensions(true);
 const PLAIN_TEXT_EXTENSIONS = createComposerExtensions(false);
 
-function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
+function ComposerPromptEditorTiptapInner(
+  props: ComposerPromptEditorProps & { initialExpandedCursor: number },
+) {
   const {
     value,
     cursor,
@@ -972,7 +996,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const skillLabelFor = useStableCallback((name: string) => composerSkillMeta(skills, name));
 
   const initialCursor = clampEditorCursor(value, cursor);
-  const initialExpandedCursor = expandEditorCursor(value, initialCursor);
+  const initialExpandedCursor = Math.max(0, Math.min(value.length, props.initialExpandedCursor));
   const snapshotRef = useRef({
     value,
     cursor: initialCursor,
@@ -1492,7 +1516,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     ) {
       return;
     }
-    const normalizedExpandedCursor = expandEditorCursor(value, normalizedCursor);
+    const normalizedExpandedCursor = initialSelection
+      ? initialExpandedCursor
+      : expandEditorCursor(value, normalizedCursor);
     snapshotRef.current = {
       value,
       cursor: normalizedCursor,
@@ -1552,6 +1578,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     cursor,
     editor,
     expandEditorCursor,
+    initialExpandedCursor,
     literalText,
     richText,
     skillLabelFor,
