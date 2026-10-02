@@ -5,6 +5,7 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
+import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
@@ -110,6 +111,30 @@ export function presentationScopeOptions(
   );
 }
 
+/**
+ * Environments the sidebar can scope to: enabled catalog entries in catalog
+ * order. Switched-off entries contribute no projects or threads, so they are
+ * not choices. Fewer than two enabled environments is no choice either, so the
+ * result is empty and the header renders no control. Built from connection
+ * summaries, which keep their identity across provider and config refreshes.
+ */
+export function sidebarEnvironmentScopeOptions(
+  summaries: readonly EnvironmentConnectionSummary[],
+  machineById: ReadonlyMap<EnvironmentId, EnvironmentMachineKind>,
+): EnvironmentScopeOption[] {
+  const enabled = summaries.filter((summary) => summary.isEnabled);
+  if (enabled.length < 2) return [];
+  return environmentScopeOptions(
+    enabled.map((summary) => ({
+      environmentId: summary.environmentId,
+      label: summary.environmentLabel,
+      displayUrl: summary.displayUrl === "" ? null : summary.displayUrl,
+      machine: machineById.get(summary.environmentId) ?? resolveEnvironmentMachineKind(null),
+      offline: summary.connectionState !== "connected",
+    })),
+  );
+}
+
 export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
@@ -175,6 +200,10 @@ export function usePullRequestsSupported() {
 
 export function useEnvironmentMachines() {
   return useAtomValue(environmentSummaries.machineByIdAtom);
+}
+
+export function useEnvironmentConnectionSummaries() {
+  return useAtomValue(environmentSummaries.environmentsAtom);
 }
 
 export function useConnectedEnvironmentIds() {

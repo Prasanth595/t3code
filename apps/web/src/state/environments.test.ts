@@ -1,8 +1,13 @@
+import type { EnvironmentConnectionSummary } from "@t3tools/client-runtime/state/presentation";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { makeEnvironmentPresentation } from "~/test/environmentPresentation";
-import { environmentScopeLabel, presentationScopeOptions } from "./environments";
+import {
+  environmentScopeLabel,
+  presentationScopeOptions,
+  sidebarEnvironmentScopeOptions,
+} from "./environments";
 
 const first = {
   environmentId: EnvironmentId.make("first"),
@@ -74,6 +79,52 @@ describe("presentationScopeOptions", () => {
     expect(options.map((option) => option.label)).toEqual([
       "Mac · https://a.example",
       "Mac · https://b.example",
+    ]);
+  });
+});
+
+describe("sidebarEnvironmentScopeOptions", () => {
+  const summary = (id: string, overrides: Partial<EnvironmentConnectionSummary> = {}) => ({
+    environmentId: EnvironmentId.make(id),
+    environmentLabel: id,
+    displayUrl: "",
+    isRelayManaged: false,
+    isEnabled: true,
+    connectionState: "connected" as const,
+    connectionError: null,
+    connectionErrorTraceId: null,
+    ...overrides,
+  });
+  const machines = new Map([[EnvironmentId.make("desk"), "desktop" as const]]);
+
+  it("offers only switched-on entries, in catalog order", () => {
+    const options = sidebarEnvironmentScopeOptions(
+      [summary("laptop"), summary("parked", { isEnabled: false }), summary("desk")],
+      machines,
+    );
+    expect(options.map((option) => option.environmentId)).toEqual(["laptop", "desk"]);
+  });
+
+  it("offers nothing below two enabled environments, so a single-machine user sees no control", () => {
+    expect(
+      sidebarEnvironmentScopeOptions(
+        [summary("laptop"), summary("parked", { isEnabled: false })],
+        machines,
+      ),
+    ).toEqual([]);
+  });
+
+  it("carries the machine glyph and offline state, and treats a missing address as none", () => {
+    const options = sidebarEnvironmentScopeOptions(
+      [
+        summary("laptop", { environmentLabel: "Mac" }),
+        summary("desk", { environmentLabel: "Mac", connectionState: "offline" }),
+      ],
+      machines,
+    );
+    expect(options).toEqual([
+      { environmentId: "laptop", label: "Mac · laptop", machine: "server", offline: false },
+      { environmentId: "desk", label: "Mac · desk", machine: "desktop", offline: true },
     ]);
   });
 });
