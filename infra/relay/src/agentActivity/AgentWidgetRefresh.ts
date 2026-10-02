@@ -45,6 +45,9 @@ export class AgentWidgetRefresh extends Context.Service<
       readonly token: string;
       readonly pushToken?: string;
     }) => Effect.Effect<RelayAgentActivitySnapshotResponse, WidgetRefreshError>;
+    readonly revoke: (input: {
+      readonly token: string;
+    }) => Effect.Effect<void, WidgetRefreshPersistenceError | WidgetRefreshUnauthorized>;
     readonly notify: (input: {
       readonly userId: string;
     }) => Effect.Effect<
@@ -67,6 +70,15 @@ const make = Effect.gen(function* () {
     Effect.mapError((cause) => new WidgetRefreshPersistenceError({ stage, cause }));
 
   return AgentWidgetRefresh.of({
+    revoke: Effect.fn("relay.agent_widget.revoke")(function* ({ token }) {
+      if (!/^[a-f0-9]{64}$/.test(token)) return yield* new WidgetRefreshUnauthorized();
+      const tokenHash = NodeCrypto.createHash("sha256").update(token).digest("hex");
+      yield* db
+        .update(relayMobileDevices)
+        .set({ widgetAccessTokenHash: null, widgetPushToken: null })
+        .where(eq(relayMobileDevices.widgetAccessTokenHash, tokenHash))
+        .pipe(persistenceError("revoke"));
+    }),
     refresh: Effect.fn("relay.agent_widget.refresh")(function* ({ token, pushToken }) {
       if (!/^[a-f0-9]{64}$/.test(token)) return yield* new WidgetRefreshUnauthorized();
       const tokenHash = NodeCrypto.createHash("sha256").update(token).digest("hex");

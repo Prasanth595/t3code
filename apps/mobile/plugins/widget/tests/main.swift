@@ -34,3 +34,25 @@ let final = AgentWidgetState.timeline(aggregate: terminals, environmentIds: ["re
 assert((props(final.last!)["activities"] as! [[String: Any]]).map { $0["phase"] as! String } == ["completed", "failed"])
 assert(PropertyListSerialization.propertyList(final, isValidFor: .binary))
 print("AgentWidgetState: background renewal, source reconciliation, expiration, and native storage passed")
+
+// Native background reads can replace JS's last idle publication. Sign-out must
+// remove that timeline even when JS would deduplicate its next idle publication.
+let suite = "t3-widget-signout-test-\(UUID().uuidString)"
+let defaults = UserDefaults(suiteName: suite)!
+defer { defaults.removePersistentDomain(forName: suite) }
+defaults.set("previous-account", forKey: "t3_agent_widget_identity")
+defaults.set("test-capability", forKey: "t3_agent_widget_token")
+defaults.set("https://relay.test/v1/widget/agent-activity", forKey: "t3_agent_widget_url")
+defaults.set("previous rows", forKey: "t3_agent_widget_local_observation")
+defaults.set(entries, forKey: "__expo_widgets_AgentActivity_timeline")
+defaults.set("install-push-token", forKey: "t3_agent_widget_push_token")
+let revocation = T3AgentWidgetConfiguration.clearStoredState(in: defaults)
+assert(revocation?.httpMethod == "DELETE")
+assert(revocation?.url?.absoluteString == "https://relay.test/v1/widget/agent-activity")
+assert(revocation?.value(forHTTPHeaderField: "Authorization") == "Bearer test-capability")
+for key in ["t3_agent_widget_identity", "t3_agent_widget_token", "t3_agent_widget_url", "t3_agent_widget_local_observation", "__expo_widgets_AgentActivity_timeline"] {
+  assert(defaults.object(forKey: key) == nil)
+}
+assert(defaults.string(forKey: "t3_agent_widget_push_token") == "install-push-token")
+assert(T3AgentWidgetConfiguration.clearStoredState(in: defaults) == nil)
+print("Agent widget sign-out: cached rows removed and previous capability revocation prepared")

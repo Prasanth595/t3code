@@ -1098,6 +1098,11 @@ const RelayWidgetGroup = HttpApiGroup.make("widget").add(
     success: RelayAgentActivitySnapshotResponse,
     error: RelayAuthAndInternalErrors,
   }),
+  HttpApiEndpoint.delete("revoke", "/v1/widget/agent-activity", {
+    headers: RelayBearerRequestHeaders,
+    success: RelayOkResponse,
+    error: RelayAuthAndInternalErrors,
+  }),
 );
 
 const RelayClientGroup = HttpApiGroup.make("client")

@@ -84,9 +84,13 @@ function fixture() {
     }),
     update: () => ({
       set: (values: Record<string, unknown>) => ({
-        where: () =>
+        where: (condition: SQL) =>
           Effect.sync(() => {
             updates.push(values);
+            const params = dialect.sqlToQuery(condition).params;
+            queries.push(params);
+            if (params.includes(tokenHash) && values.widgetAccessTokenHash === null)
+              present = false;
           }),
       }),
     }),
@@ -174,6 +178,25 @@ function fixture() {
 }
 
 describe("AgentWidgetRefresh", () => {
+  it.effect(
+    "revokes only the presented capability and rejects subsequent reads and queued pushes",
+    () => {
+      const test = fixture();
+      return Effect.gen(function* () {
+        const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
+        yield* widgets.revoke({ token: "b".repeat(64) });
+        expect((yield* widgets.refresh({ token })).aggregate?.activeCount).toBe(1);
+        yield* widgets.revoke({ token });
+        expect((yield* Effect.flip(widgets.refresh({ token })))._tag).toBe(
+          "WidgetRefreshUnauthorized",
+        );
+        yield* widgets.process(job);
+        expect(test.pushes).toEqual([]);
+        expect(test.updates.at(-1)).toEqual({ widgetAccessTokenHash: null, widgetPushToken: null });
+        expect(test.queries).toContainEqual([tokenHash]);
+      }).pipe(Effect.provide(test.layer));
+    },
+  );
   it.effect(
     "reads the latest owner state without app credentials and sees completion on the next read",
     () => {

@@ -761,35 +761,64 @@ export const layerWidgetApi = HttpApiBuilder.group(
   "widget",
   Effect.fnUntraced(function* (handlers) {
     const widgets = yield* AgentWidgetRefresh.AgentWidgetRefresh;
-    return handlers.handle(
-      "refresh",
-      Effect.fn("relay.api.widget.refresh")(
-        function* ({ headers, query }) {
-          const token = headers.authorization.replace(/^Bearer /i, "");
-          yield* appendRelayCredentialResponseHeaders;
-          return yield* widgets.refresh({
-            token,
-            ...(query.pushToken !== undefined ? { pushToken: query.pushToken } : {}),
-          });
-        },
-        mapErrorTags({
-          WidgetRefreshUnauthorized: (_error, traceId) =>
-            new RelayAuthInvalidError({ code: "auth_invalid", reason: "not_authorized", traceId }),
-          WidgetRefreshPersistenceError: (_error, traceId) =>
-            new RelayInternalError({
-              code: "internal_error",
-              reason: "persistence_failed",
-              traceId,
-            }),
-          AgentActivityRowListPersistenceError: (_error, traceId) =>
-            new RelayInternalError({
-              code: "internal_error",
-              reason: "persistence_failed",
-              traceId,
-            }),
-        }),
-      ),
-    );
+    return handlers
+      .handle(
+        "refresh",
+        Effect.fn("relay.api.widget.refresh")(
+          function* ({ headers, query }) {
+            const token = headers.authorization.replace(/^Bearer /i, "");
+            yield* appendRelayCredentialResponseHeaders;
+            return yield* widgets.refresh({
+              token,
+              ...(query.pushToken !== undefined ? { pushToken: query.pushToken } : {}),
+            });
+          },
+          mapErrorTags({
+            WidgetRefreshUnauthorized: (_error, traceId) =>
+              new RelayAuthInvalidError({
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId,
+              }),
+            WidgetRefreshPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+            AgentActivityRowListPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      )
+      .handle(
+        "revoke",
+        Effect.fn("relay.api.widget.revoke")(
+          function* ({ headers }) {
+            yield* appendRelayCredentialResponseHeaders;
+            yield* widgets.revoke({ token: headers.authorization.replace(/^Bearer /i, "") });
+            return { ok: true as const };
+          },
+          mapErrorTags({
+            WidgetRefreshUnauthorized: (_error, traceId) =>
+              new RelayAuthInvalidError({
+                code: "auth_invalid",
+                reason: "not_authorized",
+                traceId,
+              }),
+            WidgetRefreshPersistenceError: (_error, traceId) =>
+              new RelayInternalError({
+                code: "internal_error",
+                reason: "persistence_failed",
+                traceId,
+              }),
+          }),
+        ),
+      );
   }),
 );
 
