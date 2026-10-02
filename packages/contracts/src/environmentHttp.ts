@@ -1,4 +1,5 @@
 import * as Context from "effect/Context";
+import { ProjectId } from "./baseSchemas.ts";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 import * as HttpApi from "effect/http-api/HttpApi";
@@ -110,6 +111,8 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "invalid_history_cursor",
   "thread_transcript_too_large",
   "invalid_audio",
+  "dictionary_conflict",
+  "dictionary_limit",
   "speech_unavailable",
   "speech_busy",
 ]);
@@ -698,7 +701,10 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
   )
   .add(
     HttpApiEndpoint.get("status", "/api/voice/status", {
-      headers: OptionalBearerHeaders,
+      headers: Schema.Struct({
+        ...OptionalBearerHeaders.fields,
+        "x-t3-project-id": Schema.optionalKey(ProjectId),
+      }),
       success: EnvironmentSpeechStatus,
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
@@ -795,6 +801,7 @@ export class EnvironmentVoiceHttpApi extends HttpApiGroup.make("voice")
       headers: Schema.Struct({
         ...OptionalBearerHeaders.fields,
         "x-t3-project-name": Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+        "x-t3-project-id": Schema.optionalKey(ProjectId),
       }),
       payload: Schema.Uint8Array.pipe(HttpApiSchema.asUint8Array()),
       success: EnvironmentSpeechTranscriptionResult,
