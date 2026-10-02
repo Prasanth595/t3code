@@ -2503,7 +2503,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       expect(agentActivityTimeline(publication, Date.now())).toEqual([
         {
           date: new Date(Date.now()),
-          props: expect.objectContaining({ isExpired: true, activeCount: null }),
+          props: expect.objectContaining({ isExpired: true, activeCount: -1 }),
         },
       ]);
     }).pipe(Effect.scoped),
