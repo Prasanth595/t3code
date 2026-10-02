@@ -21,8 +21,8 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
 import * as Scheduler from "effect/Scheduler";
+import * as Scope from "effect/Scope";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -122,6 +122,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly getTurnItem?: (input: {
     readonly itemId: TurnItemId;
   }) => Effect.Effect<{ readonly item: OrchestrationV2TurnItem | null }>;
+  readonly streamFor?: (
+    subscription: number,
+  ) => Stream.Stream<OrchestrationV2ThreadStreamItem> | undefined;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -153,17 +156,19 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly acceptCompactTurnItems?: true;
     }) =>
       Stream.unwrap(
-        Ref.set(lastSubscribeAfterSequence, input.afterSequence).pipe(
-          Effect.andThen(
-            Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
-          ),
-          Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
-          Effect.andThen(Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems)),
-          Effect.andThen(SubscriptionRef.update(subscriptionCount, (count) => count + 1)),
-          Effect.as(
-            options?.completionMarker === true
-              ? streamFrom(inputs)
-              : Stream.concat(Stream.make(synchronized()), streamFrom(inputs)),
+        Effect.all([
+          Ref.set(lastSubscribeAfterSequence, input.afterSequence),
+          Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
+          Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot),
+          Ref.set(lastAcceptCompactTurnItems, input.acceptCompactTurnItems),
+        ]).pipe(
+          Effect.andThen(SubscriptionRef.updateAndGet(subscriptionCount, (count) => count + 1)),
+          Effect.map(
+            (count) =>
+              options?.streamFor?.(count) ??
+              (options?.completionMarker === true
+                ? streamFrom(inputs)
+                : Stream.concat(Stream.make(synchronized()), streamFrom(inputs))),
           ),
         ),
       ),
@@ -2096,6 +2101,8 @@ describe("EnvironmentThreads", () => {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION, completionMarker: true });
       yield* awaitSubscriptionCount(harness, 1);
       expect(yield* Ref.get(harness.lastRequestCompletionMarker)).toBe(true);
+      // The observer replays the current state when it starts; take it so clearing drops it.
+      yield* Queue.take(harness.observed);
       yield* Queue.clear(harness.observed);
       // Separate frames, as the server sends a replay.
       for (let index = 1; index <= 20; index += 1) {
@@ -2145,6 +2152,107 @@ describe("EnvironmentThreads", () => {
       });
       expect(yield* Queue.size(announced)).toBe(0);
     }),
+  );
+
+  // A long batch yields to the scheduler while it applies, so the next attempt
+  // can start while the replaced attempt's batch and items are still landing.
+  const LONG_BATCH = 1000;
+
+  it.effect(
+    "does not apply a replaced attempt's snapshot after the next attempt reads its cursor",
+    () =>
+      Effect.gen(function* () {
+        const sent = yield* Deferred.make<void>();
+        const harness = yield* makeHarness({
+          cached: BASE_PROJECTION,
+          streamFor: (subscription) =>
+            subscription === 1
+              ? Stream.fromArray([
+                  synchronized(),
+                  snapshot(BASE_PROJECTION, 8),
+                  ...Array.from({ length: LONG_BATCH }, (_, index) =>
+                    titleUpdated(`Title ${index + 9}`, index + 9),
+                  ),
+                  snapshot({
+                    ...BASE_PROJECTION,
+                    thread: { ...BASE_PROJECTION.thread, title: "Stale" },
+                  }),
+                ]).pipe(
+                  Stream.rechunk(1),
+                  Stream.concat(
+                    Stream.fromEffect(Deferred.succeed(sent, undefined)).pipe(Stream.drain),
+                  ),
+                  Stream.concat(Stream.never),
+                )
+              : undefined,
+        });
+        yield* Deferred.await(sent);
+        yield* Queue.offer(harness.wakeups, "application-active");
+        yield* awaitSubscriptionCount(harness, 2);
+        yield* Queue.offer(harness.inputs, titleUpdated("Live", LONG_BATCH + 9));
+        const titles: Array<string | undefined> = [];
+        yield* awaitThreadState(harness.observed, (value) => {
+          titles.push(Option.getOrNull(value.data)?.thread.title);
+          return Option.getOrNull(value.data)?.thread.title === "Live";
+        });
+        // The next attempt started with the snapshot still buffered: its cursor
+        // is past the replaced snapshot's sequence but short of the batch end.
+        const cursor = yield* Ref.get(harness.lastSubscribeAfterSequence);
+        expect(cursor).toBeGreaterThan(8);
+        expect(cursor).toBeLessThan(LONG_BATCH + 8);
+        expect(titles).not.toContain("Stale");
+      }).pipe(
+        // A small budget lets the next attempt start between the consumer's
+        // batches, before it takes the queued snapshot.
+        Effect.provideService(Scheduler.MaxOpsBeforeYield, 50),
+      ),
+  );
+
+  it.effect("does not apply a replaced attempt's late marker without its dropped prefix", () =>
+    Effect.gen(function* () {
+      const sent = yield* Deferred.make<void>();
+      const replay = [
+        questionResolved(CACHED_SNAPSHOT_SEQUENCE + 1),
+        ...Array.from({ length: 40 }, (_, index) =>
+          titleUpdated(`Title ${index}`, CACHED_SNAPSHOT_SEQUENCE + 2 + index),
+        ),
+        synchronized(),
+      ];
+      const harness = yield* makeHarness({
+        cached: { ...BASE_PROJECTION, runtimeRequests: [PENDING_QUESTION] },
+        completionMarker: true,
+        streamFor: (subscription) =>
+          subscription === 1
+            ? Stream.fromArray(replay).pipe(
+                Stream.rechunk(1),
+                Stream.concat(
+                  Stream.fromEffect(Deferred.succeed(sent, undefined)).pipe(Stream.drain),
+                ),
+                Stream.concat(Stream.never),
+              )
+            : undefined,
+      });
+      yield* Deferred.await(sent);
+      yield* Queue.offer(harness.wakeups, "application-active");
+      yield* awaitSubscriptionCount(harness, 2);
+      // The next attempt started before the replaced attempt's buffered marker landed.
+      expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      yield* Queue.offerAll(harness.inputs, [
+        ...replay,
+        titleUpdated("Live", CACHED_SNAPSHOT_SEQUENCE + 42),
+      ]);
+      const live = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.getOrNull(value.data)?.thread.title === "Live",
+      );
+      expect(Option.getOrThrow(live.data).runtimeRequests.map((request) => request.status)).toEqual(
+        ["resolved"],
+      );
+    }).pipe(
+      // The replaced attempt's items fill the switch buffer, and a small budget
+      // lets the next attempt start while the consumer still drains them.
+      Effect.provideService(Scheduler.MaxOpsBeforeYield, 10),
+    ),
   );
 
   it.effect("skips an unknown event type and resumes after it", () =>
