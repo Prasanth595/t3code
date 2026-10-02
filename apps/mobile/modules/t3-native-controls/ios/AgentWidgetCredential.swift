@@ -6,9 +6,12 @@ import Security
 enum AgentWidgetCredential {
   private static var query: [String: Any]? {
     guard let group = Bundle.main.object(forInfoDictionaryKey: "ExpoWidgetsAppGroupIdentifier") as? String else { return nil }
-    return [kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: "t3-agent-widget", kSecAttrAccount as String: "read-capability",
-      kSecAttrAccessGroup as String: group]
+    return [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: "t3-agent-widget",
+      kSecAttrAccount as String: "read-capability",
+      kSecAttrAccessGroup as String: group,
+    ]
   }
 
   static func read() -> String? {
