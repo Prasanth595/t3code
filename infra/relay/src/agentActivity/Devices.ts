@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
+import * as NodeCrypto from "node:crypto";
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
 
@@ -131,6 +132,9 @@ const make = Effect.gen(function* () {
           apsEnvironment: registration.apsEnvironment ?? null,
           pushToken: registration.pushToken ?? null,
           pushToStartToken: registration.pushToStartToken ?? null,
+          widgetAccessTokenHash: registration.widgetAccessToken
+            ? NodeCrypto.createHash("sha256").update(registration.widgetAccessToken).digest("hex")
+            : null,
           preferencesJson: registration.preferences,
           createdAt: updatedAt,
           updatedAt,
@@ -154,6 +158,9 @@ const make = Effect.gen(function* () {
                 excluded.push_to_start_token,
                 ${relayMobileDevices.pushToStartToken}
               )`,
+            widgetAccessTokenHash: registration.widgetAccessToken
+              ? NodeCrypto.createHash("sha256").update(registration.widgetAccessToken).digest("hex")
+              : sql`${relayMobileDevices.widgetAccessTokenHash}`,
             preferencesJson: registration.preferences,
             updatedAt,
           },

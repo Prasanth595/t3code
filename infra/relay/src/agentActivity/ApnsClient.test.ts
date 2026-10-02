@@ -169,6 +169,165 @@ describe("ApnsClient", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("uses the WidgetKit push type and app topic without a user alert", () => {
+    const { privateKey } = NodeCrypto.generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    const client = HttpClient.make((request) => {
+      expect(request.url).toBe("https://api.sandbox.push.apple.com/3/device/widget-token");
+      expect(request.headers).toMatchObject({
+        "apns-push-type": "widgets",
+        "apns-topic": "com.t3tools.t3code.dev.push-type.widgets",
+        "apns-priority": "5",
+        "apns-collapse-id": "agent-widget",
+      });
+      expect(request.body._tag).toBe("Uint8Array");
+      if (request.body._tag === "Uint8Array")
+        expect(JSON.parse(new TextDecoder().decode(request.body.body))).toEqual({
+          aps: { "content-changed": true },
+        });
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response("", { status: 200 })));
+    });
+    return Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const result = yield* apns.sendPushNotificationRequest({
+        credentials: {
+          teamId: "widget-team",
+          keyId: "widget-key",
+          privateKey: Redacted.make(privateKey),
+          bundleId: "com.t3tools.t3code.dev",
+          environment: "sandbox",
+        },
+        request: {
+          token: "widget-token",
+          pushType: "widgets",
+          priority: "5",
+          payload: { aps: { "content-changed": true } },
+        },
+        issuedAtUnixSeconds: 0,
+      });
+      expect(result.ok).toBe(true);
+    }).pipe(
+      Effect.provide(
+        ApnsClient.layer.pipe(
+          Layer.provide(ApnsProviderTokens.layer),
+          Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+        ),
+      ),
+    );
+  });
+
+  it.effect("preserves JWT signing context and the crypto cause", () =>
+    Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const request = apns.makePushNotificationRequest({
+        token: "push-token",
+        notification: {
+          title: "Thread",
+          body: "Input: Project",
+          environmentId: "env",
+          threadId: "thread",
+          deepLink: "/threads/env/thread",
+        },
+      });
+      const error = yield* Effect.flip(
+        apns.sendPushNotificationRequest({
+          credentials: {
+            teamId: "team-1",
+            keyId: "key-1",
+            privateKey: Redacted.make("not-a-private-key"),
+            bundleId: "com.t3tools.test",
+            environment: "sandbox",
+          },
+          request,
+          issuedAtUnixSeconds: 123,
+        }),
+      );
+
+      expect(isApnsJwtSigningError(error)).toBe(true);
+      if (!isApnsJwtSigningError(error)) {
+        return yield* Effect.die("expected APNs JWT signing error");
+      }
+      expect(error).toMatchObject({
+        teamId: "team-1",
+        keyId: "key-1",
+        issuedAtUnixSeconds: 0,
+        cause: expect.any(Error),
+        message: "Failed to sign APNs JWT for key key-1.",
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("preserves APNs request context and the HTTP cause", () => {
+    const httpCause = new Error("network unavailable");
+    const { privateKey } = NodeCrypto.generateKeyPairSync("ec", {
+      namedCurve: "prime256v1",
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+      publicKeyEncoding: { type: "spki", format: "pem" },
+    });
+    const credentials = {
+      teamId: "team-1",
+      keyId: "key-1",
+      privateKey: Redacted.make(privateKey),
+      bundleId: "com.t3tools.test",
+      environment: "sandbox",
+    } satisfies ApnsCredentials;
+    const failingHttpClient = HttpClient.make((request) =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ request, cause: httpCause }),
+        }),
+      ),
+    );
+    const layer = ApnsClient.layer.pipe(
+      Layer.provide(ApnsProviderTokens.layer),
+      Layer.provide(Layer.succeed(HttpClient.HttpClient, failingHttpClient)),
+    );
+
+    return Effect.gen(function* () {
+      const apns = yield* ApnsClient.ApnsClient;
+      const request = apns.makePushNotificationRequest({
+        token: "long-push-token",
+        notification: {
+          title: "Thread",
+          body: "Input: Project",
+          environmentId: "env",
+          threadId: "thread",
+          deepLink: "/threads/env/thread",
+        },
+      });
+      const error = yield* Effect.flip(
+        apns.sendPushNotificationRequest({
+          credentials,
+          request,
+          issuedAtUnixSeconds: 123,
+        }),
+      );
+
+      expect(isApnsHttpRequestError(error)).toBe(true);
+      if (!isApnsHttpRequestError(error)) {
+        return yield* Effect.die("expected APNs HTTP request error");
+      }
+      expect(error).toMatchObject({
+        requestKind: "push-notification",
+        event: null,
+        environment: "sandbox",
+        bundleId: "com.t3tools.test",
+        tokenSuffix: "sh-token",
+        stage: "send",
+        status: null,
+        message: "APNs push-notification request failed during send in sandbox.",
+      });
+      expect(error.cause).toBeInstanceOf(HttpClientError.HttpClientError);
+      expect((error.cause as HttpClientError.HttpClientError).reason).toMatchObject({
+        _tag: "TransportError",
+        cause: httpCause,
+      });
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("reuses the signed provider JWT across pushes within the reuse window", () => {
     ApnsProviderTokens.__resetApnsProviderTokenCacheForTest();
     const { privateKey } = NodeCrypto.generateKeyPairSync("ec", {

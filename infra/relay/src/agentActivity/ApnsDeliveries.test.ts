@@ -1,5 +1,4 @@
-import * as AgentActivityAlerts from "./agentActivityAlerts.ts";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
@@ -157,6 +156,21 @@ function layerFor(input: {
   ) => Effect.Effect<HttpClientResponse.HttpClientResponse>;
 }) {
   return ApnsDeliveries.layer.pipe(
+    Layer.provide(
+      Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+        refresh: () => Effect.succeed({ aggregate: null }),
+        notify: () => Effect.succeed([]),
+        process: (job) =>
+          Effect.succeed({
+            deviceId: job.target.deviceId,
+            kind: "widget_refresh",
+            ok: true,
+            apnsStatus: null,
+            apnsReason: null,
+            apnsId: null,
+          }),
+      }),
+    ),
     Layer.provide(ApnsClient.layer),
     Layer.provide(ApnsProviderTokens.layer),
     Layer.provide(ApnsDeliveryQueue.layer.pipe(Layer.provide(NodeCryptoLayer.layer))),

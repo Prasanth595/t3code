@@ -1,3 +1,4 @@
+import * as AgentWidgetRefresh from "./AgentWidgetRefresh.ts";
 import type {
   RelayAgentActivityState,
   RelayDeviceRegistrationRequest,
@@ -22,6 +23,21 @@ import * as AgentActivityPublisher from "./AgentActivityPublisher.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
 
 const layerPublisher = AgentActivityPublisher.layer.pipe(
+  Layer.provide(
+    Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+      refresh: () => Effect.succeed({ aggregate: null }),
+      notify: () => Effect.succeed([]),
+      process: (job) =>
+        Effect.succeed({
+          deviceId: job.target.deviceId,
+          kind: "widget_refresh",
+          ok: true,
+          apnsStatus: null,
+          apnsReason: null,
+          apnsId: null,
+        }),
+    }),
+  ),
   Layer.provide(
     Layer.succeed(FcmDeliveries.FcmDeliveries, {
       enqueue: () => Effect.succeed(null),
@@ -163,6 +179,21 @@ function layerRegistrationReplay(input: {
     Layer.provide(layerPublisher),
     Layer.provide(
       ApnsDeliveries.layer.pipe(
+        Layer.provide(
+          Layer.succeed(AgentWidgetRefresh.AgentWidgetRefresh, {
+            refresh: () => Effect.succeed({ aggregate: null }),
+            notify: () => Effect.succeed([]),
+            process: (job) =>
+              Effect.succeed({
+                deviceId: job.target.deviceId,
+                kind: "widget_refresh",
+                ok: true,
+                apnsStatus: null,
+                apnsReason: null,
+                apnsId: null,
+              }),
+          }),
+        ),
         Layer.provide(ApnsClient.layer.pipe(Layer.provide(ApnsProviderTokens.layer))),
       ),
     ),

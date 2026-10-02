@@ -1,3 +1,4 @@
+import { observeAgentWidget } from "./agentWidgetRefresh.ios";
 import AgentActivity, {
   AgentActivityWidget,
   type AgentActivityProps,
@@ -6,6 +7,7 @@ import { agentActivityTimeline } from "../../widgets/agentActivityTimeline";
 
 export function publishAgentActivityWidget(props: AgentActivityProps): boolean {
   try {
+    observeAgentWidget(props);
     AgentActivityWidget.updateTimeline(agentActivityTimeline(props, Date.now()));
     return true;
   } catch {

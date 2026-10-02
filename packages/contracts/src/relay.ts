@@ -55,6 +55,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
   apsEnvironment: Schema.optional(RelayApnsEnvironment),
   pushToken: Schema.optional(TrimmedNonEmptyString),
   pushToStartToken: Schema.optional(TrimmedNonEmptyString),
+  // Read-only capability for the native widget extension. Never used for app authentication.
+  widgetAccessToken: Schema.optional(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
   preferences: RelayAgentAwarenessPreferences,
 }).check(
   Schema.makeFilter((device) =>
@@ -63,7 +65,8 @@ export const RelayDeviceRegistrationRequest = Schema.Struct({
       : device.androidApiLevel !== undefined &&
         device.iosMajorVersion === undefined &&
         device.apsEnvironment === undefined &&
-        device.pushToStartToken === undefined,
+        device.pushToStartToken === undefined &&
+        device.widgetAccessToken === undefined,
   ),
 );
 export type RelayDeviceRegistrationRequest = typeof RelayDeviceRegistrationRequest.Type;
@@ -944,6 +947,7 @@ export const RelayDeliveryKind = Schema.Literals([
   "live_activity_update",
   "live_activity_end",
   "push_notification",
+  "widget_refresh",
 ]);
 export type RelayDeliveryKind = typeof RelayDeliveryKind.Type;
 
@@ -1045,6 +1049,7 @@ export const RelayRegisterLiveActivityEndpoint = HttpApiEndpoint.post(
 
 export const RelayAgentActivitySnapshotResponse = Schema.Struct({
   aggregate: Schema.NullOr(RelayAgentActivityAggregateState),
+  environmentIds: Schema.optional(Schema.Array(EnvironmentId)),
   // Absent on older relays, which may ignore an unknown query parameter.
   excludedEnvironmentIds: Schema.optional(Schema.Array(EnvironmentId)),
 });
@@ -1083,6 +1088,17 @@ const RelayMobileGroup = HttpApiGroup.make("mobile")
   )
   .annotate(OpenApi.Description, "Mobile push-notification and Live Activity registration.")
   .middleware(RelayDpopClientAuth);
+
+const RelayWidgetGroup = HttpApiGroup.make("widget").add(
+  HttpApiEndpoint.get("refresh", "/v1/widget/agent-activity", {
+    headers: RelayBearerRequestHeaders,
+    query: {
+      pushToken: Schema.optional(Schema.String.check(Schema.isPattern(/^(?:[a-f0-9]{1,512})?$/))),
+    },
+    success: RelayAgentActivitySnapshotResponse,
+    error: RelayAuthAndInternalErrors,
+  }),
+);
 
 const RelayClientGroup = HttpApiGroup.make("client")
   .add(
@@ -1316,6 +1332,7 @@ export const RelayApi = HttpApi.make("RelayApi")
     RelayHealthGroup,
     RelayMetadataGroup,
     RelayMobileGroup,
+    RelayWidgetGroup,
     RelayClientGroup,
     RelayTokenGroup,
     RelayDpopClientGroup,
