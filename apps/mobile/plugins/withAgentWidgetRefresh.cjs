@@ -42,8 +42,16 @@ module.exports = function withAgentWidgetRefresh(config) {
     "ios",
     (cfg) => {
       const target = path.join(cfg.modRequest.platformProjectRoot, "ExpoWidgetsTarget");
-      for (const file of ["AgentWidgetTimelineProvider.swift", "AgentWidgetState.swift"]) {
-        fs.copyFileSync(path.join(__dirname, "widget", file), path.join(target, file));
+      for (const file of [
+        "AgentWidgetTimelineProvider.swift",
+        "AgentWidgetState.swift",
+        "AgentWidgetCredential.swift",
+      ]) {
+        const source =
+          file === "AgentWidgetCredential.swift"
+            ? path.join(__dirname, "..", "modules", "t3-native-controls", "ios", file)
+            : path.join(__dirname, "widget", file);
+        fs.copyFileSync(source, path.join(target, file));
       }
       const entitlements = path.join(target, "ExpoWidgetsTarget.entitlements");
       const plist = fs.readFileSync(entitlements, "utf8");
@@ -95,7 +103,11 @@ module.exports = function withAgentWidgetRefresh(config) {
         (value.name === "ExpoWidgetsTarget" || value.path === "ExpoWidgetsTarget"),
     );
     if (!group) throw new Error("ExpoWidgetsTarget source group missing");
-    for (const file of ["AgentWidgetTimelineProvider.swift", "AgentWidgetState.swift"]) {
+    for (const file of [
+      "AgentWidgetTimelineProvider.swift",
+      "AgentWidgetState.swift",
+      "AgentWidgetCredential.swift",
+    ]) {
       proj.addSourceFile(file, { target: target[0] }, group[0]);
     }
     return cfg;

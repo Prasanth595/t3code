@@ -2217,7 +2217,14 @@ describe("makeRelayDeviceRegistrationRequest", () => {
           }),
         );
         if (transition === "provider remount") releaseAgentAwarenessRelayTokenProvider();
+        vi.mocked(clearAgentWidgetRefresh).mockClear();
+        vi.mocked(agentWidgetToken).mockClear();
         setAgentAwarenessRelayTokenProvider(() => Promise.resolve("token-b"), "user-b");
+        expect(agentWidgetToken).toHaveBeenCalledWith("user-b");
+        if (transition === "account switch") expect(clearAgentWidgetRefresh).toHaveBeenCalledOnce();
+        expect(publishAgentActivityWidget).toHaveBeenLastCalledWith(
+          expect.objectContaining({ activeCount: 0, activities: [] }),
+        );
         backgroundRuntime.pending.length = 0;
         yield* refreshActiveLiveActivityRemoteRegistration().pipe(
           Effect.provide(

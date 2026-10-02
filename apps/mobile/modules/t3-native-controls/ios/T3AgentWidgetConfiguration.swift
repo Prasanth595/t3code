@@ -12,18 +12,18 @@ enum T3AgentWidgetConfiguration {
   static func token(identity: String) -> String? {
     guard let defaults else { return nil }
     if defaults.string(forKey: "t3_agent_widget_identity") == identity,
-       let token = defaults.string(forKey: "t3_agent_widget_token") { return token }
+       let token = AgentWidgetCredential.read() { return token }
     clear()
     var bytes = [UInt8](repeating: 0, count: 32)
     guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else { return nil }
     let token = bytes.map { String(format: "%02x", $0) }.joined()
+    guard AgentWidgetCredential.store(token) else { return nil }
     defaults.set(identity, forKey: "t3_agent_widget_identity")
-    defaults.set(token, forKey: "t3_agent_widget_token")
     return token
   }
 
   static func configure(url: String, token: String) {
-    guard let defaults, defaults.string(forKey: "t3_agent_widget_token") == token else { return }
+    guard let defaults, AgentWidgetCredential.read() == token else { return }
     defaults.set(url, forKey: "t3_agent_widget_url")
     WidgetCenter.shared.reloadTimelines(ofKind: "AgentActivity")
   }
@@ -49,7 +49,9 @@ enum T3AgentWidgetConfiguration {
 
   static func clearStoredState(in defaults: UserDefaults) -> URLRequest? {
     let url = defaults.string(forKey: "t3_agent_widget_url").flatMap(URL.init(string:))
-    let token = defaults.string(forKey: "t3_agent_widget_token")
+    // Revoke the pre-Keychain development credential when upgrading this branch.
+    let token = AgentWidgetCredential.read() ?? defaults.string(forKey: "t3_agent_widget_token")
+    AgentWidgetCredential.remove()
     for key in ["t3_agent_widget_identity", "t3_agent_widget_token", "t3_agent_widget_url", "t3_agent_widget_local_observation", "__expo_widgets_AgentActivity_timeline"] {
       defaults.removeObject(forKey: key)
     }

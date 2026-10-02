@@ -35,7 +35,7 @@ enum AgentWidgetNetwork {
 
   static func refresh(completion: @escaping @Sendable (Bool) -> Void) {
     guard let defaults, let rawURL = defaults.string(forKey: "t3_agent_widget_url"),
-          let token = defaults.string(forKey: "t3_agent_widget_token"),
+          let token = AgentWidgetCredential.read(),
           var components = URLComponents(string: rawURL) else { completion(false); return }
     if let pushToken = defaults.string(forKey: "t3_agent_widget_push_token") {
       components.queryItems = [URLQueryItem(name: "pushToken", value: pushToken)]
@@ -45,7 +45,7 @@ enum AgentWidgetNetwork {
     request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
     URLSession.shared.dataTask(with: request) { data, response, _ in
       // Sign-out / another account's configuration wins over an in-flight read.
-      guard defaults.string(forKey: "t3_agent_widget_token") == token,
+      guard AgentWidgetCredential.read() == token,
             defaults.string(forKey: "t3_agent_widget_url") == rawURL else { completion(false); return }
       guard let http = response as? HTTPURLResponse, http.statusCode == 200,
             let data, let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
