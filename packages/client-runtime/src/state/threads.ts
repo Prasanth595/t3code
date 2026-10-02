@@ -602,10 +602,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   ) {
     if (item.kind === "synchronized") {
       yield* Ref.set(awaitingCompletion, false);
-      yield* SubscriptionRef.update(state, (current) =>
-        Option.isSome(current.data) && current.status !== "deleted" && Option.isNone(current.error)
-          ? { ...current, status: "live" as const, error: Option.none() }
-          : current,
+      yield* SubscriptionRef.updateSome(state, (current) =>
+        Option.isSome(current.data) &&
+        current.status !== "deleted" &&
+        current.status !== "live" &&
+        Option.isNone(current.error)
+          ? Option.some({ ...current, status: "live" as const })
+          : Option.none(),
       );
       return;
     }
@@ -637,11 +640,30 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* applyEventsLocked([item]);
   });
 
-  const applyItems = Effect.fn("EnvironmentThreadState.applyItems")(function* (
-    items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
+  // Items received before the server's completion marker apply together when it
+  // arrives, so a replayed resume renders its final state once. A restarted
+  // attempt keeps them: its replay repeats them from the unmoved cursor, and
+  // already applied sequences are skipped.
+  let catchUp: OrchestrationV2ThreadStreamItem[] = [];
+  const receiveItems = Effect.fn("EnvironmentThreadState.receiveItems")(function* (
+    received: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
   ) {
     yield* applyLock.withPermits(1)(
       Effect.gen(function* () {
+        catchUp.push(...received);
+        const completes = received.some((item) => item.kind === "synchronized");
+        if (catchUp.length === 0) return;
+        if (!completes && (yield* Ref.get(awaitingCompletion))) {
+          // A warm resume keeps its "live" status until it learns it is behind.
+          yield* SubscriptionRef.updateSome(state, (current) =>
+            current.status === "live"
+              ? Option.some({ ...current, status: "synchronizing" as const })
+              : Option.none(),
+          );
+          return;
+        }
+        const items = catchUp;
+        catchUp = [];
         let events: SequencedItem[] = [];
         for (const item of items) {
           if (
@@ -651,6 +673,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             events.push(item);
             continue;
           }
+          // Clearing the flag first lets the events before the marker publish
+          // "live", so a catch-up ending in the marker is one state change.
+          if (item.kind === "synchronized") yield* Ref.set(awaitingCompletion, false);
           yield* applyEventsLocked(events);
           events = [];
           yield* applyItemLocked(item);
@@ -1031,7 +1056,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEachArray(applyItems)),
+    ).pipe(Stream.runForEachArray(receiveItems)),
   );
 
   return state;
