@@ -168,6 +168,17 @@ export function BranchToolbarBranchSelector({
       draftThreadEnvMode: draftThread?.envMode,
     });
 
+  // Handlers can run after an await, or after another client moved the thread or
+  // started a run, so they decide from the store rather than the last render.
+  const readLatestThreadState = () => {
+    const latestThread = readThreadShell(threadRef);
+    return {
+      runtime: latestThread ? latestThread.runtime : serverSession,
+      worktreePath:
+        latestThread && !forceNewWorktree ? latestThread.worktreePath : activeWorktreePath,
+    };
+  };
+
   const setThreadBranch = (
     branch: string | null,
     worktreePath: string | null,
@@ -179,7 +190,8 @@ export function BranchToolbarBranchSelector({
       (hasServerThread && !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
     )
       return;
-    if (serverSession && worktreePath !== activeWorktreePath) {
+    const latest = readLatestThreadState();
+    if (latest.runtime && worktreePath !== latest.worktreePath) {
       void stopThreadSession({
         environmentId,
         input: { threadId: activeThreadId },
@@ -243,15 +255,21 @@ export function BranchToolbarBranchSelector({
   const prReference = parsePullRequestReference(trimmedBranchQuery);
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
-  const isWorktreeChangeBlockedForRef = (refName: VcsRef, runtime = serverSession) =>
+  const isWorktreeChangeBlockedForRef = (
+    refName: VcsRef,
+    thread: ReturnType<typeof readLatestThreadState> = {
+      runtime: serverSession,
+      worktreePath: activeWorktreePath,
+    },
+  ) =>
     activeProjectCwd !== null &&
     !isSelectingWorktreeBase &&
     isWorktreeChangeBlocked({
-      runtime,
-      currentWorktreePath: activeWorktreePath,
+      runtime: thread.runtime,
+      currentWorktreePath: thread.worktreePath,
       nextWorktreePath: resolveBranchSelectionTarget({
         activeProjectCwd,
-        activeWorktreePath,
+        activeWorktreePath: thread.worktreePath,
         refName,
       }).nextWorktreePath,
     });
@@ -405,13 +423,12 @@ export function BranchToolbarBranchSelector({
     }
 
     // Enter selects the highlighted value directly, so disabled rows need this too.
-    // A run can start after the render this handler came from, so read the runtime again.
-    const latestRuntime = readThreadShell(threadRef)?.runtime ?? null;
-    if (isWorktreeChangeBlockedForRef(refName, latestRuntime)) return;
+    const latest = readLatestThreadState();
+    if (isWorktreeChangeBlockedForRef(refName, latest)) return;
 
     const selectionTarget = resolveBranchSelectionTarget({
       activeProjectCwd,
-      activeWorktreePath,
+      activeWorktreePath: latest.worktreePath,
       refName,
     });
 
@@ -441,11 +458,11 @@ export function BranchToolbarBranchSelector({
       });
       if (checkoutResult._tag === "Success") {
         // A run can start while the checkout runs. Leave the thread where it is.
-        const latestThread = readThreadShell(threadRef);
+        const latestAfterCheckout = readLatestThreadState();
         if (
           isWorktreeChangeBlocked({
-            runtime: latestThread?.runtime ?? null,
-            currentWorktreePath: latestThread?.worktreePath ?? activeWorktreePath,
+            runtime: latestAfterCheckout.runtime,
+            currentWorktreePath: latestAfterCheckout.worktreePath,
             nextWorktreePath: selectionTarget.nextWorktreePath,
           })
         ) {
