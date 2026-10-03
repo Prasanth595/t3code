@@ -214,7 +214,7 @@ index 352d8fa656aac2e39160104df2394ebe6719bac5..040701e5d7ee498a896f03ecc79fc992
      private var _themeVariant: String?
      @objc public var themeVariant: NSString? {
 diff --git a/ios/Shared/MenuViewImplementation.swift b/ios/Shared/MenuViewImplementation.swift
-index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224ed38a69b7 100644
+index 5c4e0da4292b15d3a27b5ea1555f11452a470815..bbfd7e3f0fcdc3e522efc69307d59c8555e6f7ce 100644
 --- a/ios/Shared/MenuViewImplementation.swift
 +++ b/ios/Shared/MenuViewImplementation.swift
 @@ -42,6 +42,14 @@ public class MenuViewImplementation: UIButton {
@@ -225,7 +225,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224e
 +    /// context-menu timing.
 +    @objc public var longPressDuration: Int = 0 {
 +        didSet {
-+            self.updateQuickLongPress()
++            self.updateLongPressDuration()
 +        }
 +    }
 +
@@ -281,7 +281,7 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224e
      func setup () {
          let menu = UIMenu(title: _title,
              identifier: nil,
-@@ -86,8 +123,141 @@ public class MenuViewImplementation: UIButton {
+@@ -86,10 +123,126 @@ public class MenuViewImplementation: UIButton {
              }
          }
  
@@ -307,9 +307,9 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224e
 +        // the wrapped content as the zoom preview.
 +        self.isUserInteractionEnabled = !shouldOpenOnLongPress
 +        self.updateLongPressInteraction()
-+        self.updateQuickLongPress()
-+    }
-+
++        self.updateLongPressDuration()
+     }
+ 
 +    private func refreshPresentedMenu(_ menu: UIMenu) {
 +        // Tap mode presents through the button's built-in interaction,
 +        // long-press mode through the superview-hosted one; cover both (plus
@@ -359,44 +359,26 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224e
 +    public override func didMoveToSuperview() {
 +        super.didMoveToSuperview()
 +        self.updateLongPressInteraction()
-+        self.updateQuickLongPress()
++        self.updateLongPressDuration()
 +    }
 +
-+    private var quickLongPress: UILongPressGestureRecognizer?
-+    private let quickLongPressDelegate = SimultaneousGestureDelegate()
-+
-+    private func updateQuickLongPress() {
-+        let host = longPressDuration > 0 ? longPressInteraction?.view : nil
-+        if let existing = quickLongPress, existing.view !== host {
-+            existing.view?.removeGestureRecognizer(existing)
-+            quickLongPress = nil
++    private func updateLongPressDuration() {
++        guard let host = longPressInteraction?.view else { return }
++        let seconds: NSNumber? = longPressDuration > 0 ? NSNumber(value: Double(longPressDuration) / 1000) : nil
++        // UIKit exposes no hold-duration setting, but UIControl's long-press
++        // menu reads it from its click driver: clickDownDuration decides when a
++        // release counts as a menu press, clickTimeoutDuration when a held press
++        // opens the menu. Give this driver a subclass that answers both with our
++        // duration, so the native menu opens sooner without being re-presented
++        // by hand. Unrecognized UIKit internals leave the system timing alone.
++        for recognizer in host.gestureRecognizers ?? [] {
++            guard let driver = recognizer.delegate as? NSObject,
++                  let durationClass = LongPressDurationDriver.subclass(of: type(of: driver)) else { continue }
++            objc_setAssociatedObject(driver, &LongPressDurationDriver.key, seconds, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
++            if seconds != nil && type(of: driver) !== durationClass {
++                object_setClass(driver, durationClass)
++            }
 +        }
-+        guard let host = host else { return }
-+        if quickLongPress == nil {
-+            let recognizer = UILongPressGestureRecognizer(
-+                target: self, action: #selector(presentMenuAfterQuickLongPress(_:)))
-+            // Observe the hold alongside the wrapped React touchables instead
-+            // of stealing their touches, so a short tap still lands as a press.
-+            recognizer.cancelsTouchesInView = false
-+            recognizer.delegate = quickLongPressDelegate
-+            host.addGestureRecognizer(recognizer)
-+            quickLongPress = recognizer
-+        }
-+        quickLongPress?.minimumPressDuration = TimeInterval(longPressDuration) / 1000
-+    }
-+
-+    @objc private func presentMenuAfterQuickLongPress(_ recognizer: UILongPressGestureRecognizer) {
-+        guard recognizer.state == .began,
-+              let interaction = longPressInteraction,
-+              let host = interaction.view else { return }
-+        // UIKit has no public way to shorten a context-menu hold. Present
-+        // through the interaction's own entry point when it exists; without
-+        // it the system long press still opens the menu at its usual timing.
-+        let selector = NSSelectorFromString("_presentMenuAtLocation:")
-+        guard interaction.responds(to: selector) else { return }
-+        typealias PresentMenu = @convention(c) (AnyObject, Selector, CGPoint) -> Void
-+        let present = unsafeBitCast(interaction.method(for: selector), to: PresentMenu.self)
-+        present(interaction, selector, recognizer.location(in: host))
 +    }
 +
 +    private func updateLongPressInteraction() {
@@ -420,10 +402,13 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224e
 +            self.addInteraction(existing)
 +            longPressInteraction = nil
 +        }
-     }
- 
++    }
++
++
      public override func reactSetFrame(_ frame: CGRect) {
-@@ -124,4 +294,17 @@ public class MenuViewImplementation: UIButton {
+         super.reactSetFrame(frame);
+     }
+@@ -124,4 +277,40 @@ public class MenuViewImplementation: UIButton {
      @objc func sendMenuOpen() {
          // NO-OP (should be overriden by parent)
      }
@@ -433,12 +418,35 @@ index 5c4e0da4292b15d3a27b5ea1555f11452a470815..dc710f29c7cccd55b4049c7dce3e224e
 +    }
 +}
 +
-+private final class SimultaneousGestureDelegate: NSObject, UIGestureRecognizerDelegate {
-+    func gestureRecognizer(
-+        _ gestureRecognizer: UIGestureRecognizer,
-+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-+    ) -> Bool {
-+        true
++private enum LongPressDurationDriver {
++    static var key: UInt8 = 0
++    private static let prefix = "T3LongPressDuration_"
++    private static let selectors = ["clickDownDuration", "clickTimeoutDuration"].map(NSSelectorFromString)
++
++    /// A subclass of UIKit's long-press click driver whose hold durations
++    /// return the associated override, falling back to UIKit's own values.
++    static func subclass(of base: AnyClass) -> AnyClass? {
++        let baseName = NSStringFromClass(base)
++        if baseName.hasPrefix(prefix) { return base }
++        guard baseName.hasPrefix("_UI"), baseName.hasSuffix("LongPressClickInteractionDriver"),
++              selectors.allSatisfy({ class_getInstanceMethod(base, $0) != nil }) else { return nil }
++        let name = prefix + baseName
++        if let existing = NSClassFromString(name) { return existing }
++        guard let subclass = objc_allocateClassPair(base, name, 0) else { return nil }
++        typealias Getter = @convention(c) (AnyObject, Selector) -> Double
++        for selector in selectors {
++            guard let inherited = class_getMethodImplementation(base, selector) else { continue }
++            let original = unsafeBitCast(inherited, to: Getter.self)
++            let getter: @convention(block) (AnyObject) -> Double = { driver in
++                if let seconds = objc_getAssociatedObject(driver, &key) as? NSNumber {
++                    return seconds.doubleValue
++                }
++                return original(driver, selector)
++            }
++            class_addMethod(subclass, selector, imp_implementationWithBlock(getter), "d@:")
++        }
++        objc_registerClassPair(subclass)
++        return subclass
 +    }
  }
 diff --git a/ios/Shared/RCTMenuItem.swift b/ios/Shared/RCTMenuItem.swift
