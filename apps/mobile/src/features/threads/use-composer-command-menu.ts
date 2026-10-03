@@ -25,6 +25,7 @@ import {
 } from "../../state/use-composer-drafts";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
+  continueComposerPathTrigger,
   detectComposerTrigger,
   replaceTextRange,
   serializeComposerFileLink,
@@ -334,12 +335,31 @@ export function useComposerCommandMenu({
     workspaceRefreshRetry,
   ]);
 
-  const trigger = useMemo(() => {
-    if (!enabled || selection.start !== selection.end) {
-      return null;
-    }
-    return detectComposerTrigger(draftMessage, selection.end);
-  }, [draftMessage, enabled, selection]);
+  const [previousSearch, setPreviousSearch] = useState(() => ({
+    ownerKey,
+    draftMessage,
+    selection,
+    enabled,
+    trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
+  }));
+  let trigger = previousSearch.trigger;
+  if (
+    previousSearch.ownerKey !== ownerKey ||
+    previousSearch.draftMessage !== draftMessage ||
+    previousSearch.selection !== selection ||
+    previousSearch.enabled !== enabled
+  ) {
+    trigger =
+      enabled && selection.start === selection.end
+        ? (detectComposerTrigger(draftMessage, selection.end) ??
+          continueComposerPathTrigger(
+            draftMessage,
+            selection.end,
+            previousSearch.ownerKey === ownerKey ? previousSearch.trigger : null,
+          ))
+        : null;
+    setPreviousSearch({ ownerKey, draftMessage, selection, enabled, trigger });
+  }
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,

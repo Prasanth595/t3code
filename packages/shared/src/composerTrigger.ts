@@ -45,6 +45,21 @@ function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
 }
 
+/** Continue an already open @ search across spaces without finding old mentions in prose. */
+export function continueComposerPathTrigger(
+  text: string,
+  cursorInput: number,
+  previous: ComposerTrigger | null,
+): (ComposerTrigger & { kind: "path" }) | null {
+  if (previous?.kind !== "path") return null;
+  const cursor = clampCursor(text, cursorInput);
+  const start = previous.rangeStart;
+  if (text[start] !== "@" || cursor <= start) return null;
+  const query = text.slice(start + 1, cursor);
+  if (/[\r\n\t\uFFFC]/u.test(query)) return null;
+  return { kind: "path", query, rangeStart: start, rangeEnd: cursor };
+}
+
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,

@@ -1,6 +1,59 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { detectComposerTrigger, serializeComposerFileLink } from "./composerTrigger.ts";
+import {
+  continueComposerPathTrigger,
+  detectComposerTrigger,
+  replaceTextRange,
+  serializeComposerFileLink,
+} from "./composerTrigger.ts";
+
+describe("continueComposerPathTrigger", () => {
+  const prefix = "Inspect ";
+  const previous = detectComposerTrigger(prefix + "@Foreign", (prefix + "@Foreign").length);
+
+  it("retains the full query and replacement range in the middle of a prompt", () => {
+    const query = "Foreign Subsidiaries Motion Video/Script Notes.md";
+    const text = prefix + "@" + query + " then summarize";
+    const cursor = prefix.length + 1 + query.length;
+    const trigger = continueComposerPathTrigger(text, cursor, previous);
+    expect(trigger).toEqual({ kind: "path", query, rangeStart: prefix.length, rangeEnd: cursor });
+    expect(
+      replaceTextRange(
+        text,
+        trigger!.rangeStart,
+        trigger!.rangeEnd,
+        serializeComposerFileLink(query),
+      ).text,
+    ).toBe(
+      prefix +
+        "[Script Notes.md](Foreign%20Subsidiaries%20Motion%20Video/Script%20Notes.md) then summarize",
+    );
+  });
+
+  it("keeps a trailing space and supports deleting back through it", () => {
+    const text = prefix + "@Foreign ";
+    expect(continueComposerPathTrigger(text, text.length, previous)?.query).toBe("Foreign ");
+    expect(continueComposerPathTrigger(text, text.length - 1, previous)?.query).toBe("Foreign");
+  });
+
+  it.each(["\n", "\r", "\t", "\uFFFC"])("stops at the %j boundary", (boundary) => {
+    const text = prefix + "@Foreign" + boundary + "Subsidiaries";
+    expect(continueComposerPathTrigger(text, text.length, previous)).toBeNull();
+  });
+
+  it("does not continue after removing @, moving before it, or accepting a result", () => {
+    expect(continueComposerPathTrigger(prefix + "Foreign ", 16, previous)).toBeNull();
+    expect(continueComposerPathTrigger(prefix + "@Foreign ", prefix.length, previous)).toBeNull();
+    const selected = prefix + "[Foreign Subsidiaries](Foreign%20Subsidiaries) ";
+    expect(continueComposerPathTrigger(selected, selected.length, previous)).toBeNull();
+  });
+
+  it("does not discover old @ text when no path search was open", () => {
+    expect(continueComposerPathTrigger("@Foreign Subsidiaries", 21, null)).toBeNull();
+    const skill = detectComposerTrigger("$review", 7);
+    expect(continueComposerPathTrigger("$review file", 12, skill)).toBeNull();
+  });
+});
 
 describe("detectComposerTrigger", () => {
   it.each(["Use ", "Use\t", "Use\n  "])("detects inline slash skills after %j", (prefix) => {

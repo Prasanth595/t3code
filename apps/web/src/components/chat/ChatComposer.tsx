@@ -2386,6 +2386,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   const {
     trigger: composerTrigger,
+    detectTrigger: detectActiveComposerTrigger,
     setTrigger: setComposerTrigger,
     resolveTrigger: resolveComposerTrigger,
     dismissTrigger: dismissComposerTrigger,
@@ -3526,7 +3527,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
       );
       onChangeActivePendingUserInputCustomAnswer(
         activePendingProgress.activeQuestion.id,
@@ -3627,7 +3628,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+      cursorAdjacentToMention ? null : detectActiveComposerTrigger(nextPrompt, expandedCursor),
     );
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
@@ -3742,7 +3743,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       snapshot,
       trigger: isLiteralPendingAnswer
         ? null
-        : resolveComposerTrigger(detectComposerTrigger(snapshot.value, snapshot.expandedCursor)),
+        : resolveComposerTrigger(
+            detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
+          ),
     };
   };
 
