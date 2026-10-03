@@ -65,6 +65,7 @@ import {
 import { AndroidWorkspaceSidebar } from "../workspace/AndroidWorkspaceSidebar";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 import { HomeListOptionsProvider } from "../home/home-list-options";
+import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { ThreadNavigationSidebar } from "../threads/ThreadNavigationSidebar";
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
@@ -260,6 +261,7 @@ function AdaptiveWorkspaceLayoutContent(
   const { scale: androidControlScale } = useAndroidControlSizing();
   const pathname = props.pathname;
   const navigation = useNavigation();
+  const { openPendingTask } = usePendingTaskListActions();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const showPrimarySidebar = pathname === "/" || primarySidebarPreferredVisible;
@@ -755,6 +757,7 @@ function AdaptiveWorkspaceLayoutContent(
                         onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                         onNewThreadInProject={handleNewThreadInProject}
                         onNewThreadOnBranch={handleNewThreadOnBranch}
+                        onOpenPendingTask={openPendingTask}
                         onSelectThread={handleSelectThread}
                         onSearchQueryChange={setPrimarySidebarSearchQuery}
                         searchQuery={primarySidebarSearchQuery}
