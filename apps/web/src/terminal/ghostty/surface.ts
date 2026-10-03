@@ -490,6 +490,21 @@ export function terminalWheelArrowData(rows: number, applicationCursorKeys: bool
   return sequence.repeat(Math.abs(rows));
 }
 
+const SELECTION_SCROLL_MAX_DISTANCE_PX = 50;
+const SELECTION_SCROLL_MAX_ROWS = 8;
+
+/**
+ * Rows to scroll per autoscroll tick while a selection drag is outside the
+ * grid. Speed grows with distance past the edge, as in xterm's scroller, but
+ * capped lower because xterm's 15 rows per tick overshoots.
+ */
+export function terminalSelectionScrollRows(clientY: number, top: number, bottom: number): number {
+  const overshoot = clientY < top ? clientY - top : clientY > bottom ? clientY - bottom : 0;
+  if (overshoot === 0) return 0;
+  const ratio = Math.min(Math.abs(overshoot) / SELECTION_SCROLL_MAX_DISTANCE_PX, 1);
+  return Math.sign(overshoot) * (1 + Math.round(ratio * (SELECTION_SCROLL_MAX_ROWS - 1)));
+}
+
 export function ghosttyMouseButton(button: number): number | null {
   switch (button) {
     case 0:
@@ -1551,7 +1566,7 @@ export class GhosttyTerminalSurface {
     const bounds = this.canvas.getBoundingClientRect();
     const top = Math.max(bounds.top, 0) + CONTENT_PADDING;
     const bottom = Math.min(bounds.bottom, window.innerHeight) - CONTENT_PADDING;
-    this.setSelectionAutoscroll(event.clientY < top ? -1 : event.clientY > bottom ? 1 : 0);
+    this.setSelectionAutoscroll(terminalSelectionScrollRows(event.clientY, top, bottom));
     const cell = this.cellAt(event.clientX, event.clientY);
     if (cell.x === this.selectionEnd?.x && cell.y === this.selectionEnd.y) return;
     this.extendSelectionTo(event.clientX, event.clientY);
@@ -1603,7 +1618,7 @@ export class GhosttyTerminalSurface {
       this.scrollViewport(this.selectionScrollDelta);
       const pointer = this.selectionPointer;
       if (pointer) this.extendSelectionTo(pointer.x, pointer.y);
-    }, 80);
+    }, 50);
   }
 
   private updateHoverCursor(event: PointerEvent): void {

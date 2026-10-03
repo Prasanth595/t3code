@@ -22,6 +22,7 @@ import {
   terminalGridCellAt,
   terminalScrollbarGeometry,
   terminalScrollbarOffsetAtPointer,
+  terminalSelectionScrollRows,
   terminalLinkAtPositionWithRange,
   terminalContentOriginY,
   terminalFontFamily,
@@ -945,6 +946,20 @@ const cell = (text: string): GhosttyCell => ({
   overline: false,
   underline: false,
   selected: false,
+});
+
+describe("terminalSelectionScrollRows", () => {
+  it("scrolls faster the further a selection drag goes past the grid edge", () => {
+    expect(terminalSelectionScrollRows(150, 100, 400)).toBe(0);
+    expect(terminalSelectionScrollRows(100, 100, 400)).toBe(0);
+    expect(terminalSelectionScrollRows(400, 100, 400)).toBe(0);
+    expect(terminalSelectionScrollRows(401, 100, 400)).toBe(1);
+    expect(terminalSelectionScrollRows(430, 100, 400)).toBe(5);
+    expect(terminalSelectionScrollRows(450, 100, 400)).toBe(8);
+    expect(terminalSelectionScrollRows(900, 100, 400)).toBe(8);
+    expect(terminalSelectionScrollRows(99, 100, 400)).toBe(-1);
+    expect(terminalSelectionScrollRows(0, 100, 400)).toBe(-8);
+  });
 });
 
 describe("isTerminalAltGraphText", () => {
