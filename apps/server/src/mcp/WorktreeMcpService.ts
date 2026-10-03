@@ -130,7 +130,6 @@ const make = Effect.gen(function* () {
           );
         return {
           commandId: CommandId.make(part("command", "worktree-handoff")),
-          continuationCommandId: CommandId.make(part("command", "worktree-continuation")),
           continuationMessageId: MessageId.make(part("message", "worktree-continuation")),
         };
       }),
@@ -239,6 +238,7 @@ const make = Effect.gen(function* () {
         );
         const worktreePath = worktree.worktree.path;
 
+        // Setup errors are reported after the handoff has already committed.
         const reportFailed = (logMessage: string) =>
           Effect.catchCause((cause: Cause.Cause<unknown>) => {
             const detail = errorMessage(Cause.squash(cause));
@@ -275,7 +275,7 @@ const make = Effect.gen(function* () {
               `Thread '${scope.thread.threadId}' was archived while the worktree was being created; the handoff was rolled back.`,
             );
           }
-          yield* threadManagement
+          return yield* threadManagement
             .dispatch({
               type: "thread.metadata.update",
               commandId: ids.commandId,
@@ -283,6 +283,14 @@ const make = Effect.gen(function* () {
               branch: worktree.worktree.refName,
               worktreePath,
               expectedWorktreePath: null,
+              ...(input.continuationPrompt === undefined
+                ? {}
+                : {
+                    worktreeContinuation: {
+                      messageId: ids.continuationMessageId,
+                      text: input.continuationPrompt,
+                    },
+                  }),
             })
             .pipe(
               Effect.catchCause((cause) =>
@@ -303,33 +311,16 @@ const make = Effect.gen(function* () {
           ),
         );
 
-        // Queue continuation immediately after binding; detachment terminates the caller, so relaunch needs a durable message.
-        const queueContinuation: Effect.Effect<WorktreeMcpContinuationStatus, WorktreeMcpFailure> =
-          Effect.suspend(() =>
-            input.continuationPrompt === undefined
-              ? Effect.succeed<WorktreeMcpContinuationStatus>({ status: "skipped" })
-              : threadManagement
-                  .sendToThread({
-                    projectId: projection.thread.projectId,
-                    commandId: ids.continuationCommandId,
-                    threadId: scope.thread.threadId,
-                    messageId: ids.continuationMessageId,
-                    text: input.continuationPrompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                  })
-                  .pipe(
-                    Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                      status: "scheduled",
-                      delivery: sendResult.delivery,
-                    })),
-                    reportFailed("worktree handoff continuation failed to queue"),
-                  ),
-          );
-
-        const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));
+        // Binding and continuation events share the detach effect's commit, so
+        // even an immediately executing detach sees the durable queued message.
+        const bound = yield* recheckAndBind;
+        const queued = bound.storedEvents.some(
+          ({ event }) => event.type === "run.created" && event.payload.status === "queued",
+        );
+        const continuation: WorktreeMcpContinuationStatus =
+          input.continuationPrompt === undefined
+            ? { status: "skipped" }
+            : { status: "scheduled", delivery: queued ? "queued" : "started" };
 
         yield* vcsStatusBroadcaster
           .refreshStatus(worktreePath)
