@@ -1344,6 +1344,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 });
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
+  children: React.ReactNode;
   showActions?: boolean;
   compact: boolean;
   canOperateThread: boolean;
@@ -1399,6 +1400,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : props.reserveContextWindowMeter ? (
         <ContextWindowMeterPlaceholder />
       ) : null}
+      {props.children}
       {props.showActions !== false ? (
       <ComposerPrimaryActions
         compact={props.compact}
@@ -7407,50 +7409,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Tooltip>
                     </>
                   ) : null}
-                  {speechInput.available ? (
-                    <>
-                      <ComposerSpeechButton
-                        state={speechInput.state}
-                        progress={speechInput.progress}
-                        shortcutLabel={dictationShortcutLabel}
-                        disabled={dictationDisabled}
-                        onStart={() => void speechInput.start()}
-                        onCancel={() => void speechInput.cancel()}
-                      />
-                    </>
-                  ) : null}
-                  <VoiceInputSetup
-                    environmentId={speechInput.transcriptionEnvironmentId}
-                    open={speechInput.setup.open}
-                    step={speechInput.setup.step}
-                    status={speechInput.status}
-                    model={speechInput.setup.model}
-                    downloading={speechInput.setup.downloading}
-                    error={speechInput.setup.error}
-                    onOpenChange={speechInput.setup.setOpen}
-                    onDownload={() => void speechInput.setup.download()}
-                    onCancelDownload={() => void speechInput.setup.cancelDownload()}
-                    onStartRecording={() => void speechInput.setup.startRecording()}
-                  />
-                  {speechInput.available ? (
-                    <ComposerSpeechRecordingPill
-                      state={speechInput.state}
-                      progress={speechInput.progress}
-                      finishShortcutLabel={dictationShortcutLabel}
-                      cancelShortcutLabel="Esc"
-                      level={speechInput.level}
-                      onStart={() => void speechInput.start()}
-                      disabled={dictationDisabled}
-                      onStop={() => void speechInput.stop()}
-                      onCancel={() => void speechInput.cancel()}
-                      onSkipPostProcessing={() => speechInput.skipPostProcessing()}
-                    />
-                  ) : null}
                   <div className="contents">
                     <ComposerFooterPrimaryActions
+                      canOperateThread={canOperateThread}
+                      compactBeforeSendTokens={props.resumeCompactionTokens}
+                      keepFullHistory={props.keepFullHistory}
+                      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                       showActions={speechPresentation.showsSend || phase === "running"}
                       compact={isComposerResting || isComposerPrimaryActionsCompact}
-                      canOperateThread={canOperateThread}
                       activeContextWindow={
                         settings.contextWindowMeterEnabled ? activeContextWindow : null
                       }
@@ -7497,9 +7463,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryActionStable}
                       onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryActionStable}
-                      compactBeforeSendTokens={props.resumeCompactionTokens}
-                      keepFullHistory={props.keepFullHistory}
-                      onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                       compactDisabled={
                         compactDisabled || noProviderAvailable || isSendBusy || isConnecting
                       }
@@ -7507,7 +7470,47 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       {...(compactCommandAvailable
                         ? { onCompactContext: compactThreadContext }
                         : {})}
-                    />
+                    >
+                      {speechInput.available ? (
+                        <>
+                          <ComposerSpeechButton
+                            state={speechInput.state}
+                            progress={speechInput.progress}
+                            shortcutLabel={dictationShortcutLabel}
+                            disabled={dictationDisabled}
+                            onStart={() => void speechInput.start()}
+                            onCancel={() => void speechInput.cancel()}
+                          />
+                        </>
+                      ) : null}
+                      <VoiceInputSetup
+                        environmentId={speechInput.transcriptionEnvironmentId}
+                        open={speechInput.setup.open}
+                        step={speechInput.setup.step}
+                        status={speechInput.status}
+                        model={speechInput.setup.model}
+                        downloading={speechInput.setup.downloading}
+                        error={speechInput.setup.error}
+                        onOpenChange={speechInput.setup.setOpen}
+                        onDownload={() => void speechInput.setup.download()}
+                        onCancelDownload={() => void speechInput.setup.cancelDownload()}
+                        onStartRecording={() => void speechInput.setup.startRecording()}
+                      />
+                      {speechInput.available ? (
+                        <ComposerSpeechRecordingPill
+                          state={speechInput.state}
+                          progress={speechInput.progress}
+                          finishShortcutLabel={dictationShortcutLabel}
+                          cancelShortcutLabel="Esc"
+                          level={speechInput.level}
+                          onStart={() => void speechInput.start()}
+                          disabled={dictationDisabled}
+                          onStop={() => void speechInput.stop()}
+                          onCancel={() => void speechInput.cancel()}
+                          onSkipPostProcessing={() => speechInput.skipPostProcessing()}
+                        />
+                      ) : null}
+                    </ComposerFooterPrimaryActions>
                   </div>
                 </div>
               </div>
