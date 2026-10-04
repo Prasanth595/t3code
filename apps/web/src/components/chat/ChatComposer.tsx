@@ -361,6 +361,7 @@ import {
   shouldShowComposerFooter,
 } from "./ComposerSpeechButton";
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
+import { useDictationSubmissionShortcut } from "~/speech/useDictationSubmissionShortcut";
 import {
   createComposerScrollGestureState,
   recordComposerScrollGestureEvent,
@@ -4078,6 +4079,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useLayoutEffect(() => {
     submitComposerRef.current = (mode, intent) => submitComposerStable(undefined, mode, intent);
   }, [submitComposerStable]);
+  useDictationSubmissionShortcut({
+    enabled: voiceInputActive && !speechInput.preparing,
+    formRef: composerFormRef,
+    onKeyDown: (event) => {
+      const intent = composerSubmissionIntentForKey({
+        event,
+        keybindings,
+        isMobileViewport,
+        isDraftThread: routeKind === "draft",
+        isRunning: phase === "running",
+        sendShortcut: settings.sendShortcut,
+        prompt: promptRef.current,
+      });
+      if (!intent) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      submitComposer(
+        undefined,
+        resolveComposerDispatchMode({
+          running: phase === "running",
+          alternateModifier: intent === "alternate",
+          canSteer: !isCompacting,
+          activeTurnDefault: settings.followUpBehavior,
+        }),
+        intent,
+      );
+    },
+  });
   const handleSubmitMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     submitComposer(
@@ -6367,34 +6396,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     <form
       ref={composerFormRef}
       onSubmit={submitComposerStable}
-      onKeyDownCapture={(event) => {
-        // ProseMirror skips its key handlers while dictation freezes the editor.
-        if (!voiceInputActive || !(event.target instanceof Element)) return;
-        if (!event.target.closest('[data-testid="composer-editor"]')) return;
-        if (event.target.closest("textarea, input, button")) return;
-        const intent = composerSubmissionIntentForKey({
-          event: event.nativeEvent,
-          keybindings,
-          isMobileViewport,
-          isDraftThread: routeKind === "draft",
-          isRunning: phase === "running",
-          sendShortcut: settings.sendShortcut,
-          prompt: promptRef.current,
-        });
-        if (!intent) return;
-        event.preventDefault();
-        event.stopPropagation();
-        submitComposer(
-          undefined,
-          resolveComposerDispatchMode({
-            running: phase === "running",
-            alternateModifier: intent === "alternate",
-            canSteer: !isCompacting,
-            activeTurnDefault: settings.followUpBehavior,
-          }),
-          intent,
-        );
-      }}
       onPointerDownCapture={(event) => {
         const target = event.target;
         if (isInsideRestingComposerControlScope(target)) return;
