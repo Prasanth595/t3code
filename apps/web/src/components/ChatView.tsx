@@ -168,6 +168,7 @@ import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import { RegisteredSidePanel } from "~/panels/bundledPanels";
+import { PanelHostContext, type PanelHost } from "~/panels/panelHost";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
@@ -702,9 +703,6 @@ function useDraftHeroLayoutTransition(
   } as const;
 }
 
-const PreviewPanel = lazy(() =>
-  import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
-);
 const selectAutoShowFloatingPreview = (settings: { browserAutoShowFloatingPreview: boolean }) =>
   settings.browserAutoShowFloatingPreview;
 const DevicePanel = lazy(() =>
@@ -11078,20 +11076,13 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const rightPanelContent = activeThreadRef ? (
+  const rightPanelSurfaceContent = activeThreadRef ? (
     renderedRightPanelSurface?.kind === "preview" ? (
-      <Suspense fallback={null}>
-        <PreviewPanel
-          mode="embedded"
-          threadRef={activeThreadRef}
-          tabId={renderedRightPanelSurface.resourceId}
-          configuredUrls={configuredPreviewUrls}
-          visible={rightPanelOpen}
-          onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "auto", "foreground", { annotation, image });
-          }}
-        />
-      </Suspense>
+      <RegisteredSidePanel
+        id="preview"
+        tabId={renderedRightPanelSurface.resourceId}
+        configuredUrls={configuredPreviewUrls}
+      />
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
         visible={rightPanelOpen}
@@ -11112,14 +11103,7 @@ export default function ChatView(props: ChatViewProps) {
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
-      <Suspense fallback={null}>
-        <RegisteredSidePanel
-          key={activeThreadKey}
-          id="diff"
-          composerDraftTarget={composerDraftTarget}
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
+      <RegisteredSidePanel key={activeThreadKey} id="diff" />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
@@ -11236,6 +11220,26 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : null
   ) : null;
+  const panelHost: PanelHost | null = activeThreadRef
+    ? {
+        threadRef: activeThreadRef,
+        visible: rightPanelOpen,
+        composerDraftTarget,
+        workspaceMutationId,
+        // PreviewView drops a pick that settles after a thread switch, so this
+        // render's closure only ever sends for its own thread.
+        sendAnnotation: (annotation, image) => {
+          void onSend(undefined, "auto", "foreground", { annotation, image });
+        },
+      }
+    : null;
+  const rightPanelContent = (
+    <PanelHostContext value={panelHost}>{rightPanelSurfaceContent}</PanelHostContext>
+  );
+  const sidePanelLaunchers = {
+    preview: { available: canOperatePreview && browserAvailable, onOpen: createBrowserSurface },
+    diff: { available: isServerThread && isGitRepo, onOpen: addDiffSurface },
+  };
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
     handle: threadPanelPopoverHandle,
@@ -12056,17 +12060,14 @@ export default function ChatView(props: ChatViewProps) {
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onMoveSurface={moveRightPanelSurface}
           onCopyFilePath={copyRightPanelFilePath}
-          onAddBrowser={() => createBrowserSurface()}
+          panels={sidePanelLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
-          onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddDevice={addDeviceSurface}
-          browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
-          diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
@@ -12115,17 +12116,14 @@ export default function ChatView(props: ChatViewProps) {
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onMoveSurface={moveRightPanelSurface}
             onCopyFilePath={copyRightPanelFilePath}
-            onAddBrowser={() => createBrowserSurface()}
+            panels={sidePanelLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
             onAddTerminal={addTerminalSurface}
-            onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddDevice={addDeviceSurface}
-            browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
-            diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
