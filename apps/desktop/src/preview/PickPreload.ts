@@ -623,6 +623,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
   let voicePhase = "idle";
   let voiceSettings = false;
   let voiceBusy = false;
+  let voicePreparing = false;
   let pendingVoiceSubmission: PreviewAnnotationSubmission | null = null;
   let voiceSubmissionReady = false;
   let voiceAvailable = false;
@@ -721,6 +722,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     if (!voiceAvailable || (voiceBusy && voicePhase !== "recording")) return;
     const action = voicePhase === "recording" ? "stop" : "start";
     voiceBusy = true;
+    if (action === "start") voicePreparing = true;
     comment.readOnly = true;
     updateStatus();
     sendVoice(action);
@@ -743,6 +745,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     const submissionChanged = voiceBusy !== state.blocksSubmission;
     const previewChanged = voicePreview.textContent !== (state.preview ?? "");
     voicePhase = state.phase;
+    voicePreparing = state.phase === "preparing";
     voiceSettings = state.errorAction === "settings";
     voiceBusy = state.blocksSubmission;
     voiceAvailable = state.available;
@@ -883,7 +886,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
       sendVoice("cancel");
     }
     editor.style.display = hasTargets ? "flex" : "none";
-    submit.disabled = !hasTargets || pendingCapture;
+    submit.disabled = !hasTargets || voicePreparing || pendingCapture;
     submit.style.opacity = hasTargets ? "1" : "0.45";
     adjust.disabled = !hasTargets;
     stylePanel.style.display = editorExpanded && selected.size > 0 ? "grid" : "none";
@@ -1624,6 +1627,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
         voiceKeyCode = event.code || event.key;
         if (!event.repeat && !voiceBusy) {
           voiceBusy = true;
+          voicePreparing = true;
           comment.readOnly = true;
           updateStatus();
         }
@@ -1648,6 +1652,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
     if (submission === "send" && !sendEnabled) return;
+    if (voicePreparing) return;
     if (voiceBusy) {
       if (pendingVoiceSubmission === null) {
         pendingVoiceSubmission = submission;
