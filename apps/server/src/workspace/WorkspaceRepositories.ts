@@ -72,7 +72,8 @@ const make = Effect.gen(function* () {
 
   const toRelativePath = (cwd: string, target: string) => {
     const relative = path.relative(cwd, target);
-    if (relative === "" || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+    const leavesCwd = relative === ".." || relative.startsWith(`..${path.sep}`);
+    if (relative === "" || leavesCwd || path.isAbsolute(relative)) return null;
     return relative.split(path.sep).join("/");
   };
 

@@ -99,27 +99,31 @@ export const layerObserver = Layer.effect(
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const workspaceRepositories = yield* WorkspaceRepositories.WorkspaceRepositories;
-    const refreshStatus = (input: {
+    const refreshStatus = Effect.fn("RunFinalizationService.refreshStatus")(function* (input: {
       readonly cwd: string;
       readonly threadId: ThreadId;
       readonly runId: RunId;
-    }) =>
-      Effect.gen(function* () {
-        const local = yield* vcsStatus.refreshLocalStatus(input.cwd);
-        if (local.refName === null || local.isDefaultRef) return;
-        const thread = yield* projections.getThreadShell(input.threadId);
-        if (!thread || thread.branch !== local.refName) return;
-        if (thread.activeRunId !== null && thread.activeRunId !== input.runId) return;
-        yield* vcsStatus.refreshPullRequestStatus(input.cwd).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("failed to refresh pull request status after run completion", {
-              threadId: input.threadId,
-              cwd: input.cwd,
-              detail: error.message,
-            }),
-          ),
-        );
-      });
+      readonly isWorkspaceRepository: boolean;
+    }) {
+      const local = yield* vcsStatus.refreshLocalStatus(input.cwd);
+      if (local.refName === null || local.isDefaultRef) return;
+      const thread = yield* projections.getThreadShell(input.threadId);
+      if (!thread) return;
+      // Repositories in a multi-repo project folder keep their own branches, so only a
+      // single repository or an isolated run has a thread branch to match.
+      const inProjectFolder = input.isWorkspaceRepository && thread.worktreePath === null;
+      if (!inProjectFolder && thread.branch !== local.refName) return;
+      if (thread.activeRunId !== null && thread.activeRunId !== input.runId) return;
+      yield* vcsStatus.refreshPullRequestStatus(input.cwd).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to refresh pull request status after run completion", {
+            threadId: input.threadId,
+            cwd: input.cwd,
+            detail: error.message,
+          }),
+        ),
+      );
+    });
     return {
       refreshAfterTurn: pullRequests.refreshAfterTurn,
       refresh: Effect.fn("RunFinalizationService.refresh")(
@@ -137,7 +141,13 @@ export const layerObserver = Layer.effect(
               workspaceEntries.refresh(cwd),
               Effect.forEach(
                 statusCwds,
-                (statusCwd) => refreshStatus({ cwd: statusCwd, threadId, runId }),
+                (statusCwd) =>
+                  refreshStatus({
+                    cwd: statusCwd,
+                    threadId,
+                    runId,
+                    isWorkspaceRepository: repositories.length > 0,
+                  }),
                 { concurrency: "unbounded", discard: true },
               ),
             ],
