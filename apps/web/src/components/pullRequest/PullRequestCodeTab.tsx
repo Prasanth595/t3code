@@ -444,14 +444,18 @@ function PullRequestCodeTab({
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
   } = filesViewed;
-  // Reread the first page and the viewed ticks. The pages already on screen stay until that
-  // page arrives: blanking them remounts the viewer and sends the reader back to the top,
-  // including on every agent turn.
+  // Reread from the first page. It stays on screen so the reader does not jump; later pages
+  // belong to the snapshot being replaced, so they are fetched again. Each of those pages is
+  // its own cached query, so the walk asks for it again instead of replaying the old snapshot.
+  const refreshGeneration = useRef(0);
+  const refreshedCursor = useRef<string | null | undefined>(undefined);
   const appliedRefreshToken = useRef(refreshToken);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
+    refreshGeneration.current += 1;
+    refreshedCursor.current = undefined;
     setSliceState((previous) => retainReviewDiffSlices(previous, scopeKey));
     // An equal refetch keeps the answer's identity, so forget the applied page to reapply it.
     setAppliedPage(null);
@@ -463,11 +467,21 @@ function PullRequestCodeTab({
   useEffect(() => {
     if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
     appliedBackgroundRefreshToken.current = backgroundRefreshToken;
+    refreshGeneration.current += 1;
+    refreshedCursor.current = undefined;
     // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
     setSliceState((previous) => ({ ...previous, cursor: null }));
     refreshFirstDiffPage();
     refreshFilesViewed();
   }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
+  useEffect(() => {
+    if (refreshGeneration.current === 0 || cursor === null) return;
+    if (refreshedCursor.current === cursor) return;
+    refreshedCursor.current = cursor;
+    diffQuery.refresh();
+  }, [cursor, diffQuery.refresh]);
+  const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
+
 
   const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
@@ -499,6 +513,11 @@ function PullRequestCodeTab({
       ignoreWhitespace,
     ),
   );
+  // What a slice withheld: the host declining to inline part of it, or a patch the viewer could
+  // not structure and so dropped. Neither says anything about there being more to fetch.
+  const withheldContent =
+    loadedSlices.some((slice) => slice.truncated) ||
+    parsedSlices.some((parsed) => parsed?.kind === "raw");
   const files = parsedSlices.flatMap((parsed) =>
     parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
   );
