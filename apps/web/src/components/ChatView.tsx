@@ -290,12 +290,8 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
-import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
-import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
-import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
@@ -10520,36 +10516,17 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
       <RegisteredSidePanel key={activeThreadKey} id="diff" />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
-      <PullRequestDetailGhost />
-    ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
-      <PullRequestsUnavailableState
-        title="Pull requests unavailable"
-        error="Update this environment's T3 Code server to browse pull requests."
-      />
     ) : renderedRightPanelSurface?.kind === "pull-request" ? (
-      // No onClose: the surface tab's own X owns closing here, and a second X in the header
-      // would be the same action twice. The thread context also drops the checkout button, so it
-      // is only right for the thread's own pull request, whose branch is already under the
-      // reader's feet. A link the agent wrote can open any other one here, and that one has to be
-      // checkable out like it is anywhere else.
-      <PullRequestDetailPanel
+      // The thread context drops the checkout button, so it is only right for the thread's own
+      // pull request, whose branch is already under the reader's feet. A link the agent wrote can
+      // open any other one here, and that one has to be checkable out like it is anywhere else.
+      <RegisteredSidePanel
+        id="pull-request"
         getShortcutContext={getShortcutContext}
         shortcutsEnabled={
           rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
         }
         key={`${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
-        environmentId={activeThread.environmentId}
-        onSelectPullRequest={(reference) => {
-          if (activeThreadRef)
-            useRightPanelStore.getState().openPullRequest(activeThreadRef, {
-              projectId: reference.projectId,
-              repository: reference.repository,
-              number: reference.number,
-              ...(reference.host ? { host: reference.host } : {}),
-            });
-        }}
-        threadRef={activeThreadRef}
         reference={{
           projectId: renderedRightPanelSurface.projectId as ProjectId,
           ...(renderedRightPanelSurface.host ? { host: renderedRightPanelSurface.host } : {}),
@@ -10566,15 +10543,14 @@ export default function ChatView(props: ChatViewProps) {
           },
           renderedRightPanelSurface,
         )}
-        composerDraftTarget={composerDraftTarget}
         onBack={
           activeThreadRef !== null && pullRequestsSurfaceAvailable && visiblePullRequestCount > 1
             ? addPullRequestsSurface
             : undefined
         }
       />
-    ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
-      <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "pull-requests" ? (
+      <RegisteredSidePanel id="pull-requests" />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <RegisteredSidePanel
         id="device"
@@ -10643,6 +10619,8 @@ export default function ChatView(props: ChatViewProps) {
       onOpen: addTerminalSurface,
     },
     device: { available: activeThreadRef !== null, onOpen: addDeviceSurface },
+    "pull-request": { available: pullRequestSurfaceAvailable, onOpen: addPullRequestSurface },
+    "pull-requests": { available: pullRequestsSurfaceAvailable, onOpen: addPullRequestsSurface },
   };
   const threadDetailsPanelProps: ThreadDetailsPanelProps = {
     anchor: threadPanelPopoverAnchorRef,
@@ -11467,11 +11445,7 @@ export default function ChatView(props: ChatViewProps) {
           panels={sidePanelLaunchers}
           onAddBrowserInProfile={createBrowserSurface}
           onAddFiles={addFilesSurface}
-          onAddPullRequest={addPullRequestSurface}
-          onAddPullRequests={addPullRequestsSurface}
           filesAvailable={activeProject !== null}
-          pullRequestAvailable={pullRequestSurfaceAvailable}
-          pullRequestsAvailable={pullRequestsSurfaceAvailable}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -11519,11 +11493,7 @@ export default function ChatView(props: ChatViewProps) {
             panels={sidePanelLaunchers}
             onAddBrowserInProfile={createBrowserSurface}
             onAddFiles={addFilesSurface}
-            onAddPullRequest={addPullRequestSurface}
-            onAddPullRequests={addPullRequestsSurface}
             filesAvailable={activeProject !== null}
-            pullRequestAvailable={pullRequestSurfaceAvailable}
-            pullRequestsAvailable={pullRequestsSurfaceAvailable}
           >
             {rightPanelContent}
           </RightPanelTabs>
