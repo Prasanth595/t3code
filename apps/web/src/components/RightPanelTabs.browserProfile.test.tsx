@@ -83,14 +83,13 @@ function Harness() {
       panels={{
         preview: { available: true, onOpen: openBrowser },
         diff: { available: false, onOpen: () => undefined },
+        terminal: { available: false, onOpen: () => undefined },
       }}
       onAddBrowserInProfile={openBrowser}
-      onAddTerminal={() => undefined}
       onAddPullRequest={() => undefined}
       onAddPullRequests={() => undefined}
       onAddFiles={() => undefined}
       onAddDevice={() => undefined}
-      terminalAvailable={false}
       filesAvailable={false}
       pullRequestAvailable={false}
       pullRequestsAvailable={false}
