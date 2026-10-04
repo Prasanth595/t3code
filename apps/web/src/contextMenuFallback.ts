@@ -255,11 +255,73 @@ export function showContextMenuFallback<T extends string>(
       resolve(result);
     };
 
+    const enabledItems = (menu: HTMLDivElement) =>
+      [...menu.querySelectorAll<HTMLButtonElement>("button")].filter((item) => !item.disabled);
+
+    // Keyboard model follows the WAI-ARIA menu pattern: arrows move within the
+    // focused menu level, Right/Left enter and leave submenus, Escape backs out
+    // one level, and Tab closes the whole menu like a native one.
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        cleanup(null);
+      const level = menuStack.findIndex((menu) =>
+        isNodeWithinMenuStack(document.activeElement, [menu]),
+      );
+      const menu = menuStack[level];
+      // Focus left the menu (for example to a devtools field): only Escape
+      // still applies, so typing elsewhere is never hijacked.
+      if (!menu) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          cleanup(null);
+        }
+        return;
       }
+      const items = enabledItems(menu);
+      const focusedIndex = items.findIndex((item) => item === document.activeElement);
+      const focusItem = (index: number) => {
+        items[(index + items.length) % items.length]?.focus({ preventScroll: true });
+      };
+      const closeLevel = () => {
+        const trigger = submenuTriggerStack[level];
+        closeMenusFromLevel(level);
+        trigger?.focus({ preventScroll: true });
+      };
+
+      switch (event.key) {
+        case "ArrowDown":
+          focusItem(focusedIndex + 1);
+          break;
+        case "ArrowUp":
+          focusItem(focusedIndex === -1 ? -1 : focusedIndex - 1);
+          break;
+        case "Home":
+          focusItem(0);
+          break;
+        case "End":
+          focusItem(-1);
+          break;
+        case "ArrowRight":
+          if (items[focusedIndex]?.getAttribute("aria-haspopup") !== "menu") return;
+          items[focusedIndex]?.click();
+          break;
+        case "ArrowLeft":
+          if (level === 0) return;
+          closeLevel();
+          break;
+        case "Escape":
+          if (level === 0) {
+            cleanup(null);
+          } else {
+            closeLevel();
+          }
+          break;
+        case "Tab":
+          // Focus returns to the invoker and Tab carries on from there.
+          cleanup(null);
+          return;
+        default:
+          return;
+      }
+      event.preventDefault();
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -301,6 +363,8 @@ export function showContextMenuFallback<T extends string>(
       menu.style.left = `${preferredLeft}px`;
       menu.style.top = `${preferredTop}px`;
       menu.dataset.level = String(level);
+      menu.setAttribute("role", "menu");
+      menu.tabIndex = -1;
 
       const inner = document.createElement("div");
       // Fit the viewport (minus clampMenuPosition's 4px margins) so menus only
@@ -335,6 +399,9 @@ export function showContextMenuFallback<T extends string>(
 
         const button = document.createElement("button");
         button.type = "button";
+        button.setAttribute("role", "menuitem");
+        // Arrow keys move between items; Tab leaves the menu instead.
+        button.tabIndex = -1;
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
         const rowBase =
@@ -484,6 +551,12 @@ export function showContextMenuFallback<T extends string>(
       document.body.appendChild(menu);
       menuStack[level] = menu;
       submenuTriggerStack[level] = parentTrigger;
+      // Focus the menu itself, not its first item, so a pointer-opened menu
+      // shows no highlight while screen readers and the arrow keys still land
+      // inside it.
+      if (level === 0) {
+        menu.focus({ preventScroll: true });
+      }
 
       requestAnimationFrame(() => {
         clampMenuPosition(menu, preferredLeft, preferredTop);

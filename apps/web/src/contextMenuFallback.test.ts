@@ -69,6 +69,14 @@ class FakeElement {
     this.attributes.set(name, value);
   }
 
+  getAttribute(name: string) {
+    return this.attributes.get(name) ?? null;
+  }
+
+  click() {
+    this.dispatchEvent(new FakeDomEvent("click"));
+  }
+
   dispatchEvent(event: FakeDomEvent) {
     for (const listener of this.listeners.get(event.type) ?? []) {
       listener(event);
@@ -177,6 +185,23 @@ class FakeDocument {
   querySelectorAll(tagName: string) {
     return this.body.querySelectorAll(tagName);
   }
+
+  dispatchEvent(event: FakeDomEvent) {
+    for (const listener of this.listeners.get(event.type) ?? []) {
+      listener(event);
+    }
+    return true;
+  }
+}
+
+function pressKey(key: string) {
+  const event = new KeyboardEvent("keydown", { key });
+  (document as unknown as FakeDocument).dispatchEvent(event as unknown as FakeDomEvent);
+  return event;
+}
+
+function focusedLabel() {
+  return (document as unknown as FakeDocument).activeElement?.textContent;
 }
 
 function findButton(label: string): FakeElement | undefined {
@@ -325,6 +350,76 @@ describe("showContextMenuFallback", () => {
 
     await expect(selectionPromise).resolves.toBe("copy:branch");
     expect(invoker.focused).toBe(true);
+  });
+});
+
+describe("showContextMenuFallback keyboard", () => {
+  it("focuses the menu and moves between enabled items with the arrow keys", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "pin", label: "Pin", disabled: true },
+      { id: "archive", label: "Archive" },
+    ]);
+    const menu = (document as unknown as FakeDocument).activeElement;
+    expect(menu?.attributes.get("role")).toBe("menu");
+    expect(findButton("Rename")?.attributes.get("role")).toBe("menuitem");
+
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(true);
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("End");
+    expect(focusedLabel()).toBe("Archive");
+    pressKey("Home");
+    expect(focusedLabel()).toBe("Rename");
+    pressKey("ArrowUp");
+    expect(focusedLabel()).toBe("Archive");
+
+    // Tab closes the menu without being cancelled, so focus moves on.
+    expect(pressKey("Tab").defaultPrevented).toBe(false);
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
+  it("enters a submenu with ArrowRight and backs out with ArrowLeft and Escape", async () => {
+    const invoker = (document as unknown as FakeDocument).createElement("button");
+    (document as unknown as FakeDocument).body.appendChild(invoker);
+    invoker.focus();
+    const selectionPromise = showContextMenuFallback([
+      {
+        id: "copy:submenu",
+        label: "Copy",
+        children: [
+          { id: "copy:path", label: "Path" },
+          { id: "copy:branch", label: "Branch" },
+        ],
+      },
+    ]);
+
+    pressKey("ArrowDown");
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("Path");
+    pressKey("ArrowLeft");
+    expect(focusedLabel()).toBe("Copy");
+    expect(findButton("Path")).toBeUndefined();
+
+    pressKey("ArrowRight");
+    pressKey("Escape");
+    expect(focusedLabel()).toBe("Copy");
+    pressKey("Escape");
+
+    await expect(selectionPromise).resolves.toBeNull();
+    expect(invoker.focused).toBe(true);
+  });
+
+  it("leaves keys alone once focus is outside the menu", async () => {
+    const selectionPromise = showContextMenuFallback([{ id: "rename", label: "Rename" }]);
+    (document as unknown as FakeDocument).activeElement?.blur();
+
+    expect(pressKey("ArrowDown").defaultPrevented).toBe(false);
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
   });
 });
 
