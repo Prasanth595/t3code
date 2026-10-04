@@ -1546,6 +1546,9 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     if (event.relatedTarget === null) clearHoverOutline();
   };
 
+  const onWindowFocus = (): void => {
+    if (editor.style.display !== "none") sendVoice("focus");
+  };
   const onWindowBlur = (): void => {
     sendVoice("blur");
     clearHoverOutline();
@@ -1573,6 +1576,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
     window.removeEventListener("pointerout", onPointerOut, true);
     window.removeEventListener("click", onClick, true);
     window.removeEventListener("blur", onWindowBlur);
+    window.removeEventListener("focus", onWindowFocus);
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("scroll", repaint, true);
     window.removeEventListener("resize", repaint);
@@ -1609,9 +1613,10 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
         event.stopImmediatePropagation();
         voiceKeyCode = null;
         pendingVoiceSubmission = null;
-        sendVoice("cancel");
+        sendVoice("key", event);
         return;
       }
+      if (event.key === "Escape") sendVoice("key", event);
       if (
         voiceAvailable &&
         editor.style.display !== "none" &&
@@ -1743,6 +1748,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
   window.addEventListener("pointerout", onPointerOut, { capture: true, passive: true });
   window.addEventListener("click", onClick, { capture: true, passive: false });
   window.addEventListener("blur", onWindowBlur);
+  window.addEventListener("focus", onWindowFocus);
   window.addEventListener("keydown", onKeyDown, { capture: true });
   window.addEventListener("scroll", repaint, { capture: true, passive: true });
   window.addEventListener("resize", repaint, { passive: true });
@@ -1750,7 +1756,7 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
   ipcRenderer.on(ANNOTATION_CAPTURED_CHANNEL, onCaptured);
   ipcRenderer.on(ANNOTATION_VOICE_STATE_CHANNEL, onVoiceState);
   window.addEventListener("keyup", onVoiceKeyUp, true);
-  sendVoice("sync");
+  sendVoice(document.hasFocus() && editor.style.display !== "none" ? "focus" : "sync");
   document.documentElement.appendChild(host);
   rootResizeObserver.observe(document.documentElement);
   refreshToolButtons();
