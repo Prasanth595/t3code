@@ -66,6 +66,7 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
+import * as PluginApprovals from "./plugins/PluginApprovals.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginEventDelivery from "./plugins/PluginEventDelivery.ts";
 import * as PluginEventFeed from "./plugins/PluginEventFeed.ts";
@@ -616,6 +617,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   PluginActions.layer,
   // The orchestrator's own event sink, so commits wake event delivery.
   PluginEventFeed.layer().pipe(
+    Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
+  ),
+  // Plugins answer pending approvals through the orchestrator, like a client.
+  PluginApprovals.layer.pipe(
     Layer.provide(Layer.merge(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink)),
   ),
 ).pipe(
