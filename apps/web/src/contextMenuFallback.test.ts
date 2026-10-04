@@ -474,6 +474,33 @@ describe("showContextMenuFallback keyboard", () => {
     await expect(selectionPromise).resolves.toBeNull();
   });
 
+  it("keeps keyboard focus in the menu when hovering the parent closes a submenu", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "snooze", label: "Snooze", children: [{ id: "snooze:hour", label: "In 1 hour" }] },
+      { id: "archive", label: "Archive" },
+    ]);
+
+    pressKey("ArrowDown");
+    pressKey("ArrowRight");
+    expect(focusedLabel()).toBe("In 1 hour");
+
+    (document as unknown as FakeDocument).dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 10, clientY: 10 }) as unknown as FakeDomEvent,
+    );
+    const rootMenu = (document as unknown as FakeDocument)
+      .querySelectorAll("div")
+      .find((element) => element.attributes.get("role") === "menu");
+    rootMenu?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(findButton("In 1 hour")).toBeUndefined();
+    expect(focusedLabel()).toBe("Snooze");
+
+    pressKey("ArrowDown");
+    expect(focusedLabel()).toBe("Archive");
+
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
+  });
+
   it("leaves keys alone once focus is outside the menu", async () => {
     const selectionPromise = showContextMenuFallback([{ id: "rename", label: "Rename" }]);
     (document as unknown as FakeDocument).activeElement?.blur();
