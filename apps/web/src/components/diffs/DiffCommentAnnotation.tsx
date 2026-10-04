@@ -94,6 +94,18 @@ export function DiffCommentAnnotation({
     );
   }
 
+  const submit = (
+    speech: ReturnType<typeof useTextFieldSpeech> | undefined,
+    action: (text: string) => void,
+    allowEmpty = false,
+  ) => {
+    const finish = (text: string) => {
+      if (!pending && (allowEmpty || text.trim())) action(text.trim());
+    };
+    if (speech) speech.submitAfterDictation(finish);
+    else finish(displayedText);
+  };
+
   const renderDraft = (speech?: ReturnType<typeof useTextFieldSpeech>) => (
     <div
       data-diff-comment-annotation
@@ -119,15 +131,9 @@ export function DiffCommentAnnotation({
             event.preventDefault();
             onCancel();
           }
-          if (
-            isCommentSubmitShortcut(
-              event,
-              trimmedText,
-              pending || speech?.blocksSubmission === true,
-            )
-          ) {
+          if (isCommentSubmitShortcut(event, trimmedText, pending, speech?.blocksSubmission)) {
             event.preventDefault();
-            onComment(trimmedText);
+            submit(speech, onComment);
           }
         }}
       />
@@ -142,9 +148,9 @@ export function DiffCommentAnnotation({
             size="xs"
             variant="outline"
             disabled={
-              pending || speech?.blocksSubmission || (!secondaryAction.allowEmpty && !trimmedText)
+              pending || (!speech?.blocksSubmission && !secondaryAction.allowEmpty && !trimmedText)
             }
-            onClick={() => secondaryAction.onAction(trimmedText)}
+            onClick={() => submit(speech, secondaryAction.onAction, secondaryAction.allowEmpty)}
           >
             {secondaryAction.icon}
             {secondaryAction.label}
@@ -152,8 +158,8 @@ export function DiffCommentAnnotation({
         ) : null}
         <Button
           size="xs"
-          disabled={pending || speech?.blocksSubmission || !trimmedText}
-          onClick={() => onComment(trimmedText)}
+          disabled={pending || (!speech?.blocksSubmission && !trimmedText)}
+          onClick={() => submit(speech, onComment)}
         >
           {submitLabel}
         </Button>

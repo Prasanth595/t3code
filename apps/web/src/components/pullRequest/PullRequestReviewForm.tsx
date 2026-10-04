@@ -99,9 +99,9 @@ export function PullRequestReviewForm({
   const selectedVerdict =
     offered.find((verdict) => verdict.value === requestedVerdict) ?? offered[0];
 
-  const submit = async (verdict: (typeof VERDICTS)[number]) => {
-    if (pending || speech.blocksSubmission) return;
-    const submittedBody = body;
+  const submit = async (verdict: (typeof VERDICTS)[number], text: string) => {
+    if (pending || !canSubmit(verdict.value, text)) return;
+    const submittedBody = text;
     const submittedComments = comments;
     onPendingChange(true);
     const result = await submitReview({
@@ -130,7 +130,7 @@ export function PullRequestReviewForm({
   };
 
   // Forgejo requires a summary when requesting changes, even with inline comments.
-  const canSubmit = (verdict: PullRequestReviewVerdict, summary: string) =>
+  const canSubmit = (verdict: PullRequestReviewVerdict, summary = body) =>
     verdict === "request-changes" && requestChangesSummaryRequired
       ? summary.trim().length > 0
       : verdict === "approve" || summary.trim().length > 0 || comments.length > 0;
@@ -183,17 +183,20 @@ export function PullRequestReviewForm({
             </SelectPopup>
           </Select>
         ) : null}
-        <Button
-          size="xs"
-          disabled={
-            pending || speech.blocksSubmission || selectedVerdict === undefined || !canSubmit(selectedVerdict.value, body)
-          }
-          onClick={() => {
-            if (selectedVerdict !== undefined) void submit(selectedVerdict);
-          }}
-        >
-          {pending ? "Submitting..." : "Submit review"}
-        </Button>
+          <Button
+            size="xs"
+            disabled={
+              pending ||
+              selectedVerdict === undefined ||
+              (!canSubmit(selectedVerdict.value) && !speech.blocksSubmission)
+            }
+            onClick={() => {
+              if (selectedVerdict !== undefined)
+                speech.submitAfterDictation((text) => void submit(selectedVerdict, text));
+            }}
+          >
+            {pending ? "Submitting..." : "Submit review"}
+          </Button>
         </div>
       </div>
     </>
