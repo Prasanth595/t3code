@@ -95,6 +95,8 @@ class FakeElement {
     this.dispatchEvent(new FakeDomEvent("focus"));
   }
 
+  scrollIntoView() {}
+
   blur() {
     const fakeDocument = document as unknown as FakeDocument;
     if (fakeDocument.activeElement === this) {
@@ -400,9 +402,14 @@ describe("showContextMenuFallback keyboard", () => {
     pressKey("ArrowDown");
     pressKey("ArrowRight");
     expect(focusedLabel()).toBe("Path");
+    const closedPathButton = findButton("Path");
     pressKey("ArrowLeft");
     expect(focusedLabel()).toBe("Copy");
     expect(findButton("Path")).toBeUndefined();
+    // A closed submenu's items are no longer restyled by later key presses.
+    closedPathButton!.style.background = "detached";
+    pressKey("Home");
+    expect(closedPathButton?.style.background).toBe("detached");
 
     pressKey("ArrowRight");
     pressKey("Escape");
@@ -411,6 +418,34 @@ describe("showContextMenuFallback keyboard", () => {
 
     await expect(selectionPromise).resolves.toBeNull();
     expect(invoker.focused).toBe(true);
+  });
+
+  it("highlights the item reached by keyboard and ignores hover until the pointer moves", async () => {
+    const selectionPromise = showContextMenuFallback([
+      { id: "rename", label: "Rename" },
+      { id: "archive", label: "Archive" },
+    ]);
+    const rename = findButton("Rename");
+    const archive = findButton("Archive");
+
+    pressKey("ArrowDown");
+    expect(rename?.style.background).toBe("var(--accent)");
+    expect(archive?.style.background).toBe("transparent");
+
+    // Scrolling under a resting pointer fires mouseenter without movement.
+    archive?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(focusedLabel()).toBe("Rename");
+
+    (document as unknown as FakeDocument).dispatchEvent(
+      new MouseEvent("mousemove", { clientX: 10, clientY: 10 }) as unknown as FakeDomEvent,
+    );
+    archive?.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(focusedLabel()).toBe("Archive");
+    expect(rename?.style.background).toBe("transparent");
+    expect(archive?.style.background).toBe("var(--accent)");
+
+    pressKey("Escape");
+    await expect(selectionPromise).resolves.toBeNull();
   });
 
   it("leaves keys alone once focus is outside the menu", async () => {
