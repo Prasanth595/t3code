@@ -247,7 +247,13 @@ function ThreadUndoShortcut() {
         if (!MODIFIER_KEYS.has(event.key)) releaseThreadUndoShortcut();
         return;
       }
-      if (event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) return;
+      if (isCommandPaletteOpen() || isModelPickerOpen()) return;
+      // A held key undoes once. Cancel repeats so they cannot fall through to
+      // the editor's own undo while an older group still owns the shortcut.
+      if (event.repeat) {
+        event.preventDefault();
+        return;
+      }
       if (undoLatestThreadAction()) {
         event.preventDefault();
         event.stopPropagation();
