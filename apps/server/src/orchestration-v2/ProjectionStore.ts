@@ -69,7 +69,6 @@ import {
   isOrchestrationV2SupersededInterrupt,
 } from "@t3tools/shared/orchestrationV2Timeline";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
-import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -5867,12 +5866,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
         .withTransaction(readShellSnapshotRows(options))
-        .pipe(
-          // Reads every thread, so it runs off the event loop and never holds the writer.
-          NodeSqliteClient.readOnly,
-          Effect.mapError(shellSnapshotReadError),
-          Effect.flatMap(decodeShellSnapshot),
-        );
+        .pipe(Effect.mapError(shellSnapshotReadError), Effect.flatMap(decodeShellSnapshot));
 
     // Per-thread shell for the live shell streams: reads only the target thread
     // plus its fork-source chain instead of materializing every thread. Returns
