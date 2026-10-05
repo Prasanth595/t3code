@@ -21,6 +21,7 @@ import {
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
   getNewProjectRepository,
+  githubIncompleteOwnerRepositoryMessage,
   normalizePastedCloneUrl,
   parseAddProjectRemoteSource,
   resolveAddProjectPath,
@@ -772,6 +773,11 @@ export function AddProjectRepositoryScreen(props: {
 
   const lookupRepository = async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
+    const incompleteOwnerMessage = githubIncompleteOwnerRepositoryMessage(source, repositoryInput);
+    if (incompleteOwnerMessage) {
+      setError(incompleteOwnerMessage);
+      return;
+    }
     setError(null);
     setIsSubmitting(true);
     const provider = addProjectRemoteSourceProvider(source);
