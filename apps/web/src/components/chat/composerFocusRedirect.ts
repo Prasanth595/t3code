@@ -1,3 +1,5 @@
+import { isCiteSelectionShortcut } from "./AssistantSelectionToolbar";
+
 export const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
   "textarea",
@@ -71,6 +73,7 @@ export function shouldTypeToFocusComposer(event: KeyboardEvent): boolean {
   if (event.key.length !== 1) return false;
   if (!shouldRedirectInputToComposer(event)) return false;
   if (isSurfaceLauncherKey(event.key)) return false;
+  if (isCiteSelectionShortcut(event)) return false;
 
   return true;
 }
