@@ -228,10 +228,12 @@ function NavigationHistoryShortcuts() {
 const MODIFIER_KEYS = new Set(["Alt", "Control", "Meta", "Shift"]);
 
 // Undoes the thread actions in the sidebar's notice. Mounted wherever the
-// thread sidebar shows, so it never acts on a notice the user cannot see. Listens in the capture phase so mod+z reaches it before the composer's
-// own undo handler consumes the key.
+// thread sidebar can show; Settings replaces it. Listens in the capture phase
+// so mod+z reaches it before the composer's own undo handler consumes the key.
 function ThreadUndoShortcut() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  // A collapsed sidebar hides the notice, so text fields keep their own undo.
+  const noticeVisible = useSidebarVisibility();
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -239,7 +241,8 @@ function ThreadUndoShortcut() {
         context: {
           terminalFocus: isTerminalFocused(),
           previewFocus: isPreviewFocused(),
-          editableFocus: isEditableFocused(event.target) && !threadUndoClaimsShortcut(),
+          editableFocus:
+            isEditableFocused(event.target) && !(noticeVisible && threadUndoClaimsShortcut()),
           modelPickerOpen: isModelPickerOpen(),
         },
       });
@@ -268,7 +271,7 @@ function ThreadUndoShortcut() {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("input", onInput, true);
     };
-  }, [keybindings]);
+  }, [keybindings, noticeVisible]);
 
   return null;
 }
