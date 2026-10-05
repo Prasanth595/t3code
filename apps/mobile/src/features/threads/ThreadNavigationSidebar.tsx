@@ -951,11 +951,11 @@ function ThreadNavigationSidebarPane(
               workingShelfEnabled={workingShelfEnabled}
               onMoveThread={moveThread}
             >
-              {(scrollEnabled) => (
+              {(dragListProps) => (
                 <GestureDetector gesture={sidebarScrollGesture}>
                   <LegendList
                     ref={listRef}
-                    scrollEnabled={scrollEnabled}
+                    {...dragListProps}
                     data={listItems}
                     drawDistance={500}
                     estimatedItemSize={64}
@@ -1028,11 +1028,11 @@ function ThreadNavigationSidebarPane(
               workingShelfEnabled={workingShelfEnabled}
               onMoveThread={moveThread}
             >
-              {(scrollEnabled) => (
+              {(dragListProps) => (
                 <GestureDetector gesture={sidebarScrollGesture}>
                   <LegendList
                     ref={listRef}
-                    scrollEnabled={scrollEnabled}
+                    {...dragListProps}
                     data={listItems}
                     drawDistance={500}
                     estimatedItemSize={64}
