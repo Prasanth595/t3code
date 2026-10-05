@@ -1,4 +1,4 @@
-import type { SnoozeMorningHour, TimestampFormat } from "@t3tools/contracts/settings";
+import type { SnoozeWakeHour, TimestampFormat } from "@t3tools/contracts/settings";
 import {
   resolveSnoozePresets as resolveSharedSnoozePresets,
   snoozeWakeLabel,
@@ -18,9 +18,9 @@ function timeOfDayLabel(date: Date, timestampFormat: TimestampFormat): string {
 export function resolveSnoozePresets(
   now: Date,
   timestampFormat: TimestampFormat,
-  morningHour: SnoozeMorningHour,
+  wakeHour: SnoozeWakeHour,
 ): ReadonlyArray<SnoozePreset> {
-  return resolveSharedSnoozePresets(now, morningHour).map((preset) => {
+  return resolveSharedSnoozePresets(now, wakeHour).map((preset) => {
     const wake = parseTimestampDate(preset.snoozedUntil);
     if (wake === null) return preset;
     const time = timeOfDayLabel(wake, timestampFormat);

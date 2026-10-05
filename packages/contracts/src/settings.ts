@@ -53,9 +53,9 @@ export type TimestampFormat = typeof TimestampFormat.Type;
 const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
 /** Local hour (0-23) that the "Tomorrow" and "Next week" snooze presets wake at. */
-export const SnoozeMorningHour = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 23 }));
-export type SnoozeMorningHour = typeof SnoozeMorningHour.Type;
-export const DEFAULT_SNOOZE_MORNING_HOUR: SnoozeMorningHour = 9;
+export const SnoozeWakeHour = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 23 }));
+export type SnoozeWakeHour = typeof SnoozeWakeHour.Type;
+export const DEFAULT_SNOOZE_WAKE_HOUR: SnoozeWakeHour = 9;
 
 export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
@@ -496,8 +496,8 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
-  snoozeMorningHour: SnoozeMorningHour.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_MORNING_HOUR)),
+  snoozeWakeHour: SnoozeWakeHour.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SNOOZE_WAKE_HOUR)),
   ),
   snapShotEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   snapShotIncludeAccessibility: Schema.Boolean.pipe(
@@ -1734,7 +1734,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
-  snoozeMorningHour: Schema.optionalKey(SnoozeMorningHour),
+  snoozeWakeHour: Schema.optionalKey(SnoozeWakeHour),
   snapShotEnabled: Schema.optionalKey(Schema.Boolean),
   snapShotIncludeAccessibility: Schema.optionalKey(Schema.Boolean),
   snapShotShortcut: Schema.optionalKey(SnapShotShortcut),

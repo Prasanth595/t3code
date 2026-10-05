@@ -1,5 +1,5 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import { DEFAULT_SNOOZE_MORNING_HOUR } from "@t3tools/contracts/settings";
+import { DEFAULT_SNOOZE_WAKE_HOUR } from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -251,11 +251,11 @@ function addSnoozeDays(base: Date, days: number): Date {
  * choices start at "Tomorrow". Calendar presets that land on the same
  * instant collapse: on Sundays "Tomorrow" and "Next week" are both Monday
  * morning, so only "Tomorrow" is offered. Both calendar presets wake at the
- * user's `morningHour`.
+ * user's `wakeHour`.
  */
 export function resolveSnoozePresets(
   now: Date,
-  morningHour: number = DEFAULT_SNOOZE_MORNING_HOUR,
+  wakeHour: number = DEFAULT_SNOOZE_WAKE_HOUR,
 ): ReadonlyArray<SnoozePreset> {
   const inAnHour = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + HOUR_MS));
   const inThreeHours = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + 3 * HOUR_MS));
@@ -284,7 +284,7 @@ export function resolveSnoozePresets(
     });
   }
 
-  const tomorrow = snoozeAtHour(addSnoozeDays(now, 1), morningHour);
+  const tomorrow = snoozeAtHour(addSnoozeDays(now, 1), wakeHour);
   presets.push({
     id: "tomorrow",
     label: "Tomorrow",
@@ -293,7 +293,7 @@ export function resolveSnoozePresets(
   });
 
   const daysUntilMonday = (1 - now.getDay() + 7) % 7 || 7;
-  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), morningHour);
+  const nextWeek = snoozeAtHour(addSnoozeDays(now, daysUntilMonday), wakeHour);
   if (nextWeek.getTime() !== tomorrow.getTime()) {
     presets.push({
       id: "next-week",

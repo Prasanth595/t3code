@@ -1,4 +1,4 @@
-import { DEFAULT_SNOOZE_MORNING_HOUR } from "@t3tools/contracts/settings";
+import { DEFAULT_SNOOZE_WAKE_HOUR } from "@t3tools/contracts/settings";
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSnoozePresets, snoozeWakeDescription } from "./Sidebar.snooze";
@@ -14,7 +14,7 @@ describe("resolveSnoozePresets", () => {
     const presets = resolveSnoozePresets(
       localDate(2026, 4, 8, 10),
       "locale",
-      DEFAULT_SNOOZE_MORNING_HOUR,
+      DEFAULT_SNOOZE_WAKE_HOUR,
     );
     expect(presets.map((preset) => preset.id)).toEqual([
       "hour",
@@ -41,7 +41,7 @@ describe("resolveSnoozePresets", () => {
     const presets = resolveSnoozePresets(
       localDate(2026, 4, 8, 10),
       "locale",
-      DEFAULT_SNOOZE_MORNING_HOUR,
+      DEFAULT_SNOOZE_WAKE_HOUR,
     );
     for (const preset of presets) {
       // Day words live in the label column; the time column is time-only
@@ -56,14 +56,12 @@ describe("resolveSnoozePresets", () => {
 
   it("drops the evening preset once evening is near or past", () => {
     expect(
-      resolveSnoozePresets(
-        localDate(2026, 4, 8, 17, 30),
-        "locale",
-        DEFAULT_SNOOZE_MORNING_HOUR,
-      ).map((preset) => preset.id),
+      resolveSnoozePresets(localDate(2026, 4, 8, 17, 30), "locale", DEFAULT_SNOOZE_WAKE_HOUR).map(
+        (preset) => preset.id,
+      ),
     ).toEqual(["hour", "three-hours", "tomorrow", "next-week"]);
     expect(
-      resolveSnoozePresets(localDate(2026, 4, 8, 21), "locale", DEFAULT_SNOOZE_MORNING_HOUR).map(
+      resolveSnoozePresets(localDate(2026, 4, 8, 21), "locale", DEFAULT_SNOOZE_WAKE_HOUR).map(
         (preset) => preset.id,
       ),
     ).toEqual(["hour", "three-hours", "tomorrow", "next-week"]);
@@ -74,13 +72,13 @@ describe("resolveSnoozePresets", () => {
     const presets = resolveSnoozePresets(
       localDate(2026, 4, 6, 10),
       "locale",
-      DEFAULT_SNOOZE_MORNING_HOUR,
+      DEFAULT_SNOOZE_WAKE_HOUR,
     );
     const nextWeek = new Date(presets.find((preset) => preset.id === "next-week")!.snoozedUntil);
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
   });
-  it("labels tomorrow and next week with the chosen morning hour", () => {
+  it("labels tomorrow and next week with the chosen wake hour", () => {
     const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "24-hour", 5);
 
     expect(presets.find((preset) => preset.id === "tomorrow")!.whenLabel).toBe("05:00");
@@ -91,12 +89,12 @@ describe("resolveSnoozePresets", () => {
     const twelveHour = resolveSnoozePresets(
       localDate(2026, 4, 8, 10),
       "12-hour",
-      DEFAULT_SNOOZE_MORNING_HOUR,
+      DEFAULT_SNOOZE_WAKE_HOUR,
     );
     const twentyFourHour = resolveSnoozePresets(
       localDate(2026, 4, 8, 10),
       "24-hour",
-      DEFAULT_SNOOZE_MORNING_HOUR,
+      DEFAULT_SNOOZE_WAKE_HOUR,
     );
 
     expect(twelveHour.find((preset) => preset.id === "evening")!.whenLabel).toMatch(/PM/i);

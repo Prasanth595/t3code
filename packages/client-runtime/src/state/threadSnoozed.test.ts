@@ -354,7 +354,7 @@ describe("resolveSnoozePresets", () => {
     expect(nextWeek.getDate()).toBe(13);
   });
 
-  it("wakes tomorrow and next week at the chosen morning hour", () => {
+  it("wakes tomorrow and next week at the chosen wake hour", () => {
     const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), 5);
     expect(presets.find((preset) => preset.id === "tomorrow")?.snoozedUntil).toBe(
       localDate(2026, 4, 9, 5).toISOString(),

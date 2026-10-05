@@ -598,7 +598,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
         ? ["Snooze limited threads"]
         : []),
-      ...(settings.snoozeMorningHour !== DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour
+      ...(settings.snoozeWakeHour !== DEFAULT_UNIFIED_SETTINGS.snoozeWakeHour
         ? ["Snooze wake time"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
@@ -721,7 +721,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.autoResumeLimitedThreads,
       settings.snoozeLimitedThreads,
-      settings.snoozeMorningHour,
+      settings.snoozeWakeHour,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
@@ -829,7 +829,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
-      snoozeMorningHour: DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour,
+      snoozeWakeHour: DEFAULT_UNIFIED_SETTINGS.snoozeWakeHour,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -2392,12 +2392,12 @@ export function GeneralSettingsPanel() {
           {...searchableSetting("snooze-wake-time")}
           description="When threads snoozed until Tomorrow or Next week wake."
           resetAction={
-            settings.snoozeMorningHour !== DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour ? (
+            settings.snoozeWakeHour !== DEFAULT_UNIFIED_SETTINGS.snoozeWakeHour ? (
               <SettingResetButton
                 label="snooze wake time"
                 onClick={() =>
                   updateSettings({
-                    snoozeMorningHour: DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour,
+                    snoozeWakeHour: DEFAULT_UNIFIED_SETTINGS.snoozeWakeHour,
                   })
                 }
               />
@@ -2405,14 +2405,14 @@ export function GeneralSettingsPanel() {
           }
           control={
             <Select
-              value={String(settings.snoozeMorningHour)}
+              value={String(settings.snoozeWakeHour)}
               onValueChange={(value) => {
-                if (value !== null) updateSettings({ snoozeMorningHour: Number(value) });
+                if (value !== null) updateSettings({ snoozeWakeHour: Number(value) });
               }}
             >
               <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Snooze wake time">
                 <SelectValue>
-                  {hourOfDayLabel(settings.snoozeMorningHour, settings.timestampFormat)}
+                  {hourOfDayLabel(settings.snoozeWakeHour, settings.timestampFormat)}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
