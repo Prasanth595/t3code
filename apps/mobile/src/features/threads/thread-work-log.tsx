@@ -471,6 +471,7 @@ interface ThreadWorkLogProps {
   readonly renderImage: MarkdownImageRenderer;
   readonly renderReasoning: (text: string) => ReactNode;
   readonly onPressPreview: (source: FilePreviewSource) => void;
+  readonly renderSentMessage: (text: string) => ReactNode;
 }
 
 export function ThreadWorkLog(props: ThreadWorkLogProps) {
@@ -489,6 +490,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
         renderImage={props.renderImage}
         renderReasoning={props.renderReasoning}
         onPressPreview={props.onPressPreview}
+        renderSentMessage={props.renderSentMessage}
         themeAppearance={props.themeAppearance}
       />
     ),
@@ -503,6 +505,7 @@ export function ThreadWorkLog(props: ThreadWorkLogProps) {
       props.renderImage,
       props.renderReasoning,
       props.onPressPreview,
+      props.renderSentMessage,
       props.themeAppearance,
     ],
   );
@@ -1190,7 +1193,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
             {reasoning ? (
               props.renderReasoning(reasoning.text)
             ) : agentMessage?.message ? (
-              props.renderReasoning(agentMessage.message)
+              props.renderSentMessage(agentMessage.message)
             ) : call ? (
               [
                 call.command,
