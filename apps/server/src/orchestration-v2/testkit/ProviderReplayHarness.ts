@@ -464,6 +464,10 @@ export function layerWithRegistry<Error>(
         getThreadProjection: orchestrator.getThreadProjection,
         recoverDelegatedTask: orchestrator.recoverDelegatedTask,
         delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
+        // A Stop that holds the queue enqueues delegated-tasks.stop. Tests that
+        // cover it call the real service themselves; a failing effect here
+        // would hold back every later effect of the stopped thread.
+        stopDelegatedTasks: () => Effect.void,
       });
     }),
   ).pipe(Layer.provide(layerOrchestratorProvided));

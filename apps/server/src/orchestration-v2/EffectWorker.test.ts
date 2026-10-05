@@ -89,14 +89,14 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
-        interrupt: input.interrupt ?? (() => Effect.void),
+        interrupt: input.interrupt ?? (() => Effect.succeed({ unreadSteerMessageIds: [] })),
         steer: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
               ? "interrupt"
               : `interrupt:${request.replacementProviderSessionId}`,
-          ),
+          ).pipe(Effect.as([])),
       }),
     ),
     Layer.succeed(
@@ -861,11 +861,14 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
                 : Effect.succeed(
                     outcome === "confirmed"
                       ? {
-                          status: "cancelled" as const,
-                          completedAt: now,
-                          result: "Stopped by Claude",
+                          unreadSteerMessageIds: [],
+                          subagentOutcome: {
+                            status: "cancelled" as const,
+                            completedAt: now,
+                            result: "Stopped by Claude",
+                          },
                         }
-                      : undefined,
+                      : { unreadSteerMessageIds: [] },
                   ),
             ),
           );

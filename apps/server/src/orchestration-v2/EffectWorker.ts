@@ -1,4 +1,4 @@
-import { CommandId } from "@t3tools/contracts";
+import { CommandId, type MessageId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -104,6 +104,24 @@ export const layerExecutor: Layer.Layer<
       yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
+    // Steers the provider never read would end with its process, so they go
+    // back to the queue, where the user can still send or drop them.
+    const requeueUnreadSteers = (
+      effect: EffectOutbox.OrchestrationEffectV2,
+      messageIds: ReadonlyArray<MessageId>,
+      holdQueue: boolean,
+    ) =>
+      messageIds.length === 0
+        ? Effect.void
+        : threads
+            .dispatch({
+              type: "thread.unread-steers.requeue",
+              commandId: CommandId.make(`${effect.id}:unread-steers-requeued`),
+              threadId: effect.threadId,
+              messageIds,
+              holdQueue,
+            })
+            .pipe(Effect.asVoid);
     return OrchestrationEffectExecutorV2.of({
       execute: (effect, options) => {
         const willRetry = options?.willRetry ?? false;
@@ -164,6 +182,7 @@ export const layerExecutor: Layer.Layer<
               );
           case "provider-turn.interrupt": {
             const request = effect.request;
+            const holdQueue = request.holdQueue === true;
             return providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
@@ -194,12 +213,17 @@ export const layerExecutor: Layer.Layer<
                     request.type,
                     Cause.pretty(Cause.fail(cause)),
                   )
-                    ? Effect.void
+                    ? Effect.succeed<ProviderTurnControlService.ProviderTurnInterruptResult>({
+                        unreadSteerMessageIds: [],
+                      })
                     : Effect.fail(cause),
+                ),
+                Effect.tap(({ unreadSteerMessageIds }) =>
+                  requeueUnreadSteers(effect, unreadSteerMessageIds, holdQueue),
                 ),
                 // A targeted Stop repairs only an outcome the provider actually observed.
                 // A full-turn Stop retains its existing process-teardown repair.
-                Effect.andThen((outcome) =>
+                Effect.andThen(({ subagentOutcome: outcome }) =>
                   request.subagent !== undefined && outcome === undefined
                     ? Effect.void
                     : threads.dispatch({
@@ -360,6 +384,9 @@ export const layerExecutor: Layer.Layer<
                   : {}),
               })
               .pipe(
+                // The restarted run keeps the thread busy, so the requeued
+                // steers follow it like any queued message.
+                Effect.flatMap((unread) => requeueUnreadSteers(effect, unread, false)),
                 Effect.andThen(
                   effect.request.sessionTransition?.type === "replace"
                     ? providerSessions.detach({

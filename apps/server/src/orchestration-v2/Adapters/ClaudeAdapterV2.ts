@@ -30,6 +30,7 @@ import {
   type Settings as ClaudeSdkSettings,
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
+  type SDKControlInterruptResponse,
   type SDKMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
@@ -51,6 +52,7 @@ import {
   type ChatAttachment,
   ClaudeSettings,
   defaultInstanceIdForDriver,
+  type MessageId,
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
@@ -382,7 +384,11 @@ export interface ClaudeAgentSdkQuerySession {
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
-  readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** CLIs with the interrupt_receipt_v1 capability name the prompts they still held unread. */
+  readonly interrupt: Effect.Effect<
+    SDKControlInterruptResponse | void,
+    ClaudeAgentSdkQueryRunnerError
+  >;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
@@ -846,12 +852,13 @@ export const layerQueryRunner: Layer.Layer<
             try: () => queryRuntime.interrupt(),
             catch: (cause) => queryRunnerError(cause, "interrupt"),
           }).pipe(
-            Effect.tap(() =>
+            Effect.tap((receipt) =>
               logProtocolEvent({
                 direction: "outgoing",
                 stage: "decoded",
                 payload: {
                   type: "query.interrupt",
+                  ...(receipt === undefined ? {} : { stillQueued: receipt.still_queued }),
                 },
               }),
             ),
@@ -2931,6 +2938,8 @@ interface ActiveClaudeTurnContext {
   // Root frames seen before the echo; held only when the CLI echoes early.
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  // Steers offered into this turn, by the uuid each was offered with.
+  readonly steerMessageIds: Map<string, MessageId>;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -8571,6 +8580,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              steerMessageIds: new Map(),
             };
             // Continuation turns attach to the wake output the CLI already
             // produced instead of prompting it again: drain the buffered wake
@@ -8768,13 +8778,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
+            const receipt = yield* existing.query.interrupt;
+            // A steer Claude still queues behind a running tool dies with the
+            // process closed below, so the thread takes it back.
+            const result: ProviderAdapter.ProviderAdapterV2InterruptResult = {
+              unreadSteerMessageIds: (receipt?.still_queued ?? []).flatMap(
+                (uuid) => currentTurn.steerMessageIds.get(uuid) ?? [],
+              ),
+            };
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
             if (Option.isSome(closed)) {
-              return;
+              return result;
             }
 
             const completedAt = yield* DateTime.now;
@@ -8799,6 +8816,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             }
             yield* Deferred.succeed(existing.closed, undefined);
+            return result;
           },
           (effect, turnInput) =>
             effect.pipe(
@@ -8830,6 +8848,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
               });
             }
+            // Fresh for every offer, like a prompt's: an interrupt receipt that
+            // lists it as still queued names the message Claude never read.
+            const uuid = yield* crypto.randomUUIDv4.pipe(
+              Effect.filterOrFail(isClaudePromptUuid),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Failed to allocate a Claude steer uuid.",
+                    payload: cause,
+                  }),
+              ),
+            );
             const userMessage = yield* makeClaudeUserMessageWithAttachments({
               text: applyClaudePromptEffortPrefix(
                 turnInput.message.text,
@@ -8840,12 +8871,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               attachmentsDir,
               fileSystem,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),
+              uuid,
             });
             yield* Ref.update(steeredTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
+            currentTurn.steerMessageIds.set(uuid, turnInput.message.messageId);
             yield* existing.query.offer(userMessage);
           },
           (effect, turnInput) =>

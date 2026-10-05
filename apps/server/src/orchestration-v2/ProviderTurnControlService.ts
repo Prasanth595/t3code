@@ -44,6 +44,13 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
 
+export interface ProviderTurnInterruptResult {
+  /** Steers the provider still held unread when it stopped. */
+  readonly unreadSteerMessageIds: ReadonlyArray<MessageId>;
+  /** How a stopped subagent ended, when the provider observed it. */
+  readonly subagentOutcome?: ProviderAdapter.ProviderAdapterV2SubagentOutcome;
+}
+
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
     readonly subagent?: {
@@ -55,10 +62,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
-  }) => Effect.Effect<
-    void | ProviderAdapter.ProviderAdapterV2SubagentOutcome,
-    ProviderTurnControlError
-  >;
+  }) => Effect.Effect<ProviderTurnInterruptResult, ProviderTurnControlError>;
   readonly steer: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -73,7 +77,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly interruptedAttemptId: RunAttemptId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<ReadonlyArray<MessageId>, ProviderTurnControlError>;
 }
 
 export class ProviderTurnControlServiceV2 extends Context.Service<
@@ -196,7 +200,7 @@ export const layer: Layer.Layer<
                 cause: "No live provider session can confirm this subagent's outcome.",
               });
             }
-            return;
+            return { unreadSteerMessageIds: [] };
           }
           if (input.subagent !== undefined) {
             if (session.value.stopSubagent === undefined) {
@@ -207,19 +211,22 @@ export const layer: Layer.Layer<
                 cause: "The provider does not support stopping a native subagent.",
               });
             }
-            return yield* session.value.stopSubagent({
+            const subagentOutcome = yield* session.value.stopSubagent({
               providerThread: loaded.providerThread,
               nativeTaskId: input.subagent.nativeTaskId,
               ...(input.subagent.requestedAt === undefined
                 ? {}
                 : { requestedAt: input.subagent.requestedAt }),
             });
+            return subagentOutcome === undefined
+              ? { unreadSteerMessageIds: [] }
+              : { unreadSteerMessageIds: [], subagentOutcome };
           }
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
           // stops it or reports there is nothing left to stop. Background work
           // the projection still shows is settled by the orchestrator after.
-          yield* session.value.interruptTurn({
+          const result = yield* session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
@@ -244,6 +251,7 @@ export const layer: Layer.Layer<
               yield* Effect.sleep("10 millis");
             }
           }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
+          return { unreadSteerMessageIds: result ? result.unreadSteerMessageIds : [] };
         }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnControlError(cause)
@@ -273,10 +281,10 @@ export const layer: Layer.Layer<
                 },
               );
             }
-            return;
+            return [];
           }
 
-          yield* loaded.session.value.interruptTurn({
+          const result = yield* loaded.session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
           });
@@ -296,7 +304,7 @@ export const layer: Layer.Layer<
               attempt !== undefined &&
               attempt.status !== "running"
             ) {
-              return;
+              return result ? result.unreadSteerMessageIds : [];
             }
             // Provider terminal events are projected on a detached ingestion
             // fiber. Yield through the Node event loop instead of sleeping on

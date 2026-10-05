@@ -3216,6 +3216,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ),
   }),
   /**
+   * Follows an interrupt that ended a turn before its provider read some of
+   * the steers sent into it. Each one becomes a queued message again instead
+   * of being lost, held when the Stop held the queue.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.unread-steers.requeue"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageIds: Schema.Array(MessageId),
+    holdQueue: Schema.Boolean,
+  }),
+  /**
    * Stop for one thread, whatever it is doing: interrupts its running turn, holds its queue,
    * ends its pull request watches, and drops pending delegated-task wakes. Nothing to stop is
    * an accepted no-op. Delegated tasks under the thread get their own `thread.stop`.

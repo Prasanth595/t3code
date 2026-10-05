@@ -440,6 +440,11 @@ export interface ProviderAdapterV2InterruptInput {
   readonly requestRuntimeRestart?: boolean;
 }
 
+export interface ProviderAdapterV2InterruptResult {
+  /** Steers the provider still held unread when the interrupt ended the turn. */
+  readonly unreadSteerMessageIds: ReadonlyArray<MessageId>;
+}
+
 export interface ProviderAdapterV2RuntimeRequestResponseInput {
   readonly requestId: RuntimeRequestId;
   readonly decision?: ProviderApprovalDecision;
@@ -608,7 +613,7 @@ export interface ProviderAdapterV2SessionRuntime {
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly interruptTurn: (
     input: ProviderAdapterV2InterruptInput,
-  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  ) => Effect.Effect<ProviderAdapterV2InterruptResult | void, ProviderAdapterV2Error>;
   /** Stops one native child through its owning runtime; the owner keeps running. */
   readonly stopSubagent?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;

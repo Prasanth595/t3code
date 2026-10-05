@@ -50,6 +50,8 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
     subagent: Schema.optional(Schema.Struct({ id: NodeId, nativeTaskId: Schema.String })),
+    /** The Stop held the queue, so steers the provider never read return to it held. */
+    holdQueue: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.steer"),
