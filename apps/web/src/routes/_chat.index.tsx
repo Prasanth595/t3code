@@ -14,6 +14,7 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
+  readProject,
   useAllEnvironmentShellsBootstrapped,
   useProjects,
   useThreadShells,
@@ -64,10 +65,14 @@ function IndexDraftLanding() {
     if (mostRecentProject === null || startingRef.current || !isStillOnIndex()) {
       return;
     }
+    const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
+    // A project removed since this render is gone from the store; the next
+    // render picks another one.
+    if (readProject(projectRef) === null) {
+      return;
+    }
     startingRef.current = true;
-    void handleNewThread(scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id), {
-      replace: true,
-    })
+    void handleNewThread(projectRef, { replace: true })
       .then((opened) => {
         // The project was removed while its draft started; land on the next one.
         if (opened === null) {
