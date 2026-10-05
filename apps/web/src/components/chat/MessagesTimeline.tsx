@@ -1150,6 +1150,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
     );
   };
 
+  const itemMeasurementFrameRef = useRef<number | null>(null);
+  const handleItemSizeChanged = useCallback(() => {
+    reportContentOverflow();
+    if (itemMeasurementFrameRef.current !== null) return;
+    // Read after LegendList has applied all row measurements for this frame.
+    itemMeasurementFrameRef.current = requestAnimationFrame(() => {
+      itemMeasurementFrameRef.current = null;
+      handleScroll();
+    });
+  }, [handleScroll, reportContentOverflow]);
+
+  useEffect(
+    () => () => {
+      if (itemMeasurementFrameRef.current !== null) {
+        cancelAnimationFrame(itemMeasurementFrameRef.current);
+        itemMeasurementFrameRef.current = null;
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const frame = requestAnimationFrame(handleScroll);
     return () => cancelAnimationFrame(frame);
