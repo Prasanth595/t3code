@@ -1,5 +1,9 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import { DEFAULT_SNOOZE_HOURS, type SnoozeHour } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_SNOOZE_HOURS,
+  type SnoozeEveningHour,
+  type SnoozeMorningHour,
+} from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -214,8 +218,8 @@ export function threadWokeAt(
 const HOUR_MS = 60 * 60 * 1_000;
 
 export interface SnoozeHours {
-  readonly morningHour: SnoozeHour;
-  readonly eveningHour: SnoozeHour;
+  readonly morningHour: SnoozeMorningHour;
+  readonly eveningHour: SnoozeEveningHour;
 }
 
 export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";

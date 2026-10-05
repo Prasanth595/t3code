@@ -1184,3 +1184,19 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("ClientSettings snooze hours", () => {
+  it("accepts evening hours from noon through 23:00", () => {
+    for (const snoozeEveningHour of [12, 18, 23]) {
+      expect(decodeClientSettingsPatch({ snoozeEveningHour }).snoozeEveningHour).toBe(
+        snoozeEveningHour,
+      );
+    }
+  });
+
+  it("rejects evening hours before noon", () => {
+    for (const snoozeEveningHour of [0, 1, 11]) {
+      expect(() => decodeClientSettingsPatch({ snoozeEveningHour })).toThrow();
+    }
+  });
+});

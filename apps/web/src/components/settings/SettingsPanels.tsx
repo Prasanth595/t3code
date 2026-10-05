@@ -45,6 +45,7 @@ import {
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SNOOZE_EVENING_HOUR,
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
@@ -202,7 +203,8 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
-const HOURS_OF_DAY = Array.from({ length: 24 }, (_, hour) => hour);
+const SNOOZE_MORNING_HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const SNOOZE_EVENING_HOURS = SNOOZE_MORNING_HOURS.filter((hour) => hour >= MIN_SNOOZE_EVENING_HOUR);
 
 function hourOfDayLabel(hour: number, timestampFormat: TimestampFormat): string {
   return formatShortTimestamp(new Date(2000, 0, 1, hour).toISOString(), timestampFormat);
@@ -219,6 +221,7 @@ function hasChangedSnoozeTimes(
 
 function SnoozeHourSelect(props: {
   label: string;
+  hours: ReadonlyArray<number>;
   hour: number;
   timestampFormat: TimestampFormat;
   onHourChange: (hour: number) => void;
@@ -241,7 +244,7 @@ function SnoozeHourSelect(props: {
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        {HOURS_OF_DAY.map((hour) => (
+        {props.hours.map((hour) => (
           <SelectItem hideIndicator key={hour} value={String(hour)}>
             {hourOfDayLabel(hour, props.timestampFormat)}
           </SelectItem>
@@ -2452,12 +2455,14 @@ export function GeneralSettingsPanel() {
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <SnoozeHourSelect
                 label="Morning"
+                hours={SNOOZE_MORNING_HOURS}
                 hour={settings.snoozeMorningHour}
                 timestampFormat={settings.timestampFormat}
                 onHourChange={(hour) => updateSettings({ snoozeMorningHour: hour })}
               />
               <SnoozeHourSelect
                 label="Evening"
+                hours={SNOOZE_EVENING_HOURS}
                 hour={settings.snoozeEveningHour}
                 timestampFormat={settings.timestampFormat}
                 onHourChange={(hour) => updateSettings({ snoozeEveningHour: hour })}

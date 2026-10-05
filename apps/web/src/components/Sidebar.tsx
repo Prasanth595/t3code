@@ -60,7 +60,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import type { SnoozeHour, TimestampFormat } from "@t3tools/contracts/settings";
+import type {
+  SnoozeEveningHour,
+  SnoozeMorningHour,
+  TimestampFormat,
+} from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -581,8 +585,8 @@ function SnoozeMenuButton(props: {
   onOpenChange: (open: boolean) => void;
   onSnooze: (preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   timestampFormat: TimestampFormat;
-  snoozeMorningHour: SnoozeHour;
-  snoozeEveningHour: SnoozeHour;
+  snoozeMorningHour: SnoozeMorningHour;
+  snoozeEveningHour: SnoozeEveningHour;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat, snoozeMorningHour, snoozeEveningHour } =
     props;
@@ -1162,8 +1166,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
-  snoozeMorningHour: SnoozeHour;
-  snoozeEveningHour: SnoozeHour;
+  snoozeMorningHour: SnoozeMorningHour;
+  snoozeEveningHour: SnoozeEveningHour;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
