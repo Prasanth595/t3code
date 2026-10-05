@@ -57,6 +57,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
+import { ThreadListDragSurface } from "../threads/thread-list-drag";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import {
   buildThreadListV2Items,
@@ -979,6 +980,14 @@ export function HomeScreen(props: HomeScreenProps) {
   }
 
   const listHeader = Platform.OS === "ios" ? undefined : <HomeTopContentSpacer />;
+  // iOS lays the list under the translucent header and bottom toolbar.
+  const dragEdgeInsets =
+    Platform.OS === "ios"
+      ? {
+          top: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 56 : 0,
+          bottom: iosBottomClearance,
+        }
+      : undefined;
 
   const v2ListHeader = (
     <>
@@ -1051,60 +1060,71 @@ export function HomeScreen(props: HomeScreenProps) {
             rebuilds and `itemsAreEqual` keeps a minute tick (or an unrelated
             shell update) from re-rendering untouched rows. */}
         <SwipeableScrollGateProvider enabled={swipeEnabled} activation={swipeRowActivation}>
-          <GestureDetector gesture={homeScrollGesture}>
-            <LegendList
-              ref={listRef}
-              onLoad={() => activateVisibleRows(threadListV2Items)}
-              onTouchStart={(event) => trackListTouches(event, true)}
-              onTouchEnd={(event) => trackListTouches(event, false)}
-              onTouchCancel={(event) => trackListTouches(event, false)}
-              renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
-              data={threadListV2Items}
-              renderItem={renderV2Item}
-              keyExtractor={v2KeyExtractor}
-              getItemType={(item) => item.type}
-              itemsAreEqual={threadListV2ListItemsAreEqual}
-              estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
-              drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
-              recycleItems
-              extraData={v2ExtraData}
-              ListHeaderComponent={v2ListHeader}
-              ListFooterComponent={
-                settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
-                  <ThreadListV2ShowMoreRow
-                    hiddenCount={threadListV2Layout.hiddenSettledCount}
-                    onPress={showMoreSettled}
-                  />
-                ) : null
-              }
-              ListEmptyComponent={v2ListEmpty}
-              style={{ flex: 1 }}
-              automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
-              contentInsetAdjustmentBehavior="never"
-              contentInset={Platform.OS === "ios" ? { top: insets.top } : undefined}
-              contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
-              initialScrollOffset={
-                initialScrollOffset > 0
-                  ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
-                  : undefined
-              }
-              showsVerticalScrollIndicator={false}
-              keyboardDismissMode="on-drag"
-              keyboardShouldPersistTaps="handled"
-              {...scrollGateHandlers}
-              scrollEventThrottle={16}
-              contentContainerStyle={{
-                paddingLeft: (contentSideInsets?.left ?? 0) + (primaryColumn ? 8 : 0),
-                paddingRight: (contentSideInsets?.right ?? 0) + (primaryColumn ? 8 : 0),
-                paddingBottom:
-                  Platform.OS === "ios"
-                    ? iosBottomClearance
-                    : (workspace?.bottomClearance ??
-                      Math.max(insets.bottom, 16) +
-                        (Platform.OS === "android" ? fabClearance : 88)),
-              }}
-            />
-          </GestureDetector>
+          <ThreadListDragSurface
+            listRef={listRef}
+            items={threadListV2Items}
+            workingShelfEnabled={workingShelfEnabled}
+            edgeInsets={dragEdgeInsets}
+            onMoveThread={props.onMoveThread}
+          >
+            {(scrollEnabled) => (
+              <GestureDetector gesture={homeScrollGesture}>
+                <LegendList
+                  ref={listRef}
+                  scrollEnabled={scrollEnabled}
+                  onLoad={() => activateVisibleRows(threadListV2Items)}
+                  onTouchStart={(event) => trackListTouches(event, true)}
+                  onTouchEnd={(event) => trackListTouches(event, false)}
+                  onTouchCancel={(event) => trackListTouches(event, false)}
+                  renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
+                  data={threadListV2Items}
+                  renderItem={renderV2Item}
+                  keyExtractor={v2KeyExtractor}
+                  getItemType={(item) => item.type}
+                  itemsAreEqual={threadListV2ListItemsAreEqual}
+                  estimatedItemSize={ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT}
+                  drawDistance={THREAD_LIST_V2_DRAW_DISTANCE}
+                  recycleItems
+                  extraData={v2ExtraData}
+                  ListHeaderComponent={v2ListHeader}
+                  ListFooterComponent={
+                    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                      <ThreadListV2ShowMoreRow
+                        hiddenCount={threadListV2Layout.hiddenSettledCount}
+                        onPress={showMoreSettled}
+                      />
+                    ) : null
+                  }
+                  ListEmptyComponent={v2ListEmpty}
+                  style={{ flex: 1 }}
+                  automaticallyAdjustsScrollIndicatorInsets={Platform.OS === "ios"}
+                  contentInsetAdjustmentBehavior="never"
+                  contentInset={Platform.OS === "ios" ? { top: insets.top } : undefined}
+                  contentInsetStartAdjustment={Platform.OS === "ios" ? insets.top : 0}
+                  initialScrollOffset={
+                    initialScrollOffset > 0
+                      ? initialScrollOffset - (Platform.OS === "ios" ? insets.top : 0)
+                      : undefined
+                  }
+                  showsVerticalScrollIndicator={false}
+                  keyboardDismissMode="on-drag"
+                  keyboardShouldPersistTaps="handled"
+                  {...scrollGateHandlers}
+                  scrollEventThrottle={16}
+                  contentContainerStyle={{
+                    paddingLeft: (contentSideInsets?.left ?? 0) + (primaryColumn ? 8 : 0),
+                    paddingRight: (contentSideInsets?.right ?? 0) + (primaryColumn ? 8 : 0),
+                    paddingBottom:
+                      Platform.OS === "ios"
+                        ? iosBottomClearance
+                        : (workspace?.bottomClearance ??
+                          Math.max(insets.bottom, 16) +
+                            (Platform.OS === "android" ? fabClearance : 88)),
+                  }}
+                />
+              </GestureDetector>
+            )}
+          </ThreadListDragSurface>
         </SwipeableScrollGateProvider>
       </View>
     </View>
