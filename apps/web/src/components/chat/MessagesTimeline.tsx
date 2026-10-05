@@ -1665,7 +1665,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 onManualNavigation();
                 void listRef.current?.scrollToIndex({
                   index: item.rowIndex,
-                  animated: true,
+                  animated: !prefersReducedMotion,
                   viewOffset: 24,
                 });
               }}
