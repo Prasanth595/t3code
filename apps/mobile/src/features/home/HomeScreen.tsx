@@ -984,7 +984,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const dragEdgeInsets =
     Platform.OS === "ios"
       ? {
-          top: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 56 : 0,
+          top: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 54 : 0,
           bottom: iosBottomClearance,
         }
       : undefined;
