@@ -101,6 +101,41 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it("names the adapter's reason when a turn cannot start", () => {
+  const turnStart = (cause: unknown) =>
+    new ProviderAdapter.ProviderAdapterTurnStartError({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      threadId: ThreadId.make("thread:busy"),
+      providerThreadId: ProviderThreadId.make("provider-thread:busy"),
+      runId: RunId.make("run:busy"),
+      cause,
+    });
+
+  assert.equal(
+    makeProviderFailure({
+      cause: Cause.fail(
+        turnStart(
+          new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: ProviderDriverKind.make("claudeAgent"),
+            detail: "Claude provider turn provider-turn:previous is still active.",
+          }),
+        ),
+      ),
+    }).message,
+    "The provider could not start this turn: Claude provider turn provider-turn:previous is still active. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+  assert.equal(
+    makeProviderFailure({
+      cause: turnStart("This provider does not support context compaction."),
+    }).message,
+    "The provider could not start this turn: This provider does not support context compaction. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+  assert.equal(
+    makeProviderFailure({ cause: turnStart(new Error("socket hang up at 10.0.0.5")) }).message,
+    "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+  );
+});
+
 it("does not expose defect text nested inside a known error category", () => {
   const failure = makeProviderFailure({
     cause: {
