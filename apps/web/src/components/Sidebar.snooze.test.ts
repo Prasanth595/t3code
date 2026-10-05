@@ -61,6 +61,13 @@ describe("resolveSnoozePresets", () => {
     expect(nextWeek.getDay()).toBe(1);
     expect(nextWeek.getDate()).toBe(13);
   });
+  it("labels tomorrow and next week with the chosen morning hour", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), "24-hour", 5);
+
+    expect(presets.find((preset) => preset.id === "tomorrow")!.whenLabel).toBe("05:00");
+    expect(presets.find((preset) => preset.id === "next-week")!.whenLabel).toMatch(/Mon 05:00/);
+  });
+
   it("formats preset times with the selected clock preference", () => {
     const twelveHour = resolveSnoozePresets(localDate(2026, 4, 8, 10), "12-hour");
     const twentyFourHour = resolveSnoozePresets(localDate(2026, 4, 8, 10), "24-hour");

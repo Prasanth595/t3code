@@ -354,6 +354,16 @@ describe("resolveSnoozePresets", () => {
     expect(nextWeek.getDate()).toBe(13);
   });
 
+  it("wakes tomorrow and next week at the chosen morning hour", () => {
+    const presets = resolveSnoozePresets(localDate(2026, 4, 8, 10), 5);
+    expect(presets.find((preset) => preset.id === "tomorrow")?.snoozedUntil).toBe(
+      localDate(2026, 4, 9, 5).toISOString(),
+    );
+    expect(presets.find((preset) => preset.id === "next-week")?.snoozedUntil).toBe(
+      localDate(2026, 4, 13, 5).toISOString(),
+    );
+  });
+
   it("drops next week on Sundays, when it lands on the same Monday as tomorrow", () => {
     // Sunday 2026-08-30 07:01: "Tomorrow" and "Next week" are both Monday 9:00.
     const presets = resolveSnoozePresets(localDate(2026, 8, 30, 7, 1));

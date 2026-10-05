@@ -350,6 +350,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["usage quota rate limit reset wake recover continue"],
   },
   {
+    id: "snooze-wake-time",
+    title: "Snooze wake time",
+    to: "/settings/general",
+    searchTerms: ["remind tomorrow next week morning hour wake up"],
+  },
+  {
     id: "auto-resume-limited-threads",
     title: "Auto-resume limited threads",
     to: "/settings/general",

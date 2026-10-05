@@ -14,6 +14,7 @@ import {
   type ProviderInstanceId,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
+  type TimestampFormat,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { presentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -103,7 +104,7 @@ import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { formatRelativeTimeLabel, formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import {
@@ -199,6 +200,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const HOURS_OF_DAY = Array.from({ length: 24 }, (_, hour) => hour);
+
+function hourOfDayLabel(hour: number, timestampFormat: TimestampFormat): string {
+  return formatShortTimestamp(new Date(2000, 0, 1, hour).toISOString(), timestampFormat);
+}
 
 const CHAT_WIDTH_LABELS: Record<ChatWidth, string> = {
   comfortable: "Comfortable",
@@ -591,6 +598,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.snoozeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads
         ? ["Snooze limited threads"]
         : []),
+      ...(settings.snoozeMorningHour !== DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour
+        ? ["Snooze wake time"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
@@ -711,6 +721,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarAutoSettleOnMerge,
       settings.autoResumeLimitedThreads,
       settings.snoozeLimitedThreads,
+      settings.snoozeMorningHour,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
@@ -818,6 +829,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
+      snoozeMorningHour: DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -2374,6 +2386,43 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Snooze limited threads"
             />
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("snooze-wake-time")}
+          description="When threads snoozed until Tomorrow or Next week wake."
+          resetAction={
+            settings.snoozeMorningHour !== DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour ? (
+              <SettingResetButton
+                label="snooze wake time"
+                onClick={() =>
+                  updateSettings({
+                    snoozeMorningHour: DEFAULT_UNIFIED_SETTINGS.snoozeMorningHour,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.snoozeMorningHour)}
+              onValueChange={(value) => {
+                if (value !== null) updateSettings({ snoozeMorningHour: Number(value) });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Snooze wake time">
+                <SelectValue>
+                  {hourOfDayLabel(settings.snoozeMorningHour, settings.timestampFormat)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {HOURS_OF_DAY.map((hour) => (
+                  <SelectItem hideIndicator key={hour} value={String(hour)}>
+                    {hourOfDayLabel(hour, settings.timestampFormat)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 
