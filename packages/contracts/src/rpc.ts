@@ -296,6 +296,11 @@ import {
 } from "./device.ts";
 import {} from "./previewAutomation.ts";
 import {
+  PeerEnvironmentHost,
+  PeerEnvironmentResponse,
+  PeerEnvironmentStreamEvent,
+} from "./peerEnvironment.ts";
+import {
   ServerConfigStreamEvent,
   DesktopUpdateCommitInput,
   OtlpEndpointCheckInput,
@@ -461,6 +466,8 @@ export const WS_METHODS = {
   previewClearProfile: "preview.clearProfile",
   previewReportProfiles: "preview.reportProfiles",
   previewReportStatus: "preview.reportStatus",
+  peerEnvironmentsConnect: "peerEnvironments.connect",
+  peerEnvironmentsRespond: "peerEnvironments.respond",
 
   deviceConfigure: "device.configure",
   deviceList: "device.list",
@@ -1554,6 +1561,18 @@ const WsPreviewReportStatusRpc = Rpc.make(WS_METHODS.previewReportStatus, {
   error: Schema.Union([PreviewError, EnvironmentAuthorizationError]),
 });
 
+const WsPeerEnvironmentsConnectRpc = Rpc.make(WS_METHODS.peerEnvironmentsConnect, {
+  payload: PeerEnvironmentHost,
+  success: PeerEnvironmentStreamEvent,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsPeerEnvironmentsRespondRpc = Rpc.make(WS_METHODS.peerEnvironmentsRespond, {
+  payload: PeerEnvironmentResponse,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsSubscribePreviewEventsRpc = Rpc.make(WS_METHODS.subscribePreviewEvents, {
   payload: Schema.Struct({}),
   success: PreviewEvent,
@@ -2055,6 +2074,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewClearProfileRpc,
   WsPreviewReportProfilesRpc,
   WsPreviewReportStatusRpc,
+  WsPeerEnvironmentsConnectRpc,
+  WsPeerEnvironmentsRespondRpc,
   WsSubscribePreviewEventsRpc,
   WsSubscribeDiscoveredLocalServersRpc,
   WsDeviceConfigureRpc,
