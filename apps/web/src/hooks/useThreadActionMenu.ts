@@ -107,7 +107,8 @@ export function useThreadActionMenu(input: {
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
-  const snoozeWakeHour = useClientSettings((s) => s.snoozeWakeHour);
+  const snoozeMorningHour = useClientSettings((s) => s.snoozeMorningHour);
+  const snoozeEveningHour = useClientSettings((s) => s.snoozeEveningHour);
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
     onCopy: ({ path }) => {
       toastManager.add({ type: "success", title: "Path copied", description: path });
@@ -147,7 +148,10 @@ export function useThreadActionMenu(input: {
           titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
-        const snoozePresets = resolveSnoozePresets(now, timestampFormat, snoozeWakeHour);
+        const snoozePresets = resolveSnoozePresets(now, timestampFormat, {
+          morningHour: snoozeMorningHour,
+          eveningHour: snoozeEveningHour,
+        });
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -363,7 +367,8 @@ export function useThreadActionMenu(input: {
       settleThread,
       snoozeThread,
       threadRef,
-      snoozeWakeHour,
+      snoozeEveningHour,
+      snoozeMorningHour,
       timestampFormat,
       unsettleThread,
       unsnoozeThread,
