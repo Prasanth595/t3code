@@ -172,7 +172,7 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["sql", SqlLayer],
+  ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
 ] as const)(
   "%s: discovers settlement work with the same activity and background semantics as the shell",
