@@ -16,7 +16,8 @@ import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { makeRawThreadShell } from "../../test-fixtures";
-import { Atom, AtomRegistry } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 
 import type { AgentActivityRowProps } from "../../widgets/AgentActivity";
 import {

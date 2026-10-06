@@ -8,7 +8,7 @@ import type { RelayAgentActivitySnapshotResponse } from "@t3tools/contracts/rela
 import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 
 import type { AgentActivityRowProps } from "../../widgets/AgentActivity";
 

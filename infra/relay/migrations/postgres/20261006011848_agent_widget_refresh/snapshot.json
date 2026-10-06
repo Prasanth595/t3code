@@ -1,8 +1,8 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "0f14504f-0ef4-4c18-a028-174d414a8a31",
-  "prevIds": ["3809c51e-3821-4a08-818d-e5d28dd3e9b4"],
+  "id": "56288d1c-be3d-4d40-879f-e616798a79ea",
+  "prevIds": ["13972659-45db-4ce9-9818-523b450bceca"],
   "ddl": [
     {
       "isRlsEnabled": false,
@@ -587,6 +587,19 @@
       "generated": null,
       "identity": null,
       "name": "managed_tunnels_enabled",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "relay_environment_links"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "false",
+      "generated": null,
+      "identity": null,
+      "name": "hold_webhooks_while_offline",
       "entityType": "columns",
       "schema": "public",
       "table": "relay_environment_links"
