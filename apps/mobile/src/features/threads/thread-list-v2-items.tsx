@@ -22,9 +22,7 @@ import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/t
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
-import { GestureDetector } from "react-native-gesture-handler";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
-import Reanimated from "react-native-reanimated";
 
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
@@ -53,7 +51,11 @@ import {
   threadListV2ThreadItemKey,
   type ThreadListV2Status,
 } from "./threadListV2";
-import { useThreadListDragTarget } from "./thread-list-drag";
+import {
+  ThreadListDragRow,
+  useThreadListDragTarget,
+  type ThreadListDragTarget,
+} from "./thread-list-drag";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -571,6 +573,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly titleRegenerationSupported: boolean;
   /** Server supports reordering this card's section. */
   readonly reorderSupported?: boolean;
+  /** Present when the list supports press-and-drag arrangement. */
+  readonly dragTarget?: ThreadListDragTarget;
   readonly onMoveThread?: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -685,6 +689,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
   // Cards in live sections can be lifted when any drop could apply to them.
   const drag = useThreadListDragTarget({
+    target: props.dragTarget,
     itemKey: threadListV2ThreadItemKey(thread),
     thread,
     enabled:
@@ -1317,63 +1322,61 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   if (!canOperateThread) return rowContent(() => {});
 
   return (
-    <GestureDetector gesture={drag.gesture}>
-      <Reanimated.View ref={drag.ref} collapsable={false} style={drag.style}>
-        {customSnoozeOpen && (
-          <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+    <ThreadListDragRow drag={drag}>
+      {customSnoozeOpen && (
+        <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
+      )}
+      <ThreadSwipeable
+        dormant={dormant}
+        threadKey={`${thread.environmentId}:${thread.id}`}
+        backgroundColor={rowAppearance.swipeBackgroundColor}
+        compactActions={variant === "slim"}
+        containerStyle={rowAppearance.swipeContainerStyle}
+        enableTrackpadSwipe
+        // Full swipe commits the advertised lifecycle action (Settle /
+        // Un-settle), never the secondary snooze action.
+        fullSwipeAction="primary"
+        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        onDelete={handleDelete}
+        onSwipeableClose={props.onSwipeableClose}
+        onSwipeableWillOpen={props.onSwipeableWillOpen}
+        primaryAction={primaryAction}
+        secondaryAction={secondaryAction}
+        resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}`}
+        simultaneousWith={props.simultaneousSwipeGesture}
+        threadTitle={thread.title}
+      >
+        {(close) => (
+          <ControlPillMenu
+            actions={[
+              ...(thread.branch
+                ? [
+                    {
+                      id: "new-thread-on-branch",
+                      title: getThreadListV2NewBranchMenuTitle(thread.branch),
+                      image: "square.and.pencil",
+                    },
+                  ]
+                : []),
+              { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              ...(snoozedRow
+                ? snoozedMenuActions
+                : !props.settlementSupported
+                  ? legacyMenuActions
+                  : canUnsettle
+                    ? slimMenuActions
+                    : swipeActions.secondary === "snooze"
+                      ? snoozableCardMenuActions
+                      : cardMenuActions),
+            ]}
+            onPressAction={handleMenuAction}
+            onOpenMenu={drag.onMenuOpen}
+            shouldOpenOnLongPress
+          >
+            {rowContent(close)}
+          </ControlPillMenu>
         )}
-        <ThreadSwipeable
-          dormant={dormant}
-          threadKey={`${thread.environmentId}:${thread.id}`}
-          backgroundColor={rowAppearance.swipeBackgroundColor}
-          compactActions={variant === "slim"}
-          containerStyle={rowAppearance.swipeContainerStyle}
-          enableTrackpadSwipe
-          // Full swipe commits the advertised lifecycle action (Settle /
-          // Un-settle), never the secondary snooze action.
-          fullSwipeAction="primary"
-          fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
-          onDelete={handleDelete}
-          onSwipeableClose={props.onSwipeableClose}
-          onSwipeableWillOpen={props.onSwipeableWillOpen}
-          primaryAction={primaryAction}
-          secondaryAction={secondaryAction}
-          resetKey={`${thread.environmentId}:${thread.id}:${variant}:${snoozedRow}:${thread.settledAt}:${thread.unsettledAt}:${thread.snoozedUntil}`}
-          simultaneousWith={props.simultaneousSwipeGesture}
-          threadTitle={thread.title}
-        >
-          {(close) => (
-            <ControlPillMenu
-              actions={[
-                ...(thread.branch
-                  ? [
-                      {
-                        id: "new-thread-on-branch",
-                        title: getThreadListV2NewBranchMenuTitle(thread.branch),
-                        image: "square.and.pencil",
-                      },
-                    ]
-                  : []),
-                { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
-                ...(snoozedRow
-                  ? snoozedMenuActions
-                  : !props.settlementSupported
-                    ? legacyMenuActions
-                    : canUnsettle
-                      ? slimMenuActions
-                      : swipeActions.secondary === "snooze"
-                        ? snoozableCardMenuActions
-                        : cardMenuActions),
-              ]}
-              onPressAction={handleMenuAction}
-              onOpenMenu={drag.onMenuOpen}
-              shouldOpenOnLongPress
-            >
-              {rowContent(close)}
-            </ControlPillMenu>
-          )}
-        </ThreadSwipeable>
-      </Reanimated.View>
-    </GestureDetector>
+      </ThreadSwipeable>
+    </ThreadListDragRow>
   );
 });

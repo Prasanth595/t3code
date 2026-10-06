@@ -66,7 +66,7 @@ import {
   ThreadListV2SnoozedShelfHeader,
   ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
-import { ThreadListDragSurface } from "./thread-list-drag";
+import { useThreadListDrag } from "./thread-list-drag";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import {
   buildThreadListV2Items,
@@ -140,12 +140,6 @@ function ThreadNavigationSidebarPane(
   const drawerColor = materialTheme["--color-drawer"];
 
   const insets = useSafeAreaInsets();
-  // The native-chrome list scrolls under the header with automatic insets;
-  // keep drag auto-scroll edges on the visible part of the list.
-  const navigationHeaderHeight = useContext(HeaderHeightContext);
-  const nativeDragEdgeInsets = NATIVE_LIQUID_GLASS_SUPPORTED
-    ? { top: navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT, bottom: insets.bottom }
-    : undefined;
   const { fabClearance } = useAndroidControlSizing();
   const projects = useProjects();
   const threads = useNavigationThreadShells();
@@ -155,7 +149,6 @@ function ThreadNavigationSidebarPane(
   const searchBarRef = useRef<SearchBarCommands>(null);
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const sidebarScrollGesture = useNativeGesture();
-  const listRef = useRef<LegendListRef>(null);
   const {
     archiveThread,
     confirmDeleteThread,
@@ -673,6 +666,22 @@ function ThreadNavigationSidebarPane(
     return true;
   }, [props.nativeChrome, props.onRequestVisibility, props.visible]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
+  const listRef = useRef<LegendListRef>(null);
+  const navigationHeaderHeight = useContext(HeaderHeightContext);
+  const drag = useThreadListDrag({
+    listRef,
+    estimatedRowHeight: SIDEBAR_ESTIMATED_ROW_HEIGHT,
+    items: listItems,
+    workingShelfEnabled,
+    onMoveThread: moveThread,
+    // The native-chrome list scrolls under its translucent header.
+    edgeInsets:
+      props.nativeChrome && NATIVE_LIQUID_GLASS_SUPPORTED
+        ? { top: navigationHeaderHeight || insets.top + IOS_NAV_BAR_HEIGHT, bottom: insets.bottom }
+        : Platform.OS === "ios"
+          ? { top: stickyHeaderHeight, bottom: 0, scrollInsetTop: 0 }
+          : undefined,
+  });
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
@@ -761,6 +770,7 @@ function ThreadNavigationSidebarPane(
               }
               canMoveUp={item.canMoveUp}
               canMoveDown={item.canMoveDown}
+              dragTarget={drag.target}
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
@@ -822,6 +832,7 @@ function ThreadNavigationSidebarPane(
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      drag.target,
       machineByEnvironmentId,
       moveThread,
       openPendingTask,
@@ -954,51 +965,41 @@ function ThreadNavigationSidebarPane(
         />
         <View className="flex-1">
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
-            <ThreadListDragSurface
-              listRef={listRef}
-              estimatedRowHeight={SIDEBAR_ESTIMATED_ROW_HEIGHT}
-              items={listItems}
-              workingShelfEnabled={workingShelfEnabled}
-              edgeInsets={nativeDragEdgeInsets}
-              onMoveThread={moveThread}
-            >
-              {(dragListProps) => (
-                <GestureDetector gesture={sidebarScrollGesture}>
-                  <LegendList
-                    ref={listRef}
-                    {...dragListProps}
-                    data={listItems}
-                    drawDistance={500}
-                    estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
-                    extraData={listExtraData}
-                    getItemType={(item) => item.type}
-                    itemsAreEqual={sidebarItemsAreEqual}
-                    keyExtractor={(item) => item.key}
-                    renderItem={renderListItem}
-                    automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
-                    contentInsetAdjustmentBehavior={
-                      NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"
-                    }
-                    contentContainerStyle={[
-                      styles.threadListContent,
-                      Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
-                      {
-                        paddingBottom: Math.max(insets.bottom, 16) + 16,
-                        paddingTop: 6,
-                      },
-                    ]}
-                    keyboardDismissMode="on-drag"
-                    keyboardShouldPersistTaps="handled"
-                    {...scrollGateHandlers}
-                    recycleItems
-                    scrollEventThrottle={16}
-                    showsVerticalScrollIndicator={false}
-                    style={styles.threadList}
-                    ListEmptyComponent={listEmpty}
-                  />
-                </GestureDetector>
-              )}
-            </ThreadListDragSurface>
+            <GestureDetector gesture={sidebarScrollGesture}>
+              <LegendList
+                ref={listRef}
+                {...drag.listProps}
+                data={listItems}
+                drawDistance={500}
+                estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
+                extraData={listExtraData}
+                getItemType={(item) => item.type}
+                itemsAreEqual={sidebarItemsAreEqual}
+                keyExtractor={(item) => item.key}
+                renderItem={renderListItem}
+                automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}
+                contentInsetAdjustmentBehavior={
+                  NATIVE_LIQUID_GLASS_SUPPORTED ? "automatic" : "never"
+                }
+                contentContainerStyle={[
+                  styles.threadListContent,
+                  Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
+                  {
+                    paddingBottom: Math.max(insets.bottom, 16) + 16,
+                    paddingTop: 6,
+                  },
+                ]}
+                keyboardDismissMode="on-drag"
+                keyboardShouldPersistTaps="handled"
+                {...scrollGateHandlers}
+                recycleItems
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator={false}
+                style={styles.threadList}
+                ListEmptyComponent={listEmpty}
+              />
+            </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
         </View>
       </>
@@ -1033,55 +1034,40 @@ function ThreadNavigationSidebarPane(
           <View className="flex-1 items-center justify-center">{listEmpty}</View>
         ) : (
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
-            <ThreadListDragSurface
-              listRef={listRef}
-              estimatedRowHeight={SIDEBAR_ESTIMATED_ROW_HEIGHT}
-              items={listItems}
-              workingShelfEnabled={workingShelfEnabled}
-              // The iOS sticky header overlays the padded list.
-              edgeInsets={
-                Platform.OS === "ios"
-                  ? { top: stickyHeaderHeight, bottom: 0, scrollInsetTop: 0 }
-                  : undefined
-              }
-              onMoveThread={moveThread}
-            >
-              {(dragListProps) => (
-                <GestureDetector gesture={sidebarScrollGesture}>
-                  <LegendList
-                    ref={listRef}
-                    {...dragListProps}
-                    data={listItems}
-                    drawDistance={500}
-                    estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
-                    extraData={listExtraData}
-                    getItemType={(item) => item.type}
-                    itemsAreEqual={sidebarItemsAreEqual}
-                    keyExtractor={(item) => item.key}
-                    renderItem={renderListItem}
-                    contentContainerStyle={[
-                      styles.threadListContent,
-                      Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
-                      {
-                        paddingBottom:
-                          Platform.OS === "android"
-                            ? Math.max(insets.bottom, 16) + fabClearance - insets.bottom
-                            : 16 + insets.bottom,
-                        paddingTop: Platform.OS === "android" ? 6 : topListInset,
-                      },
-                    ]}
-                    keyboardDismissMode="on-drag"
-                    keyboardShouldPersistTaps="handled"
-                    {...scrollGateHandlers}
-                    recycleItems
-                    scrollEventThrottle={16}
-                    showsVerticalScrollIndicator={false}
-                    style={styles.threadList}
-                    ListEmptyComponent={listEmpty}
-                  />
-                </GestureDetector>
-              )}
-            </ThreadListDragSurface>
+            <GestureDetector gesture={sidebarScrollGesture}>
+              <LegendList
+                ref={listRef}
+                {...drag.listProps}
+                data={listItems}
+                drawDistance={500}
+                estimatedItemSize={SIDEBAR_ESTIMATED_ROW_HEIGHT}
+                extraData={listExtraData}
+                getItemType={(item) => item.type}
+                itemsAreEqual={sidebarItemsAreEqual}
+                keyExtractor={(item) => item.key}
+                renderItem={renderListItem}
+                contentContainerStyle={[
+                  styles.threadListContent,
+                  Platform.OS === "android" ? { paddingHorizontal: 0 } : null,
+                  {
+                    paddingBottom:
+                      Platform.OS === "android"
+                        ? Math.max(insets.bottom, 16) + fabClearance - insets.bottom
+                        : 16 + insets.bottom,
+                    paddingTop: Platform.OS === "android" ? 6 : topListInset,
+                  },
+                ]}
+                keyboardDismissMode="on-drag"
+                keyboardShouldPersistTaps="handled"
+                {...scrollGateHandlers}
+                recycleItems
+                scrollEventThrottle={16}
+                showsVerticalScrollIndicator={false}
+                style={styles.threadList}
+                ListEmptyComponent={listEmpty}
+              />
+            </GestureDetector>
+            {drag.overlay}
           </SwipeableScrollGateProvider>
         )}
       </View>
