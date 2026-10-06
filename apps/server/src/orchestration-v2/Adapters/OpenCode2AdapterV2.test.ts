@@ -15,6 +15,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type ChatAttachment,
   type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -3394,7 +3395,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }).pipe(Effect.scoped, Effect.provide(IdAllocator.layer)),
   );
 
-  it("gives OpenCode a file URL for each pasted image and leaves other attachments as paths", () => {
+  it("gives a server T3 started a file URL for each pasted image, an external one none", () => {
     const image = ChatImageAttachment.make({
       type: "image",
       id: ChatAttachmentId.make("thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc"),
@@ -3410,17 +3411,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       sizeBytes: 4,
     });
     const attachmentsDir = "/home/a user/.t3/userdata/attachments";
-    assert.deepEqual(
-      promptImageFiles([image, document], (attachment) =>
-        resolveAttachmentPath({ attachmentsDir, attachment }),
-      ),
-      [
+    const resolve = (attachment: ChatAttachment) =>
+      resolveAttachmentPath({ attachmentsDir, attachment });
+    assert.deepEqual(promptImageFiles([image, document], resolve, false), [
       {
         uri: "file:///home/a%20user/.t3/userdata/attachments/thread-opencode2-adapter-12345678-1234-1234-1234-123456789abc.png",
         name: "screen shot.png",
       },
-      ],
-    );
+    ]);
+    assert.deepEqual(promptImageFiles([image, document], resolve, true), []);
   });
 
   it.effect("reads user and assistant text from the session's message list", () =>
