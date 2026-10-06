@@ -2,10 +2,11 @@ name: Mobile Android APK
 
 # Publishes the newest nightly-compatible Android build as a sideloadable APK
 # on the rolling "android-nightly" prerelease, for nightly users who can't join
-# the Play testing group. Play re-signs uploaded bundles with the app signing key, so its
-# universal APK matches the Play Store install and needs no signing secrets
-# here. EAS submits asynchronously (--no-wait), so this polls Play instead of
-# chaining off mobile-eas-production.yml; runs with nothing new exit early.
+# the Play testing group. Play re-signs uploaded bundles with the app signing
+# key, so its universal APK matches the Play Store install and needs no signing
+# secrets here. EAS submits asynchronously (--no-wait), so this polls Play
+# instead of chaining off mobile-eas-production.yml; runs with nothing new exit
+# early.
 on:
   schedule:
     # Avoid minute zero, when GitHub scheduled jobs are busiest.
