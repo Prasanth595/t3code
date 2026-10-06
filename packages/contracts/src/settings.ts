@@ -318,6 +318,13 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+/** A saved custom-snooze duration, offered in every snooze menu. */
+export const SnoozeFavorite = Schema.Struct({
+  amount: Schema.Number.check(Schema.isFinite(), Schema.isGreaterThan(0)),
+  unit: Schema.Literals(["minutes", "hours", "days"]),
+});
+export type SnoozeFavorite = typeof SnoozeFavorite.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -436,6 +443,9 @@ export const ClientSettingsSchema = Schema.Struct({
   favorites: ModelFavorites.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   providerModelPreferences: ProviderModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  snoozeFavorites: Schema.Array(SnoozeFavorite).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
   pullRequestMergeMethodOverrides: Schema.Record(
     TrimmedNonEmptyString,
@@ -1704,6 +1714,7 @@ export const ClientSettingsPatch = Schema.Struct({
   persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
+  snoozeFavorites: Schema.optionalKey(Schema.Array(SnoozeFavorite)),
   pullRequestMergeMethodOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, PullRequestMergeMethod),
   ),
