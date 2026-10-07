@@ -2771,10 +2771,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
         (item) => item.command.name !== "compact" || compactSlashCommandAvailable,
       );
-      const pluginActionItems = pluginActionsAt(pluginActions, "composer-slash", {
-        threadId: pluginActionThreadId,
-        projectId: pluginActionProjectId,
-      }).map(({ action, target }) => ({
+      // Running a plugin action needs `orchestration:operate`.
+      const pluginActionItems = (
+        canOperateThread
+          ? pluginActionsAt(pluginActions, "composer-slash", {
+              threadId: pluginActionThreadId,
+              projectId: pluginActionProjectId,
+            })
+          : []
+      ).map(({ action, target }) => ({
         id: `plugin-action:${action.id}`,
         type: "plugin-action" as const,
         action,
@@ -2863,6 +2868,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     compactSlashCommandAvailable,
     composerTrigger,
     environmentId,
+    canOperateThread,
     environmentThreadShells,
     exactPullRequestLookup.data,
     planModeUiEnabled,
@@ -4085,6 +4091,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "plugin-action") {
+        // Keep the typed command when this connection may no longer run actions.
+        if (!canOperateThread) return;
         // Runs now, like the built-ins; nothing reaches the agent as prompt text.
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -4202,6 +4210,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftReviewComment,
       addComposerDraftThreadContexts,
       applyPromptReplacement,
+      canOperateThread,
       composerDraftTarget,
       environmentId,
       handleInteractionModeChange,
