@@ -9,6 +9,8 @@ export type ComposerInlineToken =
   | {
       readonly type: "skill";
       readonly value: string;
+      /** The exact SKILL.md, present when the mention is linked: `[$name](path)`. */
+      readonly path?: string;
       readonly source: string;
       readonly start: number;
       readonly end: number;
@@ -37,6 +39,13 @@ const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
  * global, so use it with `matchAll` or `replace`, not `test` or `exec`.
  */
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
+/**
+ * Codex's linked skill mention: the path runs to the first `)`, unencoded, and
+ * names the SKILL.md that must run even when another skill shares the name.
+ * The path is bounded for the same reason as file link labels below.
+ */
+const LINKED_SKILL_TOKEN_REGEX =
+  /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^)\r\n]{0,1024}[\\/]SKILL\.md)\)(?=\s)/giu;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
  * The label body is bounded rather than `*`. Unbounded, every whitespace in
@@ -112,11 +121,40 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
   return matches;
 }
 
+/**
+ * Serialize a skill pick bound to its SKILL.md. Returns `undefined` for a path
+ * the linked syntax cannot carry, so callers fall back to the plain `$name`.
+ */
+export function formatLinkedSkillMention(skill: {
+  readonly name: string;
+  readonly path: string;
+}): string | undefined {
+  const source = `[$${skill.name}](${skill.path})`;
+  const token = collectComposerInlineTokens(`${source} `)[0];
+  return token?.type === "skill" && token.path === skill.path && token.end === source.length
+    ? source
+    : undefined;
+}
+
 export function collectComposerInlineTokens(
   text: string,
   options: CollectComposerInlineTokensOptions = {},
 ): ReadonlyArray<ComposerInlineToken> {
   const matches = collectMentionTokens(text);
+
+  for (const match of text.matchAll(LINKED_SKILL_TOKEN_REGEX)) {
+    const prefix = match[1] ?? "";
+    const start = (match.index ?? 0) + prefix.length;
+    const end = (match.index ?? 0) + match[0].length;
+    matches.push({
+      type: "skill",
+      value: match[2] ?? "",
+      path: match[3] ?? "",
+      source: text.slice(start, end),
+      start,
+      end,
+    });
+  }
 
   for (const match of text.matchAll(SKILL_TOKEN_REGEX)) {
     const fullMatch = match[0];

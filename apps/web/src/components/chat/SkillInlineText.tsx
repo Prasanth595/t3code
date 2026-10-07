@@ -1,6 +1,10 @@
-import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import {
+  formatProviderSkillDisplayName,
+  matchInlineSkills,
+  type InlineSkill,
+} from "@t3tools/shared/inlineSkills";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
-import { matchInlineSkills, type InlineSkill } from "@t3tools/shared/inlineSkills";
 
 import { SKILL_CHIP_ICON_SVG } from "../composerInlineChip";
 import { ContextChip, ContextChipLabel } from "../ContextChip";
@@ -52,6 +56,24 @@ export function renderSkillInlineMarkdownChildren(
       renderSkillInlineMarkdownChildren(child.props.children, skills),
     );
   });
+}
+
+/**
+ * Markdown parses a linked skill mention, `[$name](…/SKILL.md)`, as a link.
+ * Given that link's source, returns the chip the composer showed for it.
+ */
+export function renderLinkedSkillMention(
+  source: string,
+  skills: ReadonlyArray<InlineSkill>,
+): ReactNode | null {
+  const token = collectComposerInlineTokens(`${source} `)[0];
+  if (token?.type !== "skill" || token.path === undefined || token.end !== source.length) {
+    return null;
+  }
+  const skill = skills.find((candidate) => candidate.name === token.value) ?? {
+    name: token.value,
+  };
+  return <SkillChip skill={skill} rawText={source} />;
 }
 
 function SkillChip(props: { skill: InlineSkill; rawText: string }) {

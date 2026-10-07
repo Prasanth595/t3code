@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import { collectComposerInlineTokens, formatLinkedSkillMention } from "./composerInlineTokens.ts";
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -29,6 +29,26 @@ describe("collectComposerInlineTokens", () => {
         end: 60,
       },
     ]);
+  });
+
+  it("collects a skill mention linked to its SKILL.md, spaces in the path included", () => {
+    const source = "[$review](C:\\Users\\Jane Doe\\.codex\\skills\\review\\SKILL.md)";
+    expect(collectComposerInlineTokens(`Run ${source} now`)).toEqual([
+      {
+        type: "skill",
+        value: "review",
+        path: "C:\\Users\\Jane Doe\\.codex\\skills\\review\\SKILL.md",
+        source,
+        start: 4,
+        end: 4 + source.length,
+      },
+    ]);
+  });
+
+  it("leaves a $-labelled link to anything but a SKILL.md as text", () => {
+    expect(collectComposerInlineTokens("See [$review](https://example.com/review) now")).toEqual(
+      [],
+    );
   });
 
   it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
@@ -189,5 +209,28 @@ describe("collectComposerInlineTokens", () => {
     const started = performance.now();
     expect(collectComposerInlineTokens(" [[".repeat(40_000))).toEqual([]);
     expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("scans unclosed linked skill mentions in linear time", () => {
+    const started = performance.now();
+    expect(collectComposerInlineTokens(" [$a](".repeat(20_000))).toEqual([]);
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+});
+
+describe("formatLinkedSkillMention", () => {
+  it("links the mention to its SKILL.md", () => {
+    expect(
+      formatLinkedSkillMention({
+        name: "review",
+        path: "/Users/me/.agents/skills/review/SKILL.md",
+      }),
+    ).toBe("[$review](/Users/me/.agents/skills/review/SKILL.md)");
+  });
+
+  it("gives up on a path the linked syntax cannot carry", () => {
+    expect(
+      formatLinkedSkillMention({ name: "review", path: "/Users/me/skills (old)/review/SKILL.md" }),
+    ).toBeUndefined();
   });
 });
