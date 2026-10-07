@@ -1083,10 +1083,10 @@ describe("requiredScopesForProjectMutation", () => {
 
 describe("server model preferences", () => {
   it("decodes a visibility update scoped to a provider instance and model", () => {
-    const patch = { setModelHidden: { provider: "codex_work", model: "sol", hidden: false } };
+    const patch = { setModelsHidden: [{ provider: "codex_work", model: "sol", hidden: false }] };
     expect(decodeServerSettingsPatch(patch)).toEqual(patch);
     expect(() =>
-      decodeServerSettingsPatch({ setModelHidden: { provider: "codex_work", model: "sol" } }),
+      decodeServerSettingsPatch({ setModelsHidden: [{ provider: "codex_work", model: "sol" }] }),
     ).toThrow();
   });
   it("distinguishes unmigrated lists from deliberately cleared lists", () => {

@@ -145,7 +145,10 @@ interface ProviderModelsSectionProps {
    * `providerInstances[id].config`).
    */
   readonly onChange: (next: ReadonlyArray<CustomModelDefinition>) => void;
-  readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onHiddenModelsChange: (
+    next: ReadonlyArray<string>,
+    affectedModels?: ReadonlyArray<string>,
+  ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
@@ -282,6 +285,7 @@ export function ProviderModelsSection({
     if (!canWritePreferences || hidden === hiddenModelSet.has(slug)) return;
     onHiddenModelsChange(
       hidden ? [...hiddenModels, slug] : hiddenModels.filter((model) => model !== slug),
+      [slug],
     );
   };
 
@@ -533,7 +537,10 @@ export function ProviderModelsSection({
               size="xs"
               variant="ghost-muted"
               onClick={() =>
-                onHiddenModelsChange(nextHiddenModelsForBulkToggle(models, hiddenModels))
+                onHiddenModelsChange(
+                  nextHiddenModelsForBulkToggle(models, hiddenModels),
+                  builtInModels.map((model) => model.slug),
+                )
               }
             >
               {allBuiltInModelsHidden ? "Enable all" : "Disable all"}

@@ -30,6 +30,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -251,6 +252,7 @@ type ThreadSettingsSubmenuPage =
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
   readonly providerInstanceId?: ProviderInstanceId;
+  readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly reportedModelSelection?: ModelSelection | null;
@@ -310,6 +312,7 @@ type ThreadSettingsSessionValue = {
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
   readonly toggleHidden: (option: ModelOption) => void;
+  readonly pendingHiddenKeys: ReadonlySet<string>;
   readonly manageHidden: boolean;
   readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
@@ -346,12 +349,22 @@ function ThreadSettingsSessionProvider(
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
   const [manageHidden, setManageHidden] = useState(false);
+  const pendingHidden = useRef(new Set<string>());
+  const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
   const providerGroups = useMemo(
     () =>
       manageHidden && config
-        ? groupByProvider(buildModelOptions(config, props.selectedModel, undefined, true))
+        ? groupByProvider(
+            buildModelOptions(config, props.selectedModel, props.lockedProviderInstanceId, true),
+          )
         : props.providerGroups,
-    [config, manageHidden, props.providerGroups, props.selectedModel],
+    [
+      config,
+      manageHidden,
+      props.providerGroups,
+      props.selectedModel,
+      props.lockedProviderInstanceId,
+    ],
   );
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
@@ -382,10 +395,13 @@ function ThreadSettingsSessionProvider(
         environmentId: props.environmentId,
         input: {
           patch: {
-            toggleModelFavorite: {
-              provider: option.selection.instanceId,
-              model: option.selection.model,
-            },
+            setModelFavorites: [
+              {
+                provider: option.selection.instanceId,
+                model: option.selection.model,
+                favorite: !favoriteKeys.has(option.key),
+              },
+            ],
             ...(settings?.favorites === null
               ? { migrateModelPreferences: { favorites: modelFavorites } }
               : {}),
@@ -393,23 +409,36 @@ function ThreadSettingsSessionProvider(
         },
       });
     },
-    [favoritesLoaded, modelFavorites, props.environmentId, saveSettings, settings],
+    [favoriteKeys, favoritesLoaded, modelFavorites, props.environmentId, saveSettings, settings],
   );
   const toggleHidden = useCallback(
     (option: ModelOption) => {
-      if (!settings || !props.environmentId || !option.canHide) return;
+      if (
+        !settings ||
+        !props.environmentId ||
+        !option.canHide ||
+        pendingHidden.current.has(option.key)
+      )
+        return;
+      pendingHidden.current.add(option.key);
+      setPendingHiddenKeys(new Set(pendingHidden.current));
       void Haptics.selectionAsync();
       void saveSettings({
         environmentId: props.environmentId,
         input: {
           patch: {
-            setModelHidden: {
-              provider: option.selection.instanceId,
-              model: option.selection.model,
-              hidden: !option.isHidden,
-            },
+            setModelsHidden: [
+              {
+                provider: option.selection.instanceId,
+                model: option.selection.model,
+                hidden: !option.isHidden,
+              },
+            ],
           },
         },
+      }).then(() => {
+        pendingHidden.current.delete(option.key);
+        setPendingHiddenKeys(new Set(pendingHidden.current));
       });
     },
     [props.environmentId, saveSettings, settings],
@@ -534,6 +563,7 @@ function ThreadSettingsSessionProvider(
       manageHidden,
       setManageHidden,
       toggleHidden,
+      pendingHiddenKeys,
       runtimeMode: compatibleRuntimeMode,
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
@@ -581,6 +611,7 @@ function ThreadSettingsSessionProvider(
       providerGroups,
       manageHidden,
       toggleHidden,
+      pendingHiddenKeys,
       runtimeModeChoices,
       searchQuery,
       showLegacyToggle,
@@ -666,6 +697,7 @@ function ThreadSettingsModelListRow(props: {
           ? () => session.toggleHidden(props.option)
           : undefined
       }
+      hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />

@@ -262,8 +262,9 @@ export function applyServerSettingsPatch(
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     migrateModelPreferences,
-    toggleModelFavorite,
-    setModelHidden,
+    setModelFavorites,
+    setModelsHidden,
+    setProviderModelOrder,
     providerModelPreferences,
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
@@ -322,41 +323,49 @@ export function applyServerSettingsPatch(
   const initialFavorites =
     patch.favorites ?? current.favorites ?? migrateModelPreferences?.favorites ?? null;
   const favorites =
-    toggleModelFavorite === undefined
-      ? initialFavorites
-      : (initialFavorites ?? []).some(
-            (favorite) =>
-              favorite.provider === toggleModelFavorite.provider &&
-              favorite.model === toggleModelFavorite.model,
-          )
-        ? (initialFavorites ?? []).filter(
-            (favorite) =>
-              favorite.provider !== toggleModelFavorite.provider ||
-              favorite.model !== toggleModelFavorite.model,
-          )
-        : [...(initialFavorites ?? []), toggleModelFavorite];
+    setModelFavorites?.reduce((current, change) => {
+      const exists = current.some(
+        (favorite) => favorite.provider === change.provider && favorite.model === change.model,
+      );
+      return change.favorite
+        ? exists
+          ? current
+          : [...current, { provider: change.provider, model: change.model }]
+        : current.filter(
+            (favorite) => favorite.provider !== change.provider || favorite.model !== change.model,
+          );
+    }, initialFavorites ?? []) ?? initialFavorites;
   const initialModelPreferences =
     providerModelPreferences ??
     current.providerModelPreferences ??
     migrateModelPreferences?.providerModelPreferences ??
     null;
-  const nextModelPreferences =
-    setModelHidden === undefined
-      ? initialModelPreferences
-      : (() => {
-          const preferences = initialModelPreferences?.[setModelHidden.provider] ?? {
-            hiddenModels: [],
-            modelOrder: [],
-          };
-          const hiddenModels = preferences.hiddenModels.filter(
-            (model) => model !== setModelHidden.model,
-          );
-          if (setModelHidden.hidden) hiddenModels.push(setModelHidden.model);
-          return {
-            ...initialModelPreferences,
-            [setModelHidden.provider]: { ...preferences, hiddenModels },
-          };
-        })();
+  let nextModelPreferences = initialModelPreferences;
+  for (const change of setModelsHidden ?? []) {
+    const preferences = nextModelPreferences?.[change.provider] ?? {
+      hiddenModels: [],
+      modelOrder: [],
+    };
+    const hiddenModels = preferences.hiddenModels.filter((model) => model !== change.model);
+    if (change.hidden) hiddenModels.push(change.model);
+    nextModelPreferences = {
+      ...nextModelPreferences,
+      [change.provider]: { ...preferences, hiddenModels },
+    };
+  }
+  if (setProviderModelOrder) {
+    const preferences = nextModelPreferences?.[setProviderModelOrder.provider] ?? {
+      hiddenModels: [],
+      modelOrder: [],
+    };
+    nextModelPreferences = {
+      ...nextModelPreferences,
+      [setProviderModelOrder.provider]: {
+        ...preferences,
+        modelOrder: [...setProviderModelOrder.modelOrder],
+      },
+    };
+  }
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,

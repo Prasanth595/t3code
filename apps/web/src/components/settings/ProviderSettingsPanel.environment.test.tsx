@@ -108,6 +108,7 @@ vi.mock("../../hooks/useSettings", () => ({
     settingsState.updateEnvironmentIds.push(environmentId);
     return settingsState.updateSettings;
   },
+  useUpdateEnvironmentModelPreferences: () => settingsState.updateSettings,
   usePersistEnvironmentProviderInstanceMutation: (environmentId: EnvironmentId) => {
     settingsState.mutationEnvironmentIds.push(environmentId);
     return settingsState.mutateProviderInstance;
@@ -344,14 +345,17 @@ describe("EnvironmentProviderSettings routing", () => {
   });
 
   it.each([
-    ["onFavoriteModelsChange", { favorites: [{ provider: codexId, model: "chosen" }] }],
+    [
+      "onFavoriteModelsChange",
+      { setModelFavorites: [{ provider: codexId, model: "chosen", favorite: true }] },
+    ],
     [
       "onHiddenModelsChange",
-      { providerModelPreferences: { [codexId]: { hiddenModels: ["chosen"], modelOrder: [] } } },
+      { setModelsHidden: [{ provider: codexId, model: "chosen", hidden: true }] },
     ],
     [
       "onModelOrderChange",
-      { providerModelPreferences: { [codexId]: { hiddenModels: [], modelOrder: ["chosen"] } } },
+      { setProviderModelOrder: { provider: codexId, modelOrder: ["chosen"] } },
     ],
   ])("saves %s on the selected environment for every connected client", (action, expected) => {
     atoms.providers = [provider()];

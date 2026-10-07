@@ -503,7 +503,10 @@ interface ProviderInstanceCardProps {
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
-  readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onHiddenModelsChange: (
+    next: ReadonlyArray<string>,
+    affectedModels?: ReadonlyArray<string>,
+  ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
   readonly onRunUpdate?: (() => void) | undefined;

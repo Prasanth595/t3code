@@ -833,6 +833,47 @@ describe("synchronized model preferences", () => {
     providerModelPreferences: { [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] } },
   };
 
+  it("keeps concurrent adds and removes of the same favorite idempotent", () => {
+    const add = { setModelFavorites: [{ provider, model: "sol", favorite: true }] };
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, add);
+    expect(applyServerSettingsPatch(first, add).favorites).toEqual([{ provider, model: "sol" }]);
+    const remove = { setModelFavorites: [{ provider, model: "sol", favorite: false }] };
+    const removed = applyServerSettingsPatch(first, remove);
+    expect(applyServerSettingsPatch(removed, remove).favorites).toEqual([]);
+  });
+
+  it("preserves unrelated models and providers during bulk visibility and order edits", () => {
+    const otherProvider = ProviderInstanceId.make("claude_work");
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerModelPreferences: {
+        ...legacy.providerModelPreferences,
+        [otherProvider]: { hiddenModels: ["opus"], modelOrder: ["sonnet", "opus"] },
+      },
+    });
+    const mobile = applyServerSettingsPatch(initial, {
+      setModelsHidden: [{ provider, model: "luna", hidden: true }],
+    });
+    const web = applyServerSettingsPatch(mobile, {
+      setModelsHidden: [
+        { provider, model: "astra", hidden: false },
+        { provider, model: "sol", hidden: true },
+      ],
+      setProviderModelOrder: { provider, modelOrder: ["sol", "luna", "astra"] },
+    });
+    expect(web.providerModelPreferences?.[provider]).toEqual({
+      hiddenModels: ["luna", "sol"],
+      modelOrder: ["sol", "luna", "astra"],
+    });
+    expect(web.providerModelPreferences?.[otherProvider]).toEqual(
+      initial.providerModelPreferences?.[otherProvider],
+    );
+    expect(
+      applyServerSettingsPatch(web, {
+        setProviderModelOrder: { provider, modelOrder: [] },
+      }).providerModelPreferences?.[provider],
+    ).toEqual({ hiddenModels: ["luna", "sol"], modelOrder: [] });
+  });
+
   it("migrates saved lists independently without claiming empty legacy lists", () => {
     expect(modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, {})).toBeNull();
     const patch = modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, legacy)!;
@@ -869,12 +910,12 @@ describe("synchronized model preferences", () => {
     expect(cleared.favorites).toEqual(legacy.favorites);
   });
 
-  it("serializes favorite toggles without losing changes from other clients", () => {
+  it("sets favorites without losing changes from other clients", () => {
     const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      toggleModelFavorite: { provider, model: "sol" },
+      setModelFavorites: [{ provider, model: "sol", favorite: true }],
     });
     const second = applyServerSettingsPatch(first, {
-      toggleModelFavorite: { provider, model: "astra" },
+      setModelFavorites: [{ provider, model: "astra", favorite: true }],
       migrateModelPreferences: { favorites: [] },
     });
     expect(second.favorites).toEqual([
@@ -882,12 +923,13 @@ describe("synchronized model preferences", () => {
       { provider, model: "astra" },
     ]);
     const removed = applyServerSettingsPatch(second, {
-      toggleModelFavorite: { provider, model: "sol" },
+      setModelFavorites: [{ provider, model: "sol", favorite: false }],
     });
     expect(removed.favorites).toEqual([{ provider, model: "astra" }]);
     expect(
-      applyServerSettingsPatch(removed, { toggleModelFavorite: { provider, model: "astra" } })
-        .favorites,
+      applyServerSettingsPatch(removed, {
+        setModelFavorites: [{ provider, model: "astra", favorite: false }],
+      }).favorites,
     ).toEqual([]);
   });
 
@@ -896,17 +938,17 @@ describe("synchronized model preferences", () => {
       providerModelPreferences: legacy.providerModelPreferences,
     });
     const first = applyServerSettingsPatch(initial, {
-      setModelHidden: { provider, model: "sol", hidden: true },
+      setModelsHidden: [{ provider, model: "sol", hidden: true }],
     });
     const second = applyServerSettingsPatch(first, {
-      setModelHidden: { provider, model: "luna", hidden: true },
+      setModelsHidden: [{ provider, model: "luna", hidden: true }],
     });
     expect(second.providerModelPreferences?.[provider]).toEqual({
       hiddenModels: ["astra", "sol", "luna"],
       modelOrder: ["sol"],
     });
     const restored = applyServerSettingsPatch(second, {
-      setModelHidden: { provider, model: "sol", hidden: false },
+      setModelsHidden: [{ provider, model: "sol", hidden: false }],
     });
     expect(restored.providerModelPreferences?.[provider]).toEqual({
       hiddenModels: ["astra", "luna"],
@@ -914,12 +956,12 @@ describe("synchronized model preferences", () => {
     });
     expect(
       applyServerSettingsPatch(restored, {
-        setModelHidden: { provider, model: "sol", hidden: false },
+        setModelsHidden: [{ provider, model: "sol", hidden: false }],
       }).providerModelPreferences,
     ).toEqual(restored.providerModelPreferences);
     expect(
       applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-        setModelHidden: { provider, model: "sol", hidden: true },
+        setModelsHidden: [{ provider, model: "sol", hidden: true }],
       }).providerModelPreferences?.[provider]?.hiddenModels,
     ).toEqual(["sol"]);
   });
@@ -927,18 +969,19 @@ describe("synchronized model preferences", () => {
   it("keeps the same model on different provider instances as separate favorites", () => {
     const otherProvider = ProviderInstanceId.make("codex_personal");
     const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
-      toggleModelFavorite: { provider, model: "sol" },
+      setModelFavorites: [{ provider, model: "sol", favorite: true }],
     });
     const second = applyServerSettingsPatch(first, {
-      toggleModelFavorite: { provider: otherProvider, model: "sol" },
+      setModelFavorites: [{ provider: otherProvider, model: "sol", favorite: true }],
     });
     expect(second.favorites).toEqual([
       { provider, model: "sol" },
       { provider: otherProvider, model: "sol" },
     ]);
     expect(
-      applyServerSettingsPatch(second, { toggleModelFavorite: { provider, model: "sol" } })
-        .favorites,
+      applyServerSettingsPatch(second, {
+        setModelFavorites: [{ provider, model: "sol", favorite: false }],
+      }).favorites,
     ).toEqual([{ provider: otherProvider, model: "sol" }]);
   });
 

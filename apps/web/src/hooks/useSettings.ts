@@ -427,12 +427,48 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
-/** Toggle against the server's latest list so rapid taps and other clients cannot lose favorites. */
+/** Hydrate legacy preferences before a mutation can claim either server-owned list. */
+export async function prepareModelPreferencesPatch(
+  settings: ServerSettings,
+  patch: ServerSettingsPatch,
+): Promise<ServerSettingsPatch> {
+  if (settings.favorites === null || settings.providerModelPreferences === null) {
+    await ensureClientSettingsHydrated();
+  }
+  return { ...modelPreferencesMigrationPatch(settings, getClientSettings()), ...patch };
+}
+
+export function useUpdateEnvironmentModelPreferences(environmentId: EnvironmentId | null) {
+  const settings = useAtomValue(
+    environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
+  );
+  const save = useAtomCommand(serverEnvironment.updateSettings, "model preferences update");
+  return useCallback(
+    async (patch: ServerSettingsPatch) => {
+      if (!environmentId || !settings) return;
+      let prepared: ServerSettingsPatch;
+      try {
+        prepared = await prepareModelPreferencesPatch(settings, patch);
+      } catch {
+        toastManager.add({
+          type: "error",
+          title: "Model preferences not saved",
+          description: "Could not load saved model preferences. Try again.",
+        });
+        return;
+      }
+      return save({ environmentId, input: { patch: prepared } });
+    },
+    [environmentId, save, settings],
+  );
+}
+
+/** Send the desired state so two clients adding a favorite do not cancel each other. */
 export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId | null) {
   const settings = useAtomValue(
     environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
   );
-  const save = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
+  const save = useUpdateEnvironmentModelPreferences(environmentId);
   return useCallback(
     async (provider: ProviderInstanceId, model: string) => {
       if (!environmentId || !settings) return;
@@ -448,16 +484,17 @@ export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId |
           return;
         }
       }
+      const favorites = resolveModelPreferences(settings, getClientSettings()).favorites;
       await save({
-        environmentId,
-        input: {
-          patch: {
-            toggleModelFavorite: { provider, model },
-            ...(settings.favorites === null
-              ? { migrateModelPreferences: { favorites: getClientSettings().favorites } }
-              : {}),
+        setModelFavorites: [
+          {
+            provider,
+            model,
+            favorite: !favorites.some(
+              (favorite) => favorite.provider === provider && favorite.model === model,
+            ),
           },
-        },
+        ],
       });
     },
     [environmentId, save, settings],

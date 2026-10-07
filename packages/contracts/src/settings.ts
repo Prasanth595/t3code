@@ -1404,9 +1404,14 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
-  toggleModelFavorite: Schema.optionalKey(ModelFavorite),
-  setModelHidden: Schema.optionalKey(
-    Schema.Struct({ ...ModelFavorite.fields, hidden: Schema.Boolean }),
+  setModelFavorites: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
+  ),
+  setModelsHidden: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ ...ModelFavorite.fields, hidden: Schema.Boolean })),
+  ),
+  setProviderModelOrder: Schema.optionalKey(
+    Schema.Struct({ provider: ProviderInstanceId, modelOrder: Schema.Array(TrimmedString) }),
   ),
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
