@@ -105,6 +105,13 @@ describe("formatProviderSkillMention", () => {
     );
   });
 
+  it("refuses a shared name whose path the linked form cannot carry", () => {
+    const parenthesized = { ...personalReview, path: "/Users/matt/skills (old)/review/SKILL.md" };
+    const skills = [parenthesized, pluginReview];
+    expect(formatProviderSkillMention(parenthesized, skills)).toBeNull();
+    expect(formatProviderSkillMenuDescription(parenthesized, skills)).toContain("Can't be picked");
+  });
+
   it("ignores a same-name skill that cannot be picked", () => {
     expect(
       formatProviderSkillMention(personalReview, [

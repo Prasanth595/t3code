@@ -48,18 +48,21 @@ function isProviderSkillNameShared(
  * picked SKILL.md when another skill shares the name. Codex binds the linked
  * form to that exact file; for providers that invoke skills by name, the
  * server spells the file out (orchestration-v2/linkedSkillMentions.ts).
+ * `null` when the name is shared but the path cannot be linked (it contains
+ * a `)`): `$name` would run a different skill, so the pick inserts nothing.
  */
 export function formatProviderSkillMention(
   skill: Pick<ServerProviderSkill, "name" | "path">,
   skills: ReadonlyArray<ServerProviderSkill>,
-): string {
-  return (
-    (isProviderSkillNameShared(skill, skills) ? formatLinkedSkillMention(skill) : undefined) ??
-    `$${skill.name}`
-  );
+): string | null {
+  if (!isProviderSkillNameShared(skill, skills)) return `$${skill.name}`;
+  return formatLinkedSkillMention(skill) ?? null;
 }
 
-/** Menu description, led by the file path when the name alone cannot tell rows apart. */
+/**
+ * Menu description, led by the file path when the name alone cannot tell rows
+ * apart, and saying so when such a row cannot be picked.
+ */
 export function formatProviderSkillMenuDescription(
   skill: ServerProviderSkill,
   skills: ReadonlyArray<ServerProviderSkill>,
@@ -68,6 +71,9 @@ export function formatProviderSkillMenuDescription(
   const description = skill.shortDescription ?? skill.description ?? fallback;
   if (!isProviderSkillNameShared(skill, skills)) {
     return description;
+  }
+  if (formatLinkedSkillMention(skill) === undefined) {
+    return `${skill.path} · Can't be picked: another skill shares its name and its path contains ")"`;
   }
   return description ? `${skill.path} · ${description}` : skill.path;
 }

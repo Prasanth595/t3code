@@ -1,6 +1,9 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 
-export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName">;
+/** `path` tells same-name skills apart when a message links one by its SKILL.md. */
+export type InlineSkill = Pick<ServerProviderSkill, "name" | "displayName"> & {
+  readonly path?: string;
+};
 
 function titleCaseWords(value: string): string {
   const words: string[] = [];

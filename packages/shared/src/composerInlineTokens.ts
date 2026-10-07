@@ -143,13 +143,16 @@ export function collectComposerInlineTokens(
   const matches = collectMentionTokens(text);
 
   for (const match of text.matchAll(LINKED_SKILL_TOKEN_REGEX)) {
+    const path = match[3] ?? "";
+    // A URL to a SKILL.md is an ordinary link, not a local skill.
+    if (URI_SCHEME_REGEX.test(path) && !WINDOWS_DRIVE_PATH_REGEX.test(path)) continue;
     const prefix = match[1] ?? "";
     const start = (match.index ?? 0) + prefix.length;
     const end = (match.index ?? 0) + match[0].length;
     matches.push({
       type: "skill",
       value: match[2] ?? "",
-      path: match[3] ?? "",
+      path,
       source: text.slice(start, end),
       start,
       end,

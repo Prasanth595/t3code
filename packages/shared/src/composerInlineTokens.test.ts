@@ -45,11 +45,12 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it("leaves a $-labelled link to anything but a SKILL.md as text", () => {
-    expect(collectComposerInlineTokens("See [$review](https://example.com/review) now")).toEqual(
-      [],
-    );
-  });
+  it.each(["https://example.com/review", "https://example.com/review/SKILL.md"])(
+    "leaves a $-labelled link to %s as an ordinary link",
+    (target) => {
+      expect(collectComposerInlineTokens(`See [$review](${target}) now`)).toEqual([]);
+    },
+  );
 
   it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
     "collects %s skill names that begin with a digit",

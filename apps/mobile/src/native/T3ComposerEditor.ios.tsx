@@ -153,7 +153,17 @@ export function ComposerEditor({
   );
 
   const skillLabels = useMemo(
-    () => new Map(skills.map((skill) => [skill.name, skill.displayName?.trim() || skill.name])),
+    // Keyed by name and by path, so a linked mention labels the skill it links.
+    () =>
+      new Map(
+        skills.flatMap((skill) => {
+          const label = skill.displayName?.trim() || skill.name;
+          return [
+            [skill.path, label],
+            [skill.name, label],
+          ] as const;
+        }),
+      ),
     [skills],
   );
   const tokensJson = useMemo(() => {
@@ -175,7 +185,9 @@ export function ComposerEditor({
           ...contextChipPresentation(token.type === "context" ? token.kind : token.type, record),
           label:
             token.type === "skill"
-              ? (skillLabels.get(token.value) ?? token.value)
+              ? ((token.path === undefined ? undefined : skillLabels.get(token.path)) ??
+                skillLabels.get(token.value) ??
+                token.value)
               : token.type === "context"
                 ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
                 : basename(token.value),

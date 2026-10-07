@@ -1168,9 +1168,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       ],
       content: buildDocJson(
         value,
-        (name) => {
+        (name, path) => {
           const normalized = name.startsWith("$") ? name.slice(1) : name;
-          const found = skills.find((candidate) => candidate.name === normalized);
+          const found = findComposerSkill(skills, normalized, path);
           if (!found) {
             return {
               label: formatProviderSkillDisplayName({ name: normalized }),

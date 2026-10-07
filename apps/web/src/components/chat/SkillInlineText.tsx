@@ -70,9 +70,8 @@ export function renderLinkedSkillMention(
   if (token?.type !== "skill" || token.path === undefined || token.end !== source.length) {
     return null;
   }
-  const skill = skills.find((candidate) => candidate.name === token.value) ?? {
-    name: token.value,
-  };
+  const skill = skills.find((candidate) => candidate.path === token.path) ??
+    skills.find((candidate) => candidate.name === token.value) ?? { name: token.value };
   return <SkillChip skill={skill} rawText={source} />;
 }
 

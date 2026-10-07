@@ -4099,7 +4099,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "skill") {
-        const replacement = `${formatProviderSkillMention(item.skill, selectedProviderSkills)} `;
+        const mention = formatProviderSkillMention(item.skill, selectedProviderSkills);
+        // The row says why it can't be picked; leave the draft as typed.
+        if (mention === null) return;
+        const replacement = `${mention} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,

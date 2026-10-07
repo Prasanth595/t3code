@@ -145,7 +145,7 @@ export function resolveComposerCommandSelection(input: {
   readonly text: string;
   readonly cursor: number;
   readonly interactionMode: ProviderInteractionMode | null;
-} {
+} | null {
   const { draftMessage, trigger, item } = input;
   if (
     input.allowInteractionMode &&
@@ -162,7 +162,10 @@ export function resolveComposerCommandSelection(input: {
   if (item.type === "path") {
     replacement = `${serializeComposerFileLink(item.path)} `;
   } else if (item.type === "skill") {
-    replacement = `${formatProviderSkillMention(item.skill, input.skills)} `;
+    const mention = formatProviderSkillMention(item.skill, input.skills);
+    // The row says why it can't be picked; leave the draft as typed.
+    if (mention === null) return null;
+    replacement = `${mention} `;
   } else if (item.type === "slash-command") {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
@@ -638,6 +641,7 @@ export function useComposerCommandMenu({
           onUpdateInteractionMode !== undefined &&
           selectedProviderStatus?.showInteractionModeToggle !== false,
       });
+      if (result === null) return;
       setSelection({ start: result.cursor, end: result.cursor });
       onChangeDraftMessage(result.text);
       if (result.interactionMode !== null) {
