@@ -1688,7 +1688,7 @@ export interface ChatComposerProps {
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
     model: string,
-    options?: { focusComposer?: boolean },
+    options?: { focusComposer?: boolean; modelOptions?: ModelSelection["options"] },
   ) => void;
   onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason: (instanceId: ProviderInstanceId, model: string) => string | null;
@@ -5540,7 +5540,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               ...(multipleModelSelections !== null
                 ? { selectedModels: multipleModelSelections }
                 : {}),
-              onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+              onToggleModel: (
+                instanceId: ProviderInstanceId,
+                model: string,
+                options?: ModelSelection["options"],
+              ) => {
                 const current = multipleModelSelections ?? [selectedModelSelection];
                 const matchesModel = (selection: ModelSelection) => {
                   if (selection.instanceId !== instanceId) return false;
@@ -5557,7 +5561,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 const exists = current.some(matchesModel);
                 const next = exists
                   ? current.filter((selection) => !matchesModel(selection))
-                  : [...current, createModelSelection(instanceId, model)];
+                  : [...current, createModelSelection(instanceId, model, options)];
                 if (next.length > 1) {
                   setMultipleModelSelections(next);
                 } else {
@@ -5616,6 +5620,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);
           onProviderModelSelect(instanceId, model);
+        }}
+        onInstanceModelSelectionChange={(instanceId, model, modelOptions) => {
+          setMultipleModelSelections(null);
+          onProviderModelSelect(instanceId, model, { modelOptions });
         }}
         onOpenProviderSetup={onOpenProviderSetup}
       />
