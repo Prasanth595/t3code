@@ -349,11 +349,9 @@ function ThreadSettingsSessionProvider(
   const providerGroups = useMemo(
     () =>
       manageHidden && config
-        ? groupByProvider(
-            buildModelOptions(config, props.selectedModel, props.providerInstanceId, true),
-          )
+        ? groupByProvider(buildModelOptions(config, props.selectedModel, undefined, true))
         : props.providerGroups,
-    [config, manageHidden, props.providerGroups, props.providerInstanceId, props.selectedModel],
+    [config, manageHidden, props.providerGroups, props.selectedModel],
   );
   const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
@@ -711,7 +709,9 @@ function useThreadSettingsCatalogItems(
         }
         const driver = group.models[0]?.providerDriver ?? group.providerKey;
         const catalogModels =
-          session.showLegacy || session.providerFilter === FAVORITES_PROVIDER_FILTER
+          session.manageHidden ||
+          session.showLegacy ||
+          session.providerFilter === FAVORITES_PROVIDER_FILTER
             ? group.models
             : group.models.filter(
                 (model) =>
@@ -795,6 +795,7 @@ function useThreadSettingsCatalogItems(
       session.providerGroups,
       session.searchQuery,
       session.showLegacy,
+      session.manageHidden,
     ],
   );
 }
@@ -875,21 +876,23 @@ function ThreadSettingsOptionsItem(props: {
         </Animated.View>
       </Animated.View>
 
-      {Platform.OS !== "ios" && session.hasLegacyModels ? (
-        <>
-          <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">
-            Catalog
-          </Text>
-          <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
-            <SwitchRow
-              isLast
-              label="Legacy models"
-              onValueChange={session.setShowLegacy}
-              value={session.showLegacy}
-            />
-          </View>
-        </>
-      ) : null}
+      <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">Catalog</Text>
+      <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
+        <SwitchRow
+          label="Manage hidden models"
+          value={session.manageHidden}
+          onValueChange={session.setManageHidden}
+          isLast={Platform.OS === "ios" || !session.hasLegacyModels}
+        />
+        {Platform.OS !== "ios" && session.hasLegacyModels ? (
+          <SwitchRow
+            isLast
+            label="Legacy models"
+            onValueChange={session.setShowLegacy}
+            value={session.showLegacy}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -1177,8 +1180,7 @@ function ThreadSettingsModelsScreen() {
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const hasCustomCatalogFilter =
-    session.providerFilter !== null || session.showLegacy || session.manageHidden;
+  const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useCallback(() => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
@@ -1199,12 +1201,6 @@ function ThreadSettingsModelsScreen() {
     () => ({
       title: "Model filters",
       items: [
-        {
-          type: "action" as const,
-          title: "Manage hidden models",
-          state: session.manageHidden ? ("on" as const) : ("off" as const),
-          onPress: () => session.setManageHidden(!session.manageHidden),
-        },
         {
           type: "submenu" as const,
           title: "Provider",
@@ -1240,11 +1236,6 @@ function ThreadSettingsModelsScreen() {
                 title="Model filters"
                 actions={[
                   {
-                    id: "manage-hidden",
-                    title: "Manage hidden models",
-                    state: session.manageHidden ? ("on" as const) : ("off" as const),
-                  },
-                  {
                     title: "Provider",
                     subactions: providerFilters.map((filter) => ({
                       id: filter.id,
@@ -1263,9 +1254,7 @@ function ThreadSettingsModelsScreen() {
                     : []),
                 ]}
                 onPressAction={({ nativeEvent }) => {
-                  if (nativeEvent.event === "manage-hidden") {
-                    session.setManageHidden(!session.manageHidden);
-                  } else if (nativeEvent.event === "show-legacy") {
+                  if (nativeEvent.event === "show-legacy") {
                     session.setShowLegacy(!session.showLegacy);
                   } else {
                     const filter = providerFilters.find((item) => item.id === nativeEvent.event);
@@ -1298,7 +1287,6 @@ function ThreadSettingsModelsScreen() {
           session.providerFilter,
           session.providerGroups.map((group) => group.providerKey),
           session.showLegacy,
-          session.manageHidden,
         ]}
         options={{
           unstable_headerToolbarItems: usesNativeMailSearchToolbar
@@ -1369,12 +1357,6 @@ function ThreadSettingsModelsScreen() {
             separateBackground
             title="Model filters"
           >
-            <NativeHeaderToolbar.MenuAction
-              isOn={session.manageHidden}
-              onPress={() => session.setManageHidden(!session.manageHidden)}
-            >
-              Manage hidden models
-            </NativeHeaderToolbar.MenuAction>
             <NativeHeaderToolbar.Menu title="Provider">
               <NativeHeaderToolbar.Label>Provider</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction
