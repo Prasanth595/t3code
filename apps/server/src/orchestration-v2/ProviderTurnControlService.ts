@@ -55,7 +55,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
-    readonly keepBackgroundWork?: boolean;
+    readonly scope?: "turn";
   }) => Effect.Effect<
     void | ProviderAdapter.ProviderAdapterV2SubagentOutcome,
     ProviderTurnControlError
@@ -184,11 +184,8 @@ export const layer: Layer.Layer<
     return ProviderTurnControlServiceV2.of({
       interrupt: (input) =>
         Effect.gen(function* () {
-          const { keepBackgroundWork, ...target } = input;
+          const { scope, ...target } = input;
           const loaded = yield* load({ ...target, operation: "interrupt" });
-          // A turn-scoped Stop leaves background work alone, so a turn that
-          // ended meanwhile has nothing left for it to stop.
-          if (keepBackgroundWork === true && loaded.providerTurn.status !== "running") return;
           const session = Option.isSome(loaded.session)
             ? loaded.session
             : yield* sessions.get(input.providerSessionId);
@@ -220,6 +217,13 @@ export const layer: Layer.Layer<
                 : { requestedAt: input.subagent.requestedAt }),
             });
           }
+          // A provider that cannot end a turn without its background work ends both.
+          const keepBackgroundWork =
+            scope === "turn" &&
+            session.value.providerSession.capabilities.turns.interruptKeepsBackgroundWork === true;
+          // A turn-scoped Stop leaves background work alone, so a turn that
+          // ended meanwhile has nothing left for it to stop.
+          if (keepBackgroundWork && loaded.providerTurn.status !== "running") return;
           // A settled turn reaches its adapter too: only the adapter knows
           // whether it still runs work for the thread, and each one either
           // stops it or reports there is nothing left to stop. Background work
@@ -227,7 +231,7 @@ export const layer: Layer.Layer<
           yield* session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
-            ...(keepBackgroundWork === true
+            ...(keepBackgroundWork
               ? { keepBackgroundWork: true }
               : { requestRuntimeRestart: true }),
           });
