@@ -238,6 +238,12 @@ describe("formatLinkedSkillMention", () => {
     expect(collectComposerInlineTokens(`${source} `)[0]).toMatchObject({ value: "review", path });
   });
 
+  it("links a path of any length", () => {
+    const path = `/skills/${"deep dir/".repeat(1_000)}review/SKILL.md`;
+    const source = formatLinkedSkillMention({ name: "review", path });
+    expect(collectComposerInlineTokens(`${source} `)[0]).toMatchObject({ path });
+  });
+
   it("gives up on a path that is not a SKILL.md", () => {
     expect(formatLinkedSkillMention({ name: "review", path: "pi:skill:review" })).toBeUndefined();
   });

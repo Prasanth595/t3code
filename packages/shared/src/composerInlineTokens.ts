@@ -45,8 +45,7 @@ export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$
  * (see formatLinkedSkillMention), so it holds no whitespace or parentheses and
  * every scan stops at the next space.
  */
-const LINKED_SKILL_TOKEN_REGEX =
-  /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^()\s]{1,4096})\)(?=\s)/gu;
+const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^()\s]+)\)(?=\s)/gu;
 const SKILL_FILE_REGEX = /[\\/]SKILL\.md$/i;
 /** Characters a Markdown link destination cannot hold as written, plus `%` itself. */
 const LINK_DESTINATION_ESCAPES = /[%()<>\s]/gu;
