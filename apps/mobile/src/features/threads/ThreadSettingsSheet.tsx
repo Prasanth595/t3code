@@ -432,7 +432,7 @@ function ThreadSettingsSessionProvider(
                 },
               ],
               ...(currentSettings.favorites === null
-                ? { migrateModelPreferences: { favorites: modelFavorites } }
+                ? { migrateModelPreferences: { favorites } }
                 : {}),
             },
           },
@@ -459,7 +459,7 @@ function ThreadSettingsSessionProvider(
         }
       }
     },
-    [favoritesLoaded, legacyFavorites, modelFavorites, props.environmentId, registry, saveSettings],
+    [favoritesLoaded, legacyFavorites, props.environmentId, registry, saveSettings],
   );
   const toggleHidden = useCallback(
     (option: ModelOption) => {
