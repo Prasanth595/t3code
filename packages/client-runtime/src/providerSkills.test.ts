@@ -105,11 +105,18 @@ describe("formatProviderSkillMention", () => {
     );
   });
 
-  it("refuses a shared name whose path the linked form cannot carry", () => {
+  it("links any SKILL.md path, encoding what Markdown cannot hold", () => {
     const parenthesized = { ...personalReview, path: "/Users/matt/skills (old)/review/SKILL.md" };
-    const skills = [parenthesized, pluginReview];
-    expect(formatProviderSkillMention(parenthesized, skills)).toBeNull();
-    expect(formatProviderSkillMenuDescription(parenthesized, skills)).toContain("Can't be picked");
+    expect(formatProviderSkillMention(parenthesized, [parenthesized, pluginReview])).toBe(
+      "[$code-review](/Users/matt/skills%20%28old%29/review/SKILL.md)",
+    );
+  });
+
+  it("refuses a shared name when the skill has no SKILL.md to link", () => {
+    const synthetic = { ...personalReview, path: "pi:skill:code-review" };
+    const skills = [synthetic, pluginReview];
+    expect(formatProviderSkillMention(synthetic, skills)).toBeNull();
+    expect(formatProviderSkillMenuDescription(synthetic, skills)).toContain("Can't be picked");
   });
 
   it("ignores a same-name skill that cannot be picked", () => {

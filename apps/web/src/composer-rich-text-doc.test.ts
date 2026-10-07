@@ -236,7 +236,7 @@ describe("composer rich text document model", () => {
     "unmatched ** stays literal",
     "**bold** then @README.md then *italic*",
     "run [$review](/Users/me/.agents/skills/review/SKILL.md) on **this**",
-    "[$review](C:\\Users\\Jane Doe\\.codex\\skills\\review\\SKILL.md) and $review",
+    "[$review](C:\\Users\\Jane%20Doe\\skills%20%28old%29\\review\\SKILL.md) and $review",
   ])("round-trips %s through a real ProseMirror document", (value) => {
     expect(roundTrip(value).value).toBe(value);
   });

@@ -1708,8 +1708,8 @@ export const layerWithOptions = (
         // Steers carry no workspace, so they reuse the one their thread's turn started in.
         const turnCwds = new Map<ProviderThreadId, string | null>();
         // A linked skill mention must name a skill this provider reported for the
-        // workspace. Codex binds the link to its file; every other driver invokes
-        // skills by name and gets the picked file spelled out instead.
+        // workspace. The Codex adapter sends it as a structured skill input; every
+        // other driver invokes skills by name and gets the picked file spelled out.
         const withProviderSkillMentions = <
           Input extends { readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage },
         >(

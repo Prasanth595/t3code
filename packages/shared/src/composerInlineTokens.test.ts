@@ -31,8 +31,8 @@ describe("collectComposerInlineTokens", () => {
     ]);
   });
 
-  it("collects a skill mention linked to its SKILL.md, spaces in the path included", () => {
-    const source = "[$review](C:\\Users\\Jane Doe\\.codex\\skills\\review\\SKILL.md)";
+  it("collects a skill mention linked to its SKILL.md, decoding its destination", () => {
+    const source = "[$review](C:\\Users\\Jane%20Doe\\.codex\\skills\\review\\SKILL.md)";
     expect(collectComposerInlineTokens(`Run ${source} now`)).toEqual([
       {
         type: "skill",
@@ -229,9 +229,16 @@ describe("formatLinkedSkillMention", () => {
     ).toBe("[$review](/Users/me/.agents/skills/review/SKILL.md)");
   });
 
-  it("gives up on a path the linked syntax cannot carry", () => {
-    expect(
-      formatLinkedSkillMention({ name: "review", path: "/Users/me/skills (old)/review/SKILL.md" }),
-    ).toBeUndefined();
+  it.each([
+    "C:\\Users\\Jane Doe\\skills (old)\\review\\SKILL.md",
+    "/Users/me/50% <draft>/review/skill.md",
+  ])("round-trips %s through its encoded destination", (path) => {
+    const source = formatLinkedSkillMention({ name: "review", path });
+    expect(source).not.toContain(" ");
+    expect(collectComposerInlineTokens(`${source} `)[0]).toMatchObject({ value: "review", path });
+  });
+
+  it("gives up on a path that is not a SKILL.md", () => {
+    expect(formatLinkedSkillMention({ name: "review", path: "pi:skill:review" })).toBeUndefined();
   });
 });

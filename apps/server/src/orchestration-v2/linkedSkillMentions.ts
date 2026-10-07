@@ -5,9 +5,10 @@ import * as Schema from "effect/Schema";
 /**
  * The composer links a skill pick to its file, `[$name](…/SKILL.md)`, when
  * another skill shares the name. Before a turn reaches a provider, every link
- * must name a skill that provider reported, and providers other than Codex
- * get the link spelled out: they invoke skills by name and would run
- * whichever same-name skill they resolve first.
+ * must name a skill that provider reported. Name-based dispatch would run
+ * whichever same-name skill a provider resolves first, so Codex gets a
+ * structured skill input (CodexAdapterV2) and every other provider gets the
+ * link spelled out (expandLinkedSkillMentions).
  */
 export interface LinkedSkillMention {
   readonly name: string;
@@ -92,25 +93,33 @@ export function findUnavailableSkillMention(
     : new UnavailableSkillMentionError({ name: mention.name, path: mention.path });
 }
 
+/** `text` with each mention, in order, replaced by `replacement(mention)`. */
+export function replaceLinkedSkillMentions(
+  text: string,
+  mentions: ReadonlyArray<LinkedSkillMention>,
+  replacement: (mention: LinkedSkillMention) => string,
+): string {
+  let result = "";
+  let cursor = 0;
+  for (const mention of mentions) {
+    result += text.slice(cursor, mention.start) + replacement(mention);
+    cursor = mention.end;
+  }
+  return result + text.slice(cursor);
+}
+
 /**
- * Rewrites each link to the bare name, so no adapter dispatches it by name,
- * plus an instruction to follow the picked file.
+ * For providers that invoke skills by name: each link becomes the bare name,
+ * so no adapter dispatches it by name, plus an instruction to follow the
+ * picked file. Codex instead gets structured skill inputs (CodexAdapterV2).
  */
 export function expandLinkedSkillMentions(
   text: string,
   mentions: ReadonlyArray<LinkedSkillMention>,
 ): string {
   if (mentions.length === 0) return text;
-  let body = "";
-  let cursor = 0;
-  const skillByPath = new Map<string, string>();
-  for (const mention of mentions) {
-    body += text.slice(cursor, mention.start) + mention.name;
-    cursor = mention.end;
-    skillByPath.set(mention.path, mention.name);
-  }
-  body += text.slice(cursor);
-
+  const body = replaceLinkedSkillMentions(text, mentions, (mention) => mention.name);
+  const skillByPath = new Map(mentions.map((mention) => [mention.path, mention.name]));
   const instructions = [...skillByPath].map(
     ([path, name]) =>
       `The user invoked the \`${name}\` skill defined in ${path}. Read that file and follow its instructions, not those of any other skill named \`${name}\`.`,
