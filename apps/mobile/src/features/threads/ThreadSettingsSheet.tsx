@@ -11,9 +11,10 @@ import type {
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
+  ServerSettings,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
@@ -344,12 +345,16 @@ const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | 
 function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
+  const registry = use(RegistryContext);
   const preferences = useAtomValue(mobilePreferencesAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
+  const pendingFavorites = useRef(
+    new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
+  );
   const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
   const providerGroups = useMemo(
     () =>
@@ -388,28 +393,73 @@ function ThreadSettingsSessionProvider(
     [modelFavorites],
   );
   const toggleFavorite = useCallback(
-    (option: ModelOption) => {
+    async (option: ModelOption) => {
       if (!favoritesLoaded || !props.environmentId) return;
+      const currentSettings = registry
+        .get(environmentServerConfigsAtom)
+        .get(props.environmentId)?.settings;
+      if (!currentSettings) return;
+      const favorites = resolveModelPreferences(currentSettings, {
+        favorites: legacyFavorites,
+      }).favorites;
+      const key = JSON.stringify([
+        props.environmentId,
+        option.selection.instanceId,
+        option.selection.model,
+      ]);
+      const previous = pendingFavorites.current.get(key);
+      const previousFavorite =
+        previous && (previous.pending || previous.settings.favorites === currentSettings.favorites)
+          ? previous.favorite
+          : favorites.some(
+              (favorite) =>
+                favorite.provider === option.selection.instanceId &&
+                favorite.model === option.selection.model,
+            );
+      const pending = { favorite: !previousFavorite, settings: currentSettings, pending: true };
+      pendingFavorites.current.set(key, pending);
       void Haptics.selectionAsync();
-      void saveSettings({
-        environmentId: props.environmentId,
-        input: {
-          patch: {
-            setModelFavorites: [
-              {
-                provider: option.selection.instanceId,
-                model: option.selection.model,
-                favorite: !favoriteKeys.has(option.key),
-              },
-            ],
-            ...(settings?.favorites === null
-              ? { migrateModelPreferences: { favorites: modelFavorites } }
-              : {}),
+      try {
+        const result = await saveSettings({
+          environmentId: props.environmentId,
+          input: {
+            patch: {
+              setModelFavorites: [
+                {
+                  provider: option.selection.instanceId,
+                  model: option.selection.model,
+                  favorite: pending.favorite,
+                },
+              ],
+              ...(currentSettings.favorites === null
+                ? { migrateModelPreferences: { favorites: modelFavorites } }
+                : {}),
+            },
           },
-        },
-      });
+        });
+        if (
+          AsyncResult.isSuccess(result) &&
+          registry.get(environmentServerConfigsAtom).get(props.environmentId)?.settings
+            .favorites === currentSettings.favorites
+        ) {
+          pending.pending = false;
+        }
+      } finally {
+        if (pending.pending && pendingFavorites.current.get(key) === pending) {
+          if (
+            previous &&
+            !previous.pending &&
+            registry.get(environmentServerConfigsAtom).get(props.environmentId)?.settings
+              .favorites === previous.settings.favorites
+          ) {
+            pendingFavorites.current.set(key, previous);
+          } else {
+            pendingFavorites.current.delete(key);
+          }
+        }
+      }
     },
-    [favoriteKeys, favoritesLoaded, modelFavorites, props.environmentId, saveSettings, settings],
+    [favoritesLoaded, legacyFavorites, modelFavorites, props.environmentId, registry, saveSettings],
   );
   const toggleHidden = useCallback(
     (option: ModelOption) => {

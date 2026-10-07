@@ -150,6 +150,7 @@ interface ProviderModelsSectionProps {
     affectedModels?: ReadonlyArray<string>,
   ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
+  readonly onToggleFavorite: (model: string) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
@@ -177,6 +178,7 @@ export function ProviderModelsSection({
   onChange,
   onHiddenModelsChange,
   onFavoriteModelsChange,
+  onToggleFavorite,
   onModelOrderChange,
 }: ProviderModelsSectionProps) {
   const [input, setInput] = useState("");
@@ -291,11 +293,7 @@ export function ProviderModelsSection({
 
   const handleToggleFavorite = (slug: string) => {
     if (!canWritePreferences) return;
-    if (favoriteModelSet.has(slug)) {
-      onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
-      return;
-    }
-    onFavoriteModelsChange([...favoriteModels, slug]);
+    onToggleFavorite(slug);
   };
 
   // Rows only trade places with a neighbour in the same group (favorites,
