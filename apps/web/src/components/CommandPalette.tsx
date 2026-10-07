@@ -72,6 +72,7 @@ import {
   MonitorIcon,
   MoonIcon,
   PaletteIcon,
+  PlugIcon,
   RotateCcwIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -140,6 +141,9 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { runPluginAction } from "../pluginActions";
+import { usePluginActions } from "../state/pluginActions";
+import { pluginActionLabels, pluginActionsAt } from "@t3tools/client-runtime/state/pluginActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
@@ -1049,6 +1053,9 @@ function OpenCommandPaletteDialog(props: {
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
+  // Plugin actions belong to the environment the palette was opened in.
+  const pluginActionEnvironmentId = currentProjectEnvironmentId ?? primaryEnvironmentId;
+  const pluginActions = usePluginActions(pluginActionEnvironmentId);
   // Where "without a project" threads start: the current environment when it
   // offers them, otherwise the first connected one that does.
   const scratchTargetEnvironmentId = scratchEnvironmentId(
@@ -1945,6 +1952,26 @@ function OpenCommandPaletteDialog(props: {
         });
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
+    });
+  }
+
+  if (pluginActionEnvironmentId !== null) {
+    const environmentId = pluginActionEnvironmentId;
+    const entries = pluginActionsAt(pluginActions, "command-palette", {
+      threadId: activeThread?.id ?? null,
+      projectId: currentProjectId,
+    });
+    const labels = pluginActionLabels(entries.map((entry) => entry.action));
+    entries.forEach(({ action, target }, index) => {
+      actionItems.push({
+        kind: "action",
+        value: `plugin-action:${environmentId}:${action.id}`,
+        searchTerms: [action.title, action.name, action.pluginName, "plugin"],
+        title: labels[index] ?? action.title,
+        description: action.description ?? action.pluginName,
+        icon: <PlugIcon className={ITEM_ICON_CLASS} />,
+        run: () => runPluginAction({ environmentId, action, target }),
+      });
     });
   }
 

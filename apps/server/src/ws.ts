@@ -128,6 +128,7 @@ import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
+import * as PluginActions from "./plugins/PluginActions.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1194,6 +1195,7 @@ const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
   Effect.gen(function* () {
     const pluginCatalog = yield* PluginCatalog.PluginCatalog;
     const pluginSettings = yield* PluginSettings.PluginSettings;
+    const pluginActions = yield* PluginActions.PluginActions;
     return ServerWsPluginRpcGroup.of({
       [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
       [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
@@ -1207,6 +1209,8 @@ const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
       [WS_METHODS.pluginsSettingsSubscribe]: (input) =>
         pluginSettings.subscribe(input.installationId),
       [WS_METHODS.pluginsSettingsUpdate]: (input) => pluginSettings.update(input),
+      [WS_METHODS.pluginActionsSubscribe]: (_input) => pluginActions.subscribe,
+      [WS_METHODS.pluginActionsInvoke]: (input) => pluginActions.invoke(input),
     });
   }),
 );
