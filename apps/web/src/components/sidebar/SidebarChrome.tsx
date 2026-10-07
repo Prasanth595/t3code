@@ -6,6 +6,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { usePullRequestsSupported } from "../../state/environments";
+import { APP_BASE_NAME, APP_DISPLAY_NAME } from "../../branding";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -122,6 +123,19 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
 }
 
 function SidebarBrandMark({ onBackdrop }: { onBackdrop: boolean }) {
+  if (APP_BASE_NAME !== "T3 Code") {
+    return (
+      <span
+        className={cn(
+          "-translate-y-px truncate text-sm font-semibold tracking-tight",
+          onBackdrop ? "text-white" : "text-foreground",
+        )}
+        data-app-branding="custom"
+      >
+        {APP_DISPLAY_NAME}
+      </span>
+    );
+  }
   return (
     // Center the visible capitals, without the font's ascender/descender space.
     // Padding keeps ascenders and round-letter overshoot inside the truncation clip.

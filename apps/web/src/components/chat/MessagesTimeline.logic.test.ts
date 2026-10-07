@@ -36,6 +36,7 @@ import {
   resolveAssistantMessageCopyState,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
+  shouldFocusComposerAfterResponseClick,
   threadReadLabelPrefix,
   threadReadTargetId,
   threadReadTargetTitle,
@@ -381,6 +382,35 @@ describe("work entry labels", () => {
       });
     },
   );
+});
+
+describe("shouldFocusComposerAfterResponseClick", () => {
+  it("focuses the composer for an ordinary response click", () => {
+    expect(
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse: false,
+        targetIsInteractive: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("keeps focus available for highlighting response text", () => {
+    expect(
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse: true,
+        targetIsInteractive: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("does not steal focus from response controls", () => {
+    expect(
+      shouldFocusComposerAfterResponseClick({
+        selectionInResponse: false,
+        targetIsInteractive: true,
+      }),
+    ).toBe(false);
+  });
 });
 
 describe("shouldPreserveAssistantLineBreaks", () => {

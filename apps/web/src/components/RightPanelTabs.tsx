@@ -33,6 +33,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  ListTodo,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -142,6 +143,7 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  onAddPlan: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -151,6 +153,7 @@ interface RightPanelTabsProps {
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
+  planAvailable: boolean;
   children: ReactNode;
 }
 
@@ -177,6 +180,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
+  plan: "Plans are only available from a thread.",
   device: "Devices are only available from a thread.",
 } as const;
 
@@ -200,6 +204,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
+  plan: "Available from a thread.",
   device: "Available from a thread.",
 } as const;
 
@@ -340,6 +345,7 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  onAddPlan: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -347,6 +353,7 @@ function RightPanelEmptyState(props: {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
+  planAvailable: boolean;
   deviceAvailable: boolean;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -400,6 +407,16 @@ function RightPanelEmptyState(props: {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
       onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Plan",
+      description: "Track the agent's current plan.",
+      icon: ListTodo,
+      shortcut: "L",
+      available: props.planAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.plan,
+      onClick: props.onAddPlan,
+      badgeCount: 0,
     },
     {
       label: "Device",
@@ -618,6 +635,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "plan":
+      return "Plan";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -701,6 +720,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "plan":
+      return <ListTodo className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -982,6 +1003,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
       onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Plan",
+      icon: ListTodo,
+      shortcut: "L",
+      available: props.planAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.plan,
+      onClick: props.onAddPlan,
     },
     {
       label: "Device",
@@ -1482,6 +1511,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
+            onAddPlan={props.onAddPlan}
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1489,6 +1519,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
+            planAvailable={props.planAvailable}
             deviceAvailable={props.deviceAvailable}
           />
         ) : (

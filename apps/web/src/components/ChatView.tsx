@@ -155,6 +155,7 @@ import {
   type SetStateAction,
   Suspense,
   useCallback,
+  useDeferredValue,
   useEffect,
   useEffectEvent,
   useLayoutEffect,
@@ -190,6 +191,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
   derivePhase,
+  deriveIsWorking,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   selectHandoffImageResources,
   type TimelineEntriesProjection,
@@ -286,6 +288,7 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { PlanPanel } from "./PlanPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
@@ -414,6 +417,7 @@ import {
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
+import { TerminalShellStatus, terminalShellRootProps } from "../addons/terminal-shell";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
@@ -2172,6 +2176,10 @@ export default function ChatView(props: ChatViewProps) {
           },
     [parentSubagentThread?.title, parentSubagentThreadRef],
   );
+  // Timeline live-follow state. Declared early because the timeline projection
+  // reads it: while following the live edge it renders the current snapshot;
+  // once the user scrolls away it may lag at background priority.
+  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
@@ -3451,12 +3459,29 @@ export default function ChatView(props: ChatViewProps) {
     ? activePendingUserInput.responseCapability === "not_resumable" ||
       respondingUserInputRequestIds.includes(activePendingUserInput.requestId)
     : false;
+  // A submitted answer stays pending until the server drops the request, so
+  // the question cannot be answered twice while the provider resumes.
+  // A failed command clears it in onRespondToUserInput.
+  useEffect(() => {
+    if (respondingUserInputRequestIds.length === 0) {
+      return;
+    }
+    const pendingRequestIds = new Set(pendingUserInputs.map((input) => input.requestId));
+    const next = respondingUserInputRequestIds.filter((requestId) =>
+      pendingRequestIds.has(requestId),
+    );
+    if (next.length !== respondingUserInputRequestIds.length) {
+      setRespondingUserInputRequestIds(next);
+    }
+  }, [pendingUserInputs, respondingUserInputRequestIds]);
+
   const activeProposedPlan = useMemo(() => {
     if (!latestRunSettled) {
       return null;
     }
     return findLatestProposedPlan(serverProjection, activeLatestRun?.runId ?? null);
   }, [activeLatestRun?.runId, latestRunSettled, serverProjection]);
+  const workingStepLabel = activeComposerTasksProgress?.step ?? null;
   const showPlanFollowUpPrompt = shouldShowPlanFollowUpPrompt({
     pendingUserInputCount: pendingUserInputs.length,
     interactionMode,
@@ -3611,13 +3636,16 @@ export default function ChatView(props: ChatViewProps) {
     compactRequestIsActive &&
     !compactionSettled;
   // A rewind is not agent work: the composer shows "Rewinding conversation"
-  // instead of the timeline growing a Thinking row.
-  const isWorking =
-    phase === "running" ||
-    isSendBusy ||
-    isConnecting ||
-    isCompacting ||
-    runlessWorkStartedAt !== null;
+  // instead of the timeline growing a Thinking row. `waiting` stays interruptible
+  // via derivePhase but must not paint Thinking / Working as if the model is live.
+  const isWorking = deriveIsWorking({
+    phase,
+    runtimeStatus: activeRuntime?.status,
+    isSendBusy,
+    isConnecting,
+    isCompacting,
+    runlessWorkStartedAt,
+  });
   const activeContextWindow = useMemo(
     () =>
       deriveLatestContextWindowSnapshot(
@@ -3912,6 +3940,20 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [feedbackSubmissions],
   );
+  // Stream updates replace the visible turn items on every message/activity
+  // change. While the timeline follows the live edge it renders the current
+  // items (a deferred snapshot could end at an older message and make the
+  // viewport jump backwards); once the user scrolls away, the expensive
+  // projection consumes them at background priority so input stays responsive.
+  const timelineTurnItemsSource = useMemo(
+    () => ({ threadKey: activeThreadKey, items: serverVisibleTurnItems }),
+    [activeThreadKey, serverVisibleTurnItems],
+  );
+  const deferredTimelineTurnItemsSource = useDeferredValue(timelineTurnItemsSource);
+  const timelineVisibleTurnItems =
+    timelineLiveFollowEnabled || deferredTimelineTurnItemsSource.threadKey !== activeThreadKey
+      ? serverVisibleTurnItems
+      : deferredTimelineTurnItemsSource.items;
   const timelineProjectionRef = useRef<{
     readonly threadKey: string | null;
     readonly projection: TimelineEntriesProjection;
@@ -3920,7 +3962,7 @@ export default function ChatView(props: ChatViewProps) {
     const previous = timelineProjectionRef.current;
     const projection = deriveTimelineEntriesFromVisibleTurnItemsWithState(
       {
-        visibleTurnItems: serverVisibleTurnItems,
+        visibleTurnItems: timelineVisibleTurnItems,
         optimisticMessages: optimisticUserMessages,
         anchoredMessages: anchoredTimelineMessages,
         attachmentUrlById: timelineAttachmentUrlById,
@@ -3940,7 +3982,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
     anchoredTimelineMessages,
     optimisticUserMessages,
-    serverVisibleTurnItems,
+    timelineVisibleTurnItems,
     serverProjection,
     timelineAttachmentUrlById,
   ]);
@@ -5447,6 +5489,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addPlanSurface = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().open(activeThreadRef, "plan");
+  }, [activeThreadRef]);
   const supportsThreadPullRequests =
     serverConfig?.environment.capabilities.threadPullRequests === true;
   const visiblePullRequests = visibleThreadPullRequests(
@@ -6365,7 +6411,6 @@ export default function ChatView(props: ChatViewProps) {
   // State mirror of the follow mode refs. LegendList's maintainScrollAtEnd
   // re-pins on its own (independent of the refs), so the timeline needs a
   // render-visible flag to switch it off once the user scrolls away.
-  const [timelineLiveFollowEnabled, setTimelineLiveFollowEnabled] = useState(true);
   const pendingTimelineAnchorRef = useRef<MessageId | null>(null);
   const positionedTimelineAnchorRef = useRef<MessageId | null>(null);
   const settledTimelineAnchorRef = useRef<MessageId | null>(null);
@@ -7992,6 +8037,7 @@ export default function ChatView(props: ChatViewProps) {
       previewOpen: previewPanelOpen,
       editableFocus: isEditableFocused(eventTarget),
       modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
+      reasoningPickerOpen: composerRef.current?.isReasoningPickerOpen() ?? false,
       composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
       draftThreadRoute: routeKind === "draft",
       turnRunning: phase === "running",
@@ -8020,7 +8066,7 @@ export default function ChatView(props: ChatViewProps) {
         event.stopPropagation();
         return;
       }
-      if (!activeThreadId || isCommandPaletteOpen()) {
+      if (isCommandPaletteOpen()) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
@@ -8029,9 +8075,27 @@ export default function ChatView(props: ChatViewProps) {
       }
       const shortcutContext = getShortcutContext(event.target);
 
+      // Providers treat a follow-up sent during a running turn as a queued
+      // steer. Interrupting the active turn lets that follow-up run next;
+      // without one, this is the normal stop action.
       if (
+        (event.key === "Escape" || (event.ctrlKey && event.key.toLowerCase() === "c")) &&
+        canInterruptRunningThread &&
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
+        (event.key !== "Escape" || !document.querySelector('[data-composer-drawer-layer="true"]'))
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void onInterrupt();
+        return;
+      }
+
+      if (
+        activeThreadId !== null &&
+        !shortcutContext.terminalFocus &&
+        !shortcutContext.modelPickerOpen &&
+        !shortcutContext.reasoningPickerOpen &&
         shouldTypeToFocusComposer(event)
       ) {
         if (composerRef.current?.insertTextAtEnd(event.key)) {
@@ -8045,6 +8109,15 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "reasoningPicker.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        composerRef.current?.toggleReasoningPicker();
+        return;
+      }
+
+      if (!activeThreadId) return;
 
       if (command === "thread.copyReference") {
         event.preventDefault();
@@ -10263,7 +10336,9 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
       userInputResponsesInFlight.current.delete(responseKey);
-      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      if (result._tag === "Failure") {
+        setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
+      }
       return result;
     },
     [activeThreadId, environmentId, pendingUserInputs, respondToThreadUserInput, setThreadError],
@@ -11115,6 +11190,13 @@ export default function ChatView(props: ChatViewProps) {
       />
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
       <ThreadPullRequestsPanel threadRef={activeThreadRef} />
+    ) : renderedRightPanelSurface?.kind === "plan" ? (
+      <PlanPanel
+        activePlan={activePlan}
+        proposedPlan={activeProposedPlan}
+        cwd={activeWorkspaceRoot}
+        threadRef={activeThreadRef}
+      />
     ) : renderedRightPanelSurface?.kind === "device" ? (
       <Suspense fallback={null}>
         <DevicePanel
@@ -11301,10 +11383,7 @@ export default function ChatView(props: ChatViewProps) {
   });
 
   const content = (
-    <div
-      ref={setWorkspaceLayoutElement}
-      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
-    >
+    <div ref={setWorkspaceLayoutElement} {...terminalShellRootProps}>
       <Dialog
         open={
           deviceSetupThread !== null &&
@@ -11532,6 +11611,7 @@ export default function ChatView(props: ChatViewProps) {
                 onContentOverflowChange={setTimelineOverflows}
                 onToolOutputCollapsedAtEnd={onToolOutputCollapsedAtEnd}
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigation}
+                onResponseClick={focusComposer}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
                 topFadeEnabled={!hasTimelineTopBanner}
@@ -11583,6 +11663,13 @@ export default function ChatView(props: ChatViewProps) {
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
                 >
+                  {!isDraftHeroState ? (
+                    <TerminalShellStatus
+                      activeTerminalCount={terminalUiState.terminalIds.length}
+                      isWorking={isWorking}
+                      workingStepLabel={workingStepLabel}
+                    />
+                  ) : null}
                   {isDraftHeroState ? (
                     <div className="absolute inset-x-0 bottom-full">
                       <div
@@ -12025,6 +12112,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddFiles={addFilesSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
+          onAddPlan={addPlanSurface}
           onAddDevice={addDeviceSurface}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}
@@ -12032,6 +12120,7 @@ export default function ChatView(props: ChatViewProps) {
           filesAvailable={activeProject !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
+          planAvailable={activeThreadRef !== null}
           deviceAvailable={activeThreadRef !== null}
         >
           {rightPanelContent}
@@ -12084,6 +12173,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddFiles={addFilesSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
+            onAddPlan={addPlanSurface}
             onAddDevice={addDeviceSurface}
             browserAvailable={canOperatePreview && browserAvailable}
             terminalAvailable={activeProject !== null && canOperateTerminal}
@@ -12091,6 +12181,7 @@ export default function ChatView(props: ChatViewProps) {
             filesAvailable={activeProject !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
+            planAvailable={activeThreadRef !== null}
             deviceAvailable={activeThreadRef !== null}
           >
             {rightPanelContent}

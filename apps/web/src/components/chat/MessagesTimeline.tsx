@@ -7,6 +7,7 @@ import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } 
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
+import { APP_DISPLAY_NAME } from "~/branding";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   getQuestionAnswerPreview,
@@ -62,7 +63,7 @@ import { observeResize } from "~/lib/observeResize";
 
 const NOOP_USE_ARTIFACT_TEMPLATE = () => {};
 const NOOP_OPEN_ATTACHMENT = (_attachment: ChatFileAttachment) => {};
-
+const NOOP_RESPONSE_CLICK = () => {};
 import { resolveChatListAnchoredEndSpace } from "@t3tools/shared/chatList";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
@@ -214,6 +215,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
+  shouldFocusComposerAfterResponseClick,
   timelineTurnFoldRunIdsByEntryId,
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -356,6 +358,7 @@ interface TimelineRowSharedState {
   openPullRequest: (event: MouseEvent<HTMLElement>, url: string) => void;
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
+  onResponseClick: () => void;
   onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
@@ -531,6 +534,7 @@ interface MessagesTimelineProps {
   onToolOutputCollapsedAtEnd?: () => void;
   onManualNavigation: () => void;
   findOpen?: boolean;
+  onResponseClick?: () => void;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
   topFadeEnabled?: boolean;
@@ -625,6 +629,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   liveFollowEnabled,
   onToolOutputCollapsedAtEnd,
   onManualNavigation,
+  onResponseClick = NOOP_RESPONSE_CLICK,
   cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
@@ -691,6 +696,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
+  const minimapScrollFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
@@ -699,6 +705,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       }
       if (disclosureSettleSecondFrameRef.current !== null) {
         cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
+      }
+      if (minimapScrollFrameRef.current !== null) {
+        cancelAnimationFrame(minimapScrollFrameRef.current);
       }
     };
   }, []);
@@ -1208,7 +1217,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onContentOverflowChange?.(measureContentOverflow());
   }, [cancelContentOverflowFrame, measureContentOverflow, onContentOverflowChange, rows.length]);
 
-  const handleScroll = useCallback(() => {
+  const updateScrollState = useCallback(() => {
+    minimapScrollFrameRef.current = null;
     const state = listRef.current?.getState?.();
     if (restoringThreadPosition || state?.data !== rows) return;
     const isAtEnd = resolveTimelineIsAtEnd(state);
@@ -1290,10 +1300,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     reportContentOverflow,
   ]);
 
+  const handleScroll = useCallback(() => {
+    if (minimapScrollFrameRef.current !== null) {
+      return;
+    }
+    minimapScrollFrameRef.current = requestAnimationFrame(updateScrollState);
+  }, [updateScrollState]);
+
   useEffect(() => {
-    const frame = requestAnimationFrame(handleScroll);
+    const frame = requestAnimationFrame(updateScrollState);
     return () => cancelAnimationFrame(frame);
-  }, [handleScroll, rows.length]);
+  }, [rows.length, updateScrollState]);
 
   useEffect(() => {
     if (!timelineViewportElement) {
@@ -1361,6 +1378,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onToggleAttemptFold,
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+      onResponseClick,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
@@ -1399,6 +1417,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onToggleAttemptFold,
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
+      onResponseClick,
       onCancelWorktreeSetup,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation,
@@ -2388,7 +2407,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
 
   return (
-    <div className="group flex flex-col items-end gap-1">
+    <div className="group flex flex-col items-start gap-1">
       {userMessage.attribution === "automation" ? (
         <p
           className="me-1 text-2xs text-muted-foreground/70"
@@ -2434,7 +2453,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+      <div className="relative min-w-0 w-full rounded-xl border border-border/35 bg-message/45 px-2.5 py-2 text-message-foreground">
         <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
@@ -2557,7 +2576,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           </span>
         </div>
       ) : null}
-      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
+      <div className="flex w-full items-center justify-start text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
           <Tooltip>
             <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -2785,10 +2804,37 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
 
+  const handleResponseClick = useCallback(
+    (event: MouseEvent<HTMLElement>) => {
+      const selection = window.getSelection();
+      const selectionInResponse =
+        selection !== null &&
+        !selection.isCollapsed &&
+        (selection.anchorNode !== null || selection.focusNode !== null) &&
+        (selection.anchorNode === null || event.currentTarget.contains(selection.anchorNode)) &&
+        (selection.focusNode === null || event.currentTarget.contains(selection.focusNode));
+      const targetIsInteractive =
+        event.target instanceof Element &&
+        event.target.closest(
+          'a, button, input, textarea, select, [contenteditable="true"], [role="button"]',
+        ) !== null;
+
+      if (
+        shouldFocusComposerAfterResponseClick({
+          selectionInResponse,
+          targetIsInteractive,
+        })
+      ) {
+        ctx.onResponseClick();
+      }
+    },
+    [ctx.onResponseClick],
+  );
+
   return (
     <>
-      <div className="relative min-w-0 px-1 py-0.5">
-        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
+      <div className="relative min-w-0 px-1 py-0.5" onClick={handleResponseClick}>
+        <MessageAuthorHeading>{APP_DISPLAY_NAME}</MessageAuthorHeading>
         <div data-thread-find-text="true">
           <AssistantCitationSource
             messageId={row.message.id}
