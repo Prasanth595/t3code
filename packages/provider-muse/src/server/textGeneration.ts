@@ -355,10 +355,13 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
   )(function* (input) {
     const generated = yield* runMuseJson({
       operation: "explainProviderFailure",
-      ...buildProviderFailureExplanationPrompt({ context: input.context }),
+      ...buildProviderFailureExplanationPrompt({
+        context: input.context,
+        knownIssues: input.knownIssues,
+      }),
       modelSelection: input.modelSelection,
     });
-    return boundProviderFailureExplanation(generated);
+    return boundProviderFailureExplanation(generated, input.knownIssues);
   });
   return {
     generateCommitMessage,

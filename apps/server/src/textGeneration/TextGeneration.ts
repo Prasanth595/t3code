@@ -18,6 +18,7 @@ export type {
   PrContentGenerationInput,
   PrContentGenerationResult,
   ProviderFailureExplanationInput,
+  ProviderFailureKnownIssue,
   ProviderFailureExplanationResult,
   ReviewGuideGenerationInput,
   ReviewGuideGenerationResult,

@@ -115,6 +115,13 @@ export type ReviewGuideGenerationResult = Omit<
   "headSha" | "generatedAt" | "modelSelection"
 >;
 
+/** An existing issue the failure may be. */
+export interface ProviderFailureKnownIssue {
+  number: number;
+  title: string;
+  state: string;
+}
+
 export interface ProviderFailureExplanationInput {
   /**
    * Plain-text description of the failure and the run around it. It comes
@@ -123,6 +130,11 @@ export interface ProviderFailureExplanationInput {
    * be turned off.
    */
   context: string;
+  /**
+   * Existing issues to match the failure against. The model is only asked
+   * about issues when this is non-empty.
+   */
+  knownIssues?: ReadonlyArray<ProviderFailureKnownIssue> | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
 }
@@ -130,6 +142,8 @@ export interface ProviderFailureExplanationInput {
 export interface ProviderFailureExplanationResult {
   summary: string;
   likelyFix: string;
+  /** The number of one of the input's `knownIssues` that clearly describes this failure, never any other. */
+  matchingIssueNumber: number | null;
 }
 
 /** Commit, change request, branch, and title generation backed by one provider instance. */

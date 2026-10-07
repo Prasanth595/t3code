@@ -13,9 +13,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import packageJson from "../../package.json" with { type: "json" };
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { limitSection } from "@t3tools/provider-core/server/textGenerationUtils";
+import * as KnownIssueSearch from "./KnownIssueSearch.ts";
+import { buildProviderFailureReportUrl } from "./ProviderFailureReportLink.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 /** Everything the model sees, however long the thread or the failure text. */
@@ -168,6 +172,7 @@ const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const knownIssueSearch = yield* KnownIssueSearch.KnownIssueSearch;
 
   const explain: ProviderFailureExplanationService["Service"]["explain"] = Effect.fn(
     "ProviderFailureExplanationService.explain",
@@ -260,13 +265,14 @@ const make = Effect.gen(function* () {
     const userMessageItem = runItems.findLast((item) => item.type === "user_message");
 
     const providerInstanceId = run?.providerInstanceId ?? shell.providerInstanceId;
+    const driver =
+      records.providerSessions.find((session) => session.providerInstanceId === providerInstanceId)
+        ?.driver ?? null;
+    const model = (run?.modelSelection ?? shell.modelSelection).model;
     const context = formatProviderFailureContext({
       providerInstanceId,
-      driver:
-        records.providerSessions.find(
-          (session) => session.providerInstanceId === providerInstanceId,
-        )?.driver ?? null,
-      model: (run?.modelSelection ?? shell.modelSelection).model,
+      driver,
+      model,
       runtimeMode: shell.runtimeMode,
       failure,
       // Retry progress belongs to the run's failure, not to a session error replacing it.
@@ -289,16 +295,39 @@ const make = Effect.gen(function* () {
       ),
       shell.projectId,
     ).settings;
+    // Best effort: a failed lookup is an empty list and the explanation goes on without it.
+    const candidates = yield* knownIssueSearch.search({ message: failure.message, driver });
     const explanation = yield* textGeneration
       .explainProviderFailure({
         context,
+        knownIssues: candidates,
         modelSelection: settings.textGenerationModelSelection,
       })
       .pipe(Effect.catch((cause) => refuse("generation_failed", GENERATION_FAILED_MESSAGE, cause)));
+    const platform = `${yield* HostProcess.Platform} ${yield* HostProcess.Architecture}`;
+    // The model's choice counts only if it is one of the issues it was shown.
+    const knownIssue = KnownIssueSearch.selectKnownIssue(
+      candidates,
+      explanation.matchingIssueNumber,
+    );
     return {
       failureMessage: lastError,
       summary: explanation.summary,
       likelyFix: explanation.likelyFix,
+      knownIssue:
+        knownIssue === null
+          ? null
+          : { number: knownIssue.number, title: knownIssue.title, url: knownIssue.url },
+      reportUrl: buildProviderFailureReportUrl({
+        failureMessage: failure.message,
+        summary: explanation.summary,
+        driver,
+        providerInstanceId,
+        model,
+        runtimeMode: shell.runtimeMode,
+        platform,
+        serverVersion: packageJson.version,
+      }),
     };
   });
 

@@ -15,7 +15,11 @@ import { type ChatAttachment, type ModelSelection, TextGenerationError } from "@
 import { formatGeneratedBranchName, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
-import type { ProviderTextGeneration } from "./textGeneration.ts";
+import type {
+  ProviderFailureExplanationInput,
+  ProviderFailureExplanationResult,
+  ProviderTextGeneration,
+} from "./textGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -130,14 +134,28 @@ function boundExplanationText(raw: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
-/** Trims and caps a provider failure explanation as the model wrote it. */
-export const boundProviderFailureExplanation = (generated: {
-  readonly summary: string;
-  readonly likelyFix: string;
-}) => ({
-  summary: boundExplanationText(generated.summary, MAX_EXPLANATION_SUMMARY_CHARS),
-  likelyFix: boundExplanationText(generated.likelyFix, MAX_EXPLANATION_FIX_CHARS),
-});
+/**
+ * Trims and caps a provider failure explanation as the model wrote it, and
+ * keeps a matched issue only when the model was shown that issue.
+ */
+export const boundProviderFailureExplanation = (
+  generated: { readonly summary: string; readonly likelyFix: string },
+  knownIssues: ProviderFailureExplanationInput["knownIssues"],
+): ProviderFailureExplanationResult => {
+  const named =
+    "matchingIssueNumber" in generated && typeof generated.matchingIssueNumber === "number"
+      ? generated.matchingIssueNumber
+      : null;
+  return {
+    summary: boundExplanationText(generated.summary, MAX_EXPLANATION_SUMMARY_CHARS),
+    likelyFix: boundExplanationText(generated.likelyFix, MAX_EXPLANATION_FIX_CHARS),
+    // A number the model was not shown is invented, so it is no match.
+    matchingIssueNumber:
+      named !== null && (knownIssues ?? []).some((issue) => issue.number === named)
+        ? named
+        : null,
+  };
+};
 
 /** The text generation service over `run`. `name` prefixes each operation's span. */
 export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
@@ -242,9 +260,12 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
       operation: "explainProviderFailure",
       cwd: null,
       modelSelection: input.modelSelection,
-      ...buildProviderFailureExplanationPrompt({ context: input.context }),
+      ...buildProviderFailureExplanationPrompt({
+        context: input.context,
+        knownIssues: input.knownIssues,
+      }),
     });
-    return boundProviderFailureExplanation(generated);
+    return boundProviderFailureExplanation(generated, input.knownIssues);
   });
 
   return {
