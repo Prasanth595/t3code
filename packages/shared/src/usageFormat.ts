@@ -127,6 +127,25 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
 }
 
 /**
+ * True when the instant's wall-clock hour occurs twice in the zone, as during a
+ * fall-back transition. Hour labels add the short zone name for these.
+ */
+function isRepeatedWallHour(instant: Date, timeZone?: string): boolean {
+  const wallHourFormat = dateTimeFormatter("en-CA", {
+    ...(timeZone === undefined ? {} : { timeZone }),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23",
+  });
+  const wallHour = wallHourFormat.format(instant);
+  return [-HOUR_MS, HOUR_MS].some(
+    (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
+  );
+}
+
+/**
  * A rolling bucket start rendered in the viewer's requested time zone.
  *
  * Repeated wall-clock hours during a fall-back transition include their short
@@ -135,33 +154,17 @@ export function enumerateHourStarts(sinceTime: string, untilTime: string): reado
 export function formatHourShort(hourStart: string, timeZone?: string): string {
   const instant = new Date(hourStart);
   if (Number.isNaN(instant.getTime())) return hourStart;
-  const options = timeZone === undefined ? {} : { timeZone };
-  const hourFormat = dateTimeFormatter("en-US", {
-    ...options,
-    hour: "numeric",
-  });
-  const wallHourFormat = dateTimeFormatter("en-CA", {
-    ...options,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hourCycle: "h23",
-  });
-  const wallHour = wallHourFormat.format(instant);
-  const isRepeatedHour = [-HOUR_MS, HOUR_MS].some(
-    (offset) => wallHourFormat.format(new Date(instant.getTime() + offset)) === wallHour,
-  );
-
-  if (!isRepeatedHour) return hourFormat.format(instant);
   return dateTimeFormatter("en-US", {
     ...(timeZone === undefined ? {} : { timeZone }),
     hour: "numeric",
-    timeZoneName: "short",
+    ...(isRepeatedWallHour(instant, timeZone) ? { timeZoneName: "short" } : {}),
   }).format(instant);
 }
 
-/** `2026-08-11T14:37:00Z` to `Aug 11, 2 PM` in the requested zone. */
+/**
+ * `2026-08-11T14:37:00Z` to `Aug 11, 2 PM` in the requested zone, with the
+ * short zone name when that hour repeats during a fall-back transition.
+ */
 export function formatDateTimeShort(instant: string, timeZone?: string): string {
   const date = new Date(instant);
   if (Number.isNaN(date.getTime())) return instant;
@@ -170,6 +173,7 @@ export function formatDateTimeShort(instant: string, timeZone?: string): string 
     month: "short",
     day: "numeric",
     hour: "numeric",
+    ...(isRepeatedWallHour(date, timeZone) ? { timeZoneName: "short" } : {}),
   }).format(date);
 }
 
@@ -199,6 +203,11 @@ export function formatRelativeHourShort(
   if (calendarDaysAgo === 0) return `${hour} today`;
   if (calendarDaysAgo === 1) return `${hour} yesterday`;
   return formatDateTimeShort(hourStart, timeZone);
+}
+
+/** Hourly buckets for windows up to a week, daily beyond that. */
+export function resolutionForWindow(days: number): UsageResolution {
+  return days <= 7 ? "hour" : "day";
 }
 
 /**
@@ -232,10 +241,10 @@ export function makeWindow(
   const untilDay = format.format(now);
   if (resolution === "hour") {
     // Minute-aligned bounds keep labels readable while still representing an
-    // exact rolling 24-hour duration. Fixed-duration buckets remain correct
-    // across offset changes and daylight-saving transitions.
+    // exact rolling duration of `days` whole days. Fixed-duration buckets remain
+    // correct across offset changes and daylight-saving transitions.
     const untilTimeMs = Math.floor(now.getTime() / 60_000) * 60_000;
-    const sinceTimeMs = untilTimeMs - 24 * HOUR_MS;
+    const sinceTimeMs = untilTimeMs - days * 24 * HOUR_MS;
     const sinceTime = new Date(sinceTimeMs);
     const untilTime = new Date(untilTimeMs);
     return {
