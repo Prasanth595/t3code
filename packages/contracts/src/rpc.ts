@@ -371,6 +371,14 @@ import {
   PluginActionsSnapshot,
 } from "./pluginActions.ts";
 import {
+  PluginViewBundle,
+  PluginViewBundleInput,
+  PluginViewCallInput,
+  PluginViewCallResult,
+  PluginViewError,
+  PluginViewsSnapshot,
+} from "./pluginViews.ts";
+import {
   ProjectCloneActionInput,
   ProjectCloneActionResult,
   ProjectCloneListEvent,
@@ -562,6 +570,11 @@ export const WS_METHODS = {
   // Plugin actions (gated on the `pluginActions` environment capability)
   pluginActionsSubscribe: "pluginActions.subscribe",
   pluginActionsInvoke: "pluginActions.invoke",
+
+  // Isolated plugin views (gated on the `pluginViews` environment capability)
+  pluginViewsSubscribe: "pluginViews.subscribe",
+  pluginViewsReadBundle: "pluginViews.readBundle",
+  pluginViewsCall: "pluginViews.call",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -1981,6 +1994,30 @@ const WsPluginActionsInvokeRpc = Rpc.make(WS_METHODS.pluginActionsInvoke, {
   error: pluginActionRpcError,
 });
 
+const pluginViewRpcError = Schema.Union([PluginViewError, EnvironmentAuthorizationError]);
+
+/** The views enabled plugins offer now, then a fresh snapshot after every change. */
+const WsPluginViewsSubscribeRpc = Rpc.make(WS_METHODS.pluginViewsSubscribe, {
+  payload: Schema.Struct({}),
+  success: PluginViewsSnapshot,
+  error: pluginViewRpcError,
+  stream: true,
+});
+
+/** The consented bytes of one view of the given installation generation. */
+const WsPluginViewsReadBundleRpc = Rpc.make(WS_METHODS.pluginViewsReadBundle, {
+  payload: PluginViewBundleInput,
+  success: PluginViewBundle,
+  error: pluginViewRpcError,
+});
+
+/** A mounted view's call into its own plugin's `view:<viewId>:<handler>` handler. */
+const WsPluginViewsCallRpc = Rpc.make(WS_METHODS.pluginViewsCall, {
+  payload: PluginViewCallInput,
+  success: PluginViewCallResult,
+  error: pluginViewRpcError,
+});
+
 const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
   payload: Schema.Struct({}),
   success: AuthAccessStreamEvent,
@@ -2236,6 +2273,9 @@ export const WsPluginRpcGroup = RpcGroup.make(
   WsPluginsSettingsUpdateRpc,
   WsPluginActionsSubscribeRpc,
   WsPluginActionsInvokeRpc,
+  WsPluginViewsSubscribeRpc,
+  WsPluginViewsReadBundleRpc,
+  WsPluginViewsCallRpc,
 ).middleware(RpcScopeAuthorization);
 
 export const WsRpcGroup = WsCoreRpcGroup.merge(WsPluginRpcGroup);

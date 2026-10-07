@@ -129,6 +129,7 @@ import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as PluginCatalog from "./plugins/PluginCatalog.ts";
 import * as PluginSettings from "./plugins/PluginSettings.ts";
 import * as PluginActions from "./plugins/PluginActions.ts";
+import * as PluginViews from "./plugins/PluginViews.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -1196,6 +1197,7 @@ const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
     const pluginCatalog = yield* PluginCatalog.PluginCatalog;
     const pluginSettings = yield* PluginSettings.PluginSettings;
     const pluginActions = yield* PluginActions.PluginActions;
+    const pluginViews = yield* PluginViews.PluginViews;
     return ServerWsPluginRpcGroup.of({
       [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
       [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
@@ -1211,6 +1213,9 @@ const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
       [WS_METHODS.pluginsSettingsUpdate]: (input) => pluginSettings.update(input),
       [WS_METHODS.pluginActionsSubscribe]: (_input) => pluginActions.subscribe,
       [WS_METHODS.pluginActionsInvoke]: (input) => pluginActions.invoke(input),
+      [WS_METHODS.pluginViewsSubscribe]: (_input) => pluginViews.subscribe,
+      [WS_METHODS.pluginViewsReadBundle]: (input) => pluginViews.readBundle(input),
+      [WS_METHODS.pluginViewsCall]: (input) => pluginViews.call(input),
     });
   }),
 );
