@@ -353,7 +353,7 @@ describe("EnvironmentProviderSettings routing", () => {
       "onModelOrderChange",
       { providerModelPreferences: { [codexId]: { hiddenModels: [], modelOrder: ["chosen"] } } },
     ],
-  ])("saves %s on this device without changing the selected server", (action, expected) => {
+  ])("saves %s on the selected environment for every connected client", (action, expected) => {
     atoms.providers = [provider()];
     const panel = renderPanel();
     const editor = visitElements(
@@ -363,8 +363,8 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(editor).not.toBeNull();
     if (!editor) throw new Error("Provider editor was not rendered");
     (editor.props[action] as (models: string[]) => void)(["chosen"]);
-    expect(settingsState.updateClientSettings).toHaveBeenCalledExactlyOnceWith(expected);
-    expect(settingsState.updateSettings).not.toHaveBeenCalled();
+    expect(settingsState.updateSettings).toHaveBeenCalledExactlyOnceWith(expected);
+    expect(settingsState.updateClientSettings).not.toHaveBeenCalled();
   });
 
   it("does not substitute another account when the requested instance was removed", () => {

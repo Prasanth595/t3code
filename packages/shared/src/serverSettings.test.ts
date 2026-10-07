@@ -13,6 +13,8 @@ import { createModelSelection } from "./model.ts";
 import { resolveProjectScripts, projectScriptsInheritDefaults } from "./projectScripts.ts";
 import {
   applyServerSettingsPatch,
+  modelPreferencesMigrationPatch,
+  resolveModelPreferences,
   isModelSelectionProviderEnabled,
   parsePersistedServerObservabilitySettings,
   resolveSourceControlWriterModelSelection,
@@ -821,5 +823,134 @@ describe("worktreesDirectory", () => {
     expect(reset.previousWorktreesDirectories).toEqual(["/a", "/b"]);
     const back = applyServerSettingsPatch(reset, { worktreesDirectory: "/a" });
     expect(back.previousWorktreesDirectories).toEqual(["/b"]);
+  });
+});
+
+describe("synchronized model preferences", () => {
+  const provider = ProviderInstanceId.make("codex_work");
+  const legacy = {
+    favorites: [{ provider, model: "sol" }],
+    providerModelPreferences: { [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] } },
+  };
+
+  it("migrates saved lists independently without claiming empty legacy lists", () => {
+    expect(modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, {})).toBeNull();
+    const patch = modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, legacy)!;
+    const migrated = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, patch);
+    expect(resolveModelPreferences(migrated)).toEqual(legacy);
+    expect(modelPreferencesMigrationPatch(migrated, legacy)).toBeNull();
+    const favoritesOnly = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, { favorites: [] });
+    expect(modelPreferencesMigrationPatch(favoritesOnly, legacy)).toEqual({
+      migrateModelPreferences: { providerModelPreferences: legacy.providerModelPreferences },
+    });
+  });
+
+  it("keeps explicit clears when a delayed migration arrives from another device", () => {
+    const staleMigration = modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, legacy)!;
+    const cleared = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      favorites: [],
+      providerModelPreferences: {},
+    });
+    expect(
+      resolveModelPreferences(applyServerSettingsPatch(cleared, staleMigration), legacy),
+    ).toEqual({
+      favorites: [],
+      providerModelPreferences: {},
+    });
+  });
+
+  it("replaces visibility records so showing every model clears removed entries", () => {
+    const migrated = applyServerSettingsPatch(
+      DEFAULT_SERVER_SETTINGS,
+      modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, legacy)!,
+    );
+    const cleared = applyServerSettingsPatch(migrated, { providerModelPreferences: {} });
+    expect(cleared.providerModelPreferences).toEqual({});
+    expect(cleared.favorites).toEqual(legacy.favorites);
+  });
+
+  it("serializes favorite toggles without losing changes from other clients", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      toggleModelFavorite: { provider, model: "sol" },
+    });
+    const second = applyServerSettingsPatch(first, {
+      toggleModelFavorite: { provider, model: "astra" },
+      migrateModelPreferences: { favorites: [] },
+    });
+    expect(second.favorites).toEqual([
+      { provider, model: "sol" },
+      { provider, model: "astra" },
+    ]);
+    const removed = applyServerSettingsPatch(second, {
+      toggleModelFavorite: { provider, model: "sol" },
+    });
+    expect(removed.favorites).toEqual([{ provider, model: "astra" }]);
+    expect(
+      applyServerSettingsPatch(removed, { toggleModelFavorite: { provider, model: "astra" } })
+        .favorites,
+    ).toEqual([]);
+  });
+
+  it("sets visibility against the latest state without replacing other models or their order", () => {
+    const initial = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      providerModelPreferences: legacy.providerModelPreferences,
+    });
+    const first = applyServerSettingsPatch(initial, {
+      setModelHidden: { provider, model: "sol", hidden: true },
+    });
+    const second = applyServerSettingsPatch(first, {
+      setModelHidden: { provider, model: "luna", hidden: true },
+    });
+    expect(second.providerModelPreferences?.[provider]).toEqual({
+      hiddenModels: ["astra", "sol", "luna"],
+      modelOrder: ["sol"],
+    });
+    const restored = applyServerSettingsPatch(second, {
+      setModelHidden: { provider, model: "sol", hidden: false },
+    });
+    expect(restored.providerModelPreferences?.[provider]).toEqual({
+      hiddenModels: ["astra", "luna"],
+      modelOrder: ["sol"],
+    });
+    expect(
+      applyServerSettingsPatch(restored, {
+        setModelHidden: { provider, model: "sol", hidden: false },
+      }).providerModelPreferences,
+    ).toEqual(restored.providerModelPreferences);
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        setModelHidden: { provider, model: "sol", hidden: true },
+      }).providerModelPreferences?.[provider]?.hiddenModels,
+    ).toEqual(["sol"]);
+  });
+
+  it("keeps the same model on different provider instances as separate favorites", () => {
+    const otherProvider = ProviderInstanceId.make("codex_personal");
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      toggleModelFavorite: { provider, model: "sol" },
+    });
+    const second = applyServerSettingsPatch(first, {
+      toggleModelFavorite: { provider: otherProvider, model: "sol" },
+    });
+    expect(second.favorites).toEqual([
+      { provider, model: "sol" },
+      { provider: otherProvider, model: "sol" },
+    ]);
+    expect(
+      applyServerSettingsPatch(second, { toggleModelFavorite: { provider, model: "sol" } })
+        .favorites,
+    ).toEqual([{ provider: otherProvider, model: "sol" }]);
+  });
+
+  it("keeps explicit edits when the same patch also carries a legacy migration", () => {
+    const edited = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      ...modelPreferencesMigrationPatch(DEFAULT_SERVER_SETTINGS, legacy),
+      favorites: [],
+      providerModelPreferences: {},
+    });
+    expect(resolveModelPreferences(edited, legacy)).toEqual({
+      favorites: [],
+      providerModelPreferences: {},
+    });
   });
 });

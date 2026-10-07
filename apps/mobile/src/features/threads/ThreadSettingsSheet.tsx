@@ -1,4 +1,9 @@
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import {
+  modelPreferencesMigrationPatch,
+  resolveModelPreferences,
+} from "@t3tools/shared/serverSettings";
 import type {
   EnvironmentId,
   ModelSelection,
@@ -8,7 +13,7 @@ import type {
   RuntimeMode,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
@@ -49,7 +54,12 @@ import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  type ModelOption,
+  type ProviderGroup,
+} from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -62,7 +72,7 @@ import {
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
@@ -88,7 +98,6 @@ import {
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
-  toggleModelFavorite,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
@@ -300,6 +309,9 @@ type ThreadSettingsSessionValue = {
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
+  readonly toggleHidden: (option: ModelOption) => void;
+  readonly manageHidden: boolean;
+  readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
@@ -330,11 +342,33 @@ function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const favoritesLoaded = AsyncResult.isSuccess(preferences);
-  const modelFavorites = favoritesLoaded
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  const config = props.environmentId ? configs.get(props.environmentId) : undefined;
+  const settings = config?.settings;
+  const [manageHidden, setManageHidden] = useState(false);
+  const providerGroups = useMemo(
+    () =>
+      manageHidden && config
+        ? groupByProvider(
+            buildModelOptions(config, props.selectedModel, props.providerInstanceId, true),
+          )
+        : props.providerGroups,
+    [config, manageHidden, props.providerGroups, props.providerInstanceId, props.selectedModel],
+  );
+  const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
+  const favoritesLoaded =
+    settings !== undefined && (settings.favorites !== null || AsyncResult.isSuccess(preferences));
+  const modelFavorites = resolveModelPreferences(settings ?? DEFAULT_SERVER_SETTINGS, {
+    favorites: legacyFavorites,
+  }).favorites;
+  const saveSettings = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
+  useEffect(() => {
+    if (!props.environmentId || !settings || !AsyncResult.isSuccess(preferences)) return;
+    const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
+    if (patch) void saveSettings({ environmentId: props.environmentId, input: { patch } });
+  }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
   const favoriteKeys = useMemo(
     () =>
       new Set(
@@ -344,18 +378,43 @@ function ThreadSettingsSessionProvider(
   );
   const toggleFavorite = useCallback(
     (option: ModelOption) => {
-      if (!favoritesLoaded) return;
+      if (!favoritesLoaded || !props.environmentId) return;
       void Haptics.selectionAsync();
-      savePreferences({
-        transform: (current) => ({
-          modelFavorites: toggleModelFavorite(
-            current.modelFavorites ?? EMPTY_MODEL_FAVORITES,
-            option,
-          ),
-        }),
+      void saveSettings({
+        environmentId: props.environmentId,
+        input: {
+          patch: {
+            toggleModelFavorite: {
+              provider: option.selection.instanceId,
+              model: option.selection.model,
+            },
+            ...(settings?.favorites === null
+              ? { migrateModelPreferences: { favorites: modelFavorites } }
+              : {}),
+          },
+        },
       });
     },
-    [favoritesLoaded, savePreferences],
+    [favoritesLoaded, modelFavorites, props.environmentId, saveSettings, settings],
+  );
+  const toggleHidden = useCallback(
+    (option: ModelOption) => {
+      if (!settings || !props.environmentId || !option.canHide) return;
+      void Haptics.selectionAsync();
+      void saveSettings({
+        environmentId: props.environmentId,
+        input: {
+          patch: {
+            setModelHidden: {
+              provider: option.selection.instanceId,
+              model: option.selection.model,
+              hidden: !option.isHidden,
+            },
+          },
+        },
+      });
+    },
+    [props.environmentId, saveSettings, settings],
   );
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
@@ -473,7 +532,10 @@ function ThreadSettingsSessionProvider(
     () => ({
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
-      providerGroups: props.providerGroups,
+      providerGroups,
+      manageHidden,
+      setManageHidden,
+      toggleHidden,
       runtimeMode: compatibleRuntimeMode,
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
@@ -518,7 +580,9 @@ function ThreadSettingsSessionProvider(
       pressModel,
       providerFilter,
       props.onUpdateRuntimeMode,
-      props.providerGroups,
+      providerGroups,
+      manageHidden,
+      toggleHidden,
       runtimeModeChoices,
       searchQuery,
       showLegacyToggle,
@@ -599,6 +663,11 @@ function ThreadSettingsModelListRow(props: {
       isFavorite={session.favoriteKeys.has(props.option.key)}
       favoritesLoaded={session.favoritesLoaded}
       onToggleFavorite={() => session.toggleFavorite(props.option)}
+      onToggleHidden={
+        session.manageHidden && props.option.canHide
+          ? () => session.toggleHidden(props.option)
+          : undefined
+      }
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />
@@ -1108,7 +1177,8 @@ function ThreadSettingsModelsScreen() {
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
-  const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
+  const hasCustomCatalogFilter =
+    session.providerFilter !== null || session.showLegacy || session.manageHidden;
   const commitAndClose = useCallback(() => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
@@ -1129,6 +1199,12 @@ function ThreadSettingsModelsScreen() {
     () => ({
       title: "Model filters",
       items: [
+        {
+          type: "action" as const,
+          title: "Manage hidden models",
+          state: session.manageHidden ? ("on" as const) : ("off" as const),
+          onPress: () => session.setManageHidden(!session.manageHidden),
+        },
         {
           type: "submenu" as const,
           title: "Provider",
@@ -1164,6 +1240,11 @@ function ThreadSettingsModelsScreen() {
                 title="Model filters"
                 actions={[
                   {
+                    id: "manage-hidden",
+                    title: "Manage hidden models",
+                    state: session.manageHidden ? ("on" as const) : ("off" as const),
+                  },
+                  {
                     title: "Provider",
                     subactions: providerFilters.map((filter) => ({
                       id: filter.id,
@@ -1182,7 +1263,9 @@ function ThreadSettingsModelsScreen() {
                     : []),
                 ]}
                 onPressAction={({ nativeEvent }) => {
-                  if (nativeEvent.event === "show-legacy") {
+                  if (nativeEvent.event === "manage-hidden") {
+                    session.setManageHidden(!session.manageHidden);
+                  } else if (nativeEvent.event === "show-legacy") {
                     session.setShowLegacy(!session.showLegacy);
                   } else {
                     const filter = providerFilters.find((item) => item.id === nativeEvent.event);
@@ -1215,6 +1298,7 @@ function ThreadSettingsModelsScreen() {
           session.providerFilter,
           session.providerGroups.map((group) => group.providerKey),
           session.showLegacy,
+          session.manageHidden,
         ]}
         options={{
           unstable_headerToolbarItems: usesNativeMailSearchToolbar
@@ -1285,6 +1369,12 @@ function ThreadSettingsModelsScreen() {
             separateBackground
             title="Model filters"
           >
+            <NativeHeaderToolbar.MenuAction
+              isOn={session.manageHidden}
+              onPress={() => session.setManageHidden(!session.manageHidden)}
+            >
+              Manage hidden models
+            </NativeHeaderToolbar.MenuAction>
             <NativeHeaderToolbar.Menu title="Provider">
               <NativeHeaderToolbar.Label>Provider</NativeHeaderToolbar.Label>
               <NativeHeaderToolbar.MenuAction

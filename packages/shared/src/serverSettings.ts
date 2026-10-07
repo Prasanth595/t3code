@@ -1,3 +1,4 @@
+import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
@@ -260,6 +261,10 @@ export function applyServerSettingsPatch(
   const patch = translateLegacyProjectOverridePatch(current, rawPatch);
   const selectionPatch = patch.textGenerationModelSelection;
   const {
+    migrateModelPreferences,
+    toggleModelFavorite,
+    setModelHidden,
+    providerModelPreferences,
     automaticGitFetchInterval,
     providerHealthRefreshInterval,
     backgroundActivityProfile,
@@ -314,9 +319,49 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
+  const initialFavorites =
+    patch.favorites ?? current.favorites ?? migrateModelPreferences?.favorites ?? null;
+  const favorites =
+    toggleModelFavorite === undefined
+      ? initialFavorites
+      : (initialFavorites ?? []).some(
+            (favorite) =>
+              favorite.provider === toggleModelFavorite.provider &&
+              favorite.model === toggleModelFavorite.model,
+          )
+        ? (initialFavorites ?? []).filter(
+            (favorite) =>
+              favorite.provider !== toggleModelFavorite.provider ||
+              favorite.model !== toggleModelFavorite.model,
+          )
+        : [...(initialFavorites ?? []), toggleModelFavorite];
+  const initialModelPreferences =
+    providerModelPreferences ??
+    current.providerModelPreferences ??
+    migrateModelPreferences?.providerModelPreferences ??
+    null;
+  const nextModelPreferences =
+    setModelHidden === undefined
+      ? initialModelPreferences
+      : (() => {
+          const preferences = initialModelPreferences?.[setModelHidden.provider] ?? {
+            hiddenModels: [],
+            modelOrder: [],
+          };
+          const hiddenModels = preferences.hiddenModels.filter(
+            (model) => model !== setModelHidden.model,
+          );
+          if (setModelHidden.hidden) hiddenModels.push(setModelHidden.model);
+          return {
+            ...initialModelPreferences,
+            [setModelHidden.provider]: { ...preferences, hiddenModels },
+          };
+        })();
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    favorites,
+    providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined
       ? {}
       : {
@@ -458,4 +503,40 @@ export function applyServerSettingsPatch(
     ...nextWithReplacements,
     textGenerationModelSelection: createModelSelection(instanceId, model, options),
   };
+}
+
+/** Resolve legacy local preferences only until the environment has a saved value. */
+export function resolveModelPreferences(
+  settings: Pick<ServerSettings, "favorites" | "providerModelPreferences">,
+  legacy: Partial<ModelPreferences> = {},
+): ModelPreferences {
+  return {
+    favorites: settings.favorites ?? legacy.favorites ?? [],
+    providerModelPreferences:
+      settings.providerModelPreferences ?? legacy.providerModelPreferences ?? {},
+  };
+}
+
+/** Empty legacy values do not claim ownership before another client can migrate its saved list. */
+export function modelPreferencesMigrationPatch(
+  settings: Pick<ServerSettings, "favorites" | "providerModelPreferences">,
+  legacy: Partial<ModelPreferences>,
+): ServerSettingsPatch | null {
+  const favorites =
+    settings.favorites === null && (legacy.favorites?.length ?? 0) > 0
+      ? legacy.favorites
+      : undefined;
+  const providerModelPreferences =
+    settings.providerModelPreferences === null &&
+    Object.keys(legacy.providerModelPreferences ?? {}).length > 0
+      ? legacy.providerModelPreferences
+      : undefined;
+  return favorites === undefined && providerModelPreferences === undefined
+    ? null
+    : {
+        migrateModelPreferences: {
+          ...(favorites === undefined ? {} : { favorites }),
+          ...(providerModelPreferences === undefined ? {} : { providerModelPreferences }),
+        },
+      };
 }

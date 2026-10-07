@@ -9,7 +9,7 @@
  * access is intentionally named as such so environment-sensitive consumers
  * cannot silently read the wrong server's settings.
  */
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_SERVER_SETTINGS,
@@ -17,6 +17,7 @@ import {
   requiredScopesForServerSettingsPatch,
   type EnvironmentId,
   type ProviderInstanceMutation,
+  type ProviderInstanceId,
   ServerSettings,
   type ServerSettingsPatch,
   sessionGrantsScope,
@@ -46,6 +47,10 @@ import {
   subscribeToThemePreview,
   themeAllowsSidebarArtwork,
 } from "~/themePalette";
+import {
+  modelPreferencesMigrationPatch,
+  resolveModelPreferences,
+} from "@t3tools/shared/serverSettings";
 import * as Struct from "effect/Struct";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
@@ -318,7 +323,38 @@ export function mergeEnvironmentSettings(
 ): UnifiedSettings {
   // Decode drops retired client keys, but older untyped persistence adapters
   // can still return them. Server-owned values must always win.
-  return { ...clientSettings, ...serverSettings };
+  return {
+    ...clientSettings,
+    ...serverSettings,
+    ...resolveModelPreferences(serverSettings, clientSettings),
+  };
+}
+
+const pendingModelPreferencesMigrations = new Set<EnvironmentId>();
+
+/** Seed saved client preferences once without overwriting another client's edits. */
+export function useMigrateModelPreferences(
+  environmentId: EnvironmentId | null,
+  settings: ServerSettings | null,
+) {
+  const clientSettings = useClientSettingsValue();
+  const hydrated = useClientSettingsHydrated();
+  const migrate = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  useEffect(() => {
+    if (
+      !environmentId ||
+      !settings ||
+      !hydrated ||
+      pendingModelPreferencesMigrations.has(environmentId)
+    )
+      return;
+    const patch = modelPreferencesMigrationPatch(settings, clientSettings);
+    if (!patch) return;
+    pendingModelPreferencesMigrations.add(environmentId);
+    void migrate({ environmentId, input: { patch } }).finally(() =>
+      pendingModelPreferencesMigrations.delete(environmentId),
+    );
+  }, [clientSettings, environmentId, hydrated, migrate, settings]);
 }
 
 function useMergedSettings<T>(
@@ -391,12 +427,65 @@ export function useLegacySidebarEnabled(): boolean {
   return settingsHydrated && legacySidebarEnabled;
 }
 
+/** Toggle against the server's latest list so rapid taps and other clients cannot lose favorites. */
+export function useToggleEnvironmentModelFavorite(environmentId: EnvironmentId | null) {
+  const settings = useAtomValue(
+    environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
+  );
+  const save = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
+  return useCallback(
+    async (provider: ProviderInstanceId, model: string) => {
+      if (!environmentId || !settings) return;
+      if (settings.favorites === null) {
+        try {
+          await ensureClientSettingsHydrated();
+        } catch {
+          toastManager.add({
+            type: "error",
+            title: "Favorites not saved",
+            description: "Could not load saved model preferences. Try again.",
+          });
+          return;
+        }
+      }
+      await save({
+        environmentId,
+        input: {
+          patch: {
+            toggleModelFavorite: { provider, model },
+            ...(settings.favorites === null
+              ? { migrateModelPreferences: { favorites: getClientSettings().favorites } }
+              : {}),
+          },
+        },
+      });
+    },
+    [environmentId, save, settings],
+  );
+}
+
+const noEnvironmentSettingsAtom = Atom.make<ServerSettings | null>(null);
+
+/** Model pickers may render before a settings target has been selected. */
+export function useEnvironmentModelPreferences(environmentId: EnvironmentId | null) {
+  const settings = useAtomValue(
+    environmentId ? serverEnvironment.settingsValueAtom(environmentId) : noEnvironmentSettingsAtom,
+  );
+  const legacy = useClientSettingsValue();
+  useMigrateModelPreferences(environmentId, settings);
+  return useMemo(
+    () => resolveModelPreferences(settings ?? DEFAULT_SERVER_SETTINGS, legacy),
+    [legacy, settings],
+  );
+}
+
 /** Read current settings for one environment, merged with client-local preferences. */
 export function useEnvironmentSettings<T = UnifiedSettings>(
   environmentId: EnvironmentId,
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
+  useMigrateModelPreferences(environmentId, serverSettings);
   return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
@@ -419,7 +508,13 @@ export function usePersistEnvironmentProviderInstanceMutation(environmentId: Env
 export function usePrimarySettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
-  return useMergedSettings(useAtomValue(primaryServerSettingsAtom), selector);
+  const environment = usePrimaryEnvironment();
+  const settings = useAtomValue(primaryServerSettingsAtom);
+  useMigrateModelPreferences(
+    environment?.environmentId ?? null,
+    environment?.serverConfig?.settings ?? null,
+  );
+  return useMergedSettings(settings, selector);
 }
 
 export const PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE =
@@ -618,7 +713,7 @@ function useUpdateSettingsTarget(environmentId: EnvironmentId | null) {
   return updateSettings;
 }
 
-export function useUpdateEnvironmentSettings(environmentId: EnvironmentId) {
+export function useUpdateEnvironmentSettings(environmentId: EnvironmentId | null) {
   return useUpdateSettingsTarget(environmentId);
 }
 

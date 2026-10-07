@@ -40,7 +40,6 @@ import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 import {
   useEnvironmentSettings,
   usePersistEnvironmentProviderInstanceMutation,
-  useUpdateClientSettings,
   useUpdateEnvironmentSettings,
 } from "../../hooks/useSettings";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
@@ -566,7 +565,6 @@ export function EnvironmentProviderSettings({
   const canRefreshProviders = useEnvironmentScope(environmentId, AuthOrchestrationReadScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const persistProviderInstance = usePersistEnvironmentProviderInstanceMutation(environmentId);
-  const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
@@ -883,7 +881,7 @@ export function EnvironmentProviderSettings({
     const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
     const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
     const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    updateClientSettings({
+    updateSettings({
       providerModelPreferences:
         hiddenModels.length === 0 && modelOrder.length === 0
           ? rest
@@ -909,7 +907,7 @@ export function EnvironmentProviderSettings({
         }),
       ),
     ];
-    updateClientSettings({
+    updateSettings({
       favorites: [
         ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
         ...favoriteModels.map((model) => ({ provider: instanceId, model })),

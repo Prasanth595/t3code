@@ -451,3 +451,20 @@ describe("onboarding completion persistence", () => {
     expect(persist).toHaveBeenLastCalledWith(completedSettings);
   });
 });
+
+it("uses the environment's model preferences after migration, including empty lists", () => {
+  const client = {
+    ...DEFAULT_CLIENT_SETTINGS,
+    favorites: [{ provider: ProviderInstanceId.make("codex_work"), model: "old" }],
+    providerModelPreferences: { codex_work: { hiddenModels: ["old"], modelOrder: [] } },
+  };
+  expect(mergeEnvironmentSettings(DEFAULT_SERVER_SETTINGS, client).favorites).toEqual(
+    client.favorites,
+  );
+  const merged = mergeEnvironmentSettings(
+    { ...DEFAULT_SERVER_SETTINGS, favorites: [], providerModelPreferences: {} },
+    client,
+  );
+  expect(merged.favorites).toEqual([]);
+  expect(merged.providerModelPreferences).toEqual({});
+});

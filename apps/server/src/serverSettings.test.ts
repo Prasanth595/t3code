@@ -98,6 +98,56 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists and broadcasts model preferences to other connected clients", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const provider = ProviderInstanceId.make("codex_work");
+        const patch = {
+          favorites: [{ provider, model: "sol" }],
+          providerModelPreferences: {
+            [provider]: { hiddenModels: ["astra"], modelOrder: ["sol"] },
+          },
+        };
+        const changes = yield* service.subscribeChanges;
+        yield* service.updateSettings(patch);
+        const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.deepEqual(received.favorites, patch.favorites);
+        assert.deepEqual(received.providerModelPreferences, patch.providerModelPreferences);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.deepEqual(saved.favorites, patch.favorites);
+        assert.deepEqual(saved.providerModelPreferences, patch.providerModelPreferences);
+        const hidden = yield* service.updateSettings({
+          setModelHidden: { provider, model: "sol", hidden: true },
+        });
+        assert.deepEqual(hidden.providerModelPreferences?.[provider], {
+          hiddenModels: ["astra", "sol"],
+          modelOrder: ["sol"],
+        });
+        const shown = yield* service.updateSettings({
+          setModelHidden: { provider, model: "astra", hidden: false },
+        });
+        assert.deepEqual(shown.providerModelPreferences?.[provider], {
+          hiddenModels: ["sol"],
+          modelOrder: ["sol"],
+        });
+        assert.deepEqual(
+          (yield* decodeServerSettingsJson(yield* fs.readFileString(config.settingsPath)))
+            .providerModelPreferences,
+          shown.providerModelPreferences,
+        );
+        yield* service.updateSettings({ favorites: [], providerModelPreferences: {} });
+        // An older device's delayed seed cannot undo a clear, even after persistence.
+        const migrated = yield* service.updateSettings({ migrateModelPreferences: patch });
+        assert.deepEqual(migrated.favorites, []);
+        assert.deepEqual(migrated.providerModelPreferences, {});
+      }),
+    ).pipe(Effect.provide(layerServerSettings())),
+  );
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
