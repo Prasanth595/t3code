@@ -34,6 +34,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
@@ -1766,6 +1767,173 @@ it.effect("does not pin ingestion on background items when the root turn is inte
     ]);
     assert.deepEqual(observed, ["turn_item:running", "root-finalized"]);
   }),
+);
+
+it.effect(
+  "a run that keeps ingesting past a turn-scoped Stop is not inherited by the next run",
+  () =>
+    Effect.gen(function* () {
+      const key = "kept-background-not-inherited";
+      const ids = backgroundScenarioIds(key);
+      const nextRunId = RunId.make(`run:${key}:next`);
+      const nextAttemptId = RunAttemptId.make(`attempt:${key}:next`);
+      const nextProviderTurnId = ProviderTurnId.make(`provider-turn:${key}:next`);
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const ingested = yield* Ref.make<ReadonlyArray<string>>([]);
+      const firstFinalized = yield* Deferred.make<void>();
+      const subscribers: Array<Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>> = [];
+      const closed: Array<Deferred.Deferred<void>> = [];
+      const publish = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        Effect.forEach(subscribers, (queue) => Queue.offer(queue, event), { discard: true });
+      const terminal = (input: {
+        readonly providerTurnId: ProviderTurnId;
+        readonly runOrdinal: number;
+        readonly status: "completed" | "interrupted";
+        readonly backgroundWorkContinues?: true;
+      }): ProviderAdapter.ProviderAdapterV2Event => ({
+        type: "turn.terminal",
+        driver,
+        providerThreadId: ids.providerThreadId,
+        failure: null,
+        threadDisposition: "reusable",
+        ...input,
+      });
+      const session = {
+        events: Stream.empty,
+        subscribeEvents: Effect.gen(function* () {
+          const queue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+          const done = yield* Deferred.make<void>();
+          subscribers.push(queue);
+          closed.push(done);
+          return { events: Stream.fromQueue(queue), close: Deferred.succeed(done, undefined) };
+        }),
+        startTurn: () => Effect.void,
+      } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+      const startRun = (input: {
+        readonly runId: RunId;
+        readonly ordinal: number;
+        readonly attemptId: RunAttemptId;
+        readonly providerTurnId: ProviderTurnId;
+        readonly inherited: ReadonlyArray<{ readonly id: TurnItemId; readonly runId: RunId }>;
+      }) =>
+        Effect.gen(function* () {
+          const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+          yield* runExecution.startRootRun({
+            commandId: CommandId.make(`command:${input.runId}`),
+            appThread: { id: ids.threadId } as OrchestrationV2AppThread,
+            providerSessionId: ProviderSessionId.make(`session:${key}`),
+            session,
+            run: {
+              id: input.runId,
+              threadId: ids.threadId,
+              ordinal: input.ordinal,
+              providerInstanceId,
+            } as OrchestrationV2Run,
+            rootNode: { id: NodeId.make(`node:${input.runId}`) } as OrchestrationV2ExecutionNode,
+            checkpointScope: {
+              id: CheckpointScopeId.make(`checkpoint-scope:${input.runId}`),
+            } as OrchestrationV2CheckpointScope,
+            providerThread: { id: ids.providerThreadId, driver } as OrchestrationV2ProviderThread,
+            attempt: {
+              id: input.attemptId,
+              providerTurnId: input.providerTurnId,
+            } as OrchestrationV2RunAttempt,
+            attemptId: input.attemptId,
+            loadInheritedBackgroundTurnItems: () => Effect.succeed(input.inherited),
+            providerTurnOrdinal: input.ordinal,
+            message: {
+              messageId: MessageId.make(`message:${input.runId}`),
+              text: "Keep going.",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+            runtimePolicy: {
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+              approvalPolicy: "never",
+              sandboxPolicy: {
+                type: "readOnly",
+                access: { type: "fullAccess" },
+                networkAccess: false,
+              },
+            },
+          });
+        });
+      const layerTest = RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            McpAppModelContext.layerEmpty,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () => Effect.void,
+            }),
+            Layer.mock(EventSink.EventSinkV2)({
+              write: () => Effect.succeed([]),
+              writeWithEffects: (input) =>
+                input.events.some(
+                  (event) => event.type === "run.updated" && event.runId === ids.runId,
+                )
+                  ? Deferred.succeed(firstFinalized, undefined).pipe(Effect.as([]))
+                  : Effect.succeed([]),
+              writeIfRunCurrent: () => Effect.succeed({ committed: true, storedEvents: [] }),
+            }),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: ({ event, runId }) =>
+                event.type === "turn_item.updated"
+                  ? Ref.update(ingested, (current) => [
+                      ...current,
+                      `${runId}:${event.turnItem.status}`,
+                    ]).pipe(Effect.as([]))
+                  : Effect.succeed([]),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* startRun({
+          runId: ids.runId,
+          ordinal: 1,
+          attemptId: ids.attemptId,
+          providerTurnId: ids.rootProviderTurnId,
+          inherited: [],
+        });
+        yield* publish(backgroundTurnItemEvent(ids, "subagent", "running", 1));
+        yield* publish(
+          terminal({
+            providerTurnId: ids.rootProviderTurnId,
+            runOrdinal: 1,
+            status: "interrupted",
+            backgroundWorkContinues: true,
+          }),
+        );
+        yield* Deferred.await(firstFinalized);
+        yield* startRun({
+          runId: nextRunId,
+          ordinal: 2,
+          attemptId: nextAttemptId,
+          providerTurnId: nextProviderTurnId,
+          inherited: [{ id: ids.itemId, runId: ids.runId }],
+        });
+        yield* publish(backgroundTurnItemEvent(ids, "subagent", "completed", 2));
+        yield* publish(
+          terminal({ providerTurnId: nextProviderTurnId, runOrdinal: 2, status: "completed" }),
+        );
+        for (const done of closed) {
+          const finished = yield* Deferred.await(done).pipe(Effect.timeoutOption("2 seconds"));
+          assert.isTrue(Option.isSome(finished), "event ingestion fiber did not finish");
+        }
+      }).pipe(Effect.provide(layerTest));
+
+      assert.deepEqual(yield* Ref.get(ingested), [
+        `${ids.runId}:running`,
+        `${ids.runId}:completed`,
+      ]);
+    }),
 );
 
 it.effect("seeds inherited background items before their next update", () =>

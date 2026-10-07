@@ -164,6 +164,7 @@ export const layerExecutor: Layer.Layer<
               );
           case "provider-turn.interrupt": {
             const request = effect.request;
+            const keepBackgroundWork = request.keepBackgroundWork === true;
             return providerTurnControl
               .interrupt({
                 threadId: effect.threadId,
@@ -178,6 +179,7 @@ export const layerExecutor: Layer.Layer<
                         requestedAt: DateTime.makeUnsafe(effect.createdAt),
                       },
                     }),
+                ...(keepBackgroundWork ? { keepBackgroundWork } : {}),
               })
               .pipe(
                 Effect.tapError((cause) =>
@@ -198,7 +200,8 @@ export const layerExecutor: Layer.Layer<
                     : Effect.fail(cause),
                 ),
                 // A targeted Stop repairs only an outcome the provider actually observed.
-                // A full-turn Stop retains its existing process-teardown repair.
+                // A full-turn Stop retains its existing process-teardown repair,
+                // unless the Stop ended only the turn and the provider still runs that work.
                 Effect.andThen((outcome) =>
                   request.subagent !== undefined && outcome === undefined
                     ? Effect.void
@@ -217,6 +220,7 @@ export const layerExecutor: Layer.Layer<
                         threadId: effect.threadId,
                         providerThreadId: request.providerThreadId,
                         providerTurnId: request.providerTurnId,
+                        ...(keepBackgroundWork ? { keepBackgroundWork } : {}),
                       }),
                 ),
                 Effect.mapError(

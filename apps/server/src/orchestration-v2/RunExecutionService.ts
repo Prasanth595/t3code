@@ -176,6 +176,18 @@ function isRunOwnedSubagentTerminalStatus(
 }
 
 /**
+ * A turn-scoped Stop: the provider ended the turn but still runs, and reports on, the
+ * background work it started, so that work is tracked as after a completed turn.
+ */
+function terminalKeepsRunOwnedWork(terminal: ProviderTerminalEvent): boolean {
+  return terminal.status === "interrupted" && terminal.backgroundWorkContinues === true;
+}
+
+function terminalEndsRunOwnedWork(terminal: ProviderTerminalEvent): boolean {
+  return isRunOwnedSubagentTerminalStatus(terminal.status) && !terminalKeepsRunOwnedWork(terminal);
+}
+
+/**
  * Whether a new run takes over a subagent's child thread, so a later message
  * can resume it there. A running subagent stays with the run that launched it,
  * which keeps ingesting until it ends; taking it over too would store its
@@ -579,6 +591,9 @@ export const layer: Layer.Layer<
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
+    // Interrupted runs that still ingest the work a turn-scoped Stop kept. Like a
+    // completed run, each delivers its own items, so a later run must not inherit them.
+    const runsIngestingKeptWork = yield* Ref.make<ReadonlySet<OrchestrationV2Run["id"]>>(new Set());
 
     const writeFinalRunEvents = (input: {
       readonly run: OrchestrationV2Run;
@@ -650,7 +665,9 @@ export const layer: Layer.Layer<
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
         const cascadedSubagentEvents =
-          isRunOwnedSubagentTerminalStatus(input.terminal.status) && hasOpenSubagentProjection
+          isRunOwnedSubagentTerminalStatus(input.terminal.status) &&
+          terminalEndsRunOwnedWork(input.terminal) &&
+          hasOpenSubagentProjection
             ? yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open,
@@ -947,6 +964,11 @@ export const layer: Layer.Layer<
           const inheritedBackgroundTurnItems = yield* (
             input.loadInheritedBackgroundTurnItems?.() ?? Effect.succeed([])
           ).pipe(
+            Effect.flatMap((items) =>
+              Ref.get(runsIngestingKeptWork).pipe(
+                Effect.map((ingesting) => items.filter((item) => !ingesting.has(item.runId))),
+              ),
+            ),
             Effect.onError(() => eventSubscription.close),
             Effect.mapError(
               (cause) =>
@@ -1020,7 +1042,7 @@ export const layer: Layer.Layer<
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
                 ),
               );
-              if (isRunOwnedSubagentTerminalStatus(terminal.status)) {
+              if (terminalEndsRunOwnedWork(terminal)) {
                 yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
               }
               yield* Ref.set(rootRunFinalized, true);
@@ -1172,8 +1194,9 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
-            // Non-completed terminals drop background tracking immediately.
-            if (terminal !== null && terminal.status !== "completed") {
+            // Non-completed terminals drop background tracking immediately,
+            // unless the provider keeps running that work past a turn-scoped Stop.
+            if (terminal !== null && terminalEndsRunOwnedWork(terminal)) {
               return true;
             }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
@@ -1187,9 +1210,9 @@ export const layer: Layer.Layer<
             // Keep ingesting past root settlement while background-capable
             // items owned by this run (or an owned child thread) are still
             // non-terminal, so their late completion events reach the
-            // projection (stuck-spinner fix). Only for completed runs:
-            // interrupted/failed turns intentionally drop background tracking
-            // rather than pinning the stream open. Newly owned items depend on
+            // projection (stuck-spinner fix). Only for completed runs and
+            // turn-scoped Stops: other interrupted/failed turns intentionally drop
+            // background tracking rather than pinning the stream open. Newly owned items depend on
             // adapters emitting a non-terminal event before the root terminal.
             // Exact inherited items are seeded from their selected durable rows.
             //
@@ -1304,6 +1327,11 @@ export const layer: Layer.Layer<
                 if (event.type === "turn.terminal") {
                   yield* Ref.set(terminalEvent, event);
                   yield* Ref.set(rootTerminalSeen, true);
+                  if (terminalKeepsRunOwnedWork(event)) {
+                    yield* Ref.update(runsIngestingKeptWork, (current) =>
+                      new Set(current).add(input.run.id),
+                    );
+                  }
                   yield* finalizeRootRun(event);
                 }
                 yield* trackChildLifecycle(event, deliveredEvent !== null);
@@ -1379,6 +1407,14 @@ export const layer: Layer.Layer<
               ),
             ),
             Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(
+              Ref.update(runsIngestingKeptWork, (current) => {
+                if (!current.has(input.run.id)) return current;
+                const next = new Set(current);
+                next.delete(input.run.id);
+                return next;
+              }),
+            ),
             Effect.forkDetach,
           );
 

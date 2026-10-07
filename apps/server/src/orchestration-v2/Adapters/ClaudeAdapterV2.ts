@@ -252,6 +252,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
+    interruptKeepsBackgroundWork: true,
   },
   streaming: {
     streamsAssistantText: true,
@@ -2946,6 +2947,8 @@ interface ActiveClaudeTurnContext {
   // Root frames seen before the echo; held only when the CLI echoes early.
   gatedFramesBeforeEcho: number;
   readonly heldRootFrames: Array<SDKMessage>;
+  // Done once finalizeActiveTurn has emitted this turn's terminal.
+  readonly ended: Deferred.Deferred<void>;
 }
 
 interface ActiveClaudeProviderRetry {
@@ -3421,6 +3424,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           >(),
         );
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        // Turns a turn-scoped Stop interrupted without closing the CLI process.
+        const turnsKeepingBackgroundWork = yield* Ref.make(
+          new Set<OrchestrationV2ProviderTurn["id"]>(),
+        );
         const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
@@ -5889,6 +5896,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           const threadDisposition = input.threadDisposition ?? "reusable";
+          // The CLI process outlived this Stop, and with it the thread's background shells.
+          const keepsBackgroundWork =
+            input.status === "interrupted" &&
+            (yield* Ref.get(turnsKeepingBackgroundWork)).has(input.context.providerTurnId);
           const terminalEvent: ProviderAdapter.ProviderAdapterV2Event =
             input.status === "failed"
               ? {
@@ -5920,6 +5931,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   status: input.status,
                   failure: null,
                   threadDisposition,
+                  ...(keepsBackgroundWork ? { backgroundWorkContinues: true } : {}),
                 };
           yield* Effect.all(
             [
@@ -5943,12 +5955,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               // Surface this native thread's roster before the root turn
               // terminals so writeFinalRunEvents preserves it. Failed or
               // interrupted turns drop only this thread's roster so sibling
-              // native threads keep their Waiting state.
+              // native threads keep their Waiting state, unless the process
+              // keeps running that work past a turn-scoped Stop.
               Effect.gen(function* () {
                 const nativeThreadId =
                   input.context.input.providerThread.nativeThreadRef?.nativeId ?? null;
                 if (nativeThreadId !== null) {
-                  if (input.status !== "completed") {
+                  if (input.status !== "completed" && !keepsBackgroundWork) {
                     yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
                     yield* clearNativeThreadTaskIdSet(
                       wakeEligibleBackgroundTasksByNativeThread,
@@ -6005,7 +6018,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     input.context.input.runOrdinal,
                   lastRunOrdinal: input.context.input.runOrdinal,
                   pendingBackgroundTasks: claudePendingBackgroundTasksFromRoster(roster),
-                  status: input.status === "completed" ? "active" : "idle",
+                  status: input.status === "completed" || keepsBackgroundWork ? "active" : "idle",
                   updatedAt: input.completedAt,
                 };
                 yield* rememberProviderThread(providerThread);
@@ -6022,7 +6035,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           yield* Ref.update(activeTurn, (current) =>
             current?.providerTurnId === input.context.providerTurnId ? null : current,
           );
-          if (input.status === "completed") {
+          // Work a turn-scoped Stop kept reports through this turn, and an
+          // explicit subagent Stop is confirmed through it.
+          if (input.status === "completed" || keepsBackgroundWork) {
             settledTurnByNativeThread.set(input.context.nativeThreadId, input.context);
           } else {
             settledTurnByNativeThread.delete(input.context.nativeThreadId);
@@ -6032,6 +6047,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             next.delete(input.context.providerTurnId);
             return next;
           });
+          yield* Ref.update(turnsKeepingBackgroundWork, (current) => {
+            const next = new Set(current);
+            next.delete(input.context.providerTurnId);
+            return next;
+          });
+          yield* Deferred.succeed(input.context.ended, undefined);
         });
 
         const emitAssistantTextArtifacts = Effect.fnUntraced(function* (input: {
@@ -7475,6 +7496,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               toolResult.tool_use_id,
             );
+            // An interrupt that keeps the process rejects the running tool
+            // the way a denial does; the Stop cut it short.
+            const stoppedByInterrupt =
+              toolNonExecutionKind === "user-rejected" &&
+              (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const artifacts = buildToolCallArtifacts({
               context,
               nativeItemId: toolCall.nativeItemId,
@@ -7490,9 +7516,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               status:
                 toolNonExecutionKind === "cancelled"
                   ? "cancelled"
-                  : isClaudeToolResultError(toolResult)
-                    ? "failed"
-                    : "completed",
+                  : stoppedByInterrupt
+                    ? "interrupted"
+                    : isClaudeToolResultError(toolResult)
+                      ? "failed"
+                      : "completed",
               ...(toolNonExecutionKind === undefined ? {} : { toolNonExecutionKind }),
               startedAt: toolCall.startedAt,
               updatedAt: completedAt,
@@ -8606,6 +8634,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               promptStarted: false,
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
+              ended: yield* Deferred.make<void>(),
             };
             // Continuation turns attach to the wake output the CLI already
             // produced instead of prompting it again: drain the buffered wake
@@ -8786,6 +8815,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }
               return;
             }
+            const keepBackgroundWork = turnInput.keepBackgroundWork === true;
+            // The turn ended before this Stop arrived; its background work stays.
+            if (keepBackgroundWork && currentTurn?.providerTurnId !== turnInput.providerTurnId) {
+              return;
+            }
             if (existing === null) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
@@ -8803,7 +8837,34 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
+            if (keepBackgroundWork) {
+              // Claude ends the turn with an interrupted result and keeps its
+              // process, so background shells finish and wake the thread later.
+              // The SDK's interrupt itself still stops background agents.
+              yield* Ref.update(turnsKeepingBackgroundWork, (current) => {
+                const next = new Set(current);
+                next.add(turnInput.providerTurnId);
+                return next;
+              });
+              yield* existing.query.interrupt;
+              const ended = yield* Deferred.await(currentTurn.ended).pipe(
+                Effect.timeoutOption("10 seconds"),
+              );
+              if (Option.isSome(ended)) return;
+              // A turn Claude did not end is closed with its process, as a full Stop does.
+              yield* Ref.update(turnsKeepingBackgroundWork, (current) => {
+                const next = new Set(current);
+                next.delete(turnInput.providerTurnId);
+                return next;
+              });
+              yield* Effect.logWarning("orchestration-v2.claude-turn-interrupt-timeout", {
+                providerSessionId: input.providerSessionId,
+                providerThreadId: turnInput.providerThread.id,
+                providerTurnId: turnInput.providerTurnId,
+              });
+            } else {
+              yield* existing.query.interrupt;
+            }
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
