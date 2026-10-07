@@ -32,6 +32,7 @@ import {
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
+  truncateOnCodePoint,
 } from "./textGenerationUtils.ts";
 
 export type Operation = keyof ProviderTextGeneration;
@@ -131,7 +132,7 @@ const MAX_EXPLANATION_FIX_CHARS = 900;
 /** Trims a model reply and caps it so a runaway answer cannot flood the banner. */
 function boundExplanationText(raw: string, maxChars: number): string {
   const text = raw.trim();
-  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3).trimEnd()}...`;
+  return text.length <= maxChars ? text : `${truncateOnCodePoint(text, maxChars - 3).trimEnd()}...`;
 }
 
 /**
