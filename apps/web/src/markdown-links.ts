@@ -55,6 +55,9 @@ export function resolveInlineCodeFileLinkMeta(
     candidate,
     cwd,
     inlineCodePathNamesFromWorkspaceRoot(candidate, cwd, baseDir) ? cwd : baseDir,
+    // Explicit links collapse `..`. Inline code keeps the joined path, so
+    // `../b/notes.md` beside `/repo/docs/a` stays `/repo/docs/a/../b/notes.md`.
+    { collapseRelative: false },
   );
 }
 
@@ -78,8 +81,9 @@ export function resolveMarkdownFileLinkMeta(
   href: string | undefined,
   cwd?: string,
   baseDir: string | undefined = cwd,
+  options?: { readonly collapseRelative?: boolean },
 ): MarkdownFileLinkMeta | null {
-  const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir);
+  const targetPath = resolveMarkdownFileLinkTarget(href, cwd, baseDir, options);
   if (!targetPath) return null;
   return buildFileLinkMetaFromTarget(targetPath, cwd);
 }

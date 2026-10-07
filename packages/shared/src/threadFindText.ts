@@ -117,12 +117,19 @@ function markdownThreadFindText(
       : assistantProcessor;
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(markdown)),
-    ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
-  ].flatMap((href) => {
-    const target = resolveMarkdownFileLinkTarget(href, cwd);
-    return target ? [splitFilePathPosition(target).path] : [];
-  });
+    ...extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(markdown)).flatMap((href) => {
+      const target = resolveMarkdownFileLinkTarget(href, cwd);
+      return target ? [splitFilePathPosition(target).path] : [];
+    }),
+    ...extractInlineCodeSpans(markdown).flatMap((span) => {
+      const candidate = inlineCodeFilePathCandidate(span);
+      if (!candidate) return [];
+      const target = resolveMarkdownFileLinkTarget(candidate, cwd, cwd, {
+        collapseRelative: false,
+      });
+      return target ? [splitFilePathPosition(target).path] : [];
+    }),
+  ];
   const parentSuffixes = buildFileLinkParentSuffixByPath(paths);
   const segments: string[] = [];
   let text = "";
@@ -156,7 +163,14 @@ function markdownThreadFindText(
           (node.children ?? []).map((child) => child.value ?? "").join(""),
         );
       }
-      const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
+      const target = candidate
+        ? resolveMarkdownFileLinkTarget(
+            candidate,
+            cwd,
+            cwd,
+            node.tagName === "code" ? { collapseRelative: false } : undefined,
+          )
+        : null;
       if (target) {
         const labelText = (node: TextTree): string =>
           node.value ?? (node.children ?? []).map(labelText).join("");
