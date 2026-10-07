@@ -116,6 +116,9 @@ interface SourceControlTextGenerationSettings {
   readonly style: SourceControlWritingStyleSettings;
 }
 
+// Error attributes stay bounded, and the configured model name has no length limit.
+const MAX_ERROR_MODEL_LENGTH = 128;
+
 /** Adds the attempted model and the setting that chose it to a generation failure. */
 function withTextGenerationContext(
   error: TextGenerationError,
@@ -127,7 +130,7 @@ function withTextGenerationContext(
     ...(error.cause !== undefined ? { cause: error.cause } : {}),
     modelSelection: {
       instanceId: settings.modelSelection.instanceId,
-      model: settings.modelSelection.model,
+      model: settings.modelSelection.model.slice(0, MAX_ERROR_MODEL_LENGTH).trimEnd(),
     },
     modelSetting: settings.modelSetting,
   });
