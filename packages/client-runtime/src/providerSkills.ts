@@ -46,7 +46,8 @@ function isProviderSkillNameShared(
 /**
  * The composer text for a skill pick: `$name`, or a mention linked to the
  * picked SKILL.md when another skill shares the name. Codex binds the linked
- * form to that exact file and ignores an ambiguous `$name`.
+ * form to that exact file; for providers that invoke skills by name, the
+ * server spells the file out (orchestration-v2/linkedSkillMentions.ts).
  */
 export function formatProviderSkillMention(
   skill: Pick<ServerProviderSkill, "name" | "path">,

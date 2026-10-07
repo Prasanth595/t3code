@@ -320,6 +320,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
+    /** Driver the opened runtime reports; the adapter itself stays Codex. */
+    readonly runtimeDriver?: ProviderDriverKind;
+    /** Collects the message text each turn start reaches the runtime with. */
+    readonly startTurnTexts?: Ref.Ref<ReadonlyArray<string>>;
     readonly beforeUnload?: Effect.Effect<void>;
     /** Registers the process's closeCount finalizer before `beforeOpen` runs. */
     readonly spawnBeforeOpen?: boolean;
@@ -388,7 +392,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 
         return {
           instanceId: ProviderInstanceId.make("codex"),
-          driver: CODEX_DRIVER,
+          driver: options.runtimeDriver ?? CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: options.failEventStream
@@ -414,7 +418,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
-          startTurn: () => options.startTurn ?? Effect.void,
+          startTurn: (turnInput) =>
+            (options.startTurnTexts === undefined
+              ? Effect.void
+              : Ref.update(options.startTurnTexts, (texts) => [...texts, turnInput.message.text])
+            ).pipe(Effect.andThen(options.startTurn ?? Effect.void)),
           steerTurn: () => Effect.void,
           interruptTurn: () =>
             Ref.update(state, (current) => ({
@@ -467,6 +475,8 @@ function layerTest(input: {
   readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
+  readonly runtimeDriver?: ProviderDriverKind;
+  readonly startTurnTexts?: Ref.Ref<ReadonlyArray<string>>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly spawnBeforeOpen?: boolean;
   readonly scopeCloseReached?: Deferred.Deferred<void>;
@@ -497,6 +507,8 @@ function layerTest(input: {
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
+      ...(input.runtimeDriver === undefined ? {} : { runtimeDriver: input.runtimeDriver }),
+      ...(input.startTurnTexts === undefined ? {} : { startTurnTexts: input.startTurnTexts }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
       ...(input.scopeCloseReached === undefined
@@ -927,6 +939,72 @@ it.effect("ProviderSessionManagerV2 closes every live session for a provider ins
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 spells out linked skill mentions for drivers other than Codex",
+  () =>
+    Effect.gen(function* () {
+      const skillPath = "/repo/.claude/skills/review/SKILL.md";
+      const text = `Run [$review](${skillPath}) now`;
+      const sendLinkedMention = (driver: ProviderDriverKind) =>
+        Effect.gen(function* () {
+          const state = yield* Ref.make(emptyState);
+          const startTurnTexts = yield* Ref.make<ReadonlyArray<string>>([]);
+          yield* Effect.gen(function* () {
+            const eventSink = yield* EventSink.EventSinkV2;
+            const idAllocator = yield* IdAllocator.IdAllocatorV2;
+            const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+            const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+            const now = yield* DateTime.now;
+            const threadId = ThreadId.make(`thread-linked-skill-${driver}`);
+            const providerSessionId = yield* idAllocator.allocate.providerSession({
+              providerInstanceId: modelSelection.instanceId,
+              threadId,
+            });
+            const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+            yield* eventSink.write({
+              events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+            });
+            const runtime = yield* manager.open({
+              threadId,
+              providerSessionId,
+              modelSelection,
+              runtimePolicy,
+            });
+            yield* runtime.startTurn({
+              appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+              threadId,
+              runId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+              rootNodeId: idAllocator.derive.rootNode({ runId }),
+              providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+                text,
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            });
+            yield* manager.close(providerSessionId);
+          }).pipe(
+            Effect.provide(
+              layerTest({ state, idleTimeoutMs: 60_000, runtimeDriver: driver, startTurnTexts }),
+            ),
+          );
+          return yield* Ref.get(startTurnTexts);
+        });
+
+      assert.deepEqual(yield* sendLinkedMention(CODEX_DRIVER), [text]);
+      const [claudeText] = yield* sendLinkedMention(ProviderDriverKind.make("claudeAgent"));
+      assert.isTrue(claudeText?.startsWith("Run review now\n\n"));
+      assert.include(claudeText, skillPath);
+    }),
 );
 
 it.effect("ProviderSessionManagerV2 records provider session and turn metrics", () =>
