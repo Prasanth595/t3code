@@ -44,6 +44,7 @@ import {
   type RenderFailureProps,
 } from "./components/RenderErrorBoundary";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
+import { PluginNotificationBannerHost } from "./features/plugins/PluginNotificationBannerHost";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
@@ -667,6 +668,7 @@ function RootStackLayout(props: {
           {props.children}
           <HardwareKeyboardCommandOverlay />
         </AdaptiveWorkspaceLayout>
+        <PluginNotificationBannerHost />
       </ExistingThreadSettingsRouteProvider>
     </HardwareKeyboardCommandProvider>
   );
