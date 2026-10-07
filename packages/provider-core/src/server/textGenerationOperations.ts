@@ -152,9 +152,7 @@ export const boundProviderFailureExplanation = (
     likelyFix: boundExplanationText(generated.likelyFix, MAX_EXPLANATION_FIX_CHARS),
     // A number the model was not shown is invented, so it is no match.
     matchingIssueNumber:
-      named !== null && (knownIssues ?? []).some((issue) => issue.number === named)
-        ? named
-        : null,
+      named !== null && (knownIssues ?? []).some((issue) => issue.number === named) ? named : null,
   };
 };
 
