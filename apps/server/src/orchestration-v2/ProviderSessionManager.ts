@@ -1746,8 +1746,18 @@ export const layerWithOptions = (
               },
             };
           });
+        const unloadThread = runtime.unloadThread;
         return {
           ...runtime,
+          // A shared runtime outlives the threads it unloads, so drop their workspaces too.
+          ...(unloadThread === undefined
+            ? {}
+            : {
+                unloadThread: (input) =>
+                  Effect.sync(() => turnCwds.delete(input.providerThread.id)).pipe(
+                    Effect.andThen(unloadThread(input)),
+                  ),
+              }),
           subscribeEvents,
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
