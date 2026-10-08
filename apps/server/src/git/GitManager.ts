@@ -2382,7 +2382,14 @@ export const make = Effect.gen(function* () {
       ) {
         return remembered.value;
       }
+      // invalidateStatus bumps the epoch. A read that started before a T3 git
+      // action, or before a newer read finished, must not replace their state.
+      const epoch = prLookupEpoch(cwd);
       const value = yield* read;
+      const latest = prLookupGitStateByKey.get(entryKey);
+      if (prLookupEpoch(cwd) !== epoch || (latest !== undefined && latest.readAtMs > readAtMs)) {
+        return value;
+      }
       prLookupGitStateByKey.delete(entryKey);
       if (prLookupGitStateByKey.size >= PR_LOOKUP_CACHE_CAPACITY) {
         const oldestKey = prLookupGitStateByKey.keys().next().value;

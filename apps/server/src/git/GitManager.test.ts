@@ -11,6 +11,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -730,6 +731,12 @@ function makeManager(input?: {
   gitConfigReads?: string[];
   /** Records the arguments of every git process the manager starts. */
   gitCommands?: string[];
+  /** Holds a matching git process's output until `release`, once it has exited. */
+  gitSpawnGate?: {
+    readonly matches: (args: ReadonlyArray<string>) => boolean;
+    readonly reached: Deferred.Deferred<void>;
+    readonly release: Deferred.Deferred<void>;
+  };
   /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
     void,
@@ -748,16 +755,30 @@ function makeManager(input?: {
   const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
   const gitCommands = input?.gitCommands;
-  const layerGitDriverSpawner = gitCommands
+  const gitSpawnGate = input?.gitSpawnGate;
+  const watchesGitSpawns = gitCommands !== undefined || gitSpawnGate !== undefined;
+  const layerGitDriverSpawner = watchesGitSpawns
     ? Layer.effect(
         ChildProcessSpawner.ChildProcessSpawner,
         Effect.gen(function* () {
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           return ChildProcessSpawner.make((command) => {
-            if (command._tag === "StandardCommand" && command.command === "git") {
-              gitCommands.push(command.args.join(" "));
+            const args =
+              command._tag === "StandardCommand" && command.command === "git" ? command.args : null;
+            if (args !== null) gitCommands?.push(args.join(" "));
+            if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
+              return spawner.spawn(command);
             }
-            return spawner.spawn(command);
+            return spawner
+              .spawn(command)
+              .pipe(
+                Effect.tap((handle) =>
+                  handle.exitCode.pipe(
+                    Effect.andThen(Deferred.succeed(gitSpawnGate.reached, undefined)),
+                    Effect.andThen(Deferred.await(gitSpawnGate.release)),
+                  ),
+                ),
+              );
           });
         }),
       ).pipe(Layer.provide(NodeServices.layer))
@@ -779,7 +800,7 @@ function makeManager(input?: {
       )
     : GitVcsDriver.layer;
   // Fresh so the counting spawner is not swapped for the suite's shared driver.
-  const layerVcsDriver = (gitCommands ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
+  const layerVcsDriver = (watchesGitSpawns ? Layer.fresh(gitVcsDriver) : gitVcsDriver).pipe(
     Layer.provide(layerGitDriverSpawner),
     Layer.provideMerge(VcsProcess.layer),
     Layer.provideMerge(NodeServices.layer),
@@ -1456,6 +1477,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* TestClock.adjust("5 minutes");
         expect((yield* lookup)?.number).toBe(236);
       }),
+  );
+
+  it.effect("a git read in flight during a T3 git action does not outlive it", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/racing-upstream"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/racing-upstream"]);
+      yield* runGit(repoDir, ["push", "origin", "HEAD:refs/heads/feature/raced-head"]);
+      const pullRequest = (number: number, headRefName: string) =>
+        encodeCliJson([
+          {
+            number,
+            title: headRefName,
+            url: `https://github.com/pingdotgg/codething-mvp/pull/${number}`,
+            baseRefName: "main",
+            headRefName,
+            state: "OPEN",
+            updatedAt: "2026-04-07T15:00:00Z",
+          },
+        ]);
+      const gate = {
+        matches: (args: ReadonlyArray<string>) =>
+          args[0] === "for-each-ref" && args.at(-1) === "refs/heads/feature/racing-upstream",
+        reached: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const { manager } = yield* makeManager({
+        gitSpawnGate: gate,
+        ghScenario: {
+          prListByHeadSelector: {
+            "feature/racing-upstream": pullRequest(237, "feature/racing-upstream"),
+            "feature/raced-head": pullRequest(238, "feature/raced-head"),
+          },
+        },
+      });
+      const lookup = manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/racing-upstream",
+      });
+
+      // The branch read has exited with the old upstream; a T3 git action
+      // changes it before the lookup gets that output.
+      const inFlight = yield* Effect.forkChild(lookup);
+      yield* Deferred.await(gate.reached);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to=origin/feature/raced-head"]);
+      yield* manager.invalidateStatus(repoDir);
+      yield* Deferred.succeed(gate.release, undefined);
+      yield* Fiber.join(inFlight);
+
+      expect((yield* lookup)?.number).toBe(238);
+    }),
   );
 
   it.effect("turn-end refresh finds a new PR and keeps known PRs cached", () =>
