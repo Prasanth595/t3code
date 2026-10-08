@@ -7,6 +7,8 @@ import {
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
+import { htmlSelectionCommand } from "~/lib/htmlRenderSelection";
+import { observeHtmlRenderCitationSource } from "./htmlRenderCitationSource";
 
 const CITATION_PULSE_DURATION_MS = 650;
 const CITATION_HIGHLIGHT_HOLD_MS = 1575;
@@ -26,6 +28,20 @@ export function observeAssistantCitationCommentSource({
   citation: AssistantCitation;
   onUnavailable: () => void;
 }): () => void {
+  if (anchor.htmlRender) {
+    const frame = anchor.htmlRender;
+    const validate = () => {
+      if (!anchor.source.isConnected || !anchor.viewport.contains(frame)) onUnavailable();
+    };
+    const observer = new MutationObserver(validate);
+    observer.observe(anchor.viewport, { childList: true, subtree: true });
+    htmlSelectionCommand(frame, "mark", citation);
+    validate();
+    return () => {
+      observer.disconnect();
+      htmlSelectionCommand(frame, "unmark");
+    };
+  }
   const { source, range, viewport } = anchor;
   const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;
   let highlight: Highlight | null = null;
@@ -110,6 +126,9 @@ function observeAssistantCitationSource({
   request: AssistantCitationTarget;
   list: LegendListRef;
 }) {
+  if (root.dataset.htmlCitationSource === "true") {
+    return observeHtmlRenderCitationSource({ root, itemKey, request, list });
+  }
   const activation = request.activationRef.current;
   if (activation.dismissed) return;
   const scrollNode = list.getScrollableNode();
@@ -339,6 +358,7 @@ export function AssistantCitationSource({
   request,
   listRef,
   children,
+  htmlRender = false,
 }: {
   messageId: MessageId;
   threadRef?: ScopedThreadRef;
@@ -346,6 +366,7 @@ export function AssistantCitationSource({
   request: AssistantCitationTarget | null;
   listRef: RefObject<LegendListRef | null>;
   children: ReactNode;
+  htmlRender?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- observes this message's DOM for a citation reveal request and scrolls the LegendList to it
@@ -360,6 +381,7 @@ export function AssistantCitationSource({
     <div
       ref={rootRef}
       data-assistant-citation-source={messageId}
+      data-html-citation-source={htmlRender || undefined}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}
     >
