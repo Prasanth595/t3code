@@ -348,7 +348,7 @@ it.effect("allows a full-access MCP client to launch on a connected environment"
           client: {
             sessionId: "client-session",
             label: "External agent",
-            runtimeModeCeiling: "full-access",
+            access: "full-access",
           },
         };
         yield* service.launchThread(clientScope, launch);
@@ -357,7 +357,7 @@ it.effect("allows a full-access MCP client to launch on a connected environment"
           .launchThread(
             {
               ...clientScope,
-              client: { ...clientScope.client!, runtimeModeCeiling: "approval-required" },
+              client: { ...clientScope.client!, access: "approval-required" },
             },
             launch,
           )
