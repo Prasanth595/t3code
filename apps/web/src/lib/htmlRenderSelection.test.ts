@@ -466,6 +466,40 @@ describe("HTML render selection bridge", () => {
     expect(p.messages().at(-1)).toMatchObject({ params: null });
   });
 
+  it.each([
+    { key: "a", ctrlKey: true, metaKey: false },
+    { key: "A", ctrlKey: false, metaKey: true },
+  ])("captures Select All after Escape with $key (ctrl=$ctrlKey, meta=$metaKey)", (shortcut) => {
+    vi.useFakeTimers();
+    const p = page("<p>Before <strong>quoted text</strong> after.</p>");
+    const paragraph = p.view.document.querySelector("p")!;
+    const strong = p.view.document.querySelector("strong")!;
+    p.pointer("pointerdown", strong);
+    p.select(strong.firstChild!, 0);
+    p.pointer("mouseup", strong);
+    vi.runOnlyPendingTimers();
+    expect(readHtmlSelection(p.messages().at(-1))?.selector.text).toBe("quoted text");
+
+    p.view.document.dispatchEvent(
+      new p.view.KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    );
+    p.view.document.dispatchEvent(new p.view.Event("selectionchange"));
+    vi.runOnlyPendingTimers();
+    expect(p.messages().at(-1)).toMatchObject({ params: null });
+
+    const selectAll = new p.view.KeyboardEvent("keydown", {
+      ...shortcut,
+      bubbles: true,
+      cancelable: true,
+    });
+    p.view.document.dispatchEvent(selectAll);
+    p.select(paragraph.firstChild!, 0, paragraph.lastChild!);
+    vi.runOnlyPendingTimers();
+    expect(selectAll.defaultPrevented).toBe(false);
+    expect(readHtmlSelection(p.messages().at(-1))?.selector.text).toBe("Before quoted text after.");
+    expect(htmlSelectionParams(p.messages().at(-1))?.pointer).toBeNull();
+  });
+
   it("keeps oversized selections out of cross-window messages", async () => {
     const p = page(`<p>${"x".repeat(8001)}</p>`);
     const text = p.view.document.querySelector("p")!;

@@ -165,7 +165,10 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     ) {
       event.preventDefault();
       post({ focus: true });
-    } else if (event.shiftKey && event.key.startsWith("Arrow")) {
+    } else if (
+      (event.shiftKey && event.key.startsWith("Arrow")) ||
+      ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a")
+    ) {
       active = true;
       pointer = null;
       schedule();
