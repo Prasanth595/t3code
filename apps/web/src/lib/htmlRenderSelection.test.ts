@@ -69,6 +69,95 @@ function page(html = "<p>Before <strong>quoted text</strong> after.</p><p>Second
 }
 
 describe("HTML render selection bridge", () => {
+  it("omits CSS-hidden subtrees from captured quotes and source matching", async () => {
+    const p = page(
+      '<style>.hidden { display: none }</style><p>Before <span class="hidden"><b>secret</b></span><strong>quoted text</strong> after.</p>',
+    );
+    const paragraph = p.view.document.querySelector("p")!;
+    p.pointer("pointerdown", paragraph);
+    p.select(paragraph.firstChild!, 0, paragraph.lastChild!);
+    p.pointer("mouseup", paragraph);
+    await p.finish();
+    const quote = readHtmlSelection(p.messages().at(-1))!.selector;
+    expect(quote.text).toBe("Before quoted text after.");
+    expect(quote.end).toBe(25);
+    p.command("target", quote);
+    expect(htmlSelectionParams(p.messages().at(-1))?.target).toEqual(p.rect);
+    p.command("target", { ...quote, text: "secret" });
+    expect(htmlSelectionParams(p.messages().at(-1))?.target).toBeNull();
+  });
+
+  it("uses CSS layout for word boundaries when capturing and resolving quotes", async () => {
+    const p = page(
+      '<style>.block { display: block } .inline { display: inline } .contents { display: contents }</style><span class="block">first</span><span class="block">second</span><div class="inline">third</div><span class="contents">fourth<br>fifth</span>',
+    );
+    const first = p.view.document.querySelector("span")!;
+    const last = p.view.document.querySelector(".contents")!;
+    p.pointer("pointerdown", first);
+    p.select(first.firstChild!, 0, last.lastChild!);
+    p.pointer("mouseup", last);
+    await p.finish();
+    const quote = readHtmlSelection(p.messages().at(-1))!.selector;
+    expect(quote.text).toBe("first\nsecond\nthirdfourth\nfifth");
+    p.command("target", quote);
+    expect(htmlSelectionParams(p.messages().at(-1))?.target).toEqual(p.rect);
+  });
+
+  it("reveals a quote through nested scroll containers before returning its target", () => {
+    const p = page(
+      '<div id="outer" style="overflow-x: auto; overflow-y: auto"><div id="inner" style="overflow-x: auto; overflow-y: auto"><p>quoted text</p></div></div>',
+    );
+    const outer = p.view.document.querySelector<HTMLElement>("#outer")!;
+    const inner = p.view.document.querySelector<HTMLElement>("#inner")!;
+    Object.defineProperties(inner, {
+      clientHeight: { value: 100 },
+      clientWidth: { value: 100 },
+      scrollHeight: { value: 800 },
+      scrollWidth: { value: 800 },
+    });
+    Object.defineProperties(outer, {
+      clientHeight: { value: 150 },
+      clientWidth: { value: 150 },
+      scrollHeight: { value: 1000 },
+      scrollWidth: { value: 1000 },
+    });
+    const bounds = (left: number, top: number, width: number, height: number) =>
+      new p.view.DOMRect(left, top, width, height);
+    inner.getBoundingClientRect = () =>
+      bounds(200 - outer.scrollLeft, 300 - outer.scrollTop, 100, 100);
+    outer.getBoundingClientRect = () => bounds(10, 10, 150, 150);
+    const quoteBounds = () =>
+      bounds(
+        450 - inner.scrollLeft - outer.scrollLeft,
+        650 - inner.scrollTop - outer.scrollTop,
+        80,
+        15,
+      );
+    Object.assign(p.view.Range.prototype, {
+      getBoundingClientRect: quoteBounds,
+      getClientRects: () => [quoteBounds()],
+    });
+    const scroll = vi.spyOn(p.view, "scrollBy").mockImplementation(() => {});
+    p.command("target", { text: "quoted text", start: 0, end: 11, prefix: "", suffix: "" });
+    const target = htmlSelectionParams(p.messages().at(-1))!.target!;
+    expect(inner.scrollTop).toBe(265);
+    expect(inner.scrollLeft).toBe(230);
+    expect(outer.scrollTop).toBe(240);
+    expect(outer.scrollLeft).toBe(140);
+    expect(target).toEqual({ left: 80, top: 145, width: 80, height: 15 });
+    expect(scroll).not.toHaveBeenCalled();
+
+    inner.scrollTop = inner.scrollLeft = 500;
+    outer.scrollTop = outer.scrollLeft = 300;
+    p.command("target", { text: "quoted text", start: 0, end: 11, prefix: "", suffix: "" });
+    expect(htmlSelectionParams(p.messages().at(-1))?.target).toEqual({
+      left: 10,
+      top: 10,
+      width: 80,
+      height: 15,
+    });
+  });
+
   it("keeps native Tab navigation for oversized selections", async () => {
     const p = page(`<p>${"x".repeat(8001)}</p><button>Next</button>`);
     const paragraph = p.view.document.querySelector("p")!;

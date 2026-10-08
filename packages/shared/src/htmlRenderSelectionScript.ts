@@ -4,8 +4,6 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
   const method = "t3/selection";
   const excluded =
     "button,input,textarea,select,[role=button],[contenteditable],[hidden],[aria-hidden=true],script,style,template,noscript,svg";
-  const blocks =
-    "address,article,aside,blockquote,dd,div,dl,dt,figcaption,figure,footer,h1,h2,h3,h4,h5,h6,header,hr,li,main,nav,ol,p,pre,section,table,td,th,tr,ul";
   const normalize = (text) => text.replace(/\s+/g, " ");
   let down = false;
   let active = false;
@@ -33,7 +31,11 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
         chunks.push({ node, start: text.length, end: text.length + node.length });
         text += node.data;
       } else if (node.nodeType === 1 && !node.matches(excluded)) {
-        const block = node.matches(blocks) || node.tagName === "BR";
+        const display = getComputedStyle(node).display;
+        if (display === "none") return;
+        const block =
+          (display && display !== "contents" && !display.startsWith("inline")) ||
+          node.tagName === "BR";
         if (block) separator = true;
         for (const child of node.childNodes) visit(child);
         if (block) separator = true;
@@ -240,6 +242,31 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     marked.setStart(first.node, Math.max(0, start - first.start));
     marked.setEnd(last.node, Math.min(last.node.length, end - last.start));
     if (action === "target") {
+      // Reveal the quoted range, even when its containing element is much taller.
+      for (let element = last.node.parentElement; element; element = element.parentElement) {
+        if (element === document.scrollingElement) continue;
+        const style = getComputedStyle(element);
+        const box = element.getBoundingClientRect();
+        const bounds = rect(marked);
+        const top = box.top + element.clientTop;
+        const left = box.left + element.clientLeft;
+        if (
+          /^(auto|scroll|hidden)$/.test(style.overflowY) &&
+          element.scrollHeight > element.clientHeight
+        )
+          element.scrollTop +=
+            bounds.top < top
+              ? bounds.top - top
+              : Math.max(0, bounds.top + bounds.height - top - element.clientHeight);
+        if (
+          /^(auto|scroll|hidden)$/.test(style.overflowX) &&
+          element.scrollWidth > element.clientWidth
+        )
+          element.scrollLeft +=
+            bounds.left < left
+              ? bounds.left - left
+              : Math.max(0, bounds.left + bounds.width - left - element.clientWidth);
+      }
       const bounds = marked.getBoundingClientRect();
       if (bounds.top < 0 || bounds.bottom > window.innerHeight)
         window.scrollBy(0, bounds.top - Math.min(80, window.innerHeight / 3));
