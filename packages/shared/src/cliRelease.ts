@@ -86,6 +86,13 @@ export function cliReleaseIndexPageUrl(page: number): string {
 }
 
 /**
+ * github.com release pages. Unlike the API, they have no anonymous hourly quota shared by every
+ * device behind one IP. `/latest` returns the newest stable release as JSON; `.atom` lists the
+ * ten newest releases on every channel.
+ */
+export const CLI_RELEASES_PAGE_URL = `https://github.com/${CLI_RELEASE_REPOSITORY}/releases`;
+
+/**
  * Drafts are skipped because their assets are not downloadable.
  */
 export function newestCliReleaseVersion(
