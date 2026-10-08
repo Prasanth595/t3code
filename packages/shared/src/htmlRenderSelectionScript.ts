@@ -12,6 +12,7 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
   let pointer = null;
   let marked = null;
   let commentQuote = null;
+  let commentTarget = null;
   const post = (params) => window.parent.postMessage({ jsonrpc: "2.0", method, params }, "*");
   const cancel = () => {
     clearTimeout(timer);
@@ -183,9 +184,18 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     if (window.CSS?.highlights) CSS.highlights.delete("t3-html-citation");
     marked = null;
   };
-  const markQuote = (quote, action) => {
+  const markQuote = (quote, action, changesOnly = false) => {
     clearMark();
-    const reply = (target) => post({ target, selector: quote, action });
+    const reply = (target) => {
+      if (changesOnly && (
+        target === commentTarget ||
+        target && commentTarget && ["left", "top", "width", "height"].every(
+          (key) => target[key] === commentTarget[key],
+        )
+      )) return;
+      if (action === "mark") commentTarget = target;
+      post({ target, selector: quote, action });
+    };
     if (
       !quote ||
       typeof quote.text !== "string" ||
@@ -293,7 +303,7 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     if (!commentQuote || validation) return;
     validation = requestAnimationFrame(() => {
       validation = null;
-      if (commentQuote) markQuote(commentQuote, "mark");
+      if (commentQuote) markQuote(commentQuote, "mark", true);
     });
   };
   const commentObserver = new MutationObserver(validateComment);
@@ -310,6 +320,7 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     if (action === "dismiss") cancel();
     if (action === "unmark") {
       commentQuote = null;
+      commentTarget = null;
       commentObserver.disconnect();
       commentResize?.disconnect();
       clearMark();
@@ -317,6 +328,7 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
     if (action !== "mark" && action !== "target") return;
     commentQuote = action === "mark" ? quote : null;
     if (commentQuote) {
+      // Any attribute can affect page CSS; validation replies only when the target changes.
       commentObserver.observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
       commentResize?.observe(document.documentElement);
     } else {

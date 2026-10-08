@@ -284,6 +284,60 @@ describe("HTML render selection bridge", () => {
     expect(highlights.has("t3-html-citation")).toBe(false);
   });
 
+  it("only reports changed comment targets during page mutation validation", async () => {
+    const p = page();
+    const callbacks: FrameRequestCallback[] = [];
+    p.view.requestAnimationFrame = (callback) => {
+      callbacks.push(callback);
+      return 1;
+    };
+    const validate = async () => {
+      // Deliver the MutationObserver batch, then run its scheduled validation.
+      await Promise.resolve();
+      expect(callbacks).toHaveLength(1);
+      callbacks.shift()!(0);
+    };
+    const replies = () =>
+      p.messages().filter((data) => htmlSelectionParams(data)?.action === "mark");
+    const quote = { text: "quoted text", start: 7, end: 18, prefix: "Before ", suffix: "" };
+    p.command("mark", quote);
+    expect(replies()).toHaveLength(1);
+    const other = p.view.document.querySelectorAll("p")[1]!;
+    for (const attribute of ["class", "style", "hidden", "data-state"]) {
+      other.setAttribute(attribute, "");
+      await validate();
+      other.removeAttribute(attribute);
+      await validate();
+      expect(replies()).toHaveLength(1);
+    }
+    // Arbitrary attributes can affect page CSS and move the quote.
+    p.rect.top = 40;
+    other.setAttribute("data-state", "expanded");
+    await validate();
+    expect(replies()).toHaveLength(2);
+    expect(htmlSelectionParams(replies().at(-1))?.target).toEqual(p.rect);
+    const strong = p.view.document.querySelector("strong")!;
+    strong.textContent = "different text";
+    await validate();
+    expect(replies()).toHaveLength(3);
+    expect(htmlSelectionParams(replies().at(-1))?.target).toBeNull();
+    other.className = "updated";
+    await validate();
+    expect(replies()).toHaveLength(3);
+    strong.textContent = "quoted text";
+    await validate();
+    expect(replies()).toHaveLength(4);
+    expect(htmlSelectionParams(replies().at(-1))?.target).toEqual(p.rect);
+    // Explicit commands still acknowledge every request, even at unchanged coordinates.
+    p.command("mark", quote);
+    p.command("mark", quote);
+    expect(replies()).toHaveLength(6);
+    p.command("unmark");
+    other.className = "after-close";
+    await Promise.resolve();
+    expect(callbacks).toHaveLength(0);
+  });
+
   it("projects selector fields in both directions across the iframe boundary", () => {
     const p = page();
     const selector = { text: "quote", start: 0, end: 5, prefix: "", suffix: "" };
