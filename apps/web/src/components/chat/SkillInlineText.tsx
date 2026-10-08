@@ -1,7 +1,7 @@
-import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
 import {
   formatProviderSkillDisplayName,
   matchInlineSkills,
+  resolveLinkedInlineSkill,
   type InlineSkill,
 } from "@t3tools/shared/inlineSkills";
 import { Children, cloneElement, isValidElement, type ReactNode } from "react";
@@ -66,13 +66,8 @@ export function renderLinkedSkillMention(
   source: string,
   skills: ReadonlyArray<InlineSkill>,
 ): ReactNode | null {
-  const token = collectComposerInlineTokens(`${source} `)[0];
-  if (token?.type !== "skill" || token.path === undefined || token.end !== source.length) {
-    return null;
-  }
-  const skill = skills.find((candidate) => candidate.path === token.path) ??
-    skills.find((candidate) => candidate.name === token.value) ?? { name: token.value };
-  return <SkillChip skill={skill} rawText={source} />;
+  const skill = resolveLinkedInlineSkill(source, skills);
+  return skill ? <SkillChip skill={skill} rawText={source} /> : null;
 }
 
 function SkillChip(props: { skill: InlineSkill; rawText: string }) {
