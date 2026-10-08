@@ -42,6 +42,7 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
@@ -663,6 +664,15 @@ export const promptImageFiles = (
           : [{ uri: NodeURL.pathToFileURL(path).href, name: attachment.name }];
       });
 
+/** OpenCode rejects the whole prompt for a missing file, so a deleted image keeps only its path text. */
+export const presentPromptFiles = (
+  fileSystem: FileSystem.FileSystem,
+  files: ReadonlyArray<{ readonly uri: string; readonly name: string }>,
+) =>
+  Effect.filter(files, (file) =>
+    fileSystem.exists(NodeURL.fileURLToPath(file.uri)).pipe(Effect.orElseSucceed(() => false)),
+  );
+
 const turnTokenUsage = (turn: ActiveTurn, status: OrchestrationV2ProviderTurn["status"]) =>
   turn.steps === 0
     ? {
@@ -686,6 +696,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const host = yield* ProviderHost.ProviderHost;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const fileSystem = yield* FileSystem.FileSystem;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Crypto.Crypto;
   const driver = OPENCODE_PROVIDER;
@@ -3275,10 +3286,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             ),
           )
         : [];
-      const files = promptImageFiles(
-        turnInput.message.attachments,
-        host.resolveAttachmentPath,
-        connection.external,
+      const files = yield* presentPromptFiles(
+        fileSystem,
+        promptImageFiles(
+          turnInput.message.attachments,
+          host.resolveAttachmentPath,
+          connection.external,
+        ),
       );
       if (!sending()) return;
       return yield* client.session
@@ -3607,10 +3621,13 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (turn.settledInbox.has(inboxID)) return;
           turn.steers.add(inboxID);
           state.strandedSteers.delete(inboxID);
-          const files = promptImageFiles(
-            steerInput.message.attachments,
-            host.resolveAttachmentPath,
-            connection.external,
+          const files = yield* presentPromptFiles(
+            fileSystem,
+            promptImageFiles(
+              steerInput.message.attachments,
+              host.resolveAttachmentPath,
+              connection.external,
+            ),
           );
           yield* client.session
             .prompt({
