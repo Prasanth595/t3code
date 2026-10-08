@@ -8,6 +8,7 @@ import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useEffect,
   useEffectEvent,
+  useMemo,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
@@ -59,6 +60,7 @@ export function AssistantCitationChip({
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
   const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
+  const [sourcePositionRevision, setSourcePositionRevision] = useState(0);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the uncommitted comment draft held in a ref once the parent closes the comment editor
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
@@ -89,25 +91,33 @@ export function AssistantCitationChip({
       anchor,
       citation,
       onUnavailable: onSourceUnavailable,
+      onPositionChange: () => setSourcePositionRevision((revision) => revision + 1),
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  const popupAnchor = activeSourceAnchor
-    ? {
-        contextElement: activeSourceAnchor.source,
-        getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          const rect =
-            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
-          // Code blocks and tables scroll sideways inside the message, so the cited
-          // text can end in their hidden overflow. Base UI only shifts the popup while
-          // it still touches the anchor, so clamp the anchor to the message's width.
-          const bounds = activeSourceAnchor.source.getBoundingClientRect();
-          const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
-          const right = Math.max(Math.min(rect.right, bounds.right), left);
-          return new DOMRect(left, rect.top, right - left, rect.height);
-        },
-      }
-    : undefined;
+  // A multi-line selection's bounding box spans the full message width; anchor
+  // the bubble to the selection's last line, where the pointer released.
+  const popupAnchor = useMemo(
+    () =>
+      activeSourceAnchor
+        ? {
+            contextElement: activeSourceAnchor.source,
+            getBoundingClientRect: () => {
+              const rects = activeSourceAnchor.range.getClientRects();
+              const rect =
+                rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+              // Code blocks and tables scroll sideways inside the message, so the cited
+              // text can end in their hidden overflow. Base UI only shifts the popup while
+              // it still touches the anchor, so clamp the anchor to the message's width.
+              const bounds = activeSourceAnchor.source.getBoundingClientRect();
+              const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
+              const right = Math.max(Math.min(rect.right, bounds.right), left);
+              return new DOMRect(left, rect.top, right - left, rect.height);
+            },
+          }
+        : undefined,
+    // oxlint-disable-next-line react/memo-dependencies -- Bridge range updates need a new virtual anchor even when its source object is unchanged.
+    [activeSourceAnchor, sourcePositionRevision],
+  );
   const label = assistantCitationLabel(citation);
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,

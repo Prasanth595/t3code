@@ -1,4 +1,5 @@
 import type { AssetResource } from "@t3tools/contracts";
+import { injectHtmlSelectionBridge } from "@t3tools/shared/htmlRender";
 import {
   AssetAttachmentNotFoundError,
   AssetSourceControlMediaUrlValidationError,
@@ -184,6 +185,7 @@ const decodeAssetClaims = Schema.decodeUnknownOption(AssetClaimsJson);
 const encodeAssetClaims = Schema.encodeSync(AssetClaimsJson);
 
 export type ResolvedAsset =
+  | { readonly kind: "html"; readonly html: string }
   | {
       readonly kind: "file";
       readonly path: string;
@@ -877,6 +879,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
 export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
   token: string,
   relativePath: string,
+  options?: { readonly htmlSelection?: boolean },
 ) {
   const [encodedPayload, signature] = token.split(".");
   if (!encodedPayload || !signature) return null;
@@ -912,6 +915,18 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ),
       Effect.orElseSucceed(() => Option.none()),
     );
+    if (
+      Option.isSome(info) &&
+      info.value.type === "File" &&
+      options?.htmlSelection &&
+      !claims.download &&
+      /\.html?$/i.test(attachmentPath)
+    ) {
+      return yield* fileSystem.readFileString(attachmentPath).pipe(
+        Effect.map((html) => ({ kind: "html" as const, html: injectHtmlSelectionBridge(html) })),
+        Effect.orElseSucceed(() => null),
+      );
+    }
     return Option.isSome(info) && info.value.type === "File"
       ? ({
           kind: "file",

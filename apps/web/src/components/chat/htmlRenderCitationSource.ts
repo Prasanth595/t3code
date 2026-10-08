@@ -28,6 +28,7 @@ export function observeHtmlRenderCitationSource({
   let frame: HTMLIFrameElement | null = null;
   let scrolling = false;
   let expiry: ReturnType<typeof setTimeout> | undefined;
+  let responseTimeout: ReturnType<typeof setTimeout> | undefined;
   const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const resolve = () => {
     if (stopped || activation.dismissed || !root.isConnected || scrolling) return;
@@ -42,7 +43,21 @@ export function observeHtmlRenderCitationSource({
       return;
     }
     frame = root.querySelector<HTMLIFrameElement>("iframe[data-html-selection-ready]");
-    if (frame) htmlSelectionCommand(frame, "target", request.citation);
+    if (frame) {
+      responseTimeout ??= setTimeout(() => {
+        if (stopped || activation.dismissed) return;
+        activation.dismissed = true;
+        if (frame) htmlSelectionCommand(frame, "unmark");
+        request.onComplete();
+        toastManager.add({
+          type: "warning",
+          title: "Could not open the cited HTML",
+          description:
+            "Update or reconnect to the environment and try again. The saved quote is unchanged.",
+        });
+      }, 5000);
+      htmlSelectionCommand(frame, "target", request.citation);
+    }
   };
   const receive = (event: MessageEvent) => {
     if (stopped || activation.dismissed || !frame || event.source !== frame.contentWindow) return;
@@ -59,6 +74,8 @@ export function observeHtmlRenderCitationSource({
     )
       return;
     const local = readHtmlSelectionRect(params.target);
+    clearTimeout(responseTimeout);
+    responseTimeout = undefined;
     const rect = local ? htmlSelectionClientRect(frame, local) : root.getBoundingClientRect();
     const state = list.getState();
     const index = state.indexByKey(itemKey);
@@ -141,6 +158,7 @@ export function observeHtmlRenderCitationSource({
     stopped = true;
     cancelScroll();
     clearTimeout(expiry);
+    clearTimeout(responseTimeout);
     observer.disconnect();
     resize.disconnect();
     stopPosition();

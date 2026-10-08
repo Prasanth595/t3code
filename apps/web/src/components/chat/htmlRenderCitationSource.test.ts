@@ -4,6 +4,7 @@ import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { observeHtmlRenderCitationSource } from "./htmlRenderCitationSource";
 import type { AssistantCitationTarget } from "./AssistantCitationSource";
+import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("../ui/toast", () => ({ toastManager: { add: toast } }));
@@ -24,6 +25,7 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 function setup(ready = true) {
@@ -94,6 +96,71 @@ function setup(ready = true) {
 }
 
 describe("HTML citation source navigation", () => {
+  it("finishes with a recovery message when the frame does not reply", () => {
+    vi.useFakeTimers();
+    const p = setup();
+    vi.advanceTimersByTime(5000);
+    expect(p.request.onComplete).toHaveBeenCalledOnce();
+    expect(p.request.activationRef.current.dismissed).toBe(true);
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Could not open the cited HTML" }),
+    );
+  });
+
+  it("updates a comment anchor and releases it when the quote disappears", () => {
+    const p = setup();
+    p.dispose();
+    disposers.pop();
+    const onUnavailable = vi.fn();
+    const onPositionChange = vi.fn();
+    const updateRange = vi.fn(() => true);
+    const dispose = observeAssistantCitationCommentSource({
+      anchor: {
+        source: p.root,
+        viewport: p.root.parentElement!,
+        htmlRender: p.frame,
+        range: {
+          getBoundingClientRect: () => new DOMRect(),
+          getClientRects: () => Object.assign([], { item: () => null }),
+        },
+        updateRange,
+      },
+      citation: p.request.citation,
+      onUnavailable,
+      onPositionChange,
+    });
+    disposers.push(dispose);
+    const reply = (
+      target: unknown,
+      source: Window | null = p.frame.contentWindow,
+      selector = p.request.citation,
+    ) =>
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          source,
+          data: {
+            jsonrpc: "2.0",
+            method: "t3/selection",
+            params: { action: "mark", target, selector },
+          },
+        }),
+      );
+    const rect = { left: 12, top: 24, width: 60, height: 20 };
+    reply(rect, window);
+    reply(rect, p.frame.contentWindow, { ...p.request.citation, text: "another quote" });
+    expect(updateRange).not.toHaveBeenCalled();
+    reply(rect);
+    expect(updateRange).toHaveBeenCalledWith(rect);
+    expect(onPositionChange).toHaveBeenCalledOnce();
+    expect(onUnavailable).not.toHaveBeenCalled();
+    reply(null);
+    expect(onUnavailable).toHaveBeenCalledOnce();
+    expect(p.post).toHaveBeenLastCalledWith(
+      { method: "t3/selection-command", params: { action: "unmark", selector: undefined } },
+      "*",
+    );
+  });
+
   it("waits for iframe readiness, then resolves and scrolls to the saved quote", async () => {
     const p = setup(false);
     expect(p.post).not.toHaveBeenCalled();
@@ -102,7 +169,10 @@ describe("HTML citation source navigation", () => {
     expect(p.post).toHaveBeenLastCalledWith(
       {
         method: "t3/selection-command",
-        params: { action: "target", selector: p.request.citation },
+        params: {
+          action: "target",
+          selector: { text: "quote", start: 0, end: 5, prefix: "", suffix: "" },
+        },
       },
       "*",
     );

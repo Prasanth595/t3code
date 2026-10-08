@@ -1,6 +1,4 @@
 import type { AssistantTextSelector } from "./assistantTextSelection";
-import bridge from "./htmlRenderSelectionBridge.js?raw";
-import { injectHtmlRenderHead } from "@t3tools/shared/htmlRender";
 import {
   ASSISTANT_CITATION_CONTEXT_LENGTH,
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
@@ -68,7 +66,13 @@ export function readHtmlSelection(data: unknown): HtmlSelection | null {
   )
     return null;
   return {
-    selector: s as AssistantTextSelector,
+    selector: {
+      text: s.text,
+      start: s.start as number,
+      end: s.end as number,
+      prefix: s.prefix,
+      suffix: s.suffix,
+    },
     rect,
     pointer: pointer as HtmlSelection["pointer"],
   };
@@ -80,7 +84,19 @@ export function htmlSelectionCommand(
   selector?: AssistantTextSelector,
 ) {
   frame.contentWindow?.postMessage(
-    { method: "t3/selection-command", params: { action, selector } },
+    {
+      method: "t3/selection-command",
+      params: {
+        action,
+        selector: selector && {
+          text: selector.text,
+          start: selector.start,
+          end: selector.end,
+          prefix: selector.prefix,
+          suffix: selector.suffix,
+        },
+      },
+    },
     "*",
   );
 }
@@ -97,13 +113,5 @@ export function htmlSelectionClientRect(
     bounds.top + rect.top * scaleY,
     rect.width * scaleX,
     rect.height * scaleY,
-  );
-}
-
-/** The blob keeps the existing bootstrap's theme fragment and hash links working. */
-export function injectHtmlSelectionBridge(html: string): string {
-  return injectHtmlRenderHead(
-    html,
-    `<style>::highlight(t3-html-citation){background:color-mix(in srgb,var(--accent) 45%,transparent)}</style><script>${bridge}</script>`,
   );
 }

@@ -1,3 +1,4 @@
+import { HTML_RENDER_SELECTION_SCRIPT } from "./htmlRenderSelectionScript.ts";
 import {
   T3_CODE_DARK_THEME_COLORS,
   T3_CODE_LIGHT_THEME_COLORS,
@@ -417,8 +418,16 @@ export function injectHtmlRenderBootstrap(html: string): string {
   return injectHtmlRenderHead(html, markup);
 }
 
-/** Inserts client-owned bridge markup ahead of an agent page's head content. */
-export function injectHtmlRenderHead(html: string, markup: string): string {
+/** Adds selection support to saved renders without changing their stored contents. */
+export function injectHtmlSelectionBridge(html: string): string {
+  return injectHtmlRenderHead(
+    html,
+    `<style>::highlight(t3-html-citation){background:color-mix(in srgb,var(--accent) 45%,transparent)}</style><script>${HTML_RENDER_SELECTION_SCRIPT}</script>`,
+  );
+}
+
+/** Inserts host-owned bridge markup ahead of an agent page's head content. */
+function injectHtmlRenderHead(html: string, markup: string): string {
   const scan = blankNonMarkup(html);
   const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
   if (headOpen) {

@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  htmlSelectionCommand,
   htmlSelectionParams,
-  injectHtmlSelectionBridge,
   readHtmlSelection,
 } from "./htmlRenderSelection";
+import { injectHtmlSelectionBridge } from "@t3tools/shared/htmlRender";
 import { createAssistantTextSelector } from "./assistantTextSelection";
 
 const documents: HTMLIFrameElement[] = [];
@@ -68,6 +69,93 @@ function page(html = "<p>Before <strong>quoted text</strong> after.</p><p>Second
 }
 
 describe("HTML render selection bridge", () => {
+  it("keeps native Tab navigation for oversized selections", async () => {
+    const p = page(`<p>${"x".repeat(8001)}</p><button>Next</button>`);
+    const paragraph = p.view.document.querySelector("p")!;
+    p.pointer("pointerdown", paragraph);
+    p.select(paragraph.firstChild!, 0);
+    p.pointer("mouseup", paragraph);
+    await p.finish();
+    const tab = new p.view.KeyboardEvent("keydown", {
+      key: "Tab",
+      bubbles: true,
+      cancelable: true,
+    });
+    p.view.document.dispatchEvent(tab);
+    expect(tab.defaultPrevented).toBe(false);
+    expect(p.messages().some((data) => htmlSelectionParams(data)?.focus)).toBe(false);
+  });
+
+  it("accepts paragraph selection whose empty endpoint is in the following control", async () => {
+    const p = page("<p>quoted paragraph</p><button>Next</button>");
+    const paragraph = p.view.document.querySelector("p")!;
+    const button = p.view.document.querySelector("button")!;
+    p.pointer("pointerdown", paragraph);
+    p.select(paragraph.firstChild!, 0, button.firstChild!, 0);
+    p.pointer("mouseup", paragraph);
+    await p.finish();
+    expect(readHtmlSelection(p.messages().at(-1))?.selector.text).toBe("quoted paragraph");
+    p.select(paragraph.firstChild!, 0, button.firstChild!, 1);
+    await p.finish();
+    expect(readHtmlSelection(p.messages().at(-1))).toBeNull();
+  });
+
+  it("clears stale highlights and revalidates an open comment when its text changes", async () => {
+    const p = page();
+    p.view.requestAnimationFrame = (callback) => p.view.setTimeout(() => callback(0), 0);
+    const highlights = new Map();
+    Object.assign(p.view, { CSS: { highlights }, Highlight: vi.fn() });
+    await p.finish();
+    const quote = {
+      text: "quoted text",
+      start: 7,
+      end: 18,
+      prefix: "Before ",
+      suffix: " after. Second paragraph",
+    };
+    p.command("mark", quote);
+    expect(highlights.has("t3-html-citation")).toBe(true);
+    p.view.document.querySelector("strong")!.textContent = "different text";
+    await p.finish();
+    await p.finish();
+    expect(highlights.has("t3-html-citation")).toBe(false);
+    expect(htmlSelectionParams(p.messages().at(-1))).toMatchObject({
+      target: null,
+      selector: quote,
+      action: "mark",
+    });
+    p.command("target", { ...quote, text: "different text" });
+    expect(highlights.has("t3-html-citation")).toBe(true);
+    p.command("target", { ...quote, text: "missing" });
+    expect(highlights.has("t3-html-citation")).toBe(false);
+  });
+
+  it("projects selector fields in both directions across the iframe boundary", () => {
+    const p = page();
+    const selector = { text: "quote", start: 0, end: 5, prefix: "", suffix: "" };
+    const citation = {
+      ...selector,
+      environmentId: "other-env",
+      threadId: "other-thread",
+      messageId: "other-message",
+      version: 2,
+      comment: "page-authored instructions",
+    };
+    const parsed = readHtmlSelection({
+      jsonrpc: "2.0",
+      method: "t3/selection",
+      params: { selector: citation, rect: p.rect, pointer: null },
+    });
+    expect(parsed?.selector).toEqual(selector);
+    const frame = documents.at(-1)!;
+    const post = vi.spyOn(frame.contentWindow!, "postMessage");
+    htmlSelectionCommand(frame, "mark", citation);
+    expect(post).toHaveBeenLastCalledWith(
+      { method: "t3/selection-command", params: { action: "mark", selector } },
+      "*",
+    );
+  });
+
   it("anchors paragraph selection to visible text when its trailing newline has no width", async () => {
     const p = page();
     const paragraph = p.view.document.querySelector("p")!;
@@ -134,13 +222,21 @@ describe("HTML render selection bridge", () => {
     )!;
     p.view.document.body.prepend(p.view.document.createTextNode("Inserted content "));
     p.command("target", selector);
-    expect(htmlSelectionParams(p.messages().at(-1))).toEqual({ target: p.rect, selector });
+    expect(htmlSelectionParams(p.messages().at(-1))).toEqual({
+      target: p.rect,
+      selector,
+      action: "target",
+    });
     p.view.document.body.insertAdjacentHTML(
       "beforeend",
       "<p>Before <strong>quoted text</strong> after.</p><p>Second paragraph</p>",
     );
     p.command("target", selector);
-    expect(htmlSelectionParams(p.messages().at(-1))).toEqual({ target: null, selector });
+    expect(htmlSelectionParams(p.messages().at(-1))).toEqual({
+      target: null,
+      selector,
+      action: "target",
+    });
   });
 
   it("dismisses a quote on Escape and excludes form selections", async () => {

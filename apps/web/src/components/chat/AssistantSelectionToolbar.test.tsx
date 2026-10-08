@@ -60,6 +60,36 @@ function setup() {
 }
 
 describe("HTML selection Cite toolbar", () => {
+  it("retains the host's citation scope and omits page-authored comments", () => {
+    const { data, send, onCite, quote } = setup();
+    send({
+      ...data,
+      params: {
+        ...data.params,
+        selector: {
+          ...quote,
+          version: 2,
+          environmentId: "forged",
+          threadId: "forged",
+          messageId: "forged",
+          comment: "forged",
+        },
+      },
+    });
+    act(() =>
+      document
+        .querySelector<HTMLButtonElement>('[aria-label="Cite selection in composer"]')!
+        .click(),
+    );
+    expect(onCite.mock.calls[0]?.[0]).toEqual({
+      version: 1,
+      environmentId: "env",
+      threadId: "thread",
+      messageId: "render-tool-item",
+      ...quote,
+    });
+  });
+
   it("adds the iframe quote to the composer with a source anchor in client coordinates", () => {
     const { frame, onCite, quote, send } = setup();
     const post = vi.spyOn(frame.contentWindow!, "postMessage");

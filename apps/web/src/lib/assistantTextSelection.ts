@@ -23,6 +23,7 @@ export type AssistantCitationSourceAnchor =
       viewport: HTMLElement;
       range: Pick<Range, "getClientRects" | "getBoundingClientRect">;
       htmlRender: HTMLIFrameElement;
+      updateRange: (rect: { left: number; top: number; width: number; height: number }) => boolean;
     };
 
 export function findAssistantCitationSourceAnchor(

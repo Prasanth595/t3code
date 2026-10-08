@@ -7,7 +7,11 @@ import {
 } from "~/lib/assistantTextSelection";
 import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
-import { htmlSelectionCommand } from "~/lib/htmlRenderSelection";
+import {
+  htmlSelectionCommand,
+  htmlSelectionParams,
+  readHtmlSelectionRect,
+} from "~/lib/htmlRenderSelection";
 import { observeHtmlRenderCitationSource } from "./htmlRenderCitationSource";
 
 const CITATION_PULSE_DURATION_MS = 650;
@@ -23,24 +27,58 @@ export function observeAssistantCitationCommentSource({
   anchor,
   citation,
   onUnavailable,
+  onPositionChange,
 }: {
   anchor: AssistantCitationSourceAnchor;
   citation: AssistantCitation;
   onUnavailable: () => void;
+  onPositionChange?: () => void;
 }): () => void {
   if (anchor.htmlRender) {
     const frame = anchor.htmlRender;
+    let stopped = false;
+    const timeout = setTimeout(() => unavailable(), 5000);
+    const unavailable = () => {
+      if (stopped) return;
+      dispose();
+      onUnavailable();
+    };
     const validate = () => {
-      if (!anchor.source.isConnected || !anchor.viewport.contains(frame)) onUnavailable();
+      if (!anchor.source.isConnected || !anchor.viewport.contains(frame)) unavailable();
+    };
+    const receive = (event: MessageEvent) => {
+      if (stopped || event.source !== frame.contentWindow) return;
+      const params = htmlSelectionParams(event.data);
+      if (!params || params.action !== "mark") return;
+      const selector = params.selector as Partial<AssistantCitation> | undefined;
+      if (
+        !selector ||
+        selector.text !== citation.text ||
+        selector.start !== citation.start ||
+        selector.end !== citation.end ||
+        selector.prefix !== citation.prefix ||
+        selector.suffix !== citation.suffix
+      )
+        return;
+      clearTimeout(timeout);
+      const rect = readHtmlSelectionRect(params.target);
+      if (!rect) unavailable();
+      else if (anchor.updateRange(rect)) onPositionChange?.();
     };
     const observer = new MutationObserver(validate);
-    observer.observe(anchor.viewport, { childList: true, subtree: true });
-    htmlSelectionCommand(frame, "mark", citation);
-    validate();
-    return () => {
+    const dispose = () => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timeout);
       observer.disconnect();
+      window.removeEventListener("message", receive);
       htmlSelectionCommand(frame, "unmark");
     };
+    observer.observe(anchor.viewport, { childList: true, subtree: true });
+    window.addEventListener("message", receive);
+    htmlSelectionCommand(frame, "mark", citation);
+    validate();
+    return dispose;
   }
   const { source, range, viewport } = anchor;
   const registry = typeof CSS !== "undefined" ? CSS.highlights : undefined;

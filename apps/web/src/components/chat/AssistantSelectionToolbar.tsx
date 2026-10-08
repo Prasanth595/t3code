@@ -216,6 +216,8 @@ export function AssistantSelectionToolbar({
         return;
       }
       const selector = captured?.selector ?? { text: "", start: 0, end: 1, prefix: "", suffix: "" };
+      let currentRect = localRect;
+      const sourceRect = () => htmlSelectionClientRect(frame, currentRect);
       setSelection({
         tooLong: params.tooLong === true,
         citation: { version: 1, ...threadRef, messageId: MessageId.make(messageId), ...selector },
@@ -223,12 +225,18 @@ export function AssistantSelectionToolbar({
           source,
           viewport,
           htmlRender: frame,
+          updateRange: (next) => {
+            const changed = (["left", "top", "width", "height"] as const).some(
+              (key) => next[key] !== currentRect[key],
+            );
+            currentRect = next;
+            return changed;
+          },
           range: {
-            getBoundingClientRect: () => htmlSelectionClientRect(frame, localRect),
+            getBoundingClientRect: sourceRect,
             getClientRects: () =>
-              Object.assign([htmlSelectionClientRect(frame, localRect)], {
-                item: (index: number) =>
-                  index === 0 ? htmlSelectionClientRect(frame, localRect) : null,
+              Object.assign([sourceRect()], {
+                item: (index: number) => (index === 0 ? sourceRect() : null),
               }),
           },
         },
