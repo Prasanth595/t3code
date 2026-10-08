@@ -3809,9 +3809,14 @@ describe("orchestrator MCP toolkit", () => {
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("delegated-task-status");
         const rawTranscript = yield* readDelegatedTaskStatusTranscript();
-        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
-          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
-        );
+        const workspaceTranscript = materializeReplayTranscriptWorkspace(rawTranscript, cwd);
+        // The recorder stopped Codex after its last frame, but this test keeps
+        // the parent turn running past the recording. Replaying that exit would
+        // end the session and fail the parent run.
+        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript({
+          ...workspaceTranscript,
+          entries: workspaceTranscript.entries.filter((entry) => entry.type !== "runtime_exit"),
+        });
         const layerOrchestrator = ProviderReplayHarness.layerProviderReplay(
           {
             name: "delegated-task-status/codex",
