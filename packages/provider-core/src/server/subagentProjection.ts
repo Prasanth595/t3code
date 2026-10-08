@@ -241,12 +241,11 @@ export function delegatedTaskProgress(projection: {
   const workRuns = projection.runs.filter(
     (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
   );
-  // A held queue entry can predate many finished follow-ups. It is still
-  // pending intent, but it must not make an idle provider look running.
-  const pendingRuns = workRuns
-    .filter((run) => !terminal(run.status))
-    .toSorted((a, b) => b.ordinal - a.ordinal);
-  const pendingRun = pendingRuns.find((run) => run.status !== "queued") ?? pendingRuns[0];
+  // A held queue waits for the user to resume it (after Stop, a restart, or a
+  // provider failure), so its runs are not work the task still owes.
+  const active = workRuns.some(
+    (run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true),
+  );
   const children =
     projection.subagents.some(
       (task) =>
@@ -262,13 +261,12 @@ export function delegatedTaskProgress(projection: {
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      pendingRuns.some((run) => !(run.status === "queued" && run.queueHeld === true)) || resultRun === undefined
+      active || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)
           : ("result_available" as const),
     resultRun,
-    pendingRun,
   };
 }
 

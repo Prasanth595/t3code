@@ -10182,8 +10182,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   });
 
   /**
-   * Synchronizes unpublished child work, then transfers a settled child's
-   * result into its parent and offers the parent wake. Every mutation here targets the PARENT thread, so callers must hold
+   * Transfers a terminal child's result into its parent and offers the parent
+   * wake. Every mutation here targets the PARENT thread, so callers must hold
    * the parent thread's dispatch lock rather than the child's: the
    * delegated_task.wake-policy handler rewrites the same subagent row under
    * that lock with a full-row payload, and unserialized writers clobber each
@@ -10211,103 +10211,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.taskId);
-      const progress = delegatedTaskProgress({
-        ...childControls,
-        runs: taskRuns.length === 0 ? childControls.runs : taskRuns,
-      });
-      const parentThreadId = childControls.thread.lineage.parentThreadId;
-      const parentProjection = yield* projectionStore.getThreadRecords(
-        parentThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "nodes",
-          "turnItems",
-          "contextTransfers",
-        ],
-        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
-      );
-      const task = parentProjection.subagents.find(
-        (candidate) =>
-          candidate.id === options.taskId &&
-          candidate.origin === "app_owned" &&
-          candidate.childThreadId === childThreadId,
-      );
-      if (task === undefined) {
-        return;
-      }
-      // A held queued continuation still belongs to this task. Publish no
-      // result until it settles, but keep the parent's durable status honest.
-      if (task.result !== null) return;
-      const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
-      const parentTurnItem = parentProjection.turnItems.find(
-        (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
-      );
-      if (progress.state !== "result_available") {
-        const status =
-          progress.state === "waiting_for_children"
-            ? ("waiting" as const)
-            : progress.pendingRun === undefined || progress.pendingRun.status === "queued"
-              ? ("pending" as const)
-              : ("running" as const);
-        if (
-          task.status === status &&
-          (parentNode === undefined || parentNode.status === status) &&
-          (parentTurnItem === undefined || parentTurnItem.status === status)
-        ) {
-          return;
-        }
-        const now = yield* DateTime.now;
-        yield* writeSystemEvents([
-          {
-            type: "subagent.updated",
-            threadId: parentThreadId,
-            ...(task.runId === null ? {} : { runId: task.runId }),
-            nodeId: task.id,
-            driver: task.driver,
-            occurredAt: now,
-            payload: { ...task, status, completedAt: null, updatedAt: now },
-          },
-          ...(parentNode === undefined
-            ? []
-            : [
-                {
-                  type: "node.updated" as const,
-                  threadId: parentThreadId,
-                  ...(parentNode.runId === null ? {} : { runId: parentNode.runId }),
-                  nodeId: parentNode.id,
-                  driver: task.driver,
-                  occurredAt: now,
-                  payload: { ...parentNode, status, completedAt: null },
-                },
-              ]),
-          ...(parentTurnItem === undefined
-            ? []
-            : [
-                {
-                  type: "turn-item.updated" as const,
-                  threadId: parentThreadId,
-                  ...(parentTurnItem.runId === null ? {} : { runId: parentTurnItem.runId }),
-                  ...(parentTurnItem.nodeId === null ? {} : { nodeId: parentTurnItem.nodeId }),
-                  driver: task.driver,
-                  occurredAt: now,
-                  payload: { ...parentTurnItem, status, completedAt: null, updatedAt: now },
-                },
-              ]),
-        ]);
-        return;
-      }
-      const childRun = progress.resultRun;
+      const childRun =
+        taskRuns.length === 0
+          ? options.taskId === forkedFrom.nodeId
+            ? options.resultRun
+            : undefined
+          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (childRun === undefined) return;
       const outcome = runOutcome(childRun);
       const terminalStatus = delegatedTaskTerminalStatus(outcome);
       if (terminalStatus === null) {
         return;
       }
-
       if (
         yield* childAwaitsRestartContinuation(
           taskRuns.length === 0 ? childControls.runs : taskRuns,
@@ -10333,6 +10248,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         messages: childResult.messages,
         turnItems: childResult.turnItems,
       };
+      const parentThreadId = childControls.thread.lineage.parentThreadId;
+      const parentProjection = yield* projectionStore.getThreadRecords(
+        parentThreadId,
+        [
+          "runs",
+          "messages",
+          "subagents",
+          "providerThreads",
+          "providerTurns",
+          "nodes",
+          "turnItems",
+          "contextTransfers",
+        ],
+        { turnItemTypes: ["subagent"], messageRoles: ["user"] },
+      );
+      const task = parentProjection.subagents.find(
+        (candidate) =>
+          candidate.id === options.taskId &&
+          candidate.origin === "app_owned" &&
+          candidate.childThreadId === childThreadId,
+      );
+      if (task === undefined) {
+        return;
+      }
       const existingResultTransfer = parentProjection.contextTransfers.find(
         (transfer) =>
           transfer.type === "subagent_result" &&
@@ -10351,6 +10290,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         task.runId === null
           ? undefined
           : parentProjection.runs.find((candidate) => candidate.id === task.runId);
+      const parentNode = parentProjection.nodes.find((candidate) => candidate.id === task.id);
+      const parentTurnItem = parentProjection.turnItems.find(
+        (candidate) => candidate.type === "subagent" && candidate.subagentId === task.id,
+      );
       const updatedTask: OrchestrationV2Subagent = {
         ...task,
         providerThreadId: childRun.providerThreadId,
@@ -11413,7 +11356,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : threadDispatch.withLock(parentThreadId, dispatch);
     });
 
-  const handleRunUpdate = (stored: OrchestrationV2StoredEvent) =>
+  const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
       // finalize writes the parent thread and startNextQueuedRun writes this
@@ -11422,20 +11365,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // while holding the parent lock, so nesting the parent lock inside the
       // child lock here would invert that order, and the keyed executor's
       // semaphores are neither reentrant nor deadlock-aware.
-      // Nonterminal updates synchronize the task without promoting queued work.
-      if (
-        String(stored.commandId).startsWith("command:runtime-reconcile:") ||
-        stored.event.type !== "run.updated" ||
-        !["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-          stored.event.payload.status,
-        )
-      ) {
-        const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
-        if (parentThreadId !== undefined) {
-          yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
-        }
-        return;
-      }
       if (stored.event.type === "run.updated") {
         yield* threadDispatch.withLock(
           threadId,
@@ -11468,7 +11397,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("Failed to react to V2 run update", {
+        Effect.logWarning("Failed to react to terminal V2 run", {
           threadId: stored.event.threadId,
           sequence: stored.sequence,
           cause,
@@ -11476,24 +11405,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
-  // Recover historical child state from projections below. Live run updates
-  // synchronize unpublished tasks; only terminal updates promote the queue.
-  // Replaying full history would delay this work as the database grows.
-  const runEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
+  // Historical terminal events are already represented by the projections
+  // below. Replaying the full event table on every server start delays live
+  // queue promotion in proportion to the lifetime size of the database.
+  const terminalEventsAfterSequence = yield* eventSink.latestSequence().pipe(Effect.orDie);
   // Queue promotion can wait on a provider or a thread lock. Subscribe to run
   // updates before buffering so that wait never retains unrelated tool bodies.
-  yield* Stream.merge(
-    eventSink.stream({ afterSequence: runEventsAfterSequence, eventType: "run.updated" }),
-    eventSink.stream({ afterSequence: runEventsAfterSequence, eventType: "run.created" }),
-  ).pipe(
-    Stream.filter(
-      (stored) =>
-        !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
-        (stored.event.type === "run.updated" || stored.event.type === "run.created"),
-    ),
-    Stream.runForEach(handleRunUpdate),
-    Effect.forkDetach,
-  );
+  yield* eventSink
+    .stream({ afterSequence: terminalEventsAfterSequence, eventType: "run.updated" })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "run.updated" &&
+          !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
+          (stored.event.payload.status === "completed" ||
+            stored.event.payload.status === "interrupted" ||
+            stored.event.payload.status === "failed" ||
+            stored.event.payload.status === "cancelled" ||
+            stored.event.payload.status === "rolled_back"),
+      ),
+      Stream.runForEach(handleTerminalRun),
+      Effect.forkDetach,
+    );
 
   const recoverDelegatedTasks = Effect.gen(function* () {
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
