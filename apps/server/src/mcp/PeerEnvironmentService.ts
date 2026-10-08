@@ -27,6 +27,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { threadShellFromProjection } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import {
@@ -215,6 +216,7 @@ function assertLaunchTarget(
 function readProjection(
   projection: OrchestrationV2ThreadProjection,
   input: OrchestratorMcpThreadReadInput,
+  nowMs: number,
 ): OrchestratorMcpThreadReadResult {
   const view = input.view ?? "messages";
   const visible = projection.visibleTurnItems.filter(
@@ -227,7 +229,7 @@ function readProjection(
   const page = remaining.slice(0, input.limit ?? DEFAULT_THREAD_READ_LIMIT);
   const messagesByThreadId = new Map([[projection.thread.id, projection.messages]]);
   return {
-    thread: threadDetail(projection, visible.length),
+    thread: threadDetail(projection, visible.length, threadShellFromProjection(projection), nowMs),
     recentRuns: projection.runs
       .toSorted((left, right) => right.ordinal - left.ordinal)
       .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)
@@ -396,7 +398,7 @@ const make = Effect.gen(function* () {
     }),
     readThread: Effect.fn("PeerEnvironmentService.readThread")(function* (scope, input) {
       yield* withCaller(scope, readCaller());
-      return readProjection(yield* loadProjection(input.environmentId, input.threadId), input);
+      return readProjection(yield* loadProjection(input.environmentId, input.threadId), input, yield* Clock.currentTimeMillis);
     }),
     waitForThread: Effect.fn("PeerEnvironmentService.waitForThread")(function* (scope, input) {
       yield* withCaller(scope, readCaller());
