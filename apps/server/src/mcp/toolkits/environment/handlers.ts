@@ -77,7 +77,7 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const peers = yield* PeerEnvironmentService.PeerEnvironmentService;
       return yield* peers.list(scope);
-    }),
+    })),
   t3_environment_catalog: McpToolAccess.reads(({ environmentId }) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
