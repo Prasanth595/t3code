@@ -105,7 +105,7 @@ describe("HTML render selection bridge", () => {
 
   it("reveals a quote through nested scroll containers before returning its target", () => {
     const p = page(
-      '<div id="outer" style="overflow-x: auto; overflow-y: auto"><div id="inner" style="overflow-x: auto; overflow-y: auto"><p>quoted text</p></div></div>',
+      '<div id="outer" style="overflow-x: auto; overflow-y: auto; scroll-behavior: smooth"><div id="inner" style="overflow-x: auto; overflow-y: auto; scroll-behavior: smooth"><p>quoted text</p></div></div>',
     );
     const outer = p.view.document.querySelector<HTMLElement>("#outer")!;
     const inner = p.view.document.querySelector<HTMLElement>("#inner")!;
@@ -121,6 +121,20 @@ describe("HTML render selection bridge", () => {
       scrollHeight: { value: 1000 },
       scrollWidth: { value: 1000 },
     });
+    for (const element of [inner, outer]) {
+      let top = 0;
+      let left = 0;
+      Object.defineProperties(element, {
+        // Auto scrolling follows the page's smooth behavior and does not finish synchronously.
+        scrollTop: { get: () => top, set: () => {} },
+        scrollLeft: { get: () => left, set: () => {} },
+      });
+      element.scrollBy = (options?: ScrollToOptions | number) => {
+        if (typeof options !== "object" || options.behavior !== "instant") return;
+        top += options.top ?? 0;
+        left += options.left ?? 0;
+      };
+    }
     const bounds = (left: number, top: number, width: number, height: number) =>
       new p.view.DOMRect(left, top, width, height);
     inner.getBoundingClientRect = () =>
@@ -147,8 +161,16 @@ describe("HTML render selection bridge", () => {
     expect(target).toEqual({ left: 80, top: 145, width: 80, height: 15 });
     expect(scroll).not.toHaveBeenCalled();
 
-    inner.scrollTop = inner.scrollLeft = 500;
-    outer.scrollTop = outer.scrollLeft = 300;
+    inner.scrollBy({
+      top: 500 - inner.scrollTop,
+      left: 500 - inner.scrollLeft,
+      behavior: "instant",
+    });
+    outer.scrollBy({
+      top: 300 - outer.scrollTop,
+      left: 300 - outer.scrollLeft,
+      behavior: "instant",
+    });
     p.command("target", { text: "quoted text", start: 0, end: 11, prefix: "", suffix: "" });
     expect(htmlSelectionParams(p.messages().at(-1))?.target).toEqual({
       left: 10,
@@ -157,6 +179,49 @@ describe("HTML render selection bridge", () => {
       height: 15,
     });
   });
+
+  it.each([
+    { left: 700, top: 20, expectedLeft: 160, expectedTop: 20 },
+    { left: -200, top: 20, expectedLeft: 80, expectedTop: 20 },
+    { left: 10, top: 700, expectedLeft: 10, expectedTop: 80 },
+    { left: 10, top: -200, expectedLeft: 10, expectedTop: 80 },
+    { left: 700, top: 700, expectedLeft: 160, expectedTop: 80 },
+  ])(
+    "reveals a quote at ($left, $top) before replying on a smooth-scrolling page",
+    ({ left, top, expectedLeft, expectedTop }) => {
+      const p = page("<style>html { scroll-behavior: smooth }</style><p>quoted text</p>");
+      Object.defineProperties(p.view, {
+        innerWidth: { value: 320 },
+        innerHeight: { value: 240 },
+      });
+      let dx = 0;
+      let dy = 0;
+      const bounds = () => new p.view.DOMRect(left - dx, top - dy, 80, 15);
+      Object.assign(p.view.Range.prototype, {
+        getBoundingClientRect: bounds,
+        getClientRects: () => [bounds()],
+      });
+      const scroll = vi
+        .spyOn(p.view, "scrollBy")
+        .mockImplementation((options?: ScrollToOptions | number) => {
+          // The reply must use coordinates after scrolling, without waiting for an animation.
+          if (typeof options !== "object" || options.behavior !== "instant") return;
+          dx += options.left ?? 0;
+          dy += options.top ?? 0;
+        });
+      const quote = { text: "quoted text", start: 0, end: 11, prefix: "", suffix: "" };
+      p.command("mark", quote);
+      expect(scroll).not.toHaveBeenCalled();
+      p.command("target", quote);
+      expect(htmlSelectionParams(p.messages().at(-1))?.target).toEqual({
+        left: expectedLeft,
+        top: expectedTop,
+        width: 80,
+        height: 15,
+      });
+      expect(scroll).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("keeps native Tab navigation for oversized selections", async () => {
     const p = page(`<p>${"x".repeat(8001)}</p><button>Next</button>`);

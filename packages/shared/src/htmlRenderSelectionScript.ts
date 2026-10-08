@@ -250,11 +250,13 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
         const bounds = rect(marked);
         const top = box.top + element.clientTop;
         const left = box.left + element.clientLeft;
+        let dy = 0;
+        let dx = 0;
         if (
           /^(auto|scroll|hidden)$/.test(style.overflowY) &&
           element.scrollHeight > element.clientHeight
         )
-          element.scrollTop +=
+          dy =
             bounds.top < top
               ? bounds.top - top
               : Math.max(0, bounds.top + bounds.height - top - element.clientHeight);
@@ -262,14 +264,24 @@ export const HTML_RENDER_SELECTION_SCRIPT = String.raw`// Loaded as raw source i
           /^(auto|scroll|hidden)$/.test(style.overflowX) &&
           element.scrollWidth > element.clientWidth
         )
-          element.scrollLeft +=
+          dx =
             bounds.left < left
               ? bounds.left - left
               : Math.max(0, bounds.left + bounds.width - left - element.clientWidth);
+        if (dx || dy) element.scrollBy({ left: dx, top: dy, behavior: "instant" });
       }
       const bounds = marked.getBoundingClientRect();
-      if (bounds.top < 0 || bounds.bottom > window.innerHeight)
-        window.scrollBy(0, bounds.top - Math.min(80, window.innerHeight / 3));
+      const marginX = Math.min(80, window.innerWidth / 3);
+      const dx = bounds.left < 0
+        ? bounds.left - marginX
+        : bounds.right > window.innerWidth
+          ? bounds.right - window.innerWidth + marginX
+          : 0;
+      const dy = bounds.top < 0 || bounds.bottom > window.innerHeight
+        ? bounds.top - Math.min(80, window.innerHeight / 3)
+        : 0;
+      // Page CSS can request smooth scrolling; return geometry only after positioning.
+      if (dx || dy) window.scrollBy({ left: dx, top: dy, behavior: "instant" });
     }
     if (window.CSS?.highlights && window.Highlight)
       CSS.highlights.set("t3-html-citation", new Highlight(marked));
