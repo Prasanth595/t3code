@@ -291,24 +291,8 @@ export function ComposerContextSheet(props: {
                 value={`${record.mimeType} · ${formatAttachmentSize(record.sizeBytes)}`}
               />
             ) : null}
-<<<<<<< HEAD
-            {pullRequestUrl && /^https?:\/\//i.test(pullRequestUrl) ? (
-              <Pressable
-                accessibilityRole="link"
-                onPress={() => {
-                  props.onClose();
-                  void openPullRequest(pullRequestUrl).catch(() =>
-                    Alert.alert("Could not open pull request", "Try again when connected."),
-                  );
-                }}
-                className="rounded-xl bg-subtle p-4"
-              >
-                <Text className="text-foreground">Open pull request</Text>
-              </Pressable>
-=======
             {record.kind === "mention" ? (
               <ContextField label="Path" value={record.path} code />
->>>>>>> 40a20b1906 (fix(mobile): use native sheets for context previews)
             ) : null}
             {record.kind === "thread" ? (
               <View className="gap-3">
@@ -329,16 +313,6 @@ export function ComposerContextSheet(props: {
                 ) : null}
               </View>
             ) : null}
-<<<<<<< HEAD
-            {props.onOpenPullRequest && !pullRequestUrl ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={props.onOpenPullRequest}
-                className="rounded-xl bg-subtle p-4"
-              >
-                <Text className="text-foreground">Open pull request</Text>
-              </Pressable>
-=======
             {record.kind === "skill" ? (
               <View className="gap-3">
                 <ContextField label="Skill" value={record.name} />
@@ -356,7 +330,6 @@ export function ComposerContextSheet(props: {
                   </Pressable>
                 ) : null}
               </View>
->>>>>>> 40a20b1906 (fix(mobile): use native sheets for context previews)
             ) : null}
           </>
         )}
@@ -379,7 +352,8 @@ export function ComposerContextSheet(props: {
           <Pressable
             accessibilityRole="link"
             onPress={() => {
-              void Linking.openURL(pullRequestUrl).catch(() =>
+              props.onClose();
+              void openPullRequest(pullRequestUrl).catch(() =>
                 Alert.alert("Could not open pull request", "Try again when connected."),
               );
             }}
