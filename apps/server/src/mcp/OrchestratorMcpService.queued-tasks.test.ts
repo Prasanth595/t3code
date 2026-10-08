@@ -137,6 +137,7 @@ function fixture(
           getThreadRecords: (id) => Effect.succeed(id === parentThreadId ? parent : child),
           getProjectThreadRecords: () => Effect.succeed(child),
           stopDelegatedTasks: () => Effect.void,
+          delegatedTaskResultPending: () => Effect.succeed(true),
           getTimelinePage: () => Effect.succeed({ items: [], totalItems: 0, hasMore: false }),
           dispatch: (command) =>
             Effect.suspend(() => {

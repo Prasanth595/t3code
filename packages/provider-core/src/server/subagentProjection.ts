@@ -244,7 +244,7 @@ export function delegatedTaskProgress(projection: {
   // A held queue entry can predate many finished follow-ups. It is still
   // pending intent, but it must not make an idle provider look running.
   const pendingRuns = workRuns
-    .filter((run) => !terminal(run.status) && !(run.status === "queued" && run.queueHeld === true))
+    .filter((run) => !terminal(run.status))
     .toSorted((a, b) => b.ordinal - a.ordinal);
   const pendingRun = pendingRuns.find((run) => run.status !== "queued") ?? pendingRuns[0];
   const children =
@@ -262,7 +262,7 @@ export function delegatedTaskProgress(projection: {
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
-      pendingRun !== undefined || resultRun === undefined
+      pendingRuns.some((run) => !(run.status === "queued" && run.queueHeld === true)) || resultRun === undefined
         ? ("working" as const)
         : children
           ? ("waiting_for_children" as const)
