@@ -167,7 +167,8 @@ it.effect("reports an old held continuation as queued and keeps the latest resul
     const task = yield* service.taskStatus(scope, taskId);
     assert.equal(task.status, "queued");
     assert.equal(task.workState, "working");
-    assert.equal(task.hasPendingChildRuns, true);
+    // Held input remains visible in the queue counts, but does not count as active child work.
+    assert.equal(task.hasPendingChildRuns, false);
     assert.equal(task.latestTerminalRunId, RunId.make("run:queued-task:4"));
     assert.equal(task.latestTerminalSummary, "Latest completed follow-up result");
     assert.isNull(task.summary);
