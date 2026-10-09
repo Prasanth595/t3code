@@ -294,6 +294,8 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
   it.effect.each([
     ["a percent-encoded callback", "callback=http%3A%2F%2F127.0.0.1%3A51234%2F%3Fcode%3Dtest-code"],
     ["an email address", "Account alice@example.com is not eligible"],
+    ["a key=value fragment", "reason=invalid"],
+    ["only digits and punctuation", "555-123-4567"],
   ])("keeps the generic failure when an authenticate error contains %s", ([, errorMessage]) =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

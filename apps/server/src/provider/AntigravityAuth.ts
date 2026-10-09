@@ -113,6 +113,7 @@ function providerReason(message: string): string | undefined {
     .replace(/\s+/g, " ")
     .trim();
   if (text.length === 0 || text.length > MAX_PROVIDER_REASON_LENGTH) return undefined;
+  if (!/\p{L}/u.test(text)) return undefined;
   // Allowlist plain prose. This excludes URLs (encoded or not), paths, emails,
   // and key=value fragments without enumerating each leak shape.
   if (!/^[\p{L}\p{N} .,:;'"()!?-]+$/u.test(text)) return undefined;
