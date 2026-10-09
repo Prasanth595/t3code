@@ -105,7 +105,7 @@ const MAX_PROVIDER_REASON_LENGTH = 300;
 /**
  * Antigravity rejections such as "account not eligible" carry an actionable,
  * human-readable reason. Show it, but only when it is short and cannot leak a
- * URL, token, or path into the UI.
+ * URL, email, token, or path into the UI.
  */
 function providerReason(message: string): string | undefined {
   const text = message
@@ -113,7 +113,10 @@ function providerReason(message: string): string | undefined {
     .replace(/\s+/g, " ")
     .trim();
   if (text.length === 0 || text.length > MAX_PROVIDER_REASON_LENGTH) return undefined;
-  if (/[a-z][a-z0-9+.-]*:\/\/|[\\/]\S|[A-Za-z0-9_-]{32,}/i.test(text)) return undefined;
+  // Allowlist plain prose. This excludes URLs (encoded or not), paths, emails,
+  // and key=value fragments without enumerating each leak shape.
+  if (!/^[\p{L}\p{N} .,:;'"()!?-]+$/u.test(text)) return undefined;
+  if (/[\p{L}\p{N}]{32,}/u.test(text)) return undefined;
   return text;
 }
 

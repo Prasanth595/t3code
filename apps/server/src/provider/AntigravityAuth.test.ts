@@ -291,6 +291,24 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     }),
   );
 
+  it.effect.each([
+    ["a percent-encoded callback", "callback=http%3A%2F%2F127.0.0.1%3A51234%2F%3Fcode%3Dtest-code"],
+    ["an email address", "Account alice@example.com is not eligible"],
+  ])("keeps the generic failure when an authenticate error contains %s", ([, errorMessage]) =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({ code: -32603, errorMessage, method: "authenticate" }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
