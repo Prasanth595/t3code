@@ -13,6 +13,7 @@ import {
   act,
   createRef,
   useLayoutEffect,
+  useState,
   type ReactNode,
   type Ref,
   type ReactElement,
@@ -87,6 +88,11 @@ beforeEach(() => {
   activityTestState.expandedRuns = false;
 });
 
+const legendListTestState = vi.hoisted(() => ({
+  data: undefined as unknown,
+  onScroll: undefined as (() => void) | undefined,
+}));
+
 vi.mock("@legendapp/list/react", async () => {
   const legendListTestId = "legend-list";
 
@@ -122,8 +128,11 @@ vi.mock("@legendapp/list/react", async () => {
         };
     className?: string;
     contentInsetEndAdjustment?: number;
+    onScroll?: () => void;
     ref?: Ref<LegendListRef>;
   }) => {
+    legendListTestState.data = props.data;
+    legendListTestState.onScroll = props.onScroll;
     if (props.anchoredEndSpace) {
       props.anchoredEndSpace.onSizeChanged?.(240);
       props.anchoredEndSpace.onReady?.({ anchorIndex: props.anchoredEndSpace.anchorIndex });
@@ -740,6 +749,82 @@ describe("MessagesTimeline", () => {
       }
     },
   );
+
+  it("remembers a manual reading position when the chat closes before the next frame", async () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const flushFrame = () =>
+      act(() => {
+        const callbacks = [...frames.values()];
+        frames.clear();
+        callbacks.forEach((callback) => callback(0));
+      });
+    const { readTimelinePosition } = await import("./timelineScrollAnchoring");
+    const props = { ...buildProps(), routeThreadKey: "environment-local:manual-departure" };
+    let scrollTop = 1400;
+    const viewport = {
+      get scrollTop() {
+        return scrollTop;
+      },
+      getBoundingClientRect: () => ({ top: 0 }),
+    };
+    props.listRef.current = {
+      getScrollableNode: () => viewport,
+      getState: () => ({
+        data: legendListTestState.data,
+        scroll: scrollTop,
+        scrollLength: 600,
+        contentLength: 2000,
+        indexByKey: () => 0,
+        positionAtIndex: () => 0,
+        sizeAtIndex: () => 2000,
+        elementAtIndex: () => ({ getBoundingClientRect: () => ({ top: -scrollTop }) }),
+      }),
+    } as unknown as LegendListRef;
+    let navigateManually = () => {};
+    function ChatProbe() {
+      const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
+      navigateManually = () => setLiveFollowEnabled(false);
+      return (
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[buildUserTimelineEntry("First prompt")]}
+          liveFollowEnabled={liveFollowEnabled}
+          onManualNavigation={navigateManually}
+        />
+      );
+    }
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<ChatProbe />);
+      });
+      await flushFrame();
+      expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true);
+
+      // The scroll event lands before the follow opt-out renders.
+      scrollTop = 1300;
+      await act(() => {
+        navigateManually();
+        legendListTestState.onScroll?.();
+      });
+      await act(() => renderer?.unmount());
+      renderer = undefined;
+
+      expect(readTimelinePosition(props.routeThreadKey)).toMatchObject({
+        atEnd: false,
+        scrollOffset: 1300,
+      });
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
 
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");

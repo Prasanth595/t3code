@@ -1300,6 +1300,16 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return () => cancelAnimationFrame(frame);
   }, [handleScroll, rows.length]);
 
+  // A scroll saved while follow was still on marks the position as at the end.
+  // Re-save in the commit that turns follow off, since leaving the chat cancels
+  // the frame above.
+  const savedLiveFollowEnabledRef = useRef(liveFollowEnabled);
+  useLayoutEffect(() => {
+    const wasFollowing = savedLiveFollowEnabledRef.current;
+    savedLiveFollowEnabledRef.current = liveFollowEnabled;
+    if (wasFollowing && !liveFollowEnabled) handleScroll();
+  }, [handleScroll, liveFollowEnabled]);
+
   useEffect(() => {
     if (!timelineViewportElement) {
       return;
