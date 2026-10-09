@@ -1,4 +1,4 @@
-import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import { parseChangeRequestUrl, providerUrlHosts } from "@t3tools/shared/changeRequestUrl";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -565,7 +565,11 @@ function pullRequestStackReference(
 ) {
   return detail === null || detail.capabilities.stacks !== true || !supportsThreadPullRequests
     ? null
-    : { ...reference, host: reference.host ?? parseChangeRequestUrl(detail.url)?.host };
+    : {
+        ...reference,
+        host:
+          reference.host ?? parseChangeRequestUrl(detail.url, providerUrlHosts(detail.url))?.host,
+      };
 }
 
 export function PullRequestDetailPanel({
@@ -772,7 +776,8 @@ export function PullRequestDetailPanel({
     setSeenAutoMergeKey(autoMergeKey);
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }
-  const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const repositoryUrl =
+    detail === null ? null : changeRequestRepositoryUrl(detail.url, providerUrlHosts(detail.url));
   const hostClient = sourceControlClients.get(detail?.provider);
   const openOnHostText = openOnHostLabel(hostClient);
   const markdownContext = pullRequestMarkdownContext(hostClient, repositoryUrl, threadRef);
@@ -786,7 +791,7 @@ export function PullRequestDetailPanel({
         handoffSummary.number,
         handoffSummary.headBranch,
         detail?.headRepositoryNameWithOwner,
-        changeRequestRepositoryUrl(handoffSummary.url),
+        changeRequestRepositoryUrl(handoffSummary.url, providerUrlHosts(handoffSummary.url)),
       )
     : loadingCheckoutCommand;
   const branchRefsQuery = useEnvironmentQuery(

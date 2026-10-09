@@ -81,6 +81,15 @@ export function gitHubHostsOf(
   );
 }
 
+/**
+ * The host of a change request URL a provider returned itself or a thread already accepted, as
+ * `parseChangeRequestUrl`'s `gitHubHosts`: reading such a URL back needs no lookalike guard.
+ */
+export function providerUrlHosts(url: string): string[] {
+  const host = URL.parse(url)?.hostname.toLowerCase();
+  return host ? [host] : [];
+}
+
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
   const repository = match?.[1];
   const number = Number(match?.[2]);
@@ -191,9 +200,13 @@ export function pullRequestCandidateUrlFromReferenceAutolink(targetUrl: string):
 export function matchesLinkedPullRequestUrl(
   linkedPullRequest: ThreadLinkedPullRequest,
   targetUrl: string,
+  gitHubHosts: ReadonlyArray<string> = [],
 ): boolean {
-  const linked = parseChangeRequestUrl(linkedPullRequest.url);
-  const target = parseChangeRequestUrl(targetUrl);
+  const linked = parseChangeRequestUrl(
+    linkedPullRequest.url,
+    providerUrlHosts(linkedPullRequest.url),
+  );
+  const target = parseChangeRequestUrl(targetUrl, gitHubHosts);
   return (
     linked !== null &&
     target !== null &&
@@ -204,8 +217,11 @@ export function matchesLinkedPullRequestUrl(
   );
 }
 
-export function changeRequestRepositoryUrl(targetUrl: string): string | null {
-  const changeRequest = parseChangeRequestUrl(targetUrl);
+export function changeRequestRepositoryUrl(
+  targetUrl: string,
+  gitHubHosts: ReadonlyArray<string> = [],
+): string | null {
+  const changeRequest = parseChangeRequestUrl(targetUrl, gitHubHosts);
   if (changeRequest === null) return null;
   const url = new URL(targetUrl);
   const repositoryPath =
@@ -221,7 +237,7 @@ export function changeRequestRepositoryUrl(targetUrl: string): string | null {
 }
 
 export function siblingPullRequestUrl(url: string, number: number): string | null {
-  const reference = parseChangeRequestUrl(url);
+  const reference = parseChangeRequestUrl(url, providerUrlHosts(url));
   if (reference === null || !Number.isSafeInteger(number) || number < 1) return null;
   const sibling = new URL(url);
   const route = /^\/(-\/merge_requests|pulls?|pull-requests|pullrequest)\/\d+(?:\/|$)/u.exec(
