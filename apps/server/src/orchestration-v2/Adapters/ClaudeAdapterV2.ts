@@ -6106,6 +6106,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const context =
             current?.nativeThreadId === closedQuery.nativeThreadId ? current : closedQuery.lastTurn;
           if (context === null) return;
+          // The process that would have finished a turn-scoped Stop's background work is gone.
+          yield* Ref.update(turnsKeepingBackgroundWork, (current) => {
+            const next = new Set(current);
+            next.delete(context.providerTurnId);
+            return next;
+          });
           const interrupted =
             closedQuery.stopping || (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
           const subagents = yield* Ref.get(sessionSubagentsByTaskId);
