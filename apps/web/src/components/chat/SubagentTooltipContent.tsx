@@ -72,7 +72,7 @@ export function SubagentTooltipContent(props: {
     childModel === (modelSlug ?? model) && childSelection?.instanceId === props.providerInstanceId
       ? childSelection
       : undefined;
-  const effort = ["reasoningEffort", "effort", "reasoning", "variant"]
+  const effort = ["reasoningEffort", "effort", "reasoning", "variant", "reasoning_effort"]
     .map((id) => getModelSelectionStringOptionValue(matchingSelection, id))
     .find(Boolean);
   const speed = provider
