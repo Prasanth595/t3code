@@ -1293,7 +1293,7 @@ describe("AssetAccess", () => {
         expect(bridged).toContain('href="style.css"');
         expect(bridged).not.toContain("<base");
         expect(assetResponseHeaders(filePath)["Content-Security-Policy"]).toBe(
-          "sandbox allow-scripts allow-forms allow-popups",
+          "sandbox allow-scripts allow-forms allow-popups allow-downloads",
         );
         expect(yield* resolve(urls[0]!, false)).toMatchObject({ kind: "file", path: filePath });
         expect(yield* resolve(urls[1]!, true)).toMatchObject({
