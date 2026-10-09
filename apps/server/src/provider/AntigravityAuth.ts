@@ -100,6 +100,23 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
   };
 }
 
+const MAX_PROVIDER_REASON_LENGTH = 300;
+
+/**
+ * Antigravity rejections such as "account not eligible" carry an actionable,
+ * human-readable reason. Show it, but only when it is short and cannot leak a
+ * URL, token, or path into the UI.
+ */
+function providerReason(message: string): string | undefined {
+  const text = message
+    .replace(/\p{Cc}+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (text.length === 0 || text.length > MAX_PROVIDER_REASON_LENGTH) return undefined;
+  if (/[a-z][a-z0-9+.-]*:\/\/|[\\/]\S|[A-Za-z0-9_-]{32,}/i.test(text)) return undefined;
+  return text;
+}
+
 function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): string {
   const error = Cause.findErrorOption(cause);
   if (Option.isSome(error)) {
@@ -118,6 +135,10 @@ function safeAuthFailure(cause: Cause.Cause<unknown>, usesBrowser: boolean): str
       }
       if (!usesBrowser && error.value.code === -32602) {
         return "Antigravity rejected the configured credentials. Check the provider settings.";
+      }
+      if (error.value.method === "authenticate") {
+        const reason = providerReason(error.value.errorMessage);
+        if (reason) return reason;
       }
     }
   }
@@ -398,6 +419,10 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             options.instanceId,
             flow.pending,
             input.callbackUrl,
+          ).pipe(
+            // Keep the status row in step with the RPC error so a rejected
+            // redirect URL is not hidden behind stale text.
+            Effect.tapError((error) => publishFlow(flow, { ...flow.state, message: error.detail })),
           );
           flow.callbackSent = true;
           yield* publishFlow(flow, {

@@ -251,6 +251,46 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       }),
   );
 
+  it.effect("shows Antigravity's onboarding rejection instead of the generic failure", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      const reason =
+        "Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. Try signing in with another personal Google account.";
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: reason,
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, reason);
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("keeps the generic failure when an authenticate error could leak a URL", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: `Onboarding failed ${callbackUrl}`,
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -299,7 +339,9 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         assert.isTrue(Exit.isFailure(result));
       }
       assert.equal(harness.forwarded(), 0);
-      assert.equal((yield* phase(harness.auth, "waiting")).authorizationUrl, authorizationUrl);
+      const waiting = yield* phase(harness.auth, "waiting");
+      assert.equal(waiting.authorizationUrl, authorizationUrl);
+      assert.include(waiting.message ?? "", "redirect URL");
       yield* harness.auth.controller.cancel(owner, state.flowId!);
     }),
   );
