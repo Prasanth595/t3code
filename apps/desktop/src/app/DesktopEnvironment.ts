@@ -205,7 +205,8 @@ const make = Effect.fn("desktop.environment.make")(function* (
     resourcesPath,
     homeDirectory,
     appDataDirectory,
-    userDataDirOverride: config.userDataDirOverride,
+    // Electron's setPath rejects relative paths.
+    userDataDirOverride: Option.map(config.userDataDirOverride, (dir) => path.resolve(dir)),
     baseDir,
     stateDir,
     desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
