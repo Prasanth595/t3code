@@ -201,7 +201,6 @@ import {
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
 import {
-  parseChangeRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
   resolvePullRequestPreviewTarget,
   useOpenChangeRequestLink,
@@ -2505,13 +2504,13 @@ function useChatMarkdownState({
       !pullRequestLinking.canLink(href)
     )
       return null;
-    const parsed = parseChangeRequestUrl(href);
+    const parsed = pullRequestLinking.parse(href);
     return parsed === null ? null : { ...parsed, url: href };
   };
   const linkedThreadPullRequestFor = (href: string) => {
     if (threadRef === undefined || !pullRequestLinking.isLinked(readThreadShell(threadRef), href))
       return null;
-    const parsed = parseChangeRequestUrl(href);
+    const parsed = pullRequestLinking.parse(href);
     return parsed === null ? null : { ...parsed, url: href };
   };
   const updateThreadPullRequestLink = async (href: string, linked: boolean) => {

@@ -1,4 +1,9 @@
-import type { RepositoryIdentity, ThreadLinkedPullRequest } from "@t3tools/contracts";
+import {
+  pullRequestHostOf,
+  SourceControlProviderKind,
+  type RepositoryIdentity,
+  type ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
 import { canonicalRepositoryKey } from "./sourceControl.ts";
 
 /**
@@ -18,7 +23,14 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
   return label !== undefined && hostname.split(".").includes(label);
 }
 
-export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | null {
+/**
+ * `gitHubHosts` names GitHub hosts known from checked-out projects (see `gitHubHostsOf`), so a
+ * GitHub Enterprise install named nothing like GitHub is still read as one.
+ */
+export function parseChangeRequestUrl(
+  targetUrl: string,
+  gitHubHosts: ReadonlyArray<string> = [],
+): ChangeRequestLink | null {
   let url: URL;
   try {
     url = new URL(targetUrl);
@@ -32,7 +44,7 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/([^/]+\/[^/]+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
-  if (isHostOf(host, "github.com", "github")) {
+  if (isHostOf(host, "github.com", "github") || gitHubHosts.includes(host)) {
     const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
     if (match) return claim(host, match);
   }
@@ -52,6 +64,17 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     return claim(host, match);
   }
   return null;
+}
+
+/** The hosts of the GitHub repositories these projects were checked out from. */
+export function gitHubHostsOf(
+  projects: ReadonlyArray<{ readonly repositoryIdentity?: RepositoryIdentity | null | undefined }>,
+): string[] {
+  return projects.flatMap(({ repositoryIdentity }) =>
+    repositoryIdentity?.provider === "github"
+      ? [pullRequestHostOf(repositoryIdentity, SourceControlProviderKind.make("github"))]
+      : [],
+  );
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
