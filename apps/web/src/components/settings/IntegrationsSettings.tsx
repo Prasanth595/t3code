@@ -52,6 +52,7 @@ import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { formatEnvironmentQueryError } from "~/state/query";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -669,7 +670,7 @@ function DeviceIntegrationSettings() {
   );
 }
 
-function DeviceIntegrationControls({
+export function DeviceIntegrationControls({
   environmentId,
   enabled,
   agentAccessEnabled,
@@ -765,11 +766,7 @@ function DeviceIntegrationControls({
                 void list({ environmentId, input: { updateTool: tool } })
                   .then((result) => {
                     if (result._tag === "Failure")
-                      setUpdateError({
-                        tool,
-                        message:
-                          "Update failed. Check this host's network connection and try again.",
-                      });
+                      setUpdateError({ tool, message: formatEnvironmentQueryError(result.cause) });
                   })
                   .finally(() => setPending(null));
               }}
