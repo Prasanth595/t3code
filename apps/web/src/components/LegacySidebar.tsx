@@ -584,8 +584,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [threadKey, toggleSubagentParentExpanded],
   );
-  // The row div also navigates on Enter/Space; the chevron activates itself,
-  // so its key events must not bubble into the row.
+  // The row div also navigates on Enter/Space; the subagent badge activates
+  // itself, so its key events must not bubble into the row.
   const handleSubagentToggleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>) => {
       if (event.key === "Enter" || event.key === " ") {
@@ -791,28 +791,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
       >
-        {subagentChildCount > 0 ? (
-          <button
-            type="button"
-            data-thread-selection-safe
-            aria-expanded={subagentChildrenExpanded}
-            aria-label={
-              subagentChildrenExpanded
-                ? `Hide subagent threads for ${thread.title}`
-                : `Show subagent threads for ${thread.title}`
-            }
-            className="flex h-6 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground/70 outline-hidden hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
-            onPointerDown={stopPropagationOnPointerDown}
-            onKeyDown={handleSubagentToggleKeyDown}
-            onClick={handleSubagentToggleClick}
-          >
-            <ChevronRightIcon
-              className={`size-3 shrink-0 transition-transform duration-150 ${
-                subagentChildrenExpanded ? "rotate-90" : ""
-              }`}
-            />
-          </button>
-        ) : null}
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           {prStatus && pr && (
             <Tooltip>
@@ -886,10 +864,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               <TooltipPopup side="top">{thread.title}</TooltipPopup>
             </Tooltip>
           )}
-          {subagentChildCount > 0 && !subagentChildrenExpanded ? (
-            <span className="shrink-0 text-3xs text-secondary-label">
+          {subagentChildCount > 0 ? (
+            <button
+              type="button"
+              data-thread-selection-safe
+              aria-expanded={subagentChildrenExpanded}
+              aria-label={
+                subagentChildrenExpanded
+                  ? `Hide ${subagentChildCount} subagent threads for ${thread.title}`
+                  : `Show ${subagentChildCount} subagent threads for ${thread.title}`
+              }
+              className="flex shrink-0 cursor-pointer items-center gap-0.5 rounded-sm px-0.5 text-3xs text-secondary-label outline-hidden hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+              onPointerDown={stopPropagationOnPointerDown}
+              onKeyDown={handleSubagentToggleKeyDown}
+              onClick={handleSubagentToggleClick}
+            >
+              <ChevronRightIcon
+                className={`size-2.5 shrink-0 transition-transform duration-150 ${
+                  subagentChildrenExpanded ? "rotate-90" : ""
+                }`}
+              />
               {subagentChildCount} subagent{subagentChildCount === 1 ? "" : "s"}
-            </span>
+            </button>
           ) : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
