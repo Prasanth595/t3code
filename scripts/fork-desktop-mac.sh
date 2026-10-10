@@ -29,7 +29,7 @@ fi
 
 sha="$(git rev-parse HEAD)"
 # Local builds use 1HHMMSS as the build number, CI uses the run number.
-# The nightly updater allows downgrades, so it installs any release that differs from the running one.
+# The fork updater never downgrades, so a local build stays until a newer release.
 version="$(node scripts/resolve-nightly-release.ts \
   --date "$(date -u +%Y%m%d)" --run-number "1$(date -u +%H%M%S)" --sha "$sha" |
   sed -n 's/^version=//p')"
@@ -43,14 +43,8 @@ if [[ "$publish" == true ]] && ! git branch -r --contains "$sha" | grep -q "orig
   exit 1
 fi
 
-# A local install has no update feed. Otherwise the updater offers the newest
-# published release and installs it over the local build on the next quit.
-# Limit: the app does not update itself until a release is installed again.
-update_repository="$FORK_REPOSITORY"
-[[ "$install" == true ]] && update_repository=""
-
 rm -rf release
-T3CODE_DESKTOP_UPDATE_REPOSITORY="$update_repository" \
+T3CODE_DESKTOP_UPDATE_REPOSITORY="$FORK_REPOSITORY" \
   T3CODE_DESKTOP_MAC_SELF_SIGNED=true \
   CSC_NAME="$SIGN_IDENTITY" \
   vp run dist:desktop:artifact \

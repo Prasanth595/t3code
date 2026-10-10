@@ -394,7 +394,10 @@ export const make = Effect.gen(function* () {
     const allowsPrerelease = channel === "nightly";
     yield* electronUpdater.setChannel(channel);
     yield* electronUpdater.setAllowPrerelease(allowsPrerelease);
-    yield* electronUpdater.setAllowDowngrade(allowsPrerelease);
+    // Fork: never downgrade. A local build (scripts/fork-desktop-mac.sh --install)
+    // carries a higher build number than the releases, so it stays installed.
+    // Limit: switching from a newer stable build to nightly no longer downgrades.
+    yield* electronUpdater.setAllowDowngrade(false);
     yield* electronUpdater.setFullChangelog(allowsPrerelease);
     yield* logUpdaterInfo("using update channel", {
       channel,
