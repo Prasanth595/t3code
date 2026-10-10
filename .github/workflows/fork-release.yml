@@ -83,6 +83,8 @@ jobs:
         name: Typecheck and test
         run: |
           set -euo pipefail
+          # scripts/browser-secret-native.test.mjs compiles the libsecret helper.
+          sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config build-essential
           vp run --filter @t3tools/desktop ensure:electron
           vp run typecheck
           vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
