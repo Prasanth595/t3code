@@ -24,6 +24,7 @@ import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.t
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as Settings from "../../../serverSettings.ts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -81,6 +82,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(Project.ProjectService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Settings.layerTest(),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-link-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -155,6 +157,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Settings.layerTest(),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-scratch-launch-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -300,7 +303,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
   }),
 );
 
-it.effect("project actions written by t3_project_update are the ones the app resolves", () =>
+it.effect("project settings written by t3_project_update are the ones the app resolves", () =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:actions");
     const project = {
@@ -318,6 +321,7 @@ it.effect("project actions written by t3_project_update are the ones the app res
       // Folded: the aggregate's scripts no longer count, as on a migrated server.
       Effect.provide(Settings.layerTest({ projectSettingsFolded: true })),
     );
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const aggregateUpdates: Array<Parameters<Project.ProjectService["Service"]["update"]>[0]> = [];
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
@@ -330,7 +334,23 @@ it.effect("project actions written by t3_project_update are the ones the app res
         capabilities: new Set(["orchestration" as const]),
       }),
       Layer.mock(ThreadManagement.ThreadManagementService)({}),
-      Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({
+        launch: (launch) => {
+          launched.push(launch);
+          return Effect.succeed({
+            threadId: launch.threadId,
+            projection: {
+              thread: {
+                id: launch.threadId,
+                projectId: launch.projectId,
+                modelSelection: launch.modelSelection,
+              },
+              runs: [],
+            },
+            resumed: false,
+          } as unknown as ThreadLaunch.ThreadLaunchResult);
+        },
+      }),
       Layer.mock(Project.ProjectService)({
         update: (input) =>
           Effect.sync(() => {
@@ -354,7 +374,7 @@ it.effect("project actions written by t3_project_update are the ones the app res
         ),
       ),
     );
-    const run = <Name extends "t3_project_update" | "t3_project_read">(
+    const run = <Name extends "t3_project_update" | "t3_project_read" | "t3_thread_launch">(
       name: Name,
       params: Parameters<typeof toolkit.handle<Name>>[1],
     ) =>
@@ -365,15 +385,47 @@ it.effect("project actions written by t3_project_update are the ones the app res
       { id: "test", name: "Test", command: "pnpm test", icon: "test", runOnWorktreeCreate: false },
     ] as const;
 
-    const updated = yield* run("t3_project_update", { projectId, scripts });
-    expect(updated.at(-1)?.result).toMatchObject({ id: projectId, scripts });
-    expect(aggregateUpdates.at(-1)).not.toHaveProperty("scripts");
+    const model = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
+    const written = {
+      scripts,
+      defaultModelSelection: model,
+      defaultThreadEnvMode: "worktree",
+      autoPull: true,
+    } as const;
+
+    const updated = yield* run("t3_project_update", { projectId, ...written });
+    expect(updated.at(-1)?.result).toMatchObject({ id: projectId, ...written });
+    for (const key of Object.keys(written)) expect(aggregateUpdates.at(-1)).not.toHaveProperty(key);
 
     const settings = yield* settingsService.getSettings;
     expect(resolveProjectScripts(settings, project)).toEqual(scripts);
+    expect(resolveProjectSettings(settings, projectId, project).settings).toMatchObject({
+      defaultModelSelection: model,
+      defaultThreadEnvMode: "worktree",
+      defaultAutoPull: true,
+    });
 
     const read = yield* run("t3_project_read", { projectId });
-    expect(read.at(-1)?.result).toMatchObject({ scripts });
+    expect(read.at(-1)?.result).toMatchObject(written);
+
+    // A launch without a model takes the project's default through the resolver.
+    const launch = yield* run("t3_thread_launch", { title: "Fix", projectId });
+    expect(launch.at(-1)?.result).toMatchObject({ modelSelection: model });
+    expect(launched[0]?.modelSelection).toEqual(model);
+
+    // null removes the override; the project inherits the environment again.
+    yield* run("t3_project_update", {
+      projectId,
+      defaultModelSelection: null,
+      defaultThreadEnvMode: null,
+    });
+    const cleared = (yield* settingsService.getSettings).projectSettingsOverrides[projectId];
+    expect(cleared).toEqual({ defaultProjectScripts: scripts, defaultAutoPull: true });
+    const reread = yield* run("t3_project_read", { projectId });
+    expect(reread.at(-1)?.result).toMatchObject({
+      defaultModelSelection: null,
+      defaultThreadEnvMode: null,
+    });
   }),
 );
 
@@ -384,7 +436,7 @@ const clientLaunchHarness = (input: {
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
-  const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
+  const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
   const layerDependencies = Layer.mergeAll(
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -425,12 +477,17 @@ const clientLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection: null,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    // The default model lives in the project's settings override, where the app reads it.
+    Settings.layerTest({
+      projectSettingsFolded: true,
+      projectSettingsOverrides: { [projectId]: { defaultModelSelection: modelSelection } },
+    }),
     NodeServices.layer,
   ).pipe(
     Layer.provideMerge(GitVcsDriver.layer),

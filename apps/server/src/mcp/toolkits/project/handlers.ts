@@ -4,9 +4,15 @@ import {
   OrchestratorMcpFailure,
   ProjectId,
   type Project as ProjectRecord,
-  type ProjectScript,
+  type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrides,
+  type ProjectUpdatePayload,
 } from "@t3tools/contracts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import {
+  clearProjectSettingsOverrides,
+  resolveProjectSettings,
+} from "@t3tools/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -57,39 +63,69 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
     });
 });
 
+type ProjectSettingsInput = Pick<
+  ProjectUpdatePayload,
+  "scripts" | "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull"
+>;
+
 /**
- * Project actions live in the project's settings override, which is what
- * `resolveProjectScripts` and the app read. The aggregate's own `scripts`
- * field only counts before the legacy fold, so writing it is lost.
- * Read-then-patch, like the app's editor: a concurrent override write to the
+ * These fields live in the project's settings override, which is what
+ * `resolveProjectSettings`, `resolveProjectScripts` and the app read. The
+ * aggregate's own fields only count before the legacy fold, so writing them
+ * there is lost. A `null` model or env mode removes the override, so the
+ * project inherits the environment value again.
+ * Read-then-patch, like the app's editors: a concurrent override write to the
  * same project between the two steps is lost. Revisit if settings gain an
  * atomic per-project patch.
  */
-const writeProjectScripts = Effect.fn("mcp.writeProjectScripts")(function* (
+const writeProjectSettings = Effect.fn("mcp.writeProjectSettings")(function* (
   projectId: ProjectId,
-  scripts: ReadonlyArray<ProjectScript>,
+  input: ProjectSettingsInput,
 ) {
+  const set: ProjectSettingsOverrides = {
+    ...(input.scripts === undefined ? {} : { defaultProjectScripts: input.scripts }),
+    ...(input.defaultModelSelection == null
+      ? {}
+      : { defaultModelSelection: input.defaultModelSelection }),
+    ...(input.defaultThreadEnvMode == null
+      ? {}
+      : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+    ...(input.autoPull === undefined ? {} : { defaultAutoPull: input.autoPull }),
+  };
+  const cleared: ProjectScopedServerSettingKey[] = [
+    ...(input.defaultModelSelection === null ? (["defaultModelSelection"] as const) : []),
+    ...(input.defaultThreadEnvMode === null ? (["defaultThreadEnvMode"] as const) : []),
+  ];
+  if (Object.keys(set).length === 0 && cleared.length === 0) return;
   const settings = yield* Settings.ServerSettingsService;
   const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+  const kept = clearProjectSettingsOverrides(current, projectId, cleared) ?? {};
   yield* settings
-    .updateSettings({
-      projectSettingsOverrides: {
-        [projectId]: {
-          ...current.projectSettingsOverrides[projectId],
-          defaultProjectScripts: scripts,
-        },
-      },
-    })
+    .updateSettings({ projectSettingsOverrides: { [projectId]: { ...kept, ...set } } })
     .pipe(Effect.mapError(unavailable));
 });
 
-/** The project with the actions the app runs, not the aggregate's legacy field. */
-const withResolvedScripts = Effect.fn("mcp.withResolvedScripts")(function* <
+/** The project as the app resolves it, not the aggregate's legacy fields. */
+const withResolvedSettings = Effect.fn("mcp.withResolvedSettings")(function* <
   P extends ProjectRecord,
 >(project: P) {
   const settings = yield* Settings.ServerSettingsService;
   const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
-  return { ...project, scripts: resolveProjectScripts(current, project) };
+  const resolved = resolveProjectSettings(current, project.id, project);
+  return {
+    ...project,
+    scripts: resolveProjectScripts(current, project),
+    // The project's own choice; null when it inherits the environment.
+    defaultModelSelection:
+      resolved.sources.defaultModelSelection === "project"
+        ? resolved.settings.defaultModelSelection
+        : null,
+    defaultThreadEnvMode:
+      resolved.sources.defaultThreadEnvMode === "project"
+        ? resolved.settings.defaultThreadEnvMode
+        : null,
+    autoPull: resolved.settings.defaultAutoPull,
+  };
 });
 
 const access = Effect.gen(function* () {
@@ -168,10 +204,20 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
+        const projectDefaultModel = Effect.gen(function* () {
+          const project = yield* readProject;
+          const settings = yield* Settings.ServerSettingsService.pipe(
+            Effect.flatMap((service) => service.getSettings),
+            Effect.mapError(unavailable),
+          );
+          // The same resolver the app uses: project override, then environment.
+          return resolveProjectSettings(settings, projectId, project).settings
+            .defaultModelSelection;
+        });
         const modelSelection =
           input.modelSelection ??
           caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
+          (yield* projectDefaultModel) ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
@@ -237,7 +283,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      return yield* withResolvedScripts(result.value);
+      return yield* withResolvedSettings(result.value);
     }),
   ),
   t3_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, scripts, ...input }) =>
@@ -282,20 +328,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const created = yield* projects
         .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
         .pipe(Effect.mapError(projectFailure));
-      if (scripts !== undefined) yield* writeProjectScripts(created.id, scripts);
-      return yield* withResolvedScripts(created);
+      if (scripts !== undefined) yield* writeProjectSettings(created.id, { scripts });
+      return yield* withResolvedSettings(created);
     }),
   ),
-  t3_project_update: McpToolAccess.writesEnvironment(({ scripts, ...input }) =>
-    Effect.gen(function* () {
-      const projects = yield* Project.ProjectService;
-      // The update runs first so an unknown project fails before settings change.
-      const updated = yield* projects
-        .update({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
-      if (scripts !== undefined) yield* writeProjectScripts(updated.id, scripts);
-      return yield* withResolvedScripts(updated);
-    }),
+  t3_project_update: McpToolAccess.writesEnvironment(
+    ({ scripts, defaultModelSelection, defaultThreadEnvMode, autoPull, ...input }) =>
+      Effect.gen(function* () {
+        const projects = yield* Project.ProjectService;
+        // The update runs first so an unknown project fails before settings change.
+        const updated = yield* projects
+          .update({ ...input, commandId: yield* newCommandId() })
+          .pipe(Effect.mapError(projectFailure));
+        yield* writeProjectSettings(updated.id, {
+          scripts,
+          defaultModelSelection,
+          defaultThreadEnvMode,
+          autoPull,
+        });
+        return yield* withResolvedSettings(updated);
+      }),
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {

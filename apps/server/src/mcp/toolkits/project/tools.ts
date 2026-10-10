@@ -151,6 +151,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,
+    Settings.ServerSettingsService,
   ],
 })
   .annotate(Tool.Destructive, true)
