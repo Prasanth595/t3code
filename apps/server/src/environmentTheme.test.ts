@@ -97,6 +97,49 @@ it.layer(NodeServices.layer)("environment theme", (it) => {
     ),
   );
 
+  it.effect("attaches a theme's own css file and no other", () =>
+    withEnvironmentThemes(
+      {
+        "nightfall.json": encodeThemeFile(NIGHTFALL_THEME),
+        "nightfall.css": "body { color: red; }",
+        "shared-light.json": encodeThemeFile(SHARED_THEME),
+        "orphan.css": "body { color: blue; }",
+      },
+      Effect.gen(function* () {
+        const themes = yield* currentThemes;
+        assert.deepEqual(
+          themes.map((theme) => [theme.id, theme.css]),
+          [
+            ["nightfall", "body { color: red; }"],
+            ["shared-light", undefined],
+          ],
+        );
+      }),
+    ),
+  );
+
+  it.effect("keeps the style fields a theme file carries", () =>
+    withEnvironmentThemes(
+      {
+        "nightfall.json": encodeThemeFile({
+          ...NIGHTFALL_THEME,
+          radius: "0",
+          borderWidth: "2px",
+          shadow: "4px 4px 0 0 #000",
+          fonts: { sans: "Bricolage Grotesque" },
+          canvasPattern: "dots",
+        }),
+      },
+      Effect.gen(function* () {
+        const [theme] = yield* currentThemes;
+        assert.equal(theme?.radius, "0");
+        assert.equal(theme?.borderWidth, "2px");
+        assert.equal(theme?.canvasPattern, "dots");
+        assert.deepEqual(theme?.fonts, { sans: "Bricolage Grotesque" });
+      }),
+    ),
+  );
+
   // Read from disk rather than from the watcher's last observation, so a
   // client connecting after a missed filesystem event still sees the truth.
   it.effect("follows the directory rather than the set read at start", () =>

@@ -46,6 +46,7 @@ const decodeEnvironmentThemeFileJsonExit = Schema.decodeUnknownExit(
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
 const THEME_FILE_SUFFIX = ".json";
+const THEME_CSS_SUFFIX = ".css";
 
 /**
  * Bounds on what a machine can publish. The directory is local, so this is not
@@ -193,10 +194,16 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
       continue;
     }
 
+    // Optional user CSS next to the theme file. A missing or unusable file
+    // means no user CSS. The directory watcher also fires for this file, so
+    // an edit reaches clients like a theme edit.
+    const css = readThemeFileGuarded(`${themesDir}/${id}${THEME_CSS_SUFFIX}`, MAX_THEME_FILE_BYTES);
+    const hasCss = css !== null && css.trim().length > 0;
+
     // Counted only once accepted: the cap bounds what travels to clients, so
     // a skipped file must not eat the budget of valid themes sorted after it.
     // Bytes, not string length -- the cap describes wire weight.
-    totalBytes += Buffer.byteLength(raw);
+    totalBytes += Buffer.byteLength(raw) + (hasCss ? Buffer.byteLength(css) : 0);
     if (totalBytes > MAX_THEME_TOTAL_BYTES) {
       yield* Effect.logWarning("ignoring environment themes past the total size limit", {
         path: themesDir,
@@ -205,7 +212,7 @@ export const readPublishedThemes = Effect.fn(function* (themesDir: string) {
       break;
     }
 
-    themes.push({ id, ...file });
+    themes.push(hasCss ? { id, ...file, css } : { id, ...file });
   }
   return themes;
 });

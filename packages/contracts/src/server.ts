@@ -608,6 +608,33 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
+/**
+ * A short CSS value a theme writes into a custom property. Braces, semicolons
+ * and angle brackets are rejected so a value cannot close the declaration.
+ */
+const EnvironmentThemeCssValue = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^[^;{}<>]*$/),
+);
+
+/** A CSS length such as `0`, `2px` or `0.5rem`. */
+export const EnvironmentThemeLength = Schema.String.check(
+  Schema.isPattern(/^(?:0|\d+(?:\.\d+)?(?:px|rem|em))$/),
+);
+export type EnvironmentThemeLength = typeof EnvironmentThemeLength.Type;
+
+export const EnvironmentThemeCanvasPattern = Schema.Literals(["none", "dots", "grid", "noise"]);
+export type EnvironmentThemeCanvasPattern = typeof EnvironmentThemeCanvasPattern.Type;
+
+/** Font families a theme suggests. An explicit client font setting wins over them. */
+export const EnvironmentThemeFonts = Schema.Struct({
+  sans: Schema.optional(EnvironmentThemeCssValue),
+  composer: Schema.optional(EnvironmentThemeCssValue),
+  code: Schema.optional(EnvironmentThemeCssValue),
+  terminal: Schema.optional(EnvironmentThemeCssValue),
+});
+export type EnvironmentThemeFonts = typeof EnvironmentThemeFonts.Type;
+
 const environmentThemeFields = {
   /**
    * Standard exported theme files (the Download button's output) carry
@@ -632,6 +659,17 @@ const environmentThemeFields = {
       dark: Schema.optional(EnvironmentThemeColors),
     }),
   ),
+  /**
+   * Optional shape and texture fields. Each one is absent by default, and an
+   * absent field keeps the stock look.
+   */
+  radius: Schema.optional(EnvironmentThemeLength),
+  borderWidth: Schema.optional(EnvironmentThemeLength),
+  /** A CSS box-shadow for raised surfaces, e.g. `4px 4px 0 0 #000`. */
+  shadow: Schema.optional(EnvironmentThemeCssValue),
+  fonts: Schema.optional(EnvironmentThemeFonts),
+  canvasPattern: Schema.optional(EnvironmentThemeCanvasPattern),
+  canvasPatternColor: Schema.optional(EnvironmentThemeCssValue),
 };
 
 /** One published theme file. The id is the filename, not part of the content,
@@ -643,6 +681,11 @@ export const EnvironmentTheme = Schema.Struct({
   /** The publishing filename without its extension, stable across recolors. */
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /**
+   * Contents of the optional `<id>.css` file next to the theme file. The
+   * server reads it, so it never appears inside the JSON file itself.
+   */
+  css: Schema.optional(Schema.String),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 

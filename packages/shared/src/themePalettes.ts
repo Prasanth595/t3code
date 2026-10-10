@@ -1,3 +1,5 @@
+import type { EnvironmentTheme } from "@t3tools/contracts";
+
 export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
 
 /** The standard T3 Code palette, kept separate from the optional built-in theme library. */
@@ -111,6 +113,16 @@ export const THEME_COLOR_ROLES = [
 export type ThemeColorRole = (typeof THEME_COLOR_ROLES)[number];
 export type ThemeColors = Readonly<Record<ThemeColorRole, string>>;
 export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors>>>;
+/**
+ * Optional shape, font, texture and user CSS fields a published theme carries.
+ * Every field is optional, and an absent field keeps the stock look.
+ */
+export type ThemeStyle = Readonly<
+  Pick<
+    EnvironmentTheme,
+    "radius" | "borderWidth" | "shadow" | "fonts" | "canvasPattern" | "canvasPatternColor" | "css"
+  >
+>;
 export type ThemeDefinition = Readonly<{
   id: string;
   label: string;
@@ -123,6 +135,8 @@ export type ThemeDefinition = Readonly<{
   sidebarArtwork?: boolean;
   /** Generated from the guided editor's canvas and accent roles. */
   managed?: boolean;
+  /** Only published themes carry it today; saved and built-in themes do not. */
+  style?: ThemeStyle;
 }>;
 
 /**
