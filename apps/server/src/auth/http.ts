@@ -35,7 +35,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
-import { deriveAuthClientMetadata } from "./utils.ts";
+import { deriveAuthClientMetadata, isForwardedRequest } from "./utils.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 
 const CREDENTIAL_RESPONSE_HEADERS = {
@@ -313,6 +313,7 @@ export const layer = HttpApiBuilder.group(
                 previousCredential?.source === "legacy-cookie"
                 ? previousCredential.token
                 : undefined,
+              isForwardedRequest(request),
             );
             const cookieName = result.cookieName ?? sessions.cookieName;
             const selectedCookie = yield* Effect.fromResult(
@@ -394,7 +395,10 @@ export const layer = HttpApiBuilder.group(
                   ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
                 },
               }),
-              proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+              {
+                ...(proofKeyThumbprint ? { proofKeyThumbprint } : {}),
+                forwarded: isForwardedRequest(request),
+              },
             );
           },
           traceRelayRequest,

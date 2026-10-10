@@ -179,6 +179,30 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
 }
 
+const FORWARDING_HEADERS = [
+  "forwarded",
+  "x-forwarded-for",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "cf-connecting-ip",
+] as const;
+
+/**
+ * Fork: whether a request came through a proxy such as a tunnel, even though
+ * its peer address is loopback. A forwarding header or a non-loopback Host
+ * header counts. Desktop renderer requests carry neither.
+ */
+export function isForwardedRequest(request: HttpServerRequest.HttpServerRequest): boolean {
+  if (FORWARDING_HEADERS.some((name) => normalizeNonEmptyString(request.headers[name]))) {
+    return true;
+  }
+  const host = normalizeNonEmptyString(request.headers.host);
+  if (host === undefined) return false;
+  const hostname = URL.parse(`http://${host}`)?.hostname;
+  // An unparsable Host header is not trusted as loopback.
+  return hostname === undefined || isRemoteReachableHost(hostname);
+}
+
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly presented?: AuthClientPresentationMetadata;

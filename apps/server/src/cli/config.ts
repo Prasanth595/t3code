@@ -164,6 +164,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tunnelPairingUrl: Config.String("T3CODE_TUNNEL_PAIRING_URL").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -234,6 +238,21 @@ export const sharedServerCommandFlags = {
   tailscaleServeEnabled: tailscaleServeFlag,
   tailscaleServePort: tailscaleServePortFlag,
 } as const;
+
+// Fork: a tunnel URL must be a bare https origin. Anything else fails startup
+// so a typo never leaves pairing silently off or pointed at the wrong place.
+const resolveTunnelPairingUrl = (raw: string | undefined) => {
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return Effect.succeed(undefined);
+  const url = URL.parse(trimmed);
+  return url !== null && url.protocol === "https:" && (url.pathname === "/" || url.pathname === "")
+    ? Effect.succeed(url.origin)
+    : Effect.fail(
+        new CliError.UserError({
+          cause: `T3CODE_TUNNEL_PAIRING_URL must be an https origin such as https://t3.example.com, got ${trimmed}.`,
+        }),
+      );
+};
 
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
@@ -398,6 +417,9 @@ export const resolveServerConfig = (
       ),
       () => 443,
     );
+    const tunnelPairingUrl = yield* resolveTunnelPairingUrl(
+      env.tunnelPairingUrl ?? bootstrap?.tunnelPairingUrl,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -479,6 +501,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(tunnelPairingUrl === undefined ? {} : { tunnelPairingUrl }),
     };
 
     return config;

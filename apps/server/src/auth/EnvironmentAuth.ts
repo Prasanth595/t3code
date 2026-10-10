@@ -480,6 +480,8 @@ export class EnvironmentAuth extends Context.Service<
       credential: string,
       requestMetadata: AuthClientMetadata,
       previousSessionToken?: string,
+      // Fork: true when the request came through a proxy (see isForwardedRequest).
+      forwarded?: boolean,
     ) => Effect.Effect<
       {
         readonly response: AuthBrowserSessionResult;
@@ -495,6 +497,8 @@ export class EnvironmentAuth extends Context.Service<
       requestMetadata: AuthClientMetadata,
       input?: {
         readonly proofKeyThumbprint?: string;
+        // Fork: true when the request came through a proxy (see isForwardedRequest).
+        readonly forwarded?: boolean;
       },
     ) => Effect.Effect<
       AuthAccessTokenResult,
@@ -804,9 +808,21 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.getSessionState"),
     );
 
+  // Fork: with tunnel pairing on, the desktop-bootstrap credential is only
+  // accepted from the desktop app itself, never through the tunnel. The
+  // desktop grant has unbounded uses, so rejecting after consume loses nothing.
+  const rejectTunnelDesktopBootstrap = (method: string, forwarded: boolean | undefined) =>
+    config.tunnelPairingUrl !== undefined && forwarded !== false && method === "desktop-bootstrap"
+      ? Effect.fail(
+          new ServerAuthInvalidCredentialError({
+            diagnostic: "desktop-bootstrap is not accepted through a tunnel.",
+          }),
+        )
+      : Effect.void;
+
   const createBrowserSession: EnvironmentAuth["Service"]["createBrowserSession"] = Effect.fn(
     "EnvironmentAuth.createBrowserSession",
-  )(function* (credential, requestMetadata, previousSessionToken) {
+  )(function* (credential, requestMetadata, previousSessionToken, forwarded) {
     if (devAuth?.matches(credential)) {
       return yield* sessions.verify(credential).pipe(
         mapSessionVerificationErrors,
@@ -841,6 +857,7 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    yield* rejectTunnelDesktopBootstrap(grant.method, forwarded);
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
@@ -908,12 +925,14 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopes, requestMetadata, input) => {
+      const { forwarded, ...grantInput } = input ?? {};
       return resolveBootstrapGrant(credential, {
-        ...input,
+        ...grantInput,
         ...(requestedScopes !== undefined ? { requestedScopes } : {}),
       }).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
+            yield* rejectTunnelDesktopBootstrap(grant.method, forwarded);
             const grantedScopes =
               requestedScopes === undefined
                 ? grant.scopes

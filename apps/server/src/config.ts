@@ -105,6 +105,9 @@ export class ServerConfig extends Context.Service<
     readonly logWebSocketEvents: boolean;
     readonly tailscaleServeEnabled: boolean;
     readonly tailscaleServePort: number;
+    // Fork: public https origin of a tunnel to this loopback server. When set,
+    // a desktop server also accepts one-time-token pairing.
+    readonly tunnelPairingUrl?: string | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

@@ -56,6 +56,11 @@ describe("pair base URL selection", () => {
     );
     expect(resolveDirectPairingBaseUrl(baseState)).toBe("http://localhost:3773");
   });
+  it("pairs through the tunnel URL of a loopback server with tunnel pairing on", () => {
+    expect(
+      resolveDirectPairingBaseUrl({ ...baseState, tunnelPairingUrl: "https://t3.example.com" }),
+    ).toBe("https://t3.example.com");
+  });
 });
 
 describe("pair tailscale local target", () => {

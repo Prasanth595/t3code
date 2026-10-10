@@ -24,6 +24,9 @@ export const PersistedServerRuntimeState = Schema.Struct({
    * the difference between "restart the service" and "stop your terminal".
    */
   serviceManaged: Schema.optional(Schema.Boolean),
+  // Fork: public https origin of a tunnel to this server. `t3 pair` prints
+  // pairing links on this origin.
+  tunnelPairingUrl: Schema.optional(Schema.String),
 });
 export type PersistedServerRuntimeState = typeof PersistedServerRuntimeState.Type;
 
@@ -54,7 +57,10 @@ const runtimeOriginForConfig = (
 };
 
 export const makePersistedServerRuntimeState = (input: {
-  readonly config: Pick<ServerConfig.ServerConfig["Service"], "host" | "devUrl">;
+  readonly config: Pick<
+    ServerConfig.ServerConfig["Service"],
+    "host" | "devUrl" | "tunnelPairingUrl"
+  >;
   readonly port: number;
   readonly serviceManaged?: boolean;
 }): Effect.Effect<PersistedServerRuntimeState> =>
@@ -67,6 +73,7 @@ export const makePersistedServerRuntimeState = (input: {
     ...(input.config.devUrl ? { devUrl: input.config.devUrl.toString() } : {}),
     startedAt: DateTime.formatIso(now),
     ...(input.serviceManaged ? { serviceManaged: true } : {}),
+    ...(input.config.tunnelPairingUrl ? { tunnelPairingUrl: input.config.tunnelPairingUrl } : {}),
   }));
 
 export const persistServerRuntimeState = (input: {

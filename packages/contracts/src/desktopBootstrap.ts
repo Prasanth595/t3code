@@ -23,6 +23,9 @@ export const DesktopBackendBootstrap = Schema.Struct({
   shellEnvironmentPrepared: Schema.optionalKey(Schema.Boolean),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: PortSchema,
+  // Fork: public https origin of a tunnel (for example cloudflared) that
+  // proxies to this loopback server. Present only when tunnel pairing is on.
+  tunnelPairingUrl: Schema.optionalKey(TrimmedNonEmptyString),
   otlpTracesUrl: Schema.optional(Schema.String),
   otlpMetricsUrl: Schema.optional(Schema.String),
   otlpLogsUrl: Schema.optional(Schema.String),

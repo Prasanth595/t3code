@@ -18,7 +18,11 @@ export class EnvironmentAuthPolicy extends Context.Service<
 export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
-  const isRemoteReachable = isRemoteReachableHost(config.host);
+  // Fork: tunnel pairing keeps the server on loopback but treats it like a
+  // remote-reachable desktop, so browsers behind the tunnel can pair.
+  const isRemoteReachable =
+    isRemoteReachableHost(config.host) ||
+    (config.mode === "desktop" && config.tunnelPairingUrl !== undefined);
 
   const policy =
     config.mode === "desktop"

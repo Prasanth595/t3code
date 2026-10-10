@@ -429,6 +429,58 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );
 
+  it.effect("rejects the desktop bootstrap credential through a tunnel", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const viaTunnel = yield* serverAuth
+        .exchangeBootstrapCredentialForAccessToken(
+          "desktop-bootstrap-token",
+          undefined,
+          requestMetadata,
+          { forwarded: true },
+        )
+        .pipe(Effect.flip);
+      const browserViaTunnel = yield* serverAuth
+        .createBrowserSession("desktop-bootstrap-token", requestMetadata, undefined, true)
+        .pipe(Effect.flip);
+      // The desktop app itself still pairs.
+      const local = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        undefined,
+        requestMetadata,
+        { forwarded: false },
+      );
+
+      expect(viaTunnel._tag).toBe("ServerAuthInvalidCredentialError");
+      expect(browserViaTunnel._tag).toBe("ServerAuthInvalidCredentialError");
+      expect(local.access_token.length).toBeGreaterThan(0);
+    }).pipe(
+      Effect.provide(
+        layerEnvironmentAuth({
+          mode: "desktop",
+          desktopBootstrapToken: "desktop-bootstrap-token",
+          tunnelPairingUrl: "https://t3.example.com",
+        }),
+      ),
+    ),
+  );
+
+  it.effect("accepts a forwarded desktop bootstrap credential with tunnel pairing off", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const token = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+        "desktop-bootstrap-token",
+        undefined,
+        requestMetadata,
+        { forwarded: true },
+      );
+
+      expect(token.access_token.length).toBeGreaterThan(0);
+    }).pipe(
+      Effect.provide(layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" })),
+    ),
+  );
+
   it.effect("narrows seeded desktop grants to the requested scopes", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
