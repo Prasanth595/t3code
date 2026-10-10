@@ -1284,7 +1284,11 @@ export default function ChatView(props: ChatViewProps) {
   const [forkSource, setForkSource] = useState<{ sourceThreadId: ThreadId; runId: RunId } | null>(
     null,
   );
-  useEffect(() => setForkSource(null), [routeThreadKey]);
+  const [forkSourceThreadKey, setForkSourceThreadKey] = useState(routeThreadKey);
+  if (forkSourceThreadKey !== routeThreadKey) {
+    setForkSourceThreadKey(routeThreadKey);
+    setForkSource(null);
+  }
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
@@ -5837,108 +5841,92 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
 
-  const onForkFromRun = useCallback(
-    async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
-      if (!activeThread || activeEnvironmentUnavailable) return;
-      setForkSource(input);
-    },
-    [activeThread, activeEnvironmentUnavailable, setForkSource],
-  );
-  const onForkWorkspaceSelected = useCallback(
-    async (
-      workspaceStrategy: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy,
-    ) => {
-      if (!activeThread || activeEnvironmentUnavailable) return;
-      if (forkSource === null) return;
-      const targetThreadId = newThreadId();
-      const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
-      const sourceThreadRef = scopeThreadRef(environmentId, activeThread.id);
-      const preparingAtom = forkWorkspacePreparingAtom(scopedThreadKey(targetThreadRef));
-      const preparesWorktree = workspaceStrategy.type === "worktree";
-      if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
-      const pendingResult = forkThreadFromRun({
-        environmentId,
-        input: {
-          sourceThreadId: forkSource.sourceThreadId,
-          targetThreadId,
-          runId: forkSource.runId,
-          title: `${activeThread.title} fork`,
-          workspaceStrategy,
-        },
-      }).finally(() => appAtomRegistry.set(preparingAtom, false));
-      // The fork request settles only once its new worktree is ready. Open the
-      // fork as soon as its thread exists so it shows setup progress meanwhile,
-      // like a new thread started in a new worktree.
-      const openedEarly =
-        preparesWorktree &&
-        (await Promise.race([
-          waitForThreadShell(targetThreadRef),
-          pendingResult.then(() => false),
-        ]));
-      if (openedEarly) {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(targetThreadRef),
-        });
-      }
-      const result = await pendingResult;
-      if (result._tag === "Failure") {
-        setForkSource(null);
-        if (isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to fork this response.";
-        if (!openedEarly) {
-          setThreadError(activeThread.id, message);
-          return;
-        }
-        // The server deletes a fork whose worktree could not be prepared.
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not fork this response",
-            description: message,
-          }),
-        );
-        const forkPathname = router.buildLocation({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(targetThreadRef),
-        }).pathname;
-        if (router.state.location.pathname === forkPathname) {
-          await navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(sourceThreadRef),
-            replace: true,
-          });
-        }
-        return;
-      }
-      setForkSource(null);
-      if (openedEarly) return;
-      const targetThreadReady = await waitForThreadShell(targetThreadRef);
-      if (!targetThreadReady) {
-        setThreadError(
-          activeThread.id,
-          "The fork was created, but its thread data did not reach this client. Reconnect and try opening it from the sidebar.",
-        );
-        return;
-      }
+  const onForkFromRun = async (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly runId: RunId;
+  }) => {
+    if (!activeThread || activeEnvironmentUnavailable) return;
+    setForkSource(input);
+  };
+  const onForkWorkspaceSelected = async (
+    workspaceStrategy: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ) => {
+    if (!activeThread || activeEnvironmentUnavailable) return;
+    if (forkSource === null) return;
+    const targetThreadId = newThreadId();
+    const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
+    const sourceThreadRef = scopeThreadRef(environmentId, activeThread.id);
+    const preparingAtom = forkWorkspacePreparingAtom(scopedThreadKey(targetThreadRef));
+    const preparesWorktree = workspaceStrategy.type === "worktree";
+    if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+    const pendingResult = forkThreadFromRun({
+      environmentId,
+      input: {
+        sourceThreadId: forkSource.sourceThreadId,
+        targetThreadId,
+        runId: forkSource.runId,
+        title: `${activeThread.title} fork`,
+        workspaceStrategy,
+      },
+    }).finally(() => appAtomRegistry.set(preparingAtom, false));
+    // The fork request settles only once its new worktree is ready. Open the
+    // fork as soon as its thread exists so it shows setup progress meanwhile,
+    // like a new thread started in a new worktree.
+    const openedEarly =
+      preparesWorktree &&
+      (await Promise.race([waitForThreadShell(targetThreadRef), pendingResult.then(() => false)]));
+    if (openedEarly) {
       await navigate({
         to: "/$environmentId/$threadId",
         params: buildThreadRouteParams(targetThreadRef),
       });
-    },
-    [
-      activeEnvironmentUnavailable,
-      activeThread,
-      environmentId,
-      forkThreadFromRun,
-      forkSource,
-      navigate,
-      router,
-      setForkSource,
-      setThreadError,
-    ],
-  );
+    }
+    const result = await pendingResult;
+    if (result._tag === "Failure") {
+      setForkSource(null);
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      const message = error instanceof Error ? error.message : "Failed to fork this response.";
+      if (!openedEarly) {
+        setThreadError(activeThread.id, message);
+        return;
+      }
+      // The server deletes a fork whose worktree could not be prepared.
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not fork this response",
+          description: message,
+        }),
+      );
+      const forkPathname = router.buildLocation({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(targetThreadRef),
+      }).pathname;
+      if (router.state.location.pathname === forkPathname) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(sourceThreadRef),
+          replace: true,
+        });
+      }
+      return;
+    }
+    setForkSource(null);
+    if (openedEarly) return;
+    const targetThreadReady = await waitForThreadShell(targetThreadRef);
+    if (!targetThreadReady) {
+      setThreadError(
+        activeThread.id,
+        "The fork was created, but its thread data did not reach this client. Reconnect and try opening it from the sidebar.",
+      );
+      return;
+    }
+    await navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(targetThreadRef),
+    });
+  };
   const onForkFromRunStable = useStableCallback(onForkFromRun);
   const onCompactContext = () => {
     if (compactDisabled) return;

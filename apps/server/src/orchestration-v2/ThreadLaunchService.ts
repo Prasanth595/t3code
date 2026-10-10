@@ -975,10 +975,11 @@ const make = Effect.gen(function* () {
           yield* validateReusableThread(input, candidateThreadId);
         }
 
-        const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
-          input.forkSource === undefined &&
-          input.workspaceStrategy.type === "root" &&
-          Option.isNone(launchReceipt)
+        // Clients open a new-worktree fork while it prepares, so it is named up
+        // front; an unbound thread would invite them to pick a checkout.
+        const workspaceStrategy: ThreadLaunchWorkspaceStrategy = Option.isSome(launchReceipt)
+          ? input.workspaceStrategy
+          : input.forkSource === undefined && input.workspaceStrategy.type === "root"
             ? Option.match(
                 yield* managedFolders
                   .folderForThread({
@@ -992,7 +993,18 @@ const make = Effect.gen(function* () {
                   onSome: (worktreePath) => ({ type: "existing_worktree", worktreePath }),
                 },
               )
-            : input.workspaceStrategy;
+            : input.forkSource !== undefined &&
+                input.workspaceStrategy.type === "worktree" &&
+                input.workspaceStrategy.branch === undefined
+              ? {
+                  ...input.workspaceStrategy,
+                  branch: yield* randomUuidV4.pipe(
+                    Effect.map((uuid) =>
+                      buildTemporaryWorktreeBranchName(() => uuid.replaceAll("-", "")),
+                    ),
+                  ),
+                }
+              : input.workspaceStrategy;
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
@@ -1248,7 +1260,10 @@ const make = Effect.gen(function* () {
     CommandId,
     {
       readonly input: ThreadLaunchInput;
-      readonly completion: Deferred.Deferred<ThreadLaunchResult, ThreadLaunchError>;
+      readonly completion: Deferred.Deferred<
+        ThreadLaunchResult,
+        ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+      >;
     }
   >();
   const launchPreparedFork: ThreadLaunchService["Service"]["launch"] = Effect.fn(
@@ -1268,7 +1283,10 @@ const make = Effect.gen(function* () {
         }
         if (input.forkSource === undefined || input.workspaceStrategy.type !== "worktree")
           return undefined;
-        const completion = Deferred.makeUnsafe<ThreadLaunchResult, ThreadLaunchError>();
+        const completion = Deferred.makeUnsafe<
+          ThreadLaunchResult,
+          ThreadLaunchError | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+        >();
         inFlightForks.set(input.commandId, { input, completion });
         // A client disconnect must not abandon checkout preparation or let a
         // retry open the fork before the original operation settles.
@@ -1344,7 +1362,12 @@ const make = Effect.gen(function* () {
         interactionMode: source.thread.interactionMode,
         workspaceStrategy: input.workspaceStrategy,
         forkSource: { sourceThreadId: input.sourceThreadId, sourcePoint: input.sourcePoint },
-      });
+      }).pipe(
+        Effect.catchTags({
+          ThreadManagementProviderInstanceDisabledError: (cause) =>
+            Effect.fail(mapError(errorContext, "create-thread", input.targetThreadId)(cause)),
+        }),
+      );
       const sequence = yield* threads
         .getThreadEventSequence(input.targetThreadId)
         .pipe(Effect.mapError(mapError(errorContext, "create-thread", input.targetThreadId)));
@@ -1406,7 +1429,13 @@ const make = Effect.gen(function* () {
     );
   };
 
-  return ThreadLaunchService.of({ launch: launchPreparedFork, fork, checkWorktreeBase, retryPreparation, prepareRun });
+  return ThreadLaunchService.of({
+    launch: launchPreparedFork,
+    fork,
+    checkWorktreeBase,
+    retryPreparation,
+    prepareRun,
+  });
 });
 
 export const layer = Layer.effect(ThreadLaunchService, make);

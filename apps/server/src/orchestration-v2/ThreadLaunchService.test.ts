@@ -68,7 +68,6 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as OrchestratorMcpService from "../mcp/OrchestratorMcpService.ts";
-import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
@@ -183,10 +182,6 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   const layerExternalServices = Layer.mergeAll(
     NodeServices.layer,
-    Layer.mock(GitVcsDriver.GitVcsDriver)({
-      listWorktreePaths: () =>
-        Effect.succeed([...(options.worktreePaths ?? ["/repo", "/repo-source"])]),
-    }),
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
@@ -242,6 +237,10 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         IdAllocator.layer,
+        Layer.mock(GitVcsDriver.GitVcsDriver)({
+          listWorktreePaths: () =>
+            Effect.succeed([...(options.worktreePaths ?? ["/repo", "/repo-source"])]),
+        }),
       ),
     ),
   );
@@ -476,6 +475,50 @@ it.effect.each([
   },
 );
 
+it.effect("names a new-worktree fork's branch before its checkout finishes", () =>
+  Effect.gen(function* () {
+    const checkoutEntered = yield* Deferred.make<void>();
+    const allowCheckout = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Deferred.succeed(checkoutEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(allowCheckout)),
+          Effect.as({
+            worktree: {
+              path: "/repo-worktrees/feature",
+              refName: input.newRefName,
+              headSha: "abc",
+            },
+          } as never),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const forkSource = yield* seedForkSource();
+      const input = {
+        ...launchInput({
+          command: "fork:named-branch",
+          thread: "thread:named-branch",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+        forkSource,
+      };
+      const launch = yield* launches.launch(input).pipe(Effect.forkChild);
+      yield* Deferred.await(checkoutEntered);
+      // Clients already show the fork; an unbound one would let them pick a checkout.
+      const pending = yield* threads.getThreadProjection(ThreadId.make("thread:named-branch"));
+      assert.isNull(pending.thread.worktreePath);
+      assert.match(pending.thread.branch ?? "", /^t3\/[0-9a-f]{8}$/);
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0].newRefName, pending.thread.branch);
+      yield* Deferred.succeed(allowCheckout, undefined);
+      const result = yield* Fiber.join(launch);
+      assert.equal(result.projection.thread.branch, pending.thread.branch);
+      assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("waits for the original fork's checkout when its accepted launch is replayed", () =>
   Effect.gen(function* () {
     const checkoutEntered = yield* Deferred.make<void>();
@@ -619,6 +662,7 @@ it.effect.each([
       assert.isTrue(Exit.isFailure(conflictingResult));
       if (Exit.isFailure(conflictingResult)) {
         const error = Cause.findErrorOption(conflictingResult.cause).pipe(Option.getOrThrow);
+        assert(error._tag === "ThreadLaunchError");
         assert.equal(error.operation, "create-thread");
         assert.include(String(error.cause), "cannot be replayed");
       }
@@ -663,12 +707,14 @@ it.effect("rejects a replay after synchronous fork setup failed in a bound workt
       forkSource,
     };
     const firstError = yield* launches.launch(input).pipe(Effect.flip);
+    assert(firstError._tag === "ThreadLaunchError");
     assert.equal(firstError.operation, "run-setup-script");
     assert.equal(
       (yield* threads.getThreadProjection(input.threadId)).thread.worktreePath,
       "/repo-worktrees/feature",
     );
     const replayError = yield* launches.launch(input).pipe(Effect.flip);
+    assert(replayError._tag === "ThreadLaunchError");
     assert.equal(replayError.operation, "provision-worktree");
     assert.include(String(replayError.cause), "did not complete");
     assert.equal(harness.createWorktree.mock.calls.length, 1);
@@ -836,10 +882,12 @@ it.effect("does not leave a runnable root-checkout fork after worktree creation 
       forkSource,
     };
     const error = yield* launches.launch(input).pipe(Effect.flip);
+    assert(error._tag === "ThreadLaunchError");
     assert.equal(error.operation, "provision-worktree");
     const target = yield* threads.getThreadProjection(input.threadId);
     assert.isNotNull(target.thread.deletedAt);
     const replayError = yield* launches.launch(input).pipe(Effect.flip);
+    assert(replayError._tag === "ThreadLaunchError");
     assert.equal(replayError.operation, "create-thread");
     assert.equal(harness.createWorktree.mock.calls.length, 1);
     assert.equal(
