@@ -266,6 +266,8 @@ in web or desktop, use **Add Environment** with the fresh link or code; pairing
 the same environment replaces its saved grant. Reconnecting alone does not change
 permissions.
 
+For a project with copies on several environments, choose **Default environment** in its project settings to start new threads there whenever that environment is connected. Choose **Automatic** to use the usual routing; you can still pick another environment for an individual thread.
+
 Grouping checkouts does not combine their permissions. Shared project settings
 require `orchestration:operate` on every member environment; actions on one
 checkout use that checkout's permissions.
