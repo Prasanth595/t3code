@@ -55,6 +55,19 @@ describe("new thread project environment", () => {
     });
   });
 
+  it("falls back to a connected member when both the default and context are disconnected", () => {
+    expect(
+      resolveNewThreadProjectRef({
+        ...input,
+        contextProjectRef: padRef,
+        connectedEnvironmentIds: new Set([mac.environmentId]),
+      }),
+    ).toEqual({
+      projectRef: macRef,
+      environmentSelection: "auto",
+    });
+  });
+
   it("allows automatic routing when the default has no project copy", () => {
     expect(resolveNewThreadProjectRef({ ...input, members: [mac] })).toEqual({
       projectRef: macRef,
@@ -70,6 +83,23 @@ describe("new thread project environment", () => {
           ...input,
           settingsByEnvironment: settings(override),
           contextProjectRef: padRef,
+        }),
+      ).toEqual({
+        projectRef: padRef,
+        environmentSelection: "auto",
+      });
+    },
+  );
+
+  it.each([{}, { defaultEnvironmentId: null }])(
+    "preserves an offline context for Automatic %j",
+    (override) => {
+      expect(
+        resolveNewThreadProjectRef({
+          ...input,
+          settingsByEnvironment: settings(override),
+          contextProjectRef: padRef,
+          connectedEnvironmentIds: new Set([mac.environmentId]),
         }),
       ).toEqual({
         projectRef: padRef,
