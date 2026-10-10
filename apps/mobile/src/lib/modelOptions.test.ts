@@ -2,9 +2,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   type ModelSelection,
   type ServerConfig,
+  type ServerSettings,
 } from "@t3tools/contracts";
 
 import {
@@ -507,6 +510,70 @@ describe("mobile model options", () => {
         modelOptions: [unavailable],
       }),
     ).toBeNull();
+  });
+
+  describe("project-aware enablement", () => {
+    const projectId = ProjectId.make("project-a");
+    const instanceId = ProviderInstanceId.make("codex_work");
+
+    function configWith(settings: ServerSettings): ServerConfig {
+      return {
+        providers: [
+          {
+            instanceId,
+            driver: "codex",
+            displayName: "Codex Work",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            models: [{ slug: "model-a", name: "Model A", isCustom: false, capabilities: null }],
+          },
+        ],
+        settings,
+      } as unknown as ServerConfig;
+    }
+
+    it("hides an instance the project disables even though the machine enables it", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        },
+      };
+
+      expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
+    });
+
+    it("shows an instance the project enables even though the machine disables it", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        },
+      };
+
+      expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toHaveLength(1);
+    });
+
+    it("falls back to the machine value with no project in scope", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
+        projectSettingsOverrides: {
+          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        },
+      };
+
+      expect(buildModelOptions(configWith(settings), null, undefined, null)).toHaveLength(1);
+    });
   });
 });
 
