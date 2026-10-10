@@ -79,6 +79,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as NativeTelemetryClient from "../resourceTelemetry/NativeTelemetryClient.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
+import { T3_TERMINAL_THREAD_ID_ENV } from "./terminalEnv.ts";
 
 export {
   TerminalCwdError,
@@ -2268,6 +2269,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               platform,
               yield* HostProcess.HomeDirectory,
             );
+            terminalEnv[T3_TERMINAL_THREAD_ID_ENV] = session.threadId;
             // Append (never prepend) managed ACP agent install directories so
             // `kimi login` and friends resolve by name without shadowing any
             // system or user tool of the same name.
