@@ -1,4 +1,12 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+  type Project as ProjectRecord,
+  type ProjectScript,
+} from "@t3tools/contracts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -7,6 +15,7 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as Settings from "../../../serverSettings.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -46,6 +55,41 @@ const assertProjectWorktree = Effect.fn("mcp.assertProjectWorktree")(function* (
       message:
         "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
     });
+});
+
+/**
+ * Project actions live in the project's settings override, which is what
+ * `resolveProjectScripts` and the app read. The aggregate's own `scripts`
+ * field only counts before the legacy fold, so writing it is lost.
+ * Read-then-patch, like the app's editor: a concurrent override write to the
+ * same project between the two steps is lost. Revisit if settings gain an
+ * atomic per-project patch.
+ */
+const writeProjectScripts = Effect.fn("mcp.writeProjectScripts")(function* (
+  projectId: ProjectId,
+  scripts: ReadonlyArray<ProjectScript>,
+) {
+  const settings = yield* Settings.ServerSettingsService;
+  const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+  yield* settings
+    .updateSettings({
+      projectSettingsOverrides: {
+        [projectId]: {
+          ...current.projectSettingsOverrides[projectId],
+          defaultProjectScripts: scripts,
+        },
+      },
+    })
+    .pipe(Effect.mapError(unavailable));
+});
+
+/** The project with the actions the app runs, not the aggregate's legacy field. */
+const withResolvedScripts = Effect.fn("mcp.withResolvedScripts")(function* <
+  P extends ProjectRecord,
+>(project: P) {
+  const settings = yield* Settings.ServerSettingsService;
+  const current = yield* settings.getSettings.pipe(Effect.mapError(unavailable));
+  return { ...project, scripts: resolveProjectScripts(current, project) };
 });
 
 const access = Effect.gen(function* () {
@@ -193,17 +237,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message: "The project was not found.",
         });
-      return result.value;
+      return yield* withResolvedScripts(result.value);
     }),
   ),
-  t3_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, ...input }) =>
+  t3_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, scripts, ...input }) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
       if (workspaceRoot === undefined) {
         // Project creation records no model default (only an update does), so
         // reject what this mode would otherwise drop silently.
         if (
-          input.scripts !== undefined ||
+          scripts !== undefined ||
           input.createWorkspaceRootIfMissing !== undefined ||
           input.defaultModelSelection !== undefined
         )
@@ -235,17 +279,22 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         };
       }
       const commandId = yield* newCommandId();
-      return yield* projects
+      const created = yield* projects
         .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
         .pipe(Effect.mapError(projectFailure));
+      if (scripts !== undefined) yield* writeProjectScripts(created.id, scripts);
+      return yield* withResolvedScripts(created);
     }),
   ),
-  t3_project_update: McpToolAccess.writesEnvironment((input) =>
+  t3_project_update: McpToolAccess.writesEnvironment(({ scripts, ...input }) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      return yield* projects
+      // The update runs first so an unknown project fails before settings change.
+      const updated = yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
+      if (scripts !== undefined) yield* writeProjectScripts(updated.id, scripts);
+      return yield* withResolvedScripts(updated);
     }),
   ),
   t3_project_delete: McpToolAccess.writesEnvironment((input) =>

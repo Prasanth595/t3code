@@ -29,6 +29,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as Settings from "../../../serverSettings.ts";
 
 const shared = {
   success: Project,
@@ -61,6 +62,7 @@ const ProjectReadTool = Tool.make("t3_project_read", {
   description:
     "Read a registered project in this environment, including its workspace and saved scripts.",
   parameters: Schema.Struct({ projectId: ProjectId }),
+  dependencies: [...shared.dependencies, Settings.ServerSettingsService],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -73,13 +75,18 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
     workspaceRoot: Schema.optional(ProjectCreatePayload.fields.workspaceRoot),
   }),
   success: Schema.Struct({ ...Project.fields, commitError: Schema.optional(Schema.String) }),
-  dependencies: [...shared.dependencies, ManagedProjectFolders.ManagedProjectFolders],
+  dependencies: [
+    ...shared.dependencies,
+    ManagedProjectFolders.ManagedProjectFolders,
+    Settings.ServerSettingsService,
+  ],
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("t3_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app.",
+    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. scripts replaces the project's actions, the list the app shows and runs.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
+  dependencies: [...shared.dependencies, Settings.ServerSettingsService],
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,

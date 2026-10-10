@@ -22,6 +22,8 @@ import * as ServerConfig from "../../../config.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
+import * as Settings from "../../../serverSettings.ts";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -256,6 +258,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
           }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Settings.layerTest(),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -294,6 +297,83 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       expect(rejected.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     }
     expect(named).toEqual(["Pinball Stats"]);
+  }),
+);
+
+it.effect("project actions written by t3_project_update are the ones the app resolves", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:actions");
+    const project = {
+      id: projectId,
+      title: "Actions",
+      workspaceRoot: "/projects/actions",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-10-01T00:00:00.000Z",
+      updatedAt: "2026-10-01T00:00:00.000Z",
+      deletedAt: null,
+    } as unknown as ProjectRecord;
+    // One instance, so every handler call below shares the same settings.
+    const settingsService = yield* Settings.ServerSettingsService.pipe(
+      // Folded: the aggregate's scripts no longer count, as on a migrated server.
+      Effect.provide(Settings.layerTest({ projectSettingsFolded: true })),
+    );
+    const aggregateUpdates: Array<Parameters<Project.ProjectService["Service"]["update"]>[0]> = [];
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "client:session-1",
+        thread: undefined,
+        client: { sessionId: "session-1", label: "Claude Code", access: "full-access" },
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({}),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({}),
+      Layer.mock(Project.ProjectService)({
+        update: (input) =>
+          Effect.sync(() => {
+            aggregateUpdates.push(input);
+            return project;
+          }),
+        getById: (id) => Effect.succeed(id === projectId ? Option.some(project) : Option.none()),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.succeed(Settings.ServerSettingsService, settingsService),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-project-actions-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const run = <Name extends "t3_project_update" | "t3_project_read">(
+      name: Name,
+      params: Parameters<typeof toolkit.handle<Name>>[1],
+    ) =>
+      toolkit
+        .handle(name, params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    const scripts = [
+      { id: "test", name: "Test", command: "pnpm test", icon: "test", runOnWorktreeCreate: false },
+    ] as const;
+
+    const updated = yield* run("t3_project_update", { projectId, scripts });
+    expect(updated.at(-1)?.result).toMatchObject({ id: projectId, scripts });
+    expect(aggregateUpdates.at(-1)).not.toHaveProperty("scripts");
+
+    const settings = yield* settingsService.getSettings;
+    expect(resolveProjectScripts(settings, project)).toEqual(scripts);
+
+    const read = yield* run("t3_project_read", { projectId });
+    expect(read.at(-1)?.result).toMatchObject({ scripts });
   }),
 );
 
