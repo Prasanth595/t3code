@@ -20,6 +20,7 @@ import { environmentEndpointUrl } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
+import { sendsSiblingCredentials } from "../rpc/siblingCredentials.ts";
 import type { DeviceHubAccess } from "../device/hubAccess.ts";
 
 export { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts";
@@ -54,7 +55,8 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
       httpBase,
       wsBase,
       query: { wsTicket: ticket.ticket },
-      credentials: false,
+      // A trusted sibling behind a proxy such as Cloudflare Access needs its cookie.
+      credentials: sendsSiblingCredentials(httpBase),
     };
   },
 );

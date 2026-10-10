@@ -1,6 +1,7 @@
 import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { setCredentialedSiblingOrigins } from "@t3tools/client-runtime/rpc/siblingCredentials";
 import {
   Outlet,
   Link,
@@ -504,6 +505,10 @@ function EventRouter({
   const serverConfig = useAtomValue(primaryServerConfigAtom);
   const serverConfigEvent = useAtomValue(primaryServerConfigEventAtom);
   const serverWelcome = useAtomValue(primaryServerWelcomeAtom);
+  const trustedBrowserOrigins = serverConfig?.trustedBrowserOrigins;
+  useEffect(() => {
+    setCredentialedSiblingOrigins(trustedBrowserOrigins ?? []);
+  }, [trustedBrowserOrigins]);
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const skipInitialBootstrapNavigationRef = useRef(skipInitialBootstrapNavigation);

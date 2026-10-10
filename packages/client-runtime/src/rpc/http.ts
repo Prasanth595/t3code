@@ -18,6 +18,8 @@ import * as Schema from "effect/Schema";
 import { FetchHttpClient, HttpClient, HttpClientError } from "effect/http";
 import * as HttpApiClient from "effect/http-api/HttpApiClient";
 
+import { sendsSiblingCredentials } from "./siblingCredentials.ts";
+
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
 
 export class RemoteEnvironmentAuthFetchError extends Data.TaggedError(
@@ -159,12 +161,22 @@ const failRemoteRequest = (
   );
 };
 
+// Every environment HTTP request (descriptor, pairing, API) passes here, so a
+// trusted sibling gets its proxy cookie on each of them.
+const withSiblingCredentials = <A, E, R>(
+  requestUrl: string,
+  request: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  sendsSiblingCredentials(requestUrl)
+    ? request.pipe(Effect.provideService(FetchHttpClient.RequestInit, { credentials: "include" }))
+    : request;
+
 export const executeEnvironmentHttpRequest = <A, E, R>(
   requestUrl: string,
   timeoutMs: number,
   request: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, RemoteEnvironmentRequestError, R> =>
-  request.pipe(
+  withSiblingCredentials(requestUrl, request).pipe(
     Effect.timeoutOption(Duration.millis(timeoutMs)),
     Effect.flatMap(
       Option.match({

@@ -143,6 +143,10 @@
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
     },
+    "./rpc/siblingCredentials": {
+      "types": "./src/rpc/siblingCredentials.ts",
+      "default": "./src/rpc/siblingCredentials.ts"
+    },
     "./state/entities": {
       "types": "./src/state/entities.ts",
       "default": "./src/state/entities.ts"
