@@ -2024,6 +2024,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     itself an action, so it stays pointer-enabled and visible
                     while the other controls appear beside it. */}
                   <span
+                    data-sidebar-status={topStatus?.label}
                     className={cn(
                       isWokeStatus
                         ? "pointer-events-auto"

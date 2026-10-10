@@ -14,6 +14,10 @@ The installed app updates itself from the fork releases through the built-in upd
 The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and the data directory `~/.t3`.
 They replace the upstream Nightly app and keep its data.
 
+## App icon
+
+The fork replaces `assets/nightly/nightly-macos-1024.png` with the Tick3d icon. The source is `assets/fork/tick3d-macos.svg`. To change it, edit the SVG and run `rsvg-convert -w 1024 -h 1024 assets/fork/tick3d-macos.svg -o assets/nightly/nightly-macos-1024.png`.
+
 ## Versions
 
 The version is `<upstream base version>-nightly.<UTC date>.<build number>`, for example `0.0.46-nightly.20261010.3`.
@@ -51,6 +55,15 @@ scripts/fork-desktop-mac.sh
 ```
 
 The script writes the signed ZIP and `nightly-mac.yml` to `release/`. It skips the DMG, which only a first manual install uses.
+
+## Install a local build on this Mac
+
+```sh
+scripts/fork-desktop-mac.sh --install
+```
+
+The script quits T3, keeps the previous app in `_shared/backup/`, installs the new build and starts it. GitHub is not involved.
+The fork updater never downgrades, so the local build stays until a newer release exists.
 
 ## Publish a local build
 
