@@ -2455,6 +2455,13 @@ code {
   box-shadow: var(--theme-shadow);
 }
 
+/* One shadow per stack: a themed surface that wraps another themed surface
+   (a popup around the details card, for example) drops its own shadow, so
+   only the inner surface with the visible border casts one. */
+:root[data-theme-shadow] :is([data-slot="composer-host"], [data-slot$="-popup"], [data-slot="dialog-panel"], [data-thread-details-card]):has(:is([data-slot$="-popup"], [data-slot="dialog-panel"], [data-thread-details-card])) {
+  box-shadow: none;
+}
+
 /* Background texture behind the main area. Several opaque bg-background
    layers stack there (draft view, thread view), so each one draws the
    pattern with a fixed attachment and the dots line up across layers. */
