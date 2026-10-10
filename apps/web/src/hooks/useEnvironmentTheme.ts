@@ -7,14 +7,17 @@ import { primaryServerEnvironmentThemesAtom } from "../state/server";
 import {
   createVividThemeColors,
   getDefaultThemeColors,
+  getActiveThemeFonts,
   getEnvironmentThemes,
   isReservedThemeId,
   lenientThemeColorOverrides,
   setEnvironmentThemes,
+  subscribeToActiveThemeFonts,
   subscribeToCustomThemes,
   type ThemeAppearance,
   type ThemeColors,
   type ThemeDefinition,
+  type ThemeStyle,
 } from "../themePalette";
 import { useTheme } from "./useTheme";
 
@@ -35,6 +38,22 @@ function publishedThemeColors(
   return { ...base, ...lenientThemeColorOverrides(colors ?? {}) };
 }
 
+/** The style fields a published theme sets, or undefined when it sets none. */
+function publishedThemeStyle(theme: EnvironmentTheme): ThemeStyle | undefined {
+  const style: ThemeStyle = {
+    ...(theme.radius !== undefined ? { radius: theme.radius } : {}),
+    ...(theme.borderWidth !== undefined ? { borderWidth: theme.borderWidth } : {}),
+    ...(theme.shadow !== undefined ? { shadow: theme.shadow } : {}),
+    ...(theme.fonts !== undefined ? { fonts: theme.fonts } : {}),
+    ...(theme.canvasPattern !== undefined ? { canvasPattern: theme.canvasPattern } : {}),
+    ...(theme.canvasPatternColor !== undefined
+      ? { canvasPatternColor: theme.canvasPatternColor }
+      : {}),
+    ...(theme.css !== undefined ? { css: theme.css } : {}),
+  };
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
 /**
  * A published theme as the theme library renders it. Both published forms are
  * accepted: the seeded short form a desktop generates, and the standard
@@ -52,9 +71,11 @@ export function environmentThemeDefinition(theme: EnvironmentTheme): ThemeDefini
     );
   }
 
+  const style = publishedThemeStyle(theme);
   return {
     id: theme.id,
     label: theme.name,
+    ...(style !== undefined ? { style } : {}),
     appearance: theme.appearance,
     colors: publishedThemeColors(theme, theme.appearance, theme.colors),
     ...(Object.keys(variants).length > 0 ? { variants } : {}),
@@ -122,4 +143,13 @@ export function useEnvironmentThemeSync(): void {
       refreshTheme({ preservePreview: true });
     }
   }, [published, refreshTheme]);
+}
+
+/** Fonts the active theme suggests; empty when it suggests none. */
+export function useActiveThemeFonts(): ReturnType<typeof getActiveThemeFonts> {
+  return useSyncExternalStore(
+    subscribeToActiveThemeFonts,
+    getActiveThemeFonts,
+    getActiveThemeFonts,
+  );
 }

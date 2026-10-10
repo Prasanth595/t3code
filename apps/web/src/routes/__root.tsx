@@ -42,7 +42,7 @@ import { ProviderAuthCallbackCoordinator } from "../components/settings/Provider
 import { ThemeEditorHost } from "../components/settings/ThemeEditorHost";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useDefaultThemeAdoption } from "../hooks/useDefaultTheme";
-import { useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
+import { useActiveThemeFonts, useEnvironmentThemeSync } from "../hooks/useEnvironmentTheme";
 import { Button } from "../components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { StandalonePage, StandalonePageHeader } from "../components/ui/standalone-page";
@@ -54,7 +54,7 @@ import {
 } from "../components/ui/toast";
 import { isElectron } from "../env";
 import { cn } from "../lib/utils";
-import { applyAppearanceFontVariables } from "~/appearanceFonts";
+import { applyAppearanceFontVariables, fontSettingOrThemeFont } from "~/appearanceFonts";
 import { applyAppearanceContrast } from "~/appearanceContrast";
 import { useClientSettings } from "../hooks/useSettings";
 import {
@@ -315,12 +315,13 @@ function FontAppearanceSync() {
   const fontSizePrompt = useClientSettings((settings) => settings.fontSizePrompt);
   const fontSizeCode = useClientSettings((settings) => settings.fontSizeCode);
   const fontSmoothing = useClientSettings((settings) => settings.fontSmoothing);
+  const themeFonts = useActiveThemeFonts();
 
   useEffect(() => {
     applyAppearanceFontVariables(document.documentElement, {
-      sans: fontFamilySans,
-      code: fontFamilyCode,
-      composer: fontFamilyComposer,
+      sans: fontSettingOrThemeFont(fontFamilySans, themeFonts.sans),
+      code: fontSettingOrThemeFont(fontFamilyCode, themeFonts.code),
+      composer: fontSettingOrThemeFont(fontFamilyComposer, themeFonts.composer),
       sizeInterface: fontSizeInterface,
       sizePrompt: fontSizePrompt,
       sizeCode: fontSizeCode,
@@ -334,6 +335,7 @@ function FontAppearanceSync() {
     fontSizeInterface,
     fontSizePrompt,
     fontSmoothing,
+    themeFonts,
   ]);
 
   return null;

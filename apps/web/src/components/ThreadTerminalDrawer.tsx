@@ -91,7 +91,9 @@ import { useEnvironmentScope } from "../state/session";
 import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { preventTerminalCloseShortcut } from "../lib/terminalCloseShortcut";
+import { useActiveThemeFonts } from "../hooks/useEnvironmentTheme";
 import {
+  fontSettingOrThemeFont,
   resolveTerminalFontPreference,
   resolveTerminalFontSizePreference,
   TYPOGRAPHY_ADVANCED_STORAGE_KEY,
@@ -425,12 +427,17 @@ export function TerminalViewport({
   });
   const canAddSelectionToChat = useEffectEvent(() => onAddTerminalContext !== undefined);
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
-  const terminalFontFamily = useClientSettings((settings) =>
+  const themeFonts = useActiveThemeFonts();
+  const terminalFontSetting = useClientSettings((settings) =>
     resolveTerminalFontPreference({
       advanced: advancedTypography,
       code: settings.fontFamilyCode,
       terminal: settings.fontFamilyTerminal,
     }),
+  );
+  const terminalFontFamily = fontSettingOrThemeFont(
+    terminalFontSetting,
+    themeFonts.terminal ?? themeFonts.code,
   );
   const terminalFontSize = useClientSettings((settings) =>
     resolveTerminalFontSizePreference({

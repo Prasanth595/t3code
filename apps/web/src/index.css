@@ -2367,3 +2367,79 @@ code {
     }
   }
 }
+
+/* Optional theme style fields (radius, borderWidth, shadow, canvasPattern).
+   themePalette.ts sets a root attribute only when the active theme sets the
+   field, so a theme without them matches none of these rules. */
+:root[data-theme-radius] {
+  --control-radius: var(--radius);
+}
+:root[data-theme-radius]
+  :is(
+    [data-slot="composer-host"],
+    [data-chat-composer-main-surface],
+    [data-slot$="-popup"],
+    [data-slot="dialog-panel"]
+  ) {
+  border-radius: var(--radius);
+}
+
+/* Thickens the borders that already exist. Elements without a border keep
+   none, because only the width utilities are overridden. Limit: these rules
+   also beat a side reset such as `border-b-0` on the same element. Revisit
+   if a themed layout shows a border that the stock layout removes. */
+:root[data-theme-border-width] .border,
+:root[data-theme-border-width] [data-chat-composer-main-surface]::after,
+:root[data-theme-border-width] [data-slot="composer-host"]::after {
+  border-width: var(--theme-border-width);
+}
+:root[data-theme-border-width] .border-t {
+  border-top-width: var(--theme-border-width);
+}
+:root[data-theme-border-width] .border-b {
+  border-bottom-width: var(--theme-border-width);
+}
+:root[data-theme-border-width] .border-l {
+  border-left-width: var(--theme-border-width);
+}
+:root[data-theme-border-width] .border-r {
+  border-right-width: var(--theme-border-width);
+}
+
+/* Raised surfaces and solid buttons take the theme shadow. */
+:root[data-theme-shadow]
+  :is(
+    [data-slot="composer-host"],
+    [data-slot$="-popup"],
+    [data-slot="dialog-panel"],
+    [data-slot="button"]:is(
+        [data-button-variant="default"],
+        [data-button-variant="outline"],
+        [data-button-variant="destructive"],
+        [data-button-variant="destructive-outline"]
+      ):not(:disabled, :active, [data-pressed])
+  ) {
+  box-shadow: var(--theme-shadow);
+}
+
+/* Background texture behind the chat canvas. */
+:root[data-canvas-pattern] [data-chat-canvas] {
+  --canvas-pattern-color: var(
+    --theme-canvas-pattern-color,
+    color-mix(in srgb, var(--foreground) 14%, transparent)
+  );
+}
+:root[data-canvas-pattern="dots"] [data-chat-canvas] {
+  background-image: radial-gradient(var(--canvas-pattern-color) 1px, transparent 1.5px);
+  background-size: 16px 16px;
+}
+:root[data-canvas-pattern="grid"] [data-chat-canvas] {
+  background-image:
+    linear-gradient(var(--canvas-pattern-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--canvas-pattern-color) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+/* The noise tile is grayscale, so it ignores canvasPatternColor. */
+:root[data-canvas-pattern="noise"] [data-chat-canvas] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}

@@ -85,6 +85,8 @@ function Button({ className, variant, size, render, ...props }: ButtonProps) {
 
   const defaultProps = {
     className: cn(buttonVariants({ className, size, variant })),
+    // Lets theme CSS target a variant without matching generated class names.
+    "data-button-variant": variant ?? "default",
     "data-slot": "button",
     type: typeValue,
   };

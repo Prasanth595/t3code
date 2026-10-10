@@ -17,11 +17,19 @@ import {
   type ThemeColorRole,
   type ThemeColors,
   type ThemeDefinition,
+  type ThemeStyle,
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 
 export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
-export type { ThemeAppearance, ThemeColorRole, ThemeColors, ThemeDefinition, ThemeVariants };
+export type {
+  ThemeAppearance,
+  ThemeColorRole,
+  ThemeColors,
+  ThemeDefinition,
+  ThemeStyle,
+  ThemeVariants,
+};
 
 export const T3_CHAT_THEME_ID = "t3-chat" as const;
 const GROVE_THEME_ID = "grove" as const;
@@ -1531,10 +1539,85 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
   setThemePreviewSidebarArtwork(false);
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
+  // Drafts carry colors only, so the preview shows them without style fields.
+  applyThemeStyle(root, undefined);
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+}
+
+/** Id of the style element that holds the active theme's user CSS. */
+export const THEME_USER_CSS_ELEMENT_ID = "t3-theme-user-css";
+let userCssElement: HTMLStyleElement | null = null;
+
+type ThemeFonts = NonNullable<ThemeStyle["fonts"]>;
+const NO_THEME_FONTS: ThemeFonts = {};
+let activeThemeFonts: ThemeFonts = NO_THEME_FONTS;
+const activeThemeFontListeners = new Set<() => void>();
+
+/** Fonts the active theme suggests. Empty when the theme has none. */
+export function getActiveThemeFonts(): ThemeFonts {
+  return activeThemeFonts;
+}
+
+export function subscribeToActiveThemeFonts(listener: () => void): () => void {
+  activeThemeFontListeners.add(listener);
+  return () => activeThemeFontListeners.delete(listener);
+}
+
+/**
+ * Root custom properties and attributes for each style field. The attribute
+ * gates the matching rules in index.css, so a theme without the field gets
+ * none of them and renders as stock.
+ */
+const THEME_STYLE_PROPERTIES = [
+  ["radius", "--radius", "themeRadius"],
+  ["borderWidth", "--theme-border-width", "themeBorderWidth"],
+  ["shadow", "--theme-shadow", "themeShadow"],
+  ["canvasPatternColor", "--theme-canvas-pattern-color", null],
+] as const satisfies ReadonlyArray<
+  readonly [keyof ThemeStyle, `--${string}`, keyof DOMStringMap | null]
+>;
+
+/**
+ * Writes the theme's optional style fields onto the root, and clears every
+ * field the theme does not set. Undefined clears all of them.
+ */
+export function applyThemeStyle(root: HTMLElement, style: ThemeStyle | undefined): void {
+  for (const [field, variable, attribute] of THEME_STYLE_PROPERTIES) {
+    const value = style?.[field];
+    if (value === undefined) {
+      root.style.removeProperty(variable);
+      if (attribute !== null) delete root.dataset[attribute];
+    } else {
+      root.style.setProperty(variable, value);
+      if (attribute !== null) root.dataset[attribute] = "";
+    }
+  }
+
+  const pattern = style?.canvasPattern;
+  if (pattern === undefined || pattern === "none") delete root.dataset.canvasPattern;
+  else root.dataset.canvasPattern = pattern;
+
+  const fonts = style?.fonts ?? NO_THEME_FONTS;
+  if (!Equal.equals(fonts, activeThemeFonts)) {
+    activeThemeFonts = fonts;
+    for (const listener of activeThemeFontListeners) listener();
+  }
+
+  // The style element goes last in <head>, so user CSS wins over the app
+  // stylesheet at equal specificity. It is removed when the theme has none.
+  const css = style?.css;
+  if (css === undefined) {
+    userCssElement?.remove();
+    userCssElement = null;
+    return;
+  }
+  userCssElement ??= document.createElement("style");
+  userCssElement.id = THEME_USER_CSS_ELEMENT_ID;
+  if (userCssElement.textContent !== css) userCssElement.textContent = css;
+  if (userCssElement !== document.head.lastElementChild) document.head.append(userCssElement);
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
@@ -1553,9 +1636,11 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
     for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
       root.style.setProperty(APP_THEME_VARIABLES[role], value);
     }
+    applyThemeStyle(root, palette.style);
     return;
   }
 
+  applyThemeStyle(root, undefined);
   delete root.dataset.themeId;
   for (const variable of Object.values(APP_THEME_VARIABLES)) {
     root.style.removeProperty(variable);

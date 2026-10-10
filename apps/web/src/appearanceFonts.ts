@@ -50,6 +50,15 @@ export function resolveTerminalFontSizePreference(input: {
   return input.code;
 }
 
+/**
+ * Font precedence: an explicit client setting wins over the theme font. The
+ * settings default to an empty string, which means "default", so the theme
+ * font applies only while the setting is empty.
+ */
+export function fontSettingOrThemeFont(setting: string, themeFont: string | undefined): string {
+  return setting.trim().length > 0 ? setting : (themeFont ?? "");
+}
+
 function quoteFontFamilyName(name: string): string {
   const bare = name.trim();
   if (bare.length === 0) return "";

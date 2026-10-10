@@ -326,6 +326,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         (!hasSendableContent && !showResume)
       }
       aria-label={submitStatus ?? submitLabel}
+      data-chat-composer-send="true"
     >
       {stageBackdropVariant ? (
         <span className="pointer-events-none absolute inset-0 -z-10" aria-hidden="true">
