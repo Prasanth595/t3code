@@ -2407,6 +2407,18 @@ code {
   border-right-width: var(--theme-border-width);
 }
 
+/* The composer backdrop is a clip-path shape with fixed 22px corners that
+   also reaches down behind the context strip. With a theme radius, use a
+   plain box above the strip, and let the strip paint its own backdrop. */
+:root[data-theme-radius] [data-slot="composer-shell"]::before {
+  clip-path: none;
+  border-radius: var(--radius);
+  bottom: var(--chat-composer-context-extension, 0px);
+}
+:root[data-theme-radius] [data-slot="composer-context-strip"]::before {
+  background-color: var(--chat-composer-glass-surface);
+}
+
 /* The strip under the composer draws its box on ::before, so the class
    rules above miss it. */
 :root[data-theme-border-width] [data-slot="composer-context-strip"]::before {
