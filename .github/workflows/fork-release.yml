@@ -48,10 +48,8 @@ jobs:
           # upstream changes them often. FORK_SYNC_TOKEN is a token with the
           # workflow scope. Without it, a rebase over workflow changes fails at push.
           token: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+          # No sparse checkout here: it makes a partial clone, and the rebase
+          # then fails to fetch upstream blobs under .repos/ from origin.
 
       - id: rebase
         name: Rebase onto upstream main
