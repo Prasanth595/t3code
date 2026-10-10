@@ -866,6 +866,34 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("remembers a first send held near the top as a reading position", async () => {
+    const { readTimelinePosition } = await import("./timelineScrollAnchoring");
+    const timeline = stubFollowTimeline("environment-local:anchored-first-send");
+    const { props } = timeline;
+    timeline.scrollTop = 1300;
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...props}
+            timelineEntries={[buildUserTimelineEntry("First prompt")]}
+            anchorMessageId={MessageId.make("message-1")}
+            liveFollowEnabled
+          />,
+        );
+      });
+      await timeline.flushFrame();
+
+      expect(readTimelinePosition(props.routeThreadKey)).toMatchObject({
+        atEnd: false,
+        scrollOffset: 1300,
+      });
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
   it("preserves arbitrary XML-like tags and comparisons in rendered user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
