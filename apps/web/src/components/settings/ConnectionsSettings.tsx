@@ -47,7 +47,9 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
+  CLOUDFLARE_ACCESS_MESSAGE,
   RelayConnectionRegistration,
+  requestHeaderOrigin,
   RelayConnectionTarget,
   connectionRoutes,
   connectionStatusText,
@@ -83,6 +85,17 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
+import {
+  EMPTY_REQUEST_HEADERS_FORM,
+  OriginRequestHeadersEditor,
+  RequestHeadersFields,
+  type RequestHeadersForm,
+  environmentRequestHeaderOrigins,
+  isCloudflareAccessChallenged,
+  requestHeadersFromForm,
+  supportsRequestHeaders,
+  useCloudflareAccessChallenged,
+} from "./RequestHeadersEditor";
 import { usePreparedConnection } from "~/state/session";
 import {
   EnvironmentRow,
@@ -166,7 +179,10 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
+  readRequestHeaders as readRequestHeadersAtom,
+  saveRequestHeaders as saveRequestHeadersAtom,
 } from "~/connection/onboarding";
+import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -1495,6 +1511,7 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [requestHeadersOpen, setRequestHeadersOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1586,6 +1603,13 @@ function SavedBackendListRow({
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const routeCount = connectionRoutes(environment.entry).length;
+  const requestHeaderOrigins = supportsRequestHeaders()
+    ? environmentRequestHeaderOrigins(environment.entry)
+    : [];
+  const accessChallenged = useCloudflareAccessChallenged(
+    requestHeaderOrigins,
+    environment.connection.error,
+  );
   const subtitleText = [
     environmentTransportLabel(environment, connectedTarget),
     resumingServerUpdate ? "Restarting" : status.text,
@@ -1608,7 +1632,7 @@ function SavedBackendListRow({
       : enabled
         ? connectionStatusText(environment.connection)
         : "Switched off"
-  }${
+  }${enabled && accessChallenged ? `\n${CLOUDFLARE_ACCESS_MESSAGE}` : ""}${
     versionMismatch
       ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
       : ""
@@ -1681,14 +1705,42 @@ function SavedBackendListRow({
               )}
             />
           </button>
+          {requestHeaderOrigins.length > 0 ? (
+            <>
+              <span aria-hidden className="shrink-0">
+                ·
+              </span>
+              <button
+                type="button"
+                aria-expanded={requestHeadersOpen}
+                aria-controls={`request-headers-${environmentId}`}
+                onClick={() => setRequestHeadersOpen((open) => !open)}
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              >
+                Request headers
+                <ChevronRightIcon
+                  aria-hidden
+                  className={cn(
+                    "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+                    requestHeadersOpen && "rotate-90",
+                  )}
+                />
+              </button>
+            </>
+          ) : null}
         </span>
       }
       below={
-        serverUpdateState.status !== "idle" ? (
-          <div className="mt-1 max-w-md">
-            <ServerUpdateProgress state={serverUpdateState} />
-          </div>
-        ) : null
+        <>
+          {serverUpdateState.status !== "idle" ? (
+            <div className="mt-1 max-w-md">
+              <ServerUpdateProgress state={serverUpdateState} />
+            </div>
+          ) : null}
+          {enabled && accessChallenged ? (
+            <p className="mt-1 text-xs text-destructive">{CLOUDFLARE_ACCESS_MESSAGE}</p>
+          ) : null}
+        </>
       }
       detail={
         <>
@@ -1708,6 +1760,20 @@ function SavedBackendListRow({
                 connected={isConnected}
                 routeContext
               />
+            </div>
+          )}
+          {requestHeadersOpen && (
+            <div
+              id={`request-headers-${environmentId}`}
+              className="mt-2 max-w-xl border-t border-border/50"
+            >
+              {requestHeaderOrigins.map((origin) => (
+                <OriginRequestHeadersEditor
+                  key={origin}
+                  origin={origin}
+                  showOrigin={requestHeaderOrigins.length > 1}
+                />
+              ))}
             </div>
           )}
         </>
@@ -2037,6 +2103,8 @@ export function ConnectionsSettings() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
+  const readRequestHeaders = useAtomCommand(readRequestHeadersAtom, { reportFailure: false });
+  const saveRequestHeaders = useAtomCommand(saveRequestHeadersAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
@@ -2174,6 +2242,10 @@ export function ConnectionsSettings() {
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
+  const [savedBackendRequestHeadersOpen, setSavedBackendRequestHeadersOpen] = useState(false);
+  const [savedBackendRequestHeaders, setSavedBackendRequestHeaders] = useState<RequestHeadersForm>(
+    EMPTY_REQUEST_HEADERS_FORM,
+  );
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -2653,14 +2725,59 @@ export function ConnectionsSettings() {
       return;
     }
 
+    const failAdd = (message: string) => {
+      setSavedBackendError(message);
+      toastManager.add(
+        stackedThreadToast({ type: "error", title: "Could not add backend", description: message }),
+      );
+      setIsAddingSavedBackend(false);
+    };
+    // Headers are keyed by origin, so they are saved before pairing to let
+    // the pairing request itself pass a proxy such as Cloudflare Access.
+    let httpBaseUrl: string;
+    try {
+      httpBaseUrl = resolveRemotePairingTarget(remotePairingInput).httpBaseUrl;
+    } catch (error) {
+      failAdd(error instanceof Error ? error.message : "Failed to add backend.");
+      return;
+    }
+    const headerOrigin = requestHeaderOrigin(httpBaseUrl);
+    const parsedHeaders = requestHeadersFromForm(savedBackendRequestHeaders);
+    if ("error" in parsedHeaders) {
+      failAdd(parsedHeaders.error);
+      return;
+    }
+    let previousHeaders: ReadonlyArray<{ readonly name: string; readonly value: string }> | null =
+      null;
+    if (headerOrigin !== null && parsedHeaders.headers.length > 0) {
+      const previous = await readRequestHeaders(headerOrigin);
+      const saved =
+        previous._tag === "Success"
+          ? await saveRequestHeaders({ origin: headerOrigin, headers: parsedHeaders.headers })
+          : previous;
+      if (previous._tag !== "Success" || saved._tag !== "Success") {
+        failAdd("Could not save the request headers.");
+        return;
+      }
+      previousHeaders = previous.value;
+    }
+
     const result = await connectPairing({
       ...remotePairingInput,
       ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
     });
     if (result._tag === "Failure") {
+      // A failed pairing saves no environment, so restore the origin's headers.
+      if (headerOrigin !== null && previousHeaders !== null) {
+        await saveRequestHeaders({ origin: headerOrigin, headers: previousHeaders });
+      }
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = error instanceof Error ? error.message : "Failed to add backend.";
+        const message = (await isCloudflareAccessChallenged(httpBaseUrl))
+          ? CLOUDFLARE_ACCESS_MESSAGE
+          : error instanceof Error
+            ? error.message
+            : "Failed to add backend.";
         setSavedBackendError(message);
         toastManager.add(
           stackedThreadToast({
@@ -2676,6 +2793,8 @@ export function ConnectionsSettings() {
 
     setSavedBackendHost("");
     setSavedBackendPairingCode("");
+    setSavedBackendRequestHeaders(EMPTY_REQUEST_HEADERS_FORM);
+    setSavedBackendRequestHeadersOpen(false);
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
@@ -2698,9 +2817,12 @@ export function ConnectionsSettings() {
     routeTarget,
     connectPairing,
     connectSavedBackendSshTarget,
+    readRequestHeaders,
+    saveRequestHeaders,
     savedBackendHost,
     savedBackendMode,
     savedBackendPairingCode,
+    savedBackendRequestHeaders,
     savedBackendSshHost,
     savedBackendSshPort,
     savedBackendSshUsername,
@@ -2983,6 +3105,34 @@ export function ConnectionsSettings() {
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
+      {supportsRequestHeaders() ? (
+        <div>
+          <button
+            type="button"
+            aria-expanded={savedBackendRequestHeadersOpen}
+            onClick={() => setSavedBackendRequestHeadersOpen((open) => !open)}
+            className="inline-flex items-center gap-0.5 rounded-sm text-xs font-medium text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            Request headers
+            <ChevronRightIcon
+              aria-hidden
+              className={cn(
+                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
+                savedBackendRequestHeadersOpen && "rotate-90",
+              )}
+            />
+          </button>
+          {savedBackendRequestHeadersOpen ? (
+            <div className="mt-2">
+              <RequestHeadersFields
+                form={savedBackendRequestHeaders}
+                disabled={isAddingSavedBackend}
+                onChange={setSavedBackendRequestHeaders}
+              />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
   // T3 Connect is offered as a route when this account can reach the machine
