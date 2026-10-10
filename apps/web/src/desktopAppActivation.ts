@@ -1,4 +1,5 @@
 import type {
+  DesktopAppActivationCheckout,
   DesktopAppActivationFailure,
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
@@ -33,6 +34,7 @@ export interface DesktopAppActivationDependencies {
   readonly waitForProject: (projectRef: ScopedProjectRef) => Promise<void>;
   readonly openThread: (
     projectRef: ScopedProjectRef,
+    checkout: DesktopAppActivationCheckout | null,
   ) => Promise<{ readonly threadId: ThreadId } | null>;
 }
 
@@ -91,10 +93,10 @@ export async function handleDesktopAppActivationRequest(
   }
 
   try {
-    const opened = await dependencies.openThread({
-      environmentId: target.environmentId,
-      projectId,
-    });
+    const opened = await dependencies.openThread(
+      { environmentId: target.environmentId, projectId },
+      request.checkout ?? null,
+    );
     if (opened === null) {
       return failure(
         request.requestId,

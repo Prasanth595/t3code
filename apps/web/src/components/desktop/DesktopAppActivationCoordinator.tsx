@@ -70,7 +70,13 @@ export function DesktopAppActivationCoordinator() {
       waitForProject: async (projectRef) => {
         await waitForProject(projectRef);
       },
-      openThread: (projectRef) => openThread(projectRef),
+      openThread: (projectRef, checkout) =>
+        openThread(
+          projectRef,
+          checkout === null
+            ? undefined
+            : { worktreePath: checkout.worktreePath, branch: checkout.branch, envMode: "worktree" },
+        ),
     }),
   );
 

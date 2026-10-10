@@ -42,7 +42,10 @@ describe("desktop app activation", () => {
     const response = await handleDesktopAppActivationRequest(request, deps);
 
     expect(deps.createProject).not.toHaveBeenCalled();
-    expect(deps.openThread).toHaveBeenCalledWith({ environmentId, projectId: existingProjectId });
+    expect(deps.openThread).toHaveBeenCalledWith(
+      { environmentId, projectId: existingProjectId },
+      null,
+    );
     expect(response).toEqual({
       version: 1,
       requestId: request.requestId,
@@ -50,6 +53,18 @@ describe("desktop app activation", () => {
       projectId: existingProjectId,
       threadId,
     });
+  });
+
+  it("opens the thread in the requested checkout", async () => {
+    const deps = dependencies();
+    const checkout = { worktreePath: "/workspace/feature", branch: "feat/feature" };
+
+    await handleDesktopAppActivationRequest({ ...request, checkout }, deps);
+
+    expect(deps.openThread).toHaveBeenCalledWith(
+      { environmentId, projectId: existingProjectId },
+      checkout,
+    );
   });
 
   it("waits for a created project before it opens the thread", async () => {

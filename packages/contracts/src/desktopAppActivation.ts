@@ -7,11 +7,20 @@ export const DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION = 1 as const;
 export const DesktopAppActivationPlatform = Schema.Literals(["darwin", "linux", "win32"]);
 export type DesktopAppActivationPlatform = typeof DesktopAppActivationPlatform.Type;
 
+// A checkout of the project to start the new thread in, for example a sibling
+// worktree that an outside picker chose. Without it the thread uses the project's defaults.
+export const DesktopAppActivationCheckout = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type DesktopAppActivationCheckout = typeof DesktopAppActivationCheckout.Type;
+
 export const DesktopAppActivationRequest = Schema.Struct({
   version: Schema.Literal(DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION),
   requestId: TrimmedNonEmptyString,
   type: Schema.Literal("open-workspace"),
   workspaceRoot: TrimmedNonEmptyString,
+  checkout: Schema.optionalKey(DesktopAppActivationCheckout),
   platform: DesktopAppActivationPlatform,
 });
 export type DesktopAppActivationRequest = typeof DesktopAppActivationRequest.Type;
