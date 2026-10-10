@@ -537,6 +537,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["ask before thread chat history"],
   },
   {
+    id: "terminal-close-confirmation",
+    title: "Terminal close confirmation",
+    to: "/settings/general",
+    searchTerms: ["ask before terminal close stop process"],
+  },
+  {
+    id: "terminal-app-shortcuts-first",
+    title: "App shortcuts in terminal",
+    to: "/settings/general",
+    searchTerms: ["terminal keybindings keyboard shortcuts priority shell focus"],
+  },
+  {
     id: "quit-confirmation",
     title: "Quit shortcut",
     to: "/settings/general",

@@ -296,6 +296,18 @@ export function modelPickerJumpIndexFromCommand(command: string): number | null 
   return index === -1 ? null : index;
 }
 
+/**
+ * Fork: with `appShortcutsFirst`, a focused terminal yields every key that
+ * resolves to an app command, so the shell never receives it.
+ */
+export function isTerminalAppShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options: ShortcutMatchOptions & { appShortcutsFirst: boolean },
+): boolean {
+  return options.appShortcutsFirst && resolveShortcutCommand(event, keybindings, options) !== null;
+}
+
 export function isTerminalToggleShortcut(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,

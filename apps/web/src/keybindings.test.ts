@@ -19,6 +19,7 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  isTerminalAppShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -319,6 +320,30 @@ describe("copy thread reference shortcut", () => {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
+    );
+  });
+});
+
+describe("isTerminalAppShortcut", () => {
+  const focused = { platform: "MacIntel", context: { terminalFocus: true } };
+
+  it("yields keys bound to an app command only when the setting is on", () => {
+    const sidebar = event({ key: "b", metaKey: true });
+    assert.isTrue(
+      isTerminalAppShortcut(sidebar, DEFAULT_BINDINGS, { ...focused, appShortcutsFirst: true }),
+    );
+    assert.isFalse(
+      isTerminalAppShortcut(sidebar, DEFAULT_BINDINGS, { ...focused, appShortcutsFirst: false }),
+    );
+  });
+
+  it("keeps unbound keys and bindings excluded by terminalFocus for the shell", () => {
+    const options = { ...focused, appShortcutsFirst: true };
+    assert.isFalse(
+      isTerminalAppShortcut(event({ key: "x", ctrlKey: true }), DEFAULT_BINDINGS, options),
+    );
+    assert.isFalse(
+      isTerminalAppShortcut(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, options),
     );
   });
 });

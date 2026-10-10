@@ -649,6 +649,14 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
+
+  it("keeps terminal close confirmation on and app shortcuts in terminal off by default", () => {
+    expect(decodeClientSettings({}).confirmTerminalClose).toBe(true);
+    expect(decodeClientSettings({}).terminalAppShortcutsFirst).toBe(false);
+    expect(
+      decodeClientSettingsPatch({ confirmTerminalClose: false, terminalAppShortcutsFirst: true }),
+    ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
+  });
 });
 
 describe("ClientSettings context window meter", () => {

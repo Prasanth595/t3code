@@ -16,6 +16,8 @@ vi.mock("~/localApi", () => ({
   readLocalApi: () => readLocalApiMock(),
 }));
 
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
+import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "./terminalCloseConfirm";
 
 describe("terminal close confirmation", () => {
@@ -23,6 +25,15 @@ describe("terminal close confirmation", () => {
     confirmMock.mockReset();
     readLocalApiMock.mockReset();
     readLocalApiMock.mockReturnValue({ dialogs: { confirm: confirmMock } });
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  });
+
+  it("closes without prompting when the confirmation setting is off", async () => {
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, confirmTerminalClose: false });
+
+    await expect(confirmTerminalClose(["Terminal 1"])).resolves.toBe(true);
+    expect(confirmMock).not.toHaveBeenCalled();
+    expect(isTerminalCloseConfirmPending()).toBe(false);
   });
 
   it("tracks pending state until the confirmation settles", async () => {
