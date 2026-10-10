@@ -10,6 +10,7 @@ The installed app updates itself from the fork releases through the built-in upd
 - If the rebase or the typecheck fails, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
 - Otherwise it pushes the branch and builds macOS arm64 (signed) and Windows x64 (unsigned).
 - It publishes a GitHub prerelease with `nightly-mac.yml` and `nightly.yml` for electron-updater.
+- `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
 
 The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and the data directory `~/.t3`.
 They replace the upstream Nightly app and keep its data.
@@ -80,5 +81,5 @@ The script creates a prerelease on the fork. Installed fork apps offer it as an 
 | Name | Kind | Use |
 | --- | --- | --- |
 | `CSC_LINK`, `CSC_KEY_PASSWORD` | secret | macOS signing certificate. |
-| `FORK_SYNC_TOKEN` | secret, optional | Token with the `workflow` scope. Without it, the push fails when upstream changes a workflow file. |
+| `FORK_SYNC_TOKEN` | secret | Fine-grained token for this repository with Contents and Workflows read and write. Without it, the push fails when upstream changes a workflow file, and the push does not start Fork CI. |
 | `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_TEMPLATE`, `CLERK_CLI_OAUTH_CLIENT_ID`, `RELAY_URL` | variable, optional | T3 Connect config. Without them, the build has no T3 Connect. |
