@@ -87,8 +87,12 @@ jobs:
           # Same browser install as ci.yml; ServerBrowserPage.test.ts launches Chromium.
           node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
           vp run typecheck
-          vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
-          vp run --filter t3 test
+          # Tests take most of the run time. A manual run skips them for fast
+          # release iteration; the nightly schedule still runs them.
+          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
+            vp run --filter t3 test
+          fi
 
       - id: push
         name: Push rebased branch
