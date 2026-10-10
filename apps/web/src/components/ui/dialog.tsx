@@ -2,6 +2,7 @@
 
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
+import { useRef } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import {
@@ -14,6 +15,26 @@ import {
 import { ScrollArea } from "~/components/ui/scroll-area";
 
 const Dialog = DialogPrimitive.Root;
+
+/** Marks a dialog's primary action, the button that takes focus on open. */
+const DIALOG_ACTION_SLOT = "dialog-action";
+
+/**
+ * Focuses the dialog's primary action on open, so Enter and Space confirm it and Tab
+ * reaches Cancel. Destructive actions aren't marked, so their dialogs keep focus on Cancel.
+ */
+function useDialogActionInitialFocus() {
+  const popupRef = useRef<HTMLDivElement>(null);
+  const initialFocus = (openType: string) => {
+    // Touch opens focus the popup itself, as Base UI does, so no virtual keyboard opens.
+    if (openType === "touch") return popupRef.current;
+    const action = popupRef.current?.querySelector<HTMLElement>(
+      `[data-slot="${DIALOG_ACTION_SLOT}"]:not(:disabled)`,
+    );
+    return action ?? true;
+  };
+  return { popupRef, initialFocus };
+}
 
 const DialogPortal = DialogPrimitive.Portal;
 
@@ -68,6 +89,7 @@ function DialogPopup({
   bottomStickOnMobile?: boolean;
   variant?: "default" | "media";
 }) {
+  const { popupRef, initialFocus } = useDialogActionInitialFocus();
   return (
     <DialogPortal>
       {/* Media opens from inside other overlays (a composer chip, a popover), so it sits above them. */}
@@ -88,6 +110,8 @@ function DialogPopup({
             className,
           )}
           data-slot="dialog-popup"
+          ref={popupRef}
+          initialFocus={initialFocus}
           {...props}
         >
           {children}
@@ -104,6 +128,15 @@ function DialogPopup({
       </DialogViewport>
     </DialogPortal>
   );
+}
+
+/**
+ * The dialog's primary, highlighted button, focused when the dialog opens. Destructive
+ * actions stay unfocused, so running one from the keyboard takes a deliberate Tab.
+ */
+function DialogAction(props: React.ComponentProps<typeof Button>) {
+  const slot = props.variant?.startsWith("destructive") ? {} : { "data-slot": DIALOG_ACTION_SLOT };
+  return <Button {...slot} {...props} />;
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
@@ -184,6 +217,8 @@ export {
   DialogTrigger,
   DialogPortal,
   DialogClose,
+  DialogAction,
+  useDialogActionInitialFocus,
   DialogBackdrop,
   DialogBackdrop as DialogOverlay,
   DialogPopup,
