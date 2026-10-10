@@ -46,6 +46,7 @@ const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExp
     tailscaleServeEnabled: true,
     tailscaleServePort: 8443,
     tunnelPairingUrl: Option.none(),
+    trustedBrowserOrigins: Option.none(),
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),

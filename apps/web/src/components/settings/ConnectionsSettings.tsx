@@ -2262,6 +2262,7 @@ export function ConnectionsSettings() {
   const [isUpdatingTunnelPairing, setIsUpdatingTunnelPairing] = useState(false);
   // Fork: null until the user edits the field; the saved URL shows until then.
   const [tunnelPairingUrlInput, setTunnelPairingUrlInput] = useState<string | null>(null);
+  const [trustedOriginsInput, setTrustedOriginsInput] = useState<string | null>(null);
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
   // Pending WSL setting change waiting on user confirmation. Set when
@@ -2529,7 +2530,11 @@ export function ConnectionsSettings() {
   }, [desktopBridge, desktopServerExposureState, primaryEnvironmentId]);
 
   const handleTunnelPairingChange = useCallback(
-    async (input: { readonly enabled: boolean; readonly url: string | null }) => {
+    async (input: {
+      readonly enabled: boolean;
+      readonly url: string | null;
+      readonly trustedBrowserOrigins: string | null;
+    }) => {
       if (
         !desktopBridge ||
         primaryEnvironmentId === null ||
@@ -2542,6 +2547,7 @@ export function ConnectionsSettings() {
         await desktopBridge.setTunnelPairing(input);
         refreshDesktopNetworkAccessState();
         setTunnelPairingUrlInput(null);
+        setTrustedOriginsInput(null);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
         setDesktopServerExposureMutationError(message);
@@ -3699,6 +3705,16 @@ export function ConnectionsSettings() {
   );
   const savedTunnelPairingUrl = desktopServerExposureState?.tunnelPairingUrl ?? null;
   const tunnelPairingUrlValue = tunnelPairingUrlInput ?? savedTunnelPairingUrl ?? "";
+  const savedTrustedOrigins = desktopServerExposureState?.trustedBrowserOrigins ?? null;
+  const trustedOriginsValue = trustedOriginsInput ?? savedTrustedOrigins ?? "";
+  const tunnelPairingTextInput = () => {
+    const url = tunnelPairingUrlValue.trim();
+    const origins = trustedOriginsValue.trim();
+    return {
+      url: url.length > 0 ? url : null,
+      trustedBrowserOrigins: origins.length > 0 ? origins : null,
+    };
+  };
   const renderTunnelPairingRow = () => (
     <SettingsRow
       title="Allow pairing through a tunnel (server stays on this Mac only)"
@@ -3718,7 +3734,7 @@ export function ConnectionsSettings() {
               if (url === (savedTunnelPairingUrl ?? "")) return;
               void handleTunnelPairingChange({
                 enabled: desktopServerExposureState?.tunnelPairingEnabled ?? false,
-                url: url.length > 0 ? url : null,
+                ...tunnelPairingTextInput(),
               });
             }}
             placeholder="Tunnel URL, for example https://t3.example.com"
@@ -3726,6 +3742,27 @@ export function ConnectionsSettings() {
             disabled={isUpdatingTunnelPairing}
             spellCheck={false}
           />
+          <Textarea
+            className="mt-2 max-w-sm"
+            value={trustedOriginsValue}
+            onChange={(event) => setTrustedOriginsInput(event.target.value)}
+            onBlur={() => {
+              if (trustedOriginsValue.trim() === (savedTrustedOrigins ?? "")) return;
+              void handleTunnelPairingChange({
+                enabled: desktopServerExposureState?.tunnelPairingEnabled ?? false,
+                ...tunnelPairingTextInput(),
+              });
+            }}
+            placeholder="Trusted web origins, for example https://t3-vps.example.com"
+            aria-label="Trusted web origins"
+            disabled={isUpdatingTunnelPairing}
+            spellCheck={false}
+            rows={2}
+          />
+          <span className="mt-1 block">
+            Trusted web origins: T3 Code pages on these https origins (comma or newline separated)
+            may call this server with their cookies, for example behind Cloudflare Access.
+          </span>
         </>
       }
       control={
@@ -3733,11 +3770,7 @@ export function ConnectionsSettings() {
           checked={desktopServerExposureState?.tunnelPairingEnabled ?? false}
           disabled={isUpdatingTunnelPairing || tunnelPairingUrlValue.trim().length === 0}
           onCheckedChange={(checked) => {
-            const url = tunnelPairingUrlValue.trim();
-            void handleTunnelPairingChange({
-              enabled: checked,
-              url: url.length > 0 ? url : null,
-            });
+            void handleTunnelPairingChange({ enabled: checked, ...tunnelPairingTextInput() });
           }}
           aria-label="Allow pairing through a tunnel"
         />

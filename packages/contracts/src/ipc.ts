@@ -506,6 +506,8 @@ export interface DesktopServerExposureState {
   // Fork: tunnel pairing (see apps/desktop DesktopServerExposure).
   tunnelPairingEnabled: boolean;
   tunnelPairingUrl: string | null;
+  // Fork: comma-joined https origins sent as T3CODE_TRUSTED_BROWSER_ORIGINS.
+  trustedBrowserOrigins: string | null;
 }
 
 export const DesktopServerExposureStateSchema = Schema.Struct({
@@ -516,6 +518,7 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   tailscaleServePort: Schema.Number,
   tunnelPairingEnabled: Schema.Boolean,
   tunnelPairingUrl: Schema.NullOr(Schema.String),
+  trustedBrowserOrigins: Schema.NullOr(Schema.String),
 });
 
 export interface PickFolderOptions {
@@ -1198,6 +1201,8 @@ export interface DesktopBridge {
   setTunnelPairing: (input: {
     readonly enabled: boolean;
     readonly url: string | null;
+    // Comma or newline separated https origins; null or blank clears them.
+    readonly trustedBrowserOrigins: string | null;
   }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   getWslState: () => Promise<DesktopWslState>;

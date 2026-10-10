@@ -202,6 +202,7 @@ describe("DesktopServerExposure", () => {
           tailscaleServePort: 443,
           tunnelPairingEnabled: false,
           tunnelPairingUrl: null,
+          trustedBrowserOrigins: null,
         });
 
         const backendConfig = yield* serverExposure.backendConfig;
@@ -256,13 +257,18 @@ describe("DesktopServerExposure", () => {
         yield* serverExposure.configureFromSettings({ port: 4173 });
 
         const invalid = yield* serverExposure
-          .setTunnelPairing({ enabled: true, url: "http://t3.example.com" })
+          .setTunnelPairing({
+            enabled: true,
+            url: "http://t3.example.com",
+            trustedBrowserOrigins: null,
+          })
           .pipe(Effect.flip);
         assert.equal(invalid._tag, "DesktopTunnelPairingInvalidUrlError");
 
         const enabled = yield* serverExposure.setTunnelPairing({
           enabled: true,
           url: "https://t3.example.com/",
+          trustedBrowserOrigins: null,
         });
         assert.equal(enabled.requiresRelaunch, true);
         assert.equal(enabled.state.tunnelPairingUrl, "https://t3.example.com");
@@ -281,11 +287,32 @@ describe("DesktopServerExposure", () => {
         const disabled = yield* serverExposure.setTunnelPairing({
           enabled: false,
           url: "https://t3.example.com",
+          trustedBrowserOrigins: null,
         });
         assert.equal(disabled.requiresRelaunch, true);
         assert.isTrue(Option.isNone((yield* serverExposure.backendConfig).tunnelPairingUrl));
         // The URL stays saved for the next time pairing is turned on.
         assert.equal((yield* settings.get).tunnelPairingUrl, "https://t3.example.com");
+
+        const badOrigins = yield* serverExposure
+          .setTunnelPairing({
+            enabled: true,
+            url: "https://t3.example.com",
+            trustedBrowserOrigins: "https://t3-vps.example.com, http://t3-win.example.com",
+          })
+          .pipe(Effect.flip);
+        assert.equal(badOrigins._tag, "DesktopTunnelPairingInvalidUrlError");
+
+        const trusted = yield* serverExposure.setTunnelPairing({
+          enabled: true,
+          url: "https://t3.example.com",
+          trustedBrowserOrigins: "https://t3-vps.example.com/\nhttps://t3-win.example.com",
+        });
+        assert.equal(trusted.requiresRelaunch, true);
+        assert.equal(
+          Option.getOrNull((yield* serverExposure.backendConfig).trustedBrowserOrigins),
+          "https://t3-vps.example.com,https://t3-win.example.com",
+        );
       }),
     ),
   );

@@ -14,6 +14,7 @@ const serverExposureState: DesktopServerExposureState = {
   tailscaleServePort: 443,
   tunnelPairingEnabled: false,
   tunnelPairingUrl: null,
+  trustedBrowserOrigins: null,
 };
 
 const advertisedEndpoints: ReadonlyArray<AdvertisedEndpoint> = [];
