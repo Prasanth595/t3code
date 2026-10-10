@@ -8,7 +8,7 @@ import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as WorkspaceRepositories from "../workspace/WorkspaceRepositories.ts";
-import { prefixNumstatPaths, prefixPatchPaths } from "./Diffs.ts";
+import { parseTurnDiffFilesFromNumstat, prefixNumstatPaths, prefixPatchPaths } from "./Diffs.ts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
@@ -218,22 +218,36 @@ export const make = Effect.gen(function* () {
           "CheckpointStore.diffCheckpoints",
           target.cwd,
         );
-        if (target.pathPrefix !== null) {
-          // A repository added to the workspace after either checkpoint has nothing to compare.
-          const comparable =
+        if (target.pathPrefix === null) {
+          return yield* checkpoints.diffCheckpoints({ ...input, cwd: target.cwd });
+        }
+        // A repository added to the workspace after either checkpoint has nothing to compare.
+        const comparable =
+          (yield* checkpoints.hasCheckpointRef({
+            cwd: target.cwd,
+            checkpointRef: input.toCheckpointRef,
+          })) &&
+          (input.fallbackFromToHead === true ||
             (yield* checkpoints.hasCheckpointRef({
               cwd: target.cwd,
-              checkpointRef: input.toCheckpointRef,
-            })) &&
-            (input.fallbackFromToHead === true ||
-              (yield* checkpoints.hasCheckpointRef({
-                cwd: target.cwd,
-                checkpointRef: input.fromCheckpointRef,
-              })));
-          if (!comparable) return "";
-        }
-        const diff = yield* checkpoints.diffCheckpoints({ ...input, cwd: target.cwd });
-        if (target.pathPrefix === null) return diff;
+              checkpointRef: input.fromCheckpointRef,
+            })));
+        if (!comparable) return "";
+        // Requested paths are relative to the workspace folder.
+        const repositoryPrefix = `${target.pathPrefix}/`;
+        const diff = yield* checkpoints.diffCheckpoints({
+          ...input,
+          cwd: target.cwd,
+          ...(input.filePaths
+            ? {
+                filePaths: input.filePaths.flatMap((filePath) =>
+                  filePath.startsWith(repositoryPrefix)
+                    ? [filePath.slice(repositoryPrefix.length)]
+                    : [],
+                ),
+              }
+            : {}),
+        });
         return input.format === "numstat"
           ? prefixNumstatPaths(diff, target.pathPrefix)
           : prefixPatchPaths(diff, target.pathPrefix);
@@ -245,8 +259,63 @@ export const make = Effect.gen(function* () {
   const listAuthoredPaths: CheckpointStore["Service"]["listAuthoredPaths"] = Effect.fn(
     "listAuthoredPaths",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.listAuthoredPaths", input.cwd);
-    return yield* checkpoints.listAuthoredPaths(input);
+    const targets = yield* resolveTargets(input.cwd);
+    if (targets.length === 1 && targets[0]!.pathPrefix === null) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.listAuthoredPaths", input.cwd);
+      return yield* checkpoints.listAuthoredPaths(input);
+    }
+    const perRepository = yield* forEachTarget(targets, (target) =>
+      Effect.gen(function* () {
+        const checkpoints = yield* resolveCheckpoints(
+          "CheckpointStore.listAuthoredPaths",
+          target.cwd,
+        );
+        // A repository without both checkpoints has no diff, so nothing of it is listed.
+        const comparable =
+          (yield* checkpoints.hasCheckpointRef({
+            cwd: target.cwd,
+            checkpointRef: input.fromCheckpointRef,
+          })) &&
+          (yield* checkpoints.hasCheckpointRef({
+            cwd: target.cwd,
+            checkpointRef: input.toCheckpointRef,
+          }));
+        if (!comparable) return { target, paths: new Set<string>() };
+        return {
+          target,
+          paths: yield* checkpoints.listAuthoredPaths({ ...input, cwd: target.cwd }),
+        };
+      }),
+    );
+    if (perRepository.every(({ paths }) => paths === null)) return null;
+    // The result is one set for the workspace, so a repository whose HEAD did not move lists
+    // every path it changed.
+    const authored = new Set<string>();
+    for (const { target, paths } of perRepository) {
+      let repositoryPaths: Iterable<string> | null = paths;
+      if (repositoryPaths === null) {
+        const numstat = yield* resolveCheckpoints(
+          "CheckpointStore.listAuthoredPaths",
+          target.cwd,
+        ).pipe(
+          Effect.flatMap((checkpoints) =>
+            checkpoints.diffCheckpoints({
+              ...input,
+              cwd: target.cwd,
+              ignoreWhitespace: false,
+              format: "numstat",
+            }),
+          ),
+        );
+        repositoryPaths = parseTurnDiffFilesFromNumstat(numstat).flatMap((file) =>
+          file.previousPath === undefined ? [file.path] : [file.path, file.previousPath],
+        );
+      }
+      for (const repositoryPath of repositoryPaths) {
+        authored.add(`${target.pathPrefix}/${repositoryPath}`);
+      }
+    }
+    return authored;
   });
 
   const deleteCheckpointRefs: CheckpointStore["Service"]["deleteCheckpointRefs"] = Effect.fn(

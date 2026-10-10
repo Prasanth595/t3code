@@ -237,6 +237,48 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         );
       }),
     );
+
+    it.effect("leaves out what a pull brought into one repository", () =>
+      Effect.gen(function* () {
+        const workspace = yield* makeWorkspace;
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("thread-multi-repo-authored");
+        const refs = {
+          cwd: workspace,
+          fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+          toCheckpointRef: checkpointRefForThreadTurn(threadId, 1),
+        };
+        const api = NodePath.join(workspace, "api");
+        yield* git(api, ["checkout", "-b", "upstream"]);
+        yield* writeTextFile(NodePath.join(api, "upstream.txt"), "upstream\n");
+        yield* git(api, ["add", "."]);
+        yield* git(api, ["commit", "-m", "upstream"], { committedAt: "2020-01-01T00:00:00Z" });
+        yield* git(api, ["checkout", "-"]);
+        yield* checkpointStore.captureCheckpoint({
+          cwd: workspace,
+          checkpointRef: refs.fromCheckpointRef,
+        });
+
+        // The turn pulls upstream into api and edits web.
+        yield* git(api, ["merge", "--ff-only", "upstream"]);
+        yield* writeTextFile(NodePath.join(workspace, "web", "app.ts"), "export {};\n");
+        yield* checkpointStore.captureCheckpoint({
+          cwd: workspace,
+          checkpointRef: refs.toCheckpointRef,
+        });
+
+        expect(yield* checkpointStore.listAuthoredPaths(refs)).toEqual(new Set(["web/app.ts"]));
+        const numstat = yield* checkpointStore.diffCheckpoints({
+          ...refs,
+          ignoreWhitespace: false,
+          format: "numstat",
+          filePaths: ["web/app.ts"],
+        });
+        expect(parseTurnDiffFilesFromNumstat(numstat).map((file) => file.path)).toEqual([
+          "web/app.ts",
+        ]);
+      }),
+    );
   });
 
   describe("diffCheckpoints", () => {
