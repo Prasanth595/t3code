@@ -12,6 +12,7 @@ import {
   removeCatalogValue,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  setRequestHeadersInCatalog,
   setRoutesInCatalog,
   replaceCatalogValue,
   Persistence,
@@ -26,6 +27,7 @@ import {
   StoredGitHubRoutingPermission,
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
+  type RequestHeader,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -500,6 +502,24 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
   return { read, update } satisfies CatalogStore;
 });
 
+/**
+ * Extra request headers per origin, kept in the connection catalog. Only the
+ * desktop app applies them; see `ElectronRequestHeaders` in apps/desktop.
+ */
+export class RequestHeaderStore extends Context.Service<
+  RequestHeaderStore,
+  {
+    readonly get: (
+      origin: string,
+    ) => Effect.Effect<ReadonlyArray<RequestHeader>, ConnectionTransientError>;
+    /** Replaces the headers of `origin`. An empty list removes them. */
+    readonly set: (
+      origin: string,
+      headers: ReadonlyArray<RequestHeader>,
+    ) => Effect.Effect<void, ConnectionTransientError>;
+  }
+>()("@t3tools/web/connection/storage/RequestHeaderStore") {}
+
 const GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
 const GITHUB_ROUTING_CHANGED = "t3code:github-routing-changed";
 const isStoredGitHubRoutingPermission = Schema.is(StoredGitHubRoutingPermission);
@@ -917,6 +937,20 @@ export const layer = Layer.effectContext(
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
       Context.add(Persistence.EnvironmentCacheStore, cacheStore),
+      Context.add(
+        RequestHeaderStore,
+        RequestHeaderStore.of({
+          get: (origin) =>
+            catalog.read.pipe(
+              Effect.map(
+                (document) =>
+                  document.requestHeaders.find((value) => value.origin === origin)?.headers ?? [],
+              ),
+            ),
+          set: (origin, headers) =>
+            catalog.update((document) => setRequestHeadersInCatalog(document, origin, headers)),
+        }),
+      ),
     );
   }),
 );

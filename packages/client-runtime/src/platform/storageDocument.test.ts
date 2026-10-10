@@ -33,6 +33,7 @@ import {
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
+  setRequestHeadersInCatalog,
 } from "./storageDocument.ts";
 
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocument);
@@ -349,6 +350,87 @@ describe("ConnectionCatalogDocument", () => {
     });
 
     expect(decoded.disabledEnvironmentIds).toEqual([]);
+    expect(decoded.requestHeaders).toEqual([]);
+  });
+
+  it("decodes stored request headers", () => {
+    const requestHeaders = [
+      {
+        origin: "https://remote.example.test",
+        headers: [{ name: "CF-Access-Client-Id", value: "id" }],
+      },
+    ];
+    const decoded = decodeCatalogDocument({
+      schemaVersion: 1,
+      targets: [],
+      profiles: [],
+      credentials: [],
+      remoteDpopTokens: [],
+      requestHeaders,
+    });
+
+    expect(decoded.requestHeaders).toEqual(requestHeaders);
+  });
+
+  it("replaces and removes the request headers of one origin", () => {
+    const origin = "https://remote.example.test";
+    const other = { origin: "https://other.example.test", headers: [{ name: "X-A", value: "a" }] };
+    const withOther = setRequestHeadersInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      other.origin,
+      other.headers,
+    );
+    const first = setRequestHeadersInCatalog(withOther, origin, [{ name: "X-B", value: "1" }]);
+    const second = setRequestHeadersInCatalog(first, origin, [{ name: "X-B", value: "2" }]);
+
+    expect(second.requestHeaders).toEqual([
+      other,
+      { origin, headers: [{ name: "X-B", value: "2" }] },
+    ]);
+    expect(setRequestHeadersInCatalog(second, origin, []).requestHeaders).toEqual([other]);
+  });
+
+  it("forgets request headers with the last environment that uses their origin", () => {
+    const headers = [{ name: "X-A", value: "a" }];
+    const otherId = EnvironmentId.make("environment-2");
+    const registered = registerConnectionInCatalog(
+      EMPTY_CONNECTION_CATALOG_DOCUMENT,
+      new BearerConnectionRegistration({
+        target: BEARER_TARGET,
+        profile: BEARER_PROFILE,
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const sharedOrigin = registerConnectionInCatalog(
+      registered,
+      new BearerConnectionRegistration({
+        target: new BearerConnectionTarget({
+          ...BEARER_TARGET,
+          environmentId: otherId,
+          connectionId: "bearer-2",
+        }),
+        profile: new BearerConnectionProfile({
+          ...BEARER_PROFILE,
+          environmentId: otherId,
+          connectionId: "bearer-2",
+        }),
+        credential: BEARER_CREDENTIAL,
+      }),
+    );
+    const document = setRequestHeadersInCatalog(
+      setRequestHeadersInCatalog(sharedOrigin, "https://remote.example.test", headers),
+      "https://unrelated.example.test",
+      headers,
+    );
+
+    const afterFirst = removeConnectionFromCatalog(document, ENVIRONMENT_ID);
+    expect(afterFirst.requestHeaders.map((value) => value.origin)).toEqual([
+      "https://remote.example.test",
+      "https://unrelated.example.test",
+    ]);
+    expect(
+      removeConnectionFromCatalog(afterFirst, otherId).requestHeaders.map((value) => value.origin),
+    ).toEqual(["https://unrelated.example.test"]);
   });
 
   it("switches a saved environment off and back on without touching its records", () => {

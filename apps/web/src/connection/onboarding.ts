@@ -1,4 +1,4 @@
-import { ConnectionOnboarding } from "@t3tools/client-runtime/connection";
+import { ConnectionOnboarding, type RequestHeader } from "@t3tools/client-runtime/connection";
 import {
   createAtomCommandScheduler,
   createRuntimeCommand,
@@ -7,6 +7,7 @@ import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { connectionAtomRuntime } from "./runtime";
+import * as ConnectionStorage from "./storage";
 
 const onboardingScheduler = createAtomCommandScheduler();
 
@@ -33,5 +34,23 @@ export const connectSshEnvironment = createRuntimeCommand(connectionAtomRuntime,
   execute: (input: ConnectionOnboarding.SshConnectionInput) =>
     ConnectionOnboarding.ConnectionOnboarding.pipe(
       Effect.flatMap((onboarding) => onboarding.registerSsh(input)),
+    ),
+});
+
+export const readRequestHeaders = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:read-request-headers",
+  execute: (origin: string) =>
+    ConnectionStorage.RequestHeaderStore.pipe(Effect.flatMap((store) => store.get(origin))),
+});
+
+export const saveRequestHeaders = createRuntimeCommand(connectionAtomRuntime, {
+  label: "web:connection:save-request-headers",
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly origin: string }) => input.origin,
+  },
+  execute: (input: { readonly origin: string; readonly headers: ReadonlyArray<RequestHeader> }) =>
+    ConnectionStorage.RequestHeaderStore.pipe(
+      Effect.flatMap((store) => store.set(input.origin, input.headers)),
     ),
 });

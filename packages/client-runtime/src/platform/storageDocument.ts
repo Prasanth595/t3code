@@ -10,6 +10,11 @@ import {
 import { type ConnectionTarget, PersistedConnectionTarget } from "../connection/model.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import { StoredGitHubRoutingPermission } from "../connection/githubRoutingPermissions.ts";
+import {
+  OriginRequestHeaders,
+  type RequestHeader,
+  requestHeaderOrigin,
+} from "../connection/requestHeaders.ts";
 
 export const StoredConnectionCredential = Schema.Struct({
   connectionId: Schema.String,
@@ -30,6 +35,12 @@ export const ConnectionCatalogDocument = Schema.Struct({
   disabledEnvironmentIds: Schema.Array(EnvironmentId).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
+  // Extra headers the desktop app adds to requests to one origin. Keyed by
+  // origin, not environment, so pairing a new environment can use them before
+  // the environment id is known. Older documents predate the key.
+  requestHeaders: Schema.Array(OriginRequestHeaders).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type ConnectionCatalogDocument = typeof ConnectionCatalogDocument.Type;
 
@@ -40,6 +51,7 @@ export const EMPTY_CONNECTION_CATALOG_DOCUMENT: ConnectionCatalogDocument = Obje
   credentials: [],
   remoteDpopTokens: [],
   disabledEnvironmentIds: [],
+  requestHeaders: [],
 });
 
 export function replaceCatalogValue<A>(
@@ -170,14 +182,47 @@ export function registerConnectionInCatalog(
   }
 }
 
+function profileOrigins(document: ConnectionCatalogDocument): ReadonlySet<string> {
+  return new Set(
+    document.profiles.flatMap((profile) =>
+      profile._tag === "BearerConnectionProfile"
+        ? (requestHeaderOrigin(profile.httpBaseUrl) ?? [])
+        : [],
+    ),
+  );
+}
+
+/**
+ * Sets the extra request headers for `origin`. An empty list removes them.
+ * Callers validate the headers with `requestHeadersError` first.
+ */
+export function setRequestHeadersInCatalog(
+  document: ConnectionCatalogDocument,
+  origin: string,
+  headers: ReadonlyArray<RequestHeader>,
+): ConnectionCatalogDocument {
+  const others = removeCatalogValue(document.requestHeaders, (value) => value.origin, origin);
+  return {
+    ...document,
+    requestHeaders: headers.length === 0 ? others : [...others, { origin, headers }],
+  };
+}
+
 /** Forgets an environment and every route it had. */
 export function removeConnectionFromCatalog(
   document: ConnectionCatalogDocument,
   environmentId: EnvironmentId,
 ): ConnectionCatalogDocument {
   const next = setRoutesInCatalog(document, environmentId, []);
+  // Headers of an origin go with the last environment that uses it. Headers
+  // of a single dropped route stay until then; they only reach their origin.
+  const removedOrigins = profileOrigins(document);
+  const keptOrigins = profileOrigins(next);
   return {
     ...next,
+    requestHeaders: next.requestHeaders.filter(
+      (value) => !removedOrigins.has(value.origin) || keptOrigins.has(value.origin),
+    ),
     remoteDpopTokens: removeCatalogValue(
       next.remoteDpopTokens,
       (value) => value.environmentId,
