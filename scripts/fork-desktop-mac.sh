@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Build the fork macOS arm64 app, signed with the self-made fork certificate.
+# It builds only the zip that the updater uses. The CI release adds the DMG.
 # Usage: scripts/fork-desktop-mac.sh [--publish]
 # --publish uploads the build as a prerelease on the fork, so installed fork apps update to it.
 # See docs/fork.md.
@@ -44,14 +45,18 @@ T3CODE_DESKTOP_UPDATE_REPOSITORY="$FORK_REPOSITORY" \
   T3CODE_DESKTOP_MAC_SELF_SIGNED=true \
   CSC_NAME="$SIGN_IDENTITY" \
   vp run dist:desktop:artifact \
-  --platform mac --target dmg --arch arm64 --build-version "$version" --signed --verbose
+  --platform mac --target zip --arch arm64 --build-version "$version" --signed --verbose
 
-codesign --verify --deep --strict release/mac-arm64/*.app
+# The build keeps only the zip, so check the app inside it.
+verify_dir="$(mktemp -d)"
+ditto -x -k release/*-arm64.zip "$verify_dir"
+codesign --verify --deep --strict "$verify_dir"/*.app
+rm -rf "$verify_dir"
 echo "Built $version in $repo_root/release"
 
 if [[ "$publish" == true ]]; then
   shopt -s nullglob
-  assets=(release/*.dmg release/*.zip release/*.blockmap release/nightly-mac.yml)
+  assets=(release/*.zip release/*.blockmap release/nightly-mac.yml)
   if [[ ! -f release/nightly-mac.yml ]]; then
     echo "release/nightly-mac.yml is missing; the updater cannot find this build." >&2
     exit 1

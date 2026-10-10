@@ -7,7 +7,7 @@ The installed app updates itself from the fork releases through the built-in upd
 
 - `.github/workflows/fork-release.yml` runs every day and on manual dispatch.
 - The workflow rebases the branch onto `pingdotgg/t3code` main and keeps the fork commits on top.
-- If the rebase or the checks fail, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
+- If the rebase or the typecheck fails, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
 - Otherwise it pushes the branch and builds macOS arm64 (signed) and Windows x64 (unsigned).
 - It publishes a GitHub prerelease with `nightly-mac.yml` and `nightly.yml` for electron-updater.
 
@@ -50,7 +50,7 @@ The last command must list "Yarden Zamir T3 Fork".
 scripts/fork-desktop-mac.sh
 ```
 
-The script writes the signed app, DMG, ZIP and `nightly-mac.yml` to `release/`.
+The script writes the signed ZIP and `nightly-mac.yml` to `release/`. It skips the DMG, which only a first manual install uses.
 
 ## Publish a local build
 

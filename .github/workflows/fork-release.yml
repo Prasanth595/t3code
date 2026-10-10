@@ -8,9 +8,6 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
-  # TEMPORARY: lets the branch test this workflow before it reaches main. Remove before merge.
-  push:
-    branches: [feat/fork-releases]
 
 concurrency:
   group: fork-release
@@ -78,21 +75,12 @@ jobs:
           run-install: true
 
       - id: checks
-        name: Typecheck and test
+        name: Typecheck
         run: |
           set -euo pipefail
-          # scripts/browser-secret-native.test.mjs compiles the libsecret helper.
-          sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config build-essential
-          vp run --filter @t3tools/desktop ensure:electron
-          # Same browser install as ci.yml; ServerBrowserPage.test.ts launches Chromium.
-          node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
           vp run typecheck
-          # Tests take most of the run time. A manual run skips them for fast
-          # release iteration; the nightly schedule still runs them.
-          if [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
-            vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
-            vp run --filter t3 test
-          fi
+          # The fork only carries small patches, so a typecheck is the release
+          # gate. The CI workflow runs the full tests on pushes to main.
 
       - id: push
         name: Push rebased branch
