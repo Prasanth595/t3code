@@ -148,7 +148,6 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
       "resolve-project",
       "read-receipt",
       "generate-metadata",
-      "validate-workspace",
       "provision-worktree",
       "run-setup-script",
       "create-thread",
@@ -182,6 +181,15 @@ export class ThreadLaunchBaseRefError extends Schema.TaggedError<ThreadLaunchBas
   }
 }
 
+export class ThreadForkWorkspaceInvalidError extends Schema.TaggedError<ThreadForkWorkspaceInvalidError>()(
+  "ThreadForkWorkspaceInvalidError",
+  { projectId: ProjectId, worktreePath: Schema.String },
+) {
+  override get message(): string {
+    return "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.";
+  }
+}
+
 export class ThreadLaunchService extends Context.Service<
   ThreadLaunchService,
   {
@@ -202,7 +210,7 @@ export class ThreadLaunchService extends Context.Service<
       input: ThreadForkInput,
     ) => Effect.Effect<
       { readonly sequence: number; readonly targetThreadId: ThreadId },
-      ThreadLaunchError
+      ThreadLaunchError | ThreadForkWorkspaceInvalidError
     >;
     readonly retryPreparation: (
       input: ThreadLaunchPreparationInput,
@@ -1309,12 +1317,10 @@ const make = Effect.gen(function* () {
           Effect.mapError(mapError(errorContext, "provision-worktree")),
         );
         if (!paths.includes(yield* real(input.workspaceStrategy.worktreePath)))
-          return yield* mapError(
-            errorContext,
-            "validate-workspace",
-          )(
-            "worktreePath must be one of the project's git worktrees. t3_worktree_list shows them.",
-          );
+          return yield* new ThreadForkWorkspaceInvalidError({
+            projectId: input.projectId,
+            worktreePath: input.workspaceStrategy.worktreePath,
+          });
       }
       yield* launchPreparedFork({
         ...input,
