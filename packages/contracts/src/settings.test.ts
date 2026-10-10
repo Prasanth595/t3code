@@ -738,6 +738,34 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
+describe("ServerSettings agent session import limits", () => {
+  it("defaults to a 30 day window and 200 messages", () => {
+    expect(decodeServerSettings({})).toMatchObject({
+      agentSessionImportWindowDays: 30,
+      agentSessionImportMaxMessages: 200,
+    });
+  });
+
+  it("accepts the range bounds", () => {
+    expect(
+      decodeServerSettingsPatch({
+        agentSessionImportWindowDays: 3650,
+        agentSessionImportMaxMessages: 1,
+      }),
+    ).toEqual({ agentSessionImportWindowDays: 3650, agentSessionImportMaxMessages: 1 });
+  });
+
+  it.each([0, -1, 1.5, 3651])("rejects an import window of %s days", (value) => {
+    expect(() => decodeServerSettings({ agentSessionImportWindowDays: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ agentSessionImportWindowDays: value })).toThrow();
+  });
+
+  it.each([0, -1, 2.5, 10_001, null])("rejects a message limit of %s", (value) => {
+    expect(() => decodeServerSettings({ agentSessionImportMaxMessages: value })).toThrow();
+    expect(() => decodeServerSettingsPatch({ agentSessionImportMaxMessages: value })).toThrow();
+  });
+});
+
 describe("ClientSettings pull request merge methods", () => {
   it("defaults to no project overrides and accepts supported methods", () => {
     expect(decodeClientSettings({}).pullRequestMergeMethodOverrides).toEqual({});

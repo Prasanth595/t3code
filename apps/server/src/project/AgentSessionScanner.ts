@@ -21,7 +21,9 @@ import {
   CodexSettings,
   ProviderDriverKind,
   ProviderInstanceId,
+  DEFAULT_AGENT_SESSION_IMPORT_MAX_MESSAGES,
   resolveProviderInstanceEnabled,
+  type AgentSessionImportMaxMessages,
   type AgentSessionImportSource,
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
@@ -82,14 +84,13 @@ const MAX_METADATA_BYTES_PER_SOURCE = 64 * 1024 * 1024;
 const MAX_METADATA_OPERATIONS_PER_SOURCE = MAX_TRANSCRIPTS_PER_SOURCE * 4;
 const MAX_METADATA_RECORDS_PER_SOURCE = 100_000;
 const MAX_METADATA_RECORDS_PER_TRANSCRIPT = 1_000;
-const RECENT_THREAD_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 /**
  * Large tool results (especially screenshots) can make an otherwise ordinary
  * Codex transcript several GiB. Streaming field selection avoids allocating
  * those payloads. Raw I/O and selected history have separate budgets.
  */
 const MAX_IMPORTED_TRANSCRIPT_BYTES = 4 * 1024 * 1024 * 1024;
-const MAX_IMPORTED_MESSAGES = 200;
 const MAX_IMPORT_HISTORY_BYTES = 32 * 1024 * 1024;
 const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
@@ -287,17 +288,23 @@ function codexTurnId(metadata: unknown): string | null {
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
     readonly contents: string;
+    readonly maxMessages?: AgentSessionImportMaxMessages;
   },
   lines = splitTranscriptRecords(input.contents, MAX_IMPORT_RECORDS + 1),
 ): AgentSessionThread | null {
   if (lines.length > MAX_IMPORT_RECORDS) return null;
   const records = lines.flatMap((line) => Option.toArray(decodeTranscriptRecord(line)));
-  return parseAgentSessionRecords(input, records);
+  return parseAgentSessionRecords(
+    input,
+    records,
+    input.maxMessages ?? DEFAULT_AGENT_SESSION_IMPORT_MAX_MESSAGES,
+  );
 }
 
 function parseAgentSessionRecords(
   input: AgentSessionTranscriptMetadata,
   records: ReadonlyArray<DecodedTranscriptRecord>,
+  maxMessages: AgentSessionImportMaxMessages,
 ): AgentSessionThread | null {
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
@@ -373,7 +380,7 @@ function parseAgentSessionRecords(
       firstUserMessage = message;
     }
     messages.push(message);
-    if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
+    if (messages.length > maxMessages) messages.shift();
   };
 
   const hasMatchingCodexEventInTurn = (text: string) => {
@@ -491,7 +498,11 @@ function parseAgentSessionRecords(
   const { codexResponseUser: _codexResponseUser, ...visibleFirstUserMessage } = firstUserMessage;
   const retainedMessages = firstUserMessageRetained
     ? visibleMessages
-    : [visibleFirstUserMessage, ...visibleMessages.slice(-(MAX_IMPORTED_MESSAGES - 1))];
+    : [
+        visibleFirstUserMessage,
+        ...// slice(-0) keeps everything, so compute the start index for maxMessages === 1.
+        visibleMessages.slice(visibleMessages.length - (maxMessages - 1)),
+      ];
   const derivedTitle = visibleFirstUserMessage.text.trim().split("\n")[0]?.slice(0, 100).trim();
 
   return {
@@ -1332,8 +1343,11 @@ export const make = Effect.gen(function* () {
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
     const rootIdentity = yield* directoryIdentity(root);
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
+    );
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
-    const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
+    const cutoffMs = nowMs - settings.agentSessionImportWindowDays * DAY_MS;
 
     const candidates = cachedCandidates ?? (yield* collectCandidates()).candidates;
     cachedCandidates = candidates;
@@ -1455,6 +1469,7 @@ export const make = Effect.gen(function* () {
               lastActiveAtMs: transcript.mtimeMs,
             },
             snapshot.records,
+            settings.agentSessionImportMaxMessages,
           );
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });

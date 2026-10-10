@@ -93,6 +93,29 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 3;
+export const MIN_AGENT_SESSION_IMPORT_WINDOW_DAYS = 1;
+export const MAX_AGENT_SESSION_IMPORT_WINDOW_DAYS = 3650;
+/** How far back recent Claude Code and Codex sessions are offered for import. */
+export const AgentSessionImportWindowDays = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_AGENT_SESSION_IMPORT_WINDOW_DAYS,
+    maximum: MAX_AGENT_SESSION_IMPORT_WINDOW_DAYS,
+  }),
+);
+export type AgentSessionImportWindowDays = typeof AgentSessionImportWindowDays.Type;
+export const DEFAULT_AGENT_SESSION_IMPORT_WINDOW_DAYS: AgentSessionImportWindowDays = 30;
+export const MIN_AGENT_SESSION_IMPORT_MAX_MESSAGES = 1;
+// The scanner's 32 MiB selected-history budget still bounds memory above this cap.
+export const MAX_AGENT_SESSION_IMPORT_MAX_MESSAGES = 10_000;
+/** Newest messages kept per imported session; the first user message is always kept. */
+export const AgentSessionImportMaxMessages = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_AGENT_SESSION_IMPORT_MAX_MESSAGES,
+    maximum: MAX_AGENT_SESSION_IMPORT_MAX_MESSAGES,
+  }),
+);
+export type AgentSessionImportMaxMessages = typeof AgentSessionImportMaxMessages.Type;
+export const DEFAULT_AGENT_SESSION_IMPORT_MAX_MESSAGES: AgentSessionImportMaxMessages = 200;
 export const MIN_GLASS_OPACITY = 40;
 export const MAX_GLASS_OPACITY = 100;
 export const GlassOpacity = Schema.Int.check(
@@ -1164,6 +1187,12 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   snoozeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  agentSessionImportWindowDays: AgentSessionImportWindowDays.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_SESSION_IMPORT_WINDOW_DAYS)),
+  ),
+  agentSessionImportMaxMessages: AgentSessionImportMaxMessages.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_AGENT_SESSION_IMPORT_MAX_MESSAGES)),
+  ),
   autoResumeLimitedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
@@ -1513,6 +1542,8 @@ export const ServerSettingsPatch = Schema.Struct({
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   autoResumeLimitedThreads: Schema.optionalKey(Schema.Boolean),
   snoozeLimitedThreads: Schema.optionalKey(Schema.Boolean),
+  agentSessionImportWindowDays: Schema.optionalKey(AgentSessionImportWindowDays),
+  agentSessionImportMaxMessages: Schema.optionalKey(AgentSessionImportMaxMessages),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
