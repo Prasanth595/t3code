@@ -75,7 +75,7 @@ const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
 
 it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
-  for (const toolkit of McpToolkits) {
+  for (const toolkit of Object.values(McpToolkits)) {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);
       names.add(tool.name);

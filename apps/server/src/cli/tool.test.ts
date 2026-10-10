@@ -7,13 +7,13 @@ import { McpToolkits } from "../mcp/toolkits/registry.ts";
 import { applyCallerThread, findMcpTool } from "./tool.ts";
 
 const registryToolNames = () =>
-  McpToolkits.flatMap((toolkit) =>
-    Object.values(toolkit.tools).map((tool) => tool.name),
-  ).toSorted();
+  Object.values(McpToolkits)
+    .flatMap((toolkit) => Object.values(toolkit.tools).map((tool) => tool.name))
+    .toSorted();
 
 it.effect("describes every registry tool with its MCP input schema", () =>
   Effect.gen(function* () {
-    for (const toolkit of McpToolkits) {
+    for (const toolkit of Object.values(McpToolkits)) {
       for (const tool of Object.values(toolkit.tools)) {
         const entry = yield* findMcpTool(tool.name);
         expect(entry.inputSchema).toEqual(Tool.getJsonSchema(tool));

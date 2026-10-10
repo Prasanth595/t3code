@@ -24,21 +24,15 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
-import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
-import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
-import { ProjectToolkit } from "./toolkits/project/tools.ts";
 import * as ProjectHandlers from "./toolkits/project/handlers.ts";
-import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
-import { ThreadToolkit } from "./toolkits/thread/tools.ts";
 import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./PreviewAutomationBroker.ts";
 import * as OrchestratorHandlers from "./toolkits/orchestrator/handlers.ts";
-import { OrchestratorToolkit } from "./toolkits/orchestrator/tools.ts";
 import * as PreviewHandlers from "./toolkits/preview/handlers.ts";
 import {
   PreviewSnapshotTool,
@@ -46,10 +40,8 @@ import {
   PreviewStandardToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
-import { WorktreeToolkit } from "./toolkits/worktree/tools.ts";
 import * as WorktreeMcpService from "./WorktreeMcpService.ts";
 import * as PullRequestsHandlers from "./toolkits/pullRequests/handlers.ts";
-import { PullRequestsToolkit } from "./toolkits/pullRequests/tools.ts";
 import * as DeviceHandlers from "./toolkits/device/handlers.ts";
 import {
   DeviceScreenshotTool,
@@ -58,6 +50,7 @@ import {
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
+import { McpToolkits, type McpToolkitName } from "./toolkits/registry.ts";
 
 /** Where an MCP client discovers how to sign in (RFC 9728), at this request's own origin. */
 const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
@@ -810,36 +803,36 @@ export const layerPreviewToolkit = Layer.mergeAll(
 );
 
 export const layerOrchestratorToolkit = toolkitRegistration(
-  OrchestratorToolkit,
+  McpToolkits.orchestrator,
   OrchestratorHandlers.layer,
 ).pipe(Layer.provide(OrchestratorMcpService.layer), Layer.provide(ThreadMetadataMcpService.layer));
 
-export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
+export const layerThreadToolkit = toolkitRegistration(McpToolkits.thread, ThreadHandlers.layer);
 
 const layerWorktreeToolkitRegistration = toolkitRegistration(
-  WorktreeToolkit,
+  McpToolkits.worktree,
   WorktreeHandlers.layer,
 ).pipe(Layer.provide(WorktreeMcpService.layer));
 
 const layerPreviewControlsRegistration = toolkitRegistration(
-  PreviewControlsToolkit,
+  McpToolkits.previewControls,
   PreviewControlsHandlers.layer,
 );
 
 export const layerEnvironmentToolkit = toolkitRegistration(
-  EnvironmentToolkit,
+  McpToolkits.environment,
   EnvironmentHandlers.layer,
 ).pipe(Layer.provide(ThreadCommandExecutor.layer));
 
-const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);
+const layerProjectRegistration = toolkitRegistration(McpToolkits.project, ProjectHandlers.layer);
 
 export const layerAttachmentToolkit = toolkitRegistration(
-  AttachmentToolkit,
+  McpToolkits.attachment,
   AttachmentHandlers.layer,
 );
 
 export const layerPullRequestsToolkit = toolkitRegistration(
-  PullRequestsToolkit,
+  McpToolkits.pullRequests,
   PullRequestsHandlers.layer,
 );
 
@@ -866,16 +859,24 @@ export const layerMcpTransport = McpServer.layerHttp({
   allowSessionTermination: true,
 }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
+/** One registration per registry toolkit; a missing or extra key fails type checking. */
+const toolkitRegistrations = {
+  orchestrator: layerOrchestratorToolkit,
+  preview: layerPreviewToolkit,
+  worktree: layerWorktreeToolkitRegistration,
+  thread: layerThreadToolkit,
+  attachment: layerAttachmentToolkit,
+  project: layerProjectRegistration,
+  environment: layerEnvironmentToolkit,
+  previewControls: layerPreviewControlsRegistration,
+  device: layerDeviceToolkit,
+  pullRequests: layerPullRequestsToolkit,
+  html: layerHtmlToolkit,
+} satisfies { readonly [Name in McpToolkitName]: Layer.Layer<never, unknown, unknown> };
+
 export const layer = Layer.mergeAll(
-  layerPreviewToolkit,
-  layerOrchestratorToolkit,
-  layerThreadToolkit,
-  layerAttachmentToolkit,
-  layerProjectRegistration,
-  layerEnvironmentToolkit,
-  layerPreviewControlsRegistration,
-  layerWorktreeToolkitRegistration,
-  layerPullRequestsToolkit,
-  layerDeviceToolkit,
-  layerHtmlToolkit,
+  ...(Object.values(toolkitRegistrations) as [
+    (typeof toolkitRegistrations)[McpToolkitName],
+    ...Array<(typeof toolkitRegistrations)[McpToolkitName]>,
+  ]),
 ).pipe(Layer.provideMerge(layerMcpTransport));

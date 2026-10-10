@@ -13,23 +13,26 @@ import { ThreadToolkit } from "./thread/tools.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
 /**
- * Every toolkit that `/mcp` publishes. The `t3 tool` CLI and the catalog
- * tests read this list, so a toolkit added to the server must also be added
- * here.
+ * Every toolkit that `/mcp` publishes, keyed by name. The server builds its
+ * `/mcp` layer from one registration per key (`McpHttpServer.layer`), and the
+ * `t3 tool` CLI lists and describes tools from the same record. Add a toolkit
+ * here; the type checker then requires its server registration.
  */
-export const McpToolkits = [
-  OrchestratorToolkit,
-  PreviewToolkit,
-  WorktreeToolkit,
-  ThreadToolkit,
-  AttachmentToolkit,
-  ProjectToolkit,
-  EnvironmentToolkit,
-  PreviewControlsToolkit,
-  DeviceToolkit,
-  PullRequestsToolkit,
-  HtmlToolkit,
-] as const;
+export const McpToolkits = {
+  orchestrator: OrchestratorToolkit,
+  preview: PreviewToolkit,
+  worktree: WorktreeToolkit,
+  thread: ThreadToolkit,
+  attachment: AttachmentToolkit,
+  project: ProjectToolkit,
+  environment: EnvironmentToolkit,
+  previewControls: PreviewControlsToolkit,
+  device: DeviceToolkit,
+  pullRequests: PullRequestsToolkit,
+  html: HtmlToolkit,
+} as const;
+
+export type McpToolkitName = keyof typeof McpToolkits;
 
 export interface McpToolEntry {
   readonly name: string;
@@ -38,10 +41,12 @@ export interface McpToolEntry {
 }
 
 export const listMcpTools = (): ReadonlyArray<McpToolEntry> =>
-  McpToolkits.flatMap((toolkit) =>
-    Object.values(toolkit.tools).map((tool) => ({
-      name: tool.name,
-      description: Tool.getDescription(tool) ?? "",
-      inputSchema: Tool.getJsonSchema(tool) as Record<string, unknown>,
-    })),
-  ).toSorted((left, right) => left.name.localeCompare(right.name));
+  Object.values(McpToolkits)
+    .flatMap((toolkit) =>
+      Object.values(toolkit.tools).map((tool) => ({
+        name: tool.name,
+        description: Tool.getDescription(tool) ?? "",
+        inputSchema: Tool.getJsonSchema(tool) as Record<string, unknown>,
+      })),
+    )
+    .toSorted((left, right) => left.name.localeCompare(right.name));
