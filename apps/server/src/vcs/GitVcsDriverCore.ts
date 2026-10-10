@@ -3467,7 +3467,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
     const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
-    yield* executeGit(
+    yield* executeGitWithStableDiagnostics(
       "GitVcsDriver.createWorktree",
       input.cwd,
       ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
@@ -3478,7 +3478,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ? {
               // Git only prints checkout progress when stderr is a tty or the
               // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+              env: { GIT_PROGRESS_DELAY: "0" },
               progress: {
                 onStderrLine: (line) => {
                   const parsed = parseGitCheckoutProgressLine(line);
