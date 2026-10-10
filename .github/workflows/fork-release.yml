@@ -1,0 +1,319 @@
+name: Fork Release
+
+# Rebases this fork onto upstream main, then publishes a nightly-channel
+# release on the fork that the in-app updater (electron-updater) follows.
+# See docs/fork.md.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_REPOSITORY: pingdotgg/t3code
+  ISSUE_TITLE: "Fork release: upstream sync failed"
+
+jobs:
+  sync:
+    name: Rebase onto upstream
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      issues: write
+    outputs:
+      sha: ${{ steps.push.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      name: ${{ steps.version.outputs.name }}
+    steps:
+      # A scheduled run rebases main. A manual run rebases the branch it runs
+      # from, so a branch can test this workflow without a change to main.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          # GITHUB_TOKEN cannot push commits that change .github/workflows, and
+          # upstream changes them often. FORK_SYNC_TOKEN is a token with the
+          # workflow scope. Without it, a rebase over workflow changes fails at push.
+          token: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - id: rebase
+        name: Rebase onto upstream main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --no-tags upstream main
+          echo "before=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          if ! git rebase upstream/main > "$RUNNER_TEMP/rebase.log" 2>&1; then
+            cat "$RUNNER_TEMP/rebase.log"
+            git status --short | head -50 >> "$RUNNER_TEMP/rebase.log"
+            git rebase --abort
+            echo "reason=rebase conflict" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "Fork commits on top of upstream:"
+          git log --oneline upstream/main..HEAD
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: true
+
+      - id: checks
+        name: Typecheck and test
+        run: |
+          set -euo pipefail
+          vp run --filter @t3tools/desktop ensure:electron
+          vp run typecheck
+          vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
+          vp run --filter t3 test
+
+      - id: push
+        name: Push rebased branch
+        run: |
+          set -euo pipefail
+          git push --force-with-lease="${GITHUB_REF_NAME}:${{ steps.rebase.outputs.before }}" origin "HEAD:${GITHUB_REF_NAME}"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Same version scheme as upstream nightlies: <base>-nightly.<UTC date>.<run number>.
+      # The date and the run number only grow, so each fork release is newer than the last.
+      - id: version
+        name: Resolve release version
+        run: |
+          node scripts/resolve-nightly-release.ts \
+            --date "$(date -u +%Y%m%d)" \
+            --run-number "${{ github.run_number }}" \
+            --sha "${{ steps.push.outputs.sha }}" \
+            --github-output
+
+      - name: Report failure in an issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REASON: ${{ steps.rebase.outputs.reason || (steps.checks.outcome == 'failure' && 'typecheck or tests failed') || 'workflow step failed' }}
+        run: |
+          set -euo pipefail
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          {
+            echo "Sync of \`${GITHUB_REF_NAME}\` onto ${UPSTREAM_REPOSITORY} main stopped: **${REASON}**."
+            echo
+            echo "Run: ${run_url}"
+            if [[ -f "$RUNNER_TEMP/rebase.log" ]]; then
+              echo
+              echo '```'
+              tail -60 "$RUNNER_TEMP/rebase.log"
+              echo '```'
+            fi
+          } > "$RUNNER_TEMP/issue.md"
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"${ISSUE_TITLE}\"" --json number --jq '.[0].number // empty')"
+          if [[ -n "$number" ]]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/issue.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/issue.md"
+          fi
+
+  build_bundle:
+    name: Build JS bundle
+    needs: [sync]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # Optional T3 Connect config. Empty values build the app without T3 Connect.
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ vars.CLERK_JWT_TEMPLATE }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ vars.CLERK_CLI_OAUTH_CLIENT_ID }}
+      T3CODE_RELAY_URL: ${{ vars.RELAY_URL }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
+      - run: node scripts/update-release-package-versions.ts "${{ needs.sync.outputs.version }}"
+      - run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
+      - run: vp run build:desktop
+      - uses: actions/upload-artifact@v7
+        with:
+          name: js-bundle
+          path: |
+            apps/server/dist
+            apps/desktop/dist-electron
+          if-no-files-found: error
+          retention-days: 1
+
+  desktop:
+    name: Desktop ${{ matrix.label }}
+    needs: [sync, build_bundle]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - label: macOS arm64
+            runner: macos-15
+            platform: mac
+            target: dmg
+            arch: arm64
+          - label: Windows x64
+            runner: windows-2025
+            platform: win
+            target: nsis
+            arch: x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: ${{ matrix.platform != 'win' }}
+          run-install: false
+      - run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+      - run: node scripts/update-release-package-versions.ts "${{ needs.sync.outputs.version }}"
+      - uses: actions/download-artifact@v8
+        with:
+          name: js-bundle
+          path: apps
+
+      # The resource monitor build needs the Spectre-mitigated MSVC libraries.
+      - name: Install Spectre-mitigated MSVC libs
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
+          $proc = Start-Process -FilePath $setupExe `
+            -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            -Wait -PassThru -NoNewWindow
+          if ($null -eq $proc -or $proc.ExitCode -ne 0) {
+            Write-Error "Visual Studio Installer failed"
+            exit 1
+          }
+
+      # electron-builder only signs with a trusted identity. The self-made
+      # certificate is its own root, so trust it on the runner for code signing.
+      - name: Trust fork signing certificate
+        if: matrix.platform == 'mac'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$CSC_LINK" || -z "$CSC_KEY_PASSWORD" ]]; then
+            echo "CSC_LINK and CSC_KEY_PASSWORD are required. Squirrel.Mac rejects updates with another signature." >&2
+            exit 1
+          fi
+          printf '%s' "$CSC_LINK" | base64 --decode > "$RUNNER_TEMP/fork.p12"
+          /usr/bin/openssl pkcs12 -in "$RUNNER_TEMP/fork.p12" -nokeys -clcerts -passin env:CSC_KEY_PASSWORD -out "$RUNNER_TEMP/fork.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/fork.pem"
+          rm -f "$RUNNER_TEMP/fork.p12"
+
+      - name: Build desktop artifact
+        shell: bash
+        env:
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
+          T3CODE_DESKTOP_MAC_SELF_SIGNED: "true"
+          CSC_LINK: ${{ matrix.platform == 'mac' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'mac' && secrets.CSC_KEY_PASSWORD || '' }}
+        run: |
+          set -euo pipefail
+          args=(--platform "${{ matrix.platform }}" --target "${{ matrix.target }}" --arch "${{ matrix.arch }}"
+            --build-version "${{ needs.sync.outputs.version }}" --skip-build --verbose)
+          # Windows stays unsigned. No Apple API key is set, so macOS is not notarized.
+          if [[ "${{ matrix.platform }}" == "mac" ]]; then
+            args+=(--signed)
+          fi
+          vp run dist:desktop:artifact "${args[@]}"
+
+      - name: Verify macOS signature
+        if: matrix.platform == 'mac'
+        run: |
+          set -euo pipefail
+          app="$(ls -d release/mac-arm64/*.app)"
+          codesign --verify --deep --strict "$app"
+          codesign -dv "$app" 2>&1 | grep "Authority=Yarden Zamir T3 Fork"
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p release-publish
+          for file in release/*.dmg release/*.zip release/*.exe release/*.blockmap release/*.yml; do
+            [[ "$file" == */builder-debug.yml ]] && continue
+            cp "$file" release-publish/
+          done
+          ls -la release-publish
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-publish/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: [sync, desktop]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      # One platform build per channel manifest, so no manifest merge is needed.
+      # Add scripts/merge-update-manifests.ts when a second arch joins a platform.
+      - name: Check updater manifests
+        run: |
+          set -euo pipefail
+          ls -la release-assets
+          test -s release-assets/nightly-mac.yml
+          test -s release-assets/nightly.yml
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ needs.sync.outputs.tag }}" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "${{ needs.sync.outputs.sha }}" \
+            --title "${{ needs.sync.outputs.name }}" \
+            --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.sync.outputs.sha }}." \
+            --prerelease

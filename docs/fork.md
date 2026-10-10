@@ -1,0 +1,71 @@
+# Fork releases
+
+This fork ([Yarden-zamir/t3code](https://github.com/Yarden-zamir/t3code)) publishes its own desktop builds.
+The installed app updates itself from the fork releases through the built-in updater.
+
+## How it works
+
+- `.github/workflows/fork-release.yml` runs every day and on manual dispatch.
+- The workflow rebases the branch onto `pingdotgg/t3code` main and keeps the fork commits on top.
+- If the rebase or the checks fail, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
+- Otherwise it pushes the branch and builds macOS arm64 (signed) and Windows x64 (unsigned).
+- It publishes a GitHub prerelease with `nightly-mac.yml` and `nightly.yml` for electron-updater.
+
+The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and the data directory `~/.t3`.
+They replace the upstream Nightly app and keep its data.
+
+## Versions
+
+The version is `<upstream base version>-nightly.<UTC date>.<build number>`, for example `0.0.46-nightly.20261010.3`.
+CI uses the workflow run number as the build number. Local builds use `1HHMMSS`.
+
+## macOS signing
+
+The fork signs with the self-made certificate "Yarden Zamir T3 Fork". The fork does not notarize.
+Squirrel.Mac installs an update only if the update has the same signature as the running app.
+Thus, every build must use the same certificate.
+
+- The certificate, the key and the `.p12` password are in `_shared/signing/` in the repository container. They are not in git.
+- The repository secrets `CSC_LINK` (base64 `.p12`) and `CSC_KEY_PASSWORD` hold the same certificate.
+- `T3CODE_DESKTOP_MAC_SELF_SIGNED=true` tells `scripts/build-desktop-artifact.ts` to skip the passkey entitlements. Passkeys need an Apple team.
+
+The first install of a fork build must be manual. The upstream Nightly has another signature, so it cannot update to a fork build.
+macOS blocks the first start of an app that is not notarized. To allow it, open the app with Control-click and select Open.
+
+## Trust the certificate on your Mac
+
+Do this one time before the first local build:
+
+```sh
+security import _shared/signing/cert.p12 -k ~/Library/Keychains/login.keychain-db -T /usr/bin/codesign -P "$(cat _shared/signing/p12-password.txt)"
+security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/login.keychain-db _shared/signing/cert.pem
+security find-identity -v -p codesigning
+```
+
+The last command must list "Yarden Zamir T3 Fork".
+
+## Build locally
+
+```sh
+scripts/fork-desktop-mac.sh
+```
+
+The script writes the signed app, DMG, ZIP and `nightly-mac.yml` to `release/`.
+
+## Publish a local build
+
+Push the commit first. Then run:
+
+```sh
+scripts/fork-desktop-mac.sh --publish
+```
+
+The script creates a prerelease on the fork. Installed fork apps offer it as an update.
+
+## Secrets and variables
+
+| Name | Kind | Use |
+| --- | --- | --- |
+| `CSC_LINK`, `CSC_KEY_PASSWORD` | secret | macOS signing certificate. |
+| `FORK_SYNC_TOKEN` | secret, optional | Token with the `workflow` scope. Without it, the push fails when upstream changes a workflow file. |
+| `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_TEMPLATE`, `CLERK_CLI_OAUTH_CLIENT_ID`, `RELAY_URL` | variable, optional | T3 Connect config. Without them, the build has no T3 Connect. |
