@@ -3991,10 +3991,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* refuseOptionLikeRefName("GitVcsDriver.switchRef", input.cwd, checkoutArgs.at(-1));
 
       // A stale ref must not turn into a path checkout that discards local edits.
-      yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, [...checkoutArgs, "--"], {
-        timeoutMs: 10_000,
-        fallbackErrorDetail: "git checkout failed",
-      });
+      yield* executeGitWithStableDiagnostics(
+        "GitVcsDriver.switchRef.checkout",
+        input.cwd,
+        [...checkoutArgs, "--"],
+        {
+          timeoutMs: 10_000,
+          fallbackErrorDetail: "git checkout failed",
+        },
+      );
 
       const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
         "branch",
