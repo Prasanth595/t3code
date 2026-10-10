@@ -250,7 +250,10 @@ export function DraftHeroHeadline({
     };
     const currentDraft = getComposerDraft(draftId);
     if (!composerDraftHasUserContent(currentDraft)) {
-      void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
+      void openProjectDraft(
+        scopeProjectRef(project.environmentId, project.id),
+        target.environmentSelection === "manual" ? { environmentSelection: "manual" } : undefined,
+      );
       return;
     }
     setLogicalProjectDraftThreadId(

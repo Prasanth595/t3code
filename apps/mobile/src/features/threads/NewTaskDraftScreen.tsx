@@ -680,7 +680,15 @@ export function NewTaskDraftScreen(props: {
       lastInitialProjectRefRef.current = props.initialProjectRef;
       appliedInitialProjectKeyRef.current = null;
     }
-    if (appliedInitialProjectKeyRef.current !== null) return;
+    if (
+      appliedInitialProjectKeyRef.current !== null &&
+      projects.some(
+        (project) =>
+          `${project.environmentId}:${project.id}` === appliedInitialProjectKeyRef.current,
+      )
+    ) {
+      return;
+    }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     const initialProjectId = props.initialProjectRef?.projectId;
     if (initialEnvironmentId && initialProjectId) {
