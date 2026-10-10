@@ -43,8 +43,14 @@ if [[ "$publish" == true ]] && ! git branch -r --contains "$sha" | grep -q "orig
   exit 1
 fi
 
+# A local install has no update feed. Otherwise the updater offers the newest
+# published release and installs it over the local build on the next quit.
+# Limit: the app does not update itself until a release is installed again.
+update_repository="$FORK_REPOSITORY"
+[[ "$install" == true ]] && update_repository=""
+
 rm -rf release
-T3CODE_DESKTOP_UPDATE_REPOSITORY="$FORK_REPOSITORY" \
+T3CODE_DESKTOP_UPDATE_REPOSITORY="$update_repository" \
   T3CODE_DESKTOP_MAC_SELF_SIGNED=true \
   CSC_NAME="$SIGN_IDENTITY" \
   vp run dist:desktop:artifact \
@@ -62,6 +68,8 @@ if [[ "$install" == true ]]; then
   # One backup only: the previous install. Older backups are not kept.
   backup="$repo_root/../_shared/backup/$app_name"
   mkdir -p "$(dirname "$backup")"
+  # Drop an update the old app downloaded; macOS installs it on quit otherwise, so clear it before the quit.
+  rm -rf "$HOME/Library/Caches/t3code-updater" "$HOME/Library/Caches/com.t3tools.t3code.ShipIt"
   osascript -e "quit app \"${app_name%.app}\"" || true
   for _ in $(seq 1 30); do pgrep -f "$installed/Contents/MacOS/" >/dev/null || break; sleep 1; done
   if pgrep -f "$installed/Contents/MacOS/" >/dev/null; then

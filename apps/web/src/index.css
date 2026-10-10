@@ -2379,7 +2379,8 @@ code {
     [data-slot="composer-host"],
     [data-chat-composer-main-surface],
     [data-slot$="-popup"],
-    [data-slot="dialog-panel"]
+    [data-slot="dialog-panel"],
+    [data-thread-details-card]
   ) {
   border-radius: var(--radius);
 }
@@ -2426,6 +2427,7 @@ code {
     [data-slot="composer-host"],
     [data-slot$="-popup"],
     [data-slot="dialog-panel"],
+    [data-thread-details-card],
     [data-slot="button"]:is(
         [data-button-variant="default"],
         [data-button-variant="outline"],
@@ -2436,24 +2438,29 @@ code {
   box-shadow: var(--theme-shadow);
 }
 
-/* Background texture behind the chat canvas. */
-:root[data-canvas-pattern] [data-chat-canvas] {
+/* Background texture behind the main area. Several opaque bg-background
+   layers stack there (draft view, thread view), so each one draws the
+   pattern with a fixed attachment and the dots line up across layers. */
+:root[data-canvas-pattern] :is([data-slot="sidebar-inset"], [data-slot="sidebar-inset"] .bg-background:not([data-slot$="-popup"])) {
+  background-attachment: fixed;
+}
+:root[data-canvas-pattern] [data-slot="sidebar-inset"] {
   --canvas-pattern-color: var(
     --theme-canvas-pattern-color,
     color-mix(in srgb, var(--foreground) 14%, transparent)
   );
 }
-:root[data-canvas-pattern="dots"] [data-chat-canvas] {
+:root[data-canvas-pattern="dots"] :is([data-slot="sidebar-inset"], [data-slot="sidebar-inset"] .bg-background:not([data-slot$="-popup"])) {
   background-image: radial-gradient(var(--canvas-pattern-color) 1px, transparent 1.5px);
   background-size: 16px 16px;
 }
-:root[data-canvas-pattern="grid"] [data-chat-canvas] {
+:root[data-canvas-pattern="grid"] :is([data-slot="sidebar-inset"], [data-slot="sidebar-inset"] .bg-background:not([data-slot$="-popup"])) {
   background-image:
     linear-gradient(var(--canvas-pattern-color) 1px, transparent 1px),
     linear-gradient(90deg, var(--canvas-pattern-color) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 /* The noise tile is grayscale, so it ignores canvasPatternColor. */
-:root[data-canvas-pattern="noise"] [data-chat-canvas] {
+:root[data-canvas-pattern="noise"] :is([data-slot="sidebar-inset"], [data-slot="sidebar-inset"] .bg-background:not([data-slot$="-popup"])) {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
