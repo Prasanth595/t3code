@@ -1142,6 +1142,23 @@ export const ServerSettings = Schema.Struct({
   projectScriptOverrides: Schema.Record(ProjectId, Schema.NullOr(Schema.Array(ProjectScript))).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * Scripts available in every project of this environment. They run where a
+   * project script runs for the thread: its worktree, else the project root.
+   * They live next to project scripts because both run on this host.
+   */
+  globalScripts: Schema.Array(ProjectScript).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * Pinned script ids in button order. Stored on the server next to the
+   * scripts they point at, so every client of this environment shows the
+   * same pins and project ids stay environment-local.
+   */
+  pinnedGlobalScriptIds: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  pinnedProjectScriptIds: Schema.Record(ProjectId, Schema.Array(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   projectAutoPullOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1518,6 +1535,12 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultProjectScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
   projectScriptOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Array(ProjectScript))),
+  ),
+  globalScripts: Schema.optionalKey(Schema.Array(ProjectScript)),
+  pinnedGlobalScriptIds: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+  /** Per-project entry replacement: each entry replaces that project's pins and `null` removes them. */
+  pinnedProjectScriptIds: Schema.optionalKey(
+    Schema.Record(ProjectId, Schema.NullOr(Schema.Array(TrimmedNonEmptyString))),
   ),
   projectAutoPullOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),

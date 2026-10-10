@@ -1147,3 +1147,43 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("ServerSettings global scripts and pins", () => {
+  const script = {
+    id: "lint",
+    name: "Lint",
+    command: "vp lint",
+    icon: "lint",
+    runOnWorktreeCreate: false,
+  };
+
+  it("defaults to no global scripts and no pins", () => {
+    const settings = decodeServerSettings({});
+    expect(settings.globalScripts).toEqual([]);
+    expect(settings.pinnedGlobalScriptIds).toEqual([]);
+    expect(settings.pinnedProjectScriptIds).toEqual({});
+  });
+
+  it("accepts global scripts and pin entries", () => {
+    const settings = decodeServerSettings({
+      globalScripts: [script],
+      pinnedGlobalScriptIds: ["lint"],
+      pinnedProjectScriptIds: { "project-1": ["dev", "test"] },
+    });
+    expect(settings.globalScripts).toEqual([script]);
+    expect(settings.pinnedProjectScriptIds["project-1" as ProjectId]).toEqual(["dev", "test"]);
+  });
+
+  it("rejects malformed global scripts and pin entries", () => {
+    expect(() => decodeServerSettings({ globalScripts: [{ ...script, command: " " }] })).toThrow();
+    expect(() => decodeServerSettings({ pinnedGlobalScriptIds: [""] })).toThrow();
+    expect(() => decodeServerSettings({ pinnedProjectScriptIds: { "project-1": "dev" } })).toThrow();
+  });
+
+  it("lets a patch remove one project's pins with null", () => {
+    expect(
+      decodeServerSettingsPatch({ pinnedProjectScriptIds: { "project-1": null } })
+        .pinnedProjectScriptIds,
+    ).toEqual({ "project-1": null });
+  });
+});

@@ -301,6 +301,8 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    // Entry replacement per project, like the override record above.
+    pinnedProjectScriptIds: pinnedProjectScriptIdsPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
     // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -473,6 +475,20 @@ export function applyServerSettingsPatch(
       : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
+      : {}),
+    // Arrays replace whole: deepMerge would merge them index by index.
+    ...(patch.globalScripts !== undefined ? { globalScripts: patch.globalScripts } : {}),
+    ...(patch.pinnedGlobalScriptIds !== undefined
+      ? { pinnedGlobalScriptIds: patch.pinnedGlobalScriptIds }
+      : {}),
+    ...(pinnedProjectScriptIdsPatch !== undefined
+      ? {
+          pinnedProjectScriptIds: Object.fromEntries(
+            Object.entries(
+              mergeSettingsEntries(current.pinnedProjectScriptIds, pinnedProjectScriptIdsPatch),
+            ).filter(([, ids]) => ids.length > 0),
+          ),
+        }
       : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {
