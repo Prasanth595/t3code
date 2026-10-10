@@ -266,7 +266,9 @@ jobs:
         if: matrix.platform == 'mac'
         run: |
           set -euo pipefail
-          app="$(ls -d release/mac-arm64/*.app)"
+          # The build script keeps only the dmg and zip, so check the app inside the zip.
+          ditto -x -k release/*-arm64.zip "$RUNNER_TEMP/verify"
+          app="$(ls -d "$RUNNER_TEMP"/verify/*.app)"
           codesign --verify --deep --strict "$app"
           codesign -dv "$app" 2>&1 | grep "Authority=Yarden Zamir T3 Fork"
 
