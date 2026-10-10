@@ -2503,11 +2503,13 @@ code {
     linear-gradient(90deg, var(--canvas-pattern-color) 1px, transparent 1px);
   background-size: 24px 24px;
 }
-/* The noise tile is grayscale, so it ignores canvasPatternColor. */
+/* The noise tile is grayscale, so it ignores canvasPatternColor. Quotes and
+   parentheses in the SVG are percent-encoded: @shadcn/lint skips url( only to
+   the first ), so a raw quote here hides later classes from no-unknown-classes. */
 :root[data-canvas-pattern="noise"]
   :is(
     [data-slot="sidebar-inset"],
     [data-slot="sidebar-inset"] .bg-background:not([data-slot$="-popup"])
   ) {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27160%27 height=%27160%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.8%27 numOctaves=%273%27 stitchTiles=%27stitch%27/%3E%3CfeColorMatrix values=%270 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0%27/%3E%3C/filter%3E%3Crect width=%27100%25%27 height=%27100%25%27 filter=%27url%28%23n%29%27/%3E%3C/svg%3E");
 }
