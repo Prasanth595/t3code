@@ -273,8 +273,9 @@ jobs:
           # The build script keeps only the dmg and zip, so check the app inside the zip.
           ditto -x -k release/*-arm64.zip "$RUNNER_TEMP/verify"
           app="$(ls -d "$RUNNER_TEMP"/verify/*.app)"
-          codesign --verify --deep --strict "$app"
-          codesign -dv "$app" 2>&1 | grep "Authority=Yarden Zamir T3 Fork"
+          codesign -dvv "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          grep -q "Yarden Zamir T3 Fork" "$RUNNER_TEMP/codesign.txt"
 
       - name: Collect release assets
         shell: bash
