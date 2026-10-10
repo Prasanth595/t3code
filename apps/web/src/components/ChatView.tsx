@@ -155,7 +155,7 @@ import {
   useState,
 } from "react";
 import { flushSync } from "react-dom";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useRouter } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -411,6 +411,7 @@ import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/M
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import { forkWorkspacePreparingAtom } from "@t3tools/client-runtime/worktree-setup";
 import {
   overlayComposerIsResting,
   resolveComposerTimelineInset,
@@ -1191,6 +1192,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const navigate = useNavigate();
+  const router = useRouter();
   // Selects primitives: an object here is new on every router store update, which
   // re-renders ChatView on unrelated navigation state changes.
   const citationHref = useLocation({ select: (location) => location.href });
@@ -2843,6 +2845,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
   );
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
+  const forkWorkspacePreparing = useAtomValue(forkWorkspacePreparingAtom(routeThreadKey));
   const {
     worktreeSetup,
     isPreparingWorktree,
@@ -2859,7 +2862,7 @@ export default function ChatView(props: ChatViewProps) {
     threadRef: activeThreadRef,
     serverProjection,
     activityRun: activeActivityRun,
-    localPreparing: isLocallyPreparingWorktree,
+    localPreparing: isLocallyPreparingWorktree || forkWorkspacePreparing,
     sendQueuesBehindSetup,
     // Counts the optimistic send too, so the row retires the moment the
     // follow-up is on screen rather than when the server echoes it back.
@@ -5849,7 +5852,11 @@ export default function ChatView(props: ChatViewProps) {
       if (forkSource === null) return;
       const targetThreadId = newThreadId();
       const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
-      const result = await forkThreadFromRun({
+      const sourceThreadRef = scopeThreadRef(environmentId, activeThread.id);
+      const preparingAtom = forkWorkspacePreparingAtom(scopedThreadKey(targetThreadRef));
+      const preparesWorktree = workspaceStrategy.type === "worktree";
+      if (preparesWorktree) appAtomRegistry.set(preparingAtom, true);
+      const pendingResult = forkThreadFromRun({
         environmentId,
         input: {
           sourceThreadId: forkSource.sourceThreadId,
@@ -5858,19 +5865,55 @@ export default function ChatView(props: ChatViewProps) {
           title: `${activeThread.title} fork`,
           workspaceStrategy,
         },
-      });
+      }).finally(() => appAtomRegistry.set(preparingAtom, false));
+      // The fork request settles only once its new worktree is ready. Open the
+      // fork as soon as its thread exists so it shows setup progress meanwhile,
+      // like a new thread started in a new worktree.
+      const openedEarly =
+        preparesWorktree &&
+        (await Promise.race([
+          waitForThreadShell(targetThreadRef),
+          pendingResult.then(() => false),
+        ]));
+      if (openedEarly) {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(targetThreadRef),
+        });
+      }
+      const result = await pendingResult;
       if (result._tag === "Failure") {
         setForkSource(null);
-        if (!isAtomCommandInterrupted(result)) {
-          const error = squashAtomCommandFailure(result);
-          setThreadError(
-            activeThread.id,
-            error instanceof Error ? error.message : "Failed to fork this response.",
-          );
+        if (isAtomCommandInterrupted(result)) return;
+        const error = squashAtomCommandFailure(result);
+        const message = error instanceof Error ? error.message : "Failed to fork this response.";
+        if (!openedEarly) {
+          setThreadError(activeThread.id, message);
+          return;
+        }
+        // The server deletes a fork whose worktree could not be prepared.
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not fork this response",
+            description: message,
+          }),
+        );
+        const forkPathname = router.buildLocation({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(targetThreadRef),
+        }).pathname;
+        if (router.state.location.pathname === forkPathname) {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(sourceThreadRef),
+            replace: true,
+          });
         }
         return;
       }
       setForkSource(null);
+      if (openedEarly) return;
       const targetThreadReady = await waitForThreadShell(targetThreadRef);
       if (!targetThreadReady) {
         setThreadError(
@@ -5891,6 +5934,7 @@ export default function ChatView(props: ChatViewProps) {
       forkThreadFromRun,
       forkSource,
       navigate,
+      router,
       setForkSource,
       setThreadError,
     ],

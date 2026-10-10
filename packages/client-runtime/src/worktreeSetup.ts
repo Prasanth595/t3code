@@ -4,6 +4,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 
 const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
@@ -20,6 +21,16 @@ export function findRecordedWorktreeSetup(
   }
   return null;
 }
+
+/**
+ * Forks still preparing their new worktree, keyed by scoped thread key. A
+ * client opens such a fork as soon as its thread exists and sets this until
+ * the fork request settles, so the fork shows setup progress and holds sends
+ * until its checkout exists.
+ */
+export const forkWorkspacePreparingAtom = Atom.family((_threadKey: string) =>
+  Atom.make(false).pipe(Atom.keepAlive),
+);
 
 export function resolveVisibleWorktreeSetup(input: {
   live: WorktreeSetupSnapshot | null;
