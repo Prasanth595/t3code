@@ -86,6 +86,8 @@ jobs:
           # scripts/browser-secret-native.test.mjs compiles the libsecret helper.
           sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config build-essential
           vp run --filter @t3tools/desktop ensure:electron
+          # Same browser install as ci.yml; ServerBrowserPage.test.ts launches Chromium.
+          node apps/server/node_modules/playwright-core/cli.js install --with-deps --only-shell chromium
           vp run typecheck
           vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' test
           vp run --filter t3 test
