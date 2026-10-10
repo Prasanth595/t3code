@@ -282,26 +282,3 @@ describe("remembered timeline positions", () => {
     expect(readTimelinePosition("scroll-test-a:thread-1")).toEqual(following);
   });
 });
-
-describe("remembered timeline follow intent", () => {
-  const key = "follow-intent-test:thread";
-  const position = { rowId: "message-4", offsetWithinRow: 32, scrollOffset: 932, atEnd: false };
-
-  it("keeps following when smooth scrolling or a layout callback reports an end gap", () => {
-    rememberTimelinePosition(key, { ...position, atEnd: true }, true);
-    rememberTimelinePosition(key, position, true);
-    expect(readTimelinePosition(key)).toEqual({ ...position, atEnd: true });
-  });
-
-  it("restores the reading position after manual navigation opts out of follow", () => {
-    rememberTimelinePosition(key, position, true);
-    rememberTimelinePosition(key, position, false);
-    expect(readTimelinePosition(key)).toEqual(position);
-  });
-
-  it("remembers returning to the end before the follow flag updates", () => {
-    rememberTimelinePosition(key, position, false);
-    rememberTimelinePosition(key, { ...position, atEnd: true }, false);
-    expect(readTimelinePosition(key)?.atEnd).toBe(true);
-  });
-});

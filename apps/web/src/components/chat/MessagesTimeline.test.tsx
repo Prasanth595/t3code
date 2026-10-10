@@ -750,7 +750,7 @@ describe("MessagesTimeline", () => {
     },
   );
 
-  it("remembers a manual reading position when the chat closes before the next frame", async () => {
+  function stubFollowTimeline(routeThreadKey: string) {
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 0;
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -759,18 +759,20 @@ describe("MessagesTimeline", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", (frame: number) => frames.delete(frame));
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    const flushFrame = () =>
-      act(() => {
-        const callbacks = [...frames.values()];
-        frames.clear();
-        callbacks.forEach((callback) => callback(0));
-      });
-    const { readTimelinePosition } = await import("./timelineScrollAnchoring");
-    const props = { ...buildProps(), routeThreadKey: "environment-local:manual-departure" };
-    let scrollTop = 1400;
+    const props = { ...buildProps(), routeThreadKey };
+    const timeline = {
+      props,
+      scrollTop: 1400,
+      flushFrame: () =>
+        act(() => {
+          const callbacks = [...frames.values()];
+          frames.clear();
+          callbacks.forEach((callback) => callback(0));
+        }),
+    };
     const viewport = {
       get scrollTop() {
-        return scrollTop;
+        return timeline.scrollTop;
       },
       getBoundingClientRect: () => ({ top: 0 }),
     };
@@ -778,15 +780,22 @@ describe("MessagesTimeline", () => {
       getScrollableNode: () => viewport,
       getState: () => ({
         data: legendListTestState.data,
-        scroll: scrollTop,
+        scroll: timeline.scrollTop,
         scrollLength: 600,
         contentLength: 2000,
         indexByKey: () => 0,
         positionAtIndex: () => 0,
         sizeAtIndex: () => 2000,
-        elementAtIndex: () => ({ getBoundingClientRect: () => ({ top: -scrollTop }) }),
+        elementAtIndex: () => ({ getBoundingClientRect: () => ({ top: -timeline.scrollTop }) }),
       }),
     } as unknown as LegendListRef;
+    return timeline;
+  }
+
+  it("remembers a manual reading position when the chat closes before the next frame", async () => {
+    const { readTimelinePosition } = await import("./timelineScrollAnchoring");
+    const timeline = stubFollowTimeline("environment-local:manual-departure");
+    const { props } = timeline;
     let navigateManually = () => {};
     function ChatProbe() {
       const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
@@ -805,11 +814,11 @@ describe("MessagesTimeline", () => {
       await act(() => {
         renderer = create(<ChatProbe />);
       });
-      await flushFrame();
+      await timeline.flushFrame();
       expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true);
 
       // The scroll event lands before the follow opt-out renders.
-      scrollTop = 1300;
+      timeline.scrollTop = 1300;
       await act(() => {
         navigateManually();
         legendListTestState.onScroll?.();
@@ -821,6 +830,37 @@ describe("MessagesTimeline", () => {
         atEnd: false,
         scrollOffset: 1300,
       });
+    } finally {
+      await act(() => renderer?.unmount());
+    }
+  });
+
+  it("keeps a following thread's intent while its timeline is held for the next thread", async () => {
+    const { readTimelinePosition } = await import("./timelineScrollAnchoring");
+    const timeline = stubFollowTimeline("environment-local:held-departure");
+    const { props } = timeline;
+    // Smooth follow is still catching up with the stream.
+    timeline.scrollTop = 1300;
+    const render = (held: boolean) => (
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[buildUserTimelineEntry("First prompt")]}
+        liveFollowEnabled={!held}
+        paintOnly={held}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(render(false));
+      });
+      await timeline.flushFrame();
+      expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true);
+
+      await act(() => renderer?.update(render(true)));
+      await timeline.flushFrame();
+
+      expect(readTimelinePosition(props.routeThreadKey)?.atEnd).toBe(true);
     } finally {
       await act(() => renderer?.unmount());
     }
