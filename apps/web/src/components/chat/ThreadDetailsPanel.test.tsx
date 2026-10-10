@@ -75,6 +75,8 @@ describe("ThreadDetailsPanel", () => {
       onStartFromOriginChange: vi.fn(),
       onComposerFocusRequest: vi.fn(),
       onRunProjectScript: vi.fn(),
+      globalScripts: [],
+      onRunGlobalScript: vi.fn(),
       onAddProjectScript: vi.fn() as ThreadDetailsPanelProps["onAddProjectScript"],
       onUpdateProjectScript: vi.fn() as ThreadDetailsPanelProps["onUpdateProjectScript"],
       onDeleteProjectScript: vi.fn() as ThreadDetailsPanelProps["onDeleteProjectScript"],

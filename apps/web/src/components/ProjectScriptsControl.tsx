@@ -58,6 +58,7 @@ import {
 export type { NewProjectScriptInput, ProjectScriptActionResult };
 
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+const NO_GLOBAL_SCRIPTS: ReadonlyArray<ProjectScript> = [];
 
 interface ProjectScriptsControlProps {
   displayMode?: "toolbar" | "panel";
@@ -69,6 +70,9 @@ interface ProjectScriptsControlProps {
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   preferredScriptId?: string | null;
   onRunScript?: ((script: ProjectScript) => void) | undefined;
+  /** Environment-wide scripts, listed in their own group. Edited in Settings. */
+  globalScripts?: ReadonlyArray<ProjectScript>;
+  onRunGlobalScript?: ((script: ProjectScript) => void) | undefined;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateScript: (
     scriptId: string,
@@ -86,6 +90,8 @@ export default function ProjectScriptsControl({
   fileScripts = NO_FILE_SCRIPTS,
   preferredScriptId = null,
   onRunScript,
+  globalScripts = NO_GLOBAL_SCRIPTS,
+  onRunGlobalScript,
   onAddScript,
   onUpdateScript,
   onDeleteScript,
@@ -243,6 +249,26 @@ export default function ProjectScriptsControl({
         );
       })}
       {importMenuItems}
+      {globalScripts.length > 0 && (
+        <>
+          <MenuSeparator />
+          <MenuGroup>
+            <MenuGroupLabel>Global scripts</MenuGroupLabel>
+            {globalScripts.map((script) => (
+              <MenuItem
+                density={presentation === "menu" ? "touch" : "default"}
+                key={script.id}
+                disabled={!onRunGlobalScript}
+                onClick={() => onRunGlobalScript?.(script)}
+              >
+                <ScriptIcon icon={script.icon} className="size-4" />
+                <MenuItemLabel>{script.name}</MenuItemLabel>
+              </MenuItem>
+            ))}
+          </MenuGroup>
+          <MenuSeparator />
+        </>
+      )}
       <MenuItem density={presentation === "menu" ? "touch" : "default"} onClick={openAddDialog}>
         <PlusIcon className="size-4" />
         <MenuItemLabel>{isPanel ? "Add project script" : "Add action"}</MenuItemLabel>
@@ -267,7 +293,7 @@ export default function ProjectScriptsControl({
               </MenuShortcut>
             </MenuItem>
           )}
-          {scripts.length > 0 || importableScripts.length > 0 ? (
+          {scripts.length > 0 || importableScripts.length > 0 || globalScripts.length > 0 ? (
             <MenuSub
               open={actionsMenuOpen.scripts}
               onOpenChange={(open) =>
@@ -370,7 +396,7 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </ActionGroup>
-      ) : scripts.length > 0 || importableScripts.length > 0 ? (
+      ) : scripts.length > 0 || importableScripts.length > 0 || globalScripts.length > 0 ? (
         // No one-click action (only a settle action, or only t3.json imports),
         // so the saved actions stay reachable through this menu.
         isPanel ? (

@@ -1177,7 +1177,9 @@ describe("ServerSettings global scripts and pins", () => {
   it("rejects malformed global scripts and pin entries", () => {
     expect(() => decodeServerSettings({ globalScripts: [{ ...script, command: " " }] })).toThrow();
     expect(() => decodeServerSettings({ pinnedGlobalScriptIds: [""] })).toThrow();
-    expect(() => decodeServerSettings({ pinnedProjectScriptIds: { "project-1": "dev" } })).toThrow();
+    expect(() =>
+      decodeServerSettings({ pinnedProjectScriptIds: { "project-1": "dev" } }),
+    ).toThrow();
   });
 
   it("lets a patch remove one project's pins with null", () => {

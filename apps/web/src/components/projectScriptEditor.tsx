@@ -153,11 +153,18 @@ export function ProjectScriptEditorDialog({
   editScope = AuthOrchestrationOperateScope,
   request,
   scripts,
+  global = false,
   onSubmit,
   onDelete,
   onClose,
 }: {
   environmentId: EnvironmentId;
+  /**
+   * A global script runs only on demand: no shortcut, no setup or settle
+   * role. Shortcut commands are keyed by script id, which a global script
+   * could share with a project script.
+   */
+  global?: boolean;
   editScope?: typeof AuthOrchestrationOperateScope | typeof AuthSettingsWriteScope;
   request: ProjectScriptEditorRequest | null;
   /** Existing scripts, used to derive a unique id for new scripts. */
@@ -337,7 +344,9 @@ export function ProjectScriptEditorDialog({
           <DialogHeader>
             <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
             <DialogDescription>
-              Actions are project-scoped commands you can run from the top bar or keybindings.
+              {global
+                ? "Global scripts run in the current thread's worktree or project folder, in every project."
+                : "Actions are project-scoped commands you can run from the top bar or keybindings."}
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
@@ -394,21 +403,23 @@ export function ProjectScriptEditorDialog({
                     />
                   </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="script-keybinding">Keybinding</Label>
-                  <Input
-                    disabled={!canWriteSettings}
-                    id="script-keybinding"
-                    placeholder="Press shortcut"
-                    value={keybinding}
-                    readOnly
-                    onKeyDown={captureKeybinding}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
-                    environment-wide. Projects using the same action share its shortcut.
-                  </p>
-                </div>
+                {global ? null : (
+                  <div className="space-y-1.5">
+                    <Label htmlFor="script-keybinding">Keybinding</Label>
+                    <Input
+                      disabled={!canWriteSettings}
+                      id="script-keybinding"
+                      placeholder="Press shortcut"
+                      value={keybinding}
+                      readOnly
+                      onKeyDown={captureKeybinding}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
+                      environment-wide. Projects using the same action share its shortcut.
+                    </p>
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label htmlFor="script-command">Command</Label>
                   <Textarea
@@ -430,32 +441,36 @@ export function ProjectScriptEditorDialog({
                     Open this URL in the in-app preview when this action runs.
                   </p>
                 </div>
-                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-                  <span>Run automatically on worktree creation</span>
-                  <Switch
-                    checked={runOnWorktreeCreate}
-                    onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
-                  />
-                </label>
-                <label
-                  className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
-                    runOnWorktreeCreate ? "" : "opacity-60"
-                  }`}
-                >
-                  <span>Wait for it to finish before the agent starts</span>
-                  <Switch
-                    checked={waitForSetup}
-                    disabled={!runOnWorktreeCreate}
-                    onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
-                  />
-                </label>
-                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-                  <span>Run in the thread's worktree when the thread settles</span>
-                  <Switch
-                    checked={runOnSettle}
-                    onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
-                  />
-                </label>
+                {global ? null : (
+                  <>
+                    <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                      <span>Run automatically on worktree creation</span>
+                      <Switch
+                        checked={runOnWorktreeCreate}
+                        onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                      />
+                    </label>
+                    <label
+                      className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+                        runOnWorktreeCreate ? "" : "opacity-60"
+                      }`}
+                    >
+                      <span>Wait for it to finish before the agent starts</span>
+                      <Switch
+                        checked={waitForSetup}
+                        disabled={!runOnWorktreeCreate}
+                        onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
+                      />
+                    </label>
+                    <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                      <span>Run in the thread's worktree when the thread settles</span>
+                      <Switch
+                        checked={runOnSettle}
+                        onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
+                      />
+                    </label>
+                  </>
+                )}
                 <label
                   className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
                     previewUrl.trim().length === 0 ? "opacity-60" : ""

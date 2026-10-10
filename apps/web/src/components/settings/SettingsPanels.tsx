@@ -1,3 +1,4 @@
+import { GlobalScriptsSettings } from "./GlobalScriptsSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
@@ -2291,6 +2292,7 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="general" />
+      <GlobalScriptsSettings />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
           {...searchableSetting("project-grouping")}

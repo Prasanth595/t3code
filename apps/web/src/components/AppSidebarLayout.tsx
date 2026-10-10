@@ -56,6 +56,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { TitlebarPinnedScripts, usePinnedScriptsTargetStore } from "./PinnedScripts";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -80,7 +81,11 @@ function readInitialThreadSidebarWidth(): number {
   }
 }
 
-function SidebarControl() {
+function SidebarControl({
+  onPinnedScriptsWidthChange,
+}: {
+  onPinnedScriptsWidthChange: (width: number) => void;
+}) {
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { toggleSidebar } = useSidebar();
@@ -92,6 +97,7 @@ function SidebarControl() {
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
   });
+  const pinnedScriptsTarget = usePinnedScriptsTargetStore((state) => state.target);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -134,6 +140,28 @@ function SidebarControl() {
     };
   }, [keybindings, toggleSidebar, usagePageOpen]);
 
+  const trigger = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <SidebarTrigger
+            // Over the stage artwork the trigger is a control on imagery, like the media
+            // viewer's arrows; that variant positions itself, so the layout is reset here.
+            variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+            className={cn(
+              "pointer-events-auto",
+              isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+            )}
+            aria-label="Toggle main sidebar"
+          />
+        }
+      />
+      <TooltipPopup side="bottom">
+        Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+      </TooltipPopup>
+    </Tooltip>
+  );
+
   return (
     // The right-side layout controls carry mr-px (border compensation inside
     // the panel), so the trigger mirrors it: both clusters sit one extra pixel
@@ -142,25 +170,16 @@ function SidebarControl() {
       className="pointer-events-none fixed left-[var(--workspace-controls-left)] top-[var(--workspace-controls-top)] z-50 ml-px flex h-[var(--workspace-topbar-height)] items-center"
       data-sidebar-control=""
     >
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <SidebarTrigger
-              // Over the stage artwork the trigger is a control on imagery, like the media
-              // viewer's arrows; that variant positions itself, so the layout is reset here.
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
-              className={cn(
-                "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
-              )}
-              aria-label="Toggle main sidebar"
-            />
-          }
-        />
-        <TooltipPopup side="bottom">
-          Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
-        </TooltipPopup>
-      </Tooltip>
+      {pinnedScriptsTarget ? (
+        <TitlebarPinnedScripts
+          target={pinnedScriptsTarget}
+          onWidthChange={onPinnedScriptsWidthChange}
+        >
+          {trigger}
+        </TitlebarPinnedScripts>
+      ) : (
+        trigger
+      )}
     </div>
   );
 }
@@ -243,6 +262,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // that would otherwise refresh a render-time snapshot.
   const viewportWidth = useSyncExternalStore(subscribeToViewportWidth, readViewportWidth);
   const [brandWidth, setBrandWidth] = useState(0);
+  const [pinnedScriptsWidth, setPinnedScriptsWidth] = useState(0);
   const sidebarMinimumWidth = resolveThreadSidebarMinimumWidth(brandWidth);
   const sidebarMaximumWidth = resolveThreadSidebarMaximumWidth(viewportWidth, sidebarMinimumWidth);
   const resetSidebarWidth = () => {
@@ -264,6 +284,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
+      : {}),
+    // Title bar pins sit right of the sidebar toggle, so content starts after them.
+    ...(pinnedScriptsWidth > 0
+      ? {
+          "--workspace-titlebar-content-left": `calc(var(--workspace-controls-left) + var(--workspace-titlebar-control-size) + var(--workspace-titlebar-control-gap) + ${pinnedScriptsWidth}px)`,
+        }
       : {}),
   } as CSSProperties;
 
@@ -343,7 +369,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           <SidebarRail onDoubleClick={resetSidebarWidth} />
         </Sidebar>
         {children}
-        <SidebarControl />
+        <SidebarControl onPinnedScriptsWidthChange={setPinnedScriptsWidth} />
         <NavigationHistoryShortcuts />
         <MainAppLocationTracker />
       </SidebarProvider>

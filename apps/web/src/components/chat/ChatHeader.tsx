@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ProjectScript,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -38,6 +39,7 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
+import { PinnedScriptsArea, usePinnedScripts } from "../PinnedScripts";
 import { useClientSettings } from "../../hooks/useSettings";
 
 interface ChatHeaderProps {
@@ -52,6 +54,10 @@ interface ChatHeaderProps {
   rightPanelOpen: boolean;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
+  /** The active project's scripts, offered for pinning. */
+  projectScripts: readonly ProjectScript[];
+  /** Undefined when this client cannot run terminal commands. */
+  onRunPinnedScript: ((script: ProjectScript) => void) | undefined;
 }
 
 /**
@@ -86,7 +92,14 @@ export const ChatHeader = memo(function ChatHeader({
   rightPanelOpen,
   onNewThreadInProject,
   onOpenProjectSettings,
+  projectScripts,
+  onRunPinnedScript,
 }: ChatHeaderProps) {
+  const pins = usePinnedScripts({
+    environmentId: activeThreadEnvironmentId,
+    projectId: activeProject?.id ?? null,
+    projectScripts,
+  });
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
@@ -264,6 +277,19 @@ export const ChatHeader = memo(function ChatHeader({
   const handleHeaderContextMenu = useCallback(
     (event: ReactMouseEvent) => {
       if (renamingTitle !== null) return;
+      // Blank header space opens the pin menu once this environment uses
+      // pins or global scripts; the title buttons keep their own menu.
+      if (
+        pins.inUse &&
+        pins.hasPinnableScripts &&
+        event.target instanceof Element &&
+        event.target.closest("button, input") === null
+      ) {
+        cancelPendingTitleMenu();
+        event.preventDefault();
+        void pins.openPinMenu({ x: event.clientX, y: event.clientY });
+        return;
+      }
       if (!isServerThread && onOpenProjectSettings === undefined) return;
       cancelPendingTitleMenu();
       event.preventDefault();
@@ -282,7 +308,7 @@ export const ChatHeader = memo(function ChatHeader({
       }
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [cancelPendingTitleMenu, isServerThread, onOpenProjectSettings, openMenu, renamingTitle],
+    [cancelPendingTitleMenu, isServerThread, onOpenProjectSettings, openMenu, pins, renamingTitle],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -436,6 +462,14 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <PinnedScriptsArea
+        area="header"
+        scripts={pins.pinnedProjectScripts}
+        canReorder={pins.canWrite}
+        onRun={onRunPinnedScript}
+        onMove={pins.moveProjectPin}
+        onOpenMenu={(position) => void pins.openPinMenu(position)}
+      />
     </div>
   );
 });

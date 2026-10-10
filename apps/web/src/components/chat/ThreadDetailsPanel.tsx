@@ -54,6 +54,8 @@ export interface ThreadDetailsPanelProps extends Pick<
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
+  globalScripts: ReadonlyArray<ProjectScript>;
+  onRunGlobalScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
   onUpdateProjectScript: (
     scriptId: string,
@@ -136,6 +138,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                   fileScripts={fileScripts}
                   preferredScriptId={props.preferredScriptId}
                   onRunScript={props.onRunProjectScript}
+                  globalScripts={props.globalScripts}
+                  onRunGlobalScript={props.onRunGlobalScript}
                   onAddScript={props.onAddProjectScript}
                   onUpdateScript={props.onUpdateProjectScript}
                   onDeleteScript={props.onDeleteProjectScript}

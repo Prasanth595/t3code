@@ -452,6 +452,7 @@ import {
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { type PinnedScriptsTarget, usePinnedScriptsTargetStore } from "./PinnedScripts";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -5105,6 +5106,31 @@ export default function ChatView(props: ChatViewProps) {
   useLayoutEffect(() => {
     runProjectScriptRef.current = runProjectScript;
   }, [runProjectScript]);
+  // Pins run like a pick from the scripts menu. A global script does not
+  // become the project's preferred script, since it is not one of them.
+  const runPinnedProjectScript = useCallback((script: ProjectScript) => {
+    void runProjectScriptRef.current(script);
+  }, []);
+  const runGlobalScript = useCallback((script: ProjectScript) => {
+    void runProjectScriptRef.current(script, { rememberAsLastInvoked: false });
+  }, []);
+  const globalScripts = settings.globalScripts;
+  // The title bar sits outside this view, so it reaches the runner through the store.
+  useEffect(() => {
+    if (!activeProject) return;
+    const target: PinnedScriptsTarget = {
+      environmentId,
+      projectId: activeProject.id,
+      projectScripts: activeProjectScripts,
+      runScript: canOperateTerminal ? runGlobalScript : undefined,
+    };
+    usePinnedScriptsTargetStore.setState({ target });
+    return () => {
+      if (usePinnedScriptsTargetStore.getState().target === target) {
+        usePinnedScriptsTargetStore.setState({ target: null });
+      }
+    };
+  }, [activeProject, activeProjectScripts, canOperateTerminal, environmentId, runGlobalScript]);
   const runShellCommand = useCallback((command: string) => {
     void runProjectScriptRef.current(
       {
@@ -11221,6 +11247,8 @@ export default function ChatView(props: ChatViewProps) {
     onComposerFocusRequest: scheduleComposerFocus,
     ...(isServerThread && isGitRepo ? { onOpenChanges: openChangesFromThreadPanel } : {}),
     onRunProjectScript: runProjectScript,
+    globalScripts,
+    onRunGlobalScript: runGlobalScript,
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
@@ -11371,6 +11399,8 @@ export default function ChatView(props: ChatViewProps) {
             onOpenThread={onOpenRelatedThread}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
             onNewThreadInProject={handleNewThreadInActiveProject}
+            projectScripts={activeProjectScripts}
+            onRunPinnedScript={canOperateTerminal ? runPinnedProjectScript : undefined}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
