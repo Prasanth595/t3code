@@ -126,6 +126,46 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
   return classifySqliteError(cause, { message, operation });
 };
 
+/**
+ * SQLite keeps its copy of a statement's text and blob parameters until the
+ * statement is bound again or finalized, and `node:sqlite` cannot clear them.
+ * A cached statement would hold its last payload for as long as it stays
+ * cached, so executions binding more than this many string code units and
+ * blob bytes get a throwaway statement instead.
+ */
+const LARGE_BINDING_SIZE = 64 * 1024;
+
+const bindingSize = (value: unknown): number => {
+  if (typeof value === "string") {
+    return value.length;
+  }
+  return ArrayBuffer.isView(value) ? value.byteLength : 0;
+};
+
+const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
+  try {
+    let size = 0;
+    for (const param of params) {
+      if (
+        (typeof param === "object" || typeof param === "function") &&
+        param !== null &&
+        !ArrayBuffer.isView(param)
+      ) {
+        // `node:sqlite` takes named parameters as one object, callable or not.
+        for (const value of Object.values(param)) {
+          size += bindingSize(value);
+        }
+      } else {
+        size += bindingSize(param);
+      }
+    }
+    return size > LARGE_BINDING_SIZE;
+  } catch {
+    // A parameter that cannot be measured is left for the statement to report.
+    return true;
+  }
+};
+
 // Evaluated source instead of a worker file, so the reader also starts from
 // bundles and single-executable builds that have no module file on disk.
 const readerWorkerSource = `
@@ -487,6 +527,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
         Exit.isSuccess(exit) ? (options.prepareCacheTTL ?? Duration.minutes(10)) : Duration.zero,
     });
 
+    const statementFor = (sql: string, params: ReadonlyArray<unknown>) =>
+      hasLargeBinding(params) ? prepare(sql) : Cache.get(prepareCache, sql);
+
     const runStatement = (
       statement: NodeSqlite.StatementSync,
       params: ReadonlyArray<unknown>,
@@ -510,7 +553,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       });
 
     const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
+      Effect.flatMap(statementFor(sql, params), (s) => runStatement(s, params, raw));
 
     const runStatementValues = (
       statement: NodeSqlite.StatementSync,
@@ -521,6 +564,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
         (statement) =>
           Effect.try({
             try: () => {
+              statement.setReadBigInts(
+                Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
+              );
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
                 // Safe to cast to array after we've setReturnArrays(true)
@@ -555,7 +601,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
 
     const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (statement) =>
+      Effect.flatMap(statementFor(sql, params), (statement) =>
         runStatementValues(statement, params),
       );
 
