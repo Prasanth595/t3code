@@ -103,7 +103,7 @@ export const AgentSessionImportWindowDays = Schema.Int.check(
   }),
 );
 export type AgentSessionImportWindowDays = typeof AgentSessionImportWindowDays.Type;
-export const DEFAULT_AGENT_SESSION_IMPORT_WINDOW_DAYS: AgentSessionImportWindowDays = 30;
+const DEFAULT_AGENT_SESSION_IMPORT_WINDOW_DAYS: AgentSessionImportWindowDays = 30;
 export const MIN_AGENT_SESSION_IMPORT_MAX_MESSAGES = 1;
 // The scanner's 32 MiB selected-history budget still bounds memory above this cap.
 export const MAX_AGENT_SESSION_IMPORT_MAX_MESSAGES = 10_000;

@@ -1584,7 +1584,7 @@ const THEME_STYLE_PROPERTIES = [
  * Writes the theme's optional style fields onto the root, and clears every
  * field the theme does not set. Undefined clears all of them.
  */
-export function applyThemeStyle(root: HTMLElement, style: ThemeStyle | undefined): void {
+function applyThemeStyle(root: HTMLElement, style: ThemeStyle | undefined): void {
   for (const [field, variable, attribute] of THEME_STYLE_PROPERTIES) {
     const value = style?.[field];
     if (value === undefined) {
