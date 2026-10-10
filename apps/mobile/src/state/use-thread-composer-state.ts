@@ -52,7 +52,10 @@ import {
 import type { DraftComposerImageAttachment } from "../lib/composerImages";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed } from "../lib/threadActivity";
-import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
+import {
+  acknowledgedThreadMessagesAtom,
+  settledAcknowledgedMessageIds,
+} from "./acknowledged-thread-messages";
 import { appendPendingThreadMessages } from "../features/threads/pending-thread-feed";
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "../state/atom-registry";
@@ -83,6 +86,7 @@ import {
   resolveComposerDispatchMode,
   type ActiveTurnComposerAction,
 } from "@t3tools/client-runtime/state/composer-dispatch";
+import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { AsyncResult } from "effect/reactivity";
 import { prepareTurnAttachments } from "../lib/attachmentUpload";
@@ -100,6 +104,7 @@ import {
 import { setPendingConnectionError } from "../state/use-remote-environment-registry";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
 import {
+  useSelectedThreadDetailState,
   useSelectedThreadProjection,
   useSelectedThreadVisibleTurnItems,
 } from "../state/use-thread-detail";
@@ -288,17 +293,33 @@ export function useThreadComposerState() {
     selectedThreadQueuedMessages,
     acknowledgedMessages,
   ]);
+  const selectedThreadHasMoreHistory = useSelectedThreadDetailState().history.hasMoreHistory;
   useEffect(() => {
-    const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
-    if (acknowledgedMessages.some((message) => echoedIds.has(message.messageId))) {
+    if (!selectedThreadMessages) return;
+    const settledIds = settledAcknowledgedMessageIds({
+      acknowledged: acknowledgedMessages.filter(
+        (message) => scopedThreadKey(message.environmentId, message.threadId) === selectedThreadKey,
+      ),
+      loadedMessages: selectedThreadMessages.map((message) => ({
+        id: message.id,
+        createdAtMs: DateTime.toEpochMillis(message.createdAt),
+      })),
+      hasMoreHistory: selectedThreadHasMoreHistory,
+    });
+    if (settledIds.size > 0) {
       appAtomRegistry.set(
         acknowledgedThreadMessagesAtom,
         appAtomRegistry
           .get(acknowledgedThreadMessagesAtom)
-          .filter((message) => !echoedIds.has(message.messageId)),
+          .filter((message) => !settledIds.has(message.messageId)),
       );
     }
-  }, [acknowledgedMessages, selectedThreadMessages]);
+  }, [
+    acknowledgedMessages,
+    selectedThreadHasMoreHistory,
+    selectedThreadKey,
+    selectedThreadMessages,
+  ]);
 
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)

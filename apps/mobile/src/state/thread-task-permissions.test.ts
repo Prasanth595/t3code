@@ -78,6 +78,7 @@ vi.mock("./use-thread-selection", () => ({
   }),
 }));
 vi.mock("./use-thread-detail", () => ({
+  useSelectedThreadDetailState: () => ({ history: { hasMoreHistory: false } }),
   useSelectedThreadProjection: () => null,
   useSelectedThreadVisibleTurnItems: () => [],
   useSelectedThreadPendingRequests: () => state.pendingRequests,
