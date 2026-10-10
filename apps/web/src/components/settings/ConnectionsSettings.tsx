@@ -2187,6 +2187,9 @@ export function ConnectionsSettings() {
   const [isUpdatingDesktopServerExposure, setIsUpdatingDesktopServerExposure] = useState(false);
   const [isDesktopServerExposureDialogOpen, setIsDesktopServerExposureDialogOpen] = useState(false);
   const [isUpdatingTailscaleServe, setIsUpdatingTailscaleServe] = useState(false);
+  const [isUpdatingTunnelPairing, setIsUpdatingTunnelPairing] = useState(false);
+  // Fork: null until the user edits the field; the saved URL shows until then.
+  const [tunnelPairingUrlInput, setTunnelPairingUrlInput] = useState<string | null>(null);
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
   // Pending WSL setting change waiting on user confirmation. Set when
@@ -2452,6 +2455,37 @@ export function ConnectionsSettings() {
       setIsUpdatingTailscaleServe(false);
     }
   }, [desktopBridge, desktopServerExposureState, primaryEnvironmentId]);
+
+  const handleTunnelPairingChange = useCallback(
+    async (input: { readonly enabled: boolean; readonly url: string | null }) => {
+      if (
+        !desktopBridge ||
+        primaryEnvironmentId === null ||
+        !readEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope)
+      )
+        return;
+      setIsUpdatingTunnelPairing(true);
+      setDesktopServerExposureMutationError(null);
+      try {
+        await desktopBridge.setTunnelPairing(input);
+        refreshDesktopNetworkAccessState();
+        setTunnelPairingUrlInput(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
+        setDesktopServerExposureMutationError(message);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not update tunnel pairing",
+            description: message,
+          }),
+        );
+      } finally {
+        setIsUpdatingTunnelPairing(false);
+      }
+    },
+    [desktopBridge, primaryEnvironmentId],
+  );
 
   const handleStartTailscaleServeDisable = useCallback((_endpoint: AdvertisedEndpoint) => {
     setDisableTailscaleServeDialogOpen(true);
@@ -3513,6 +3547,53 @@ export function ConnectionsSettings() {
       }
     />
   );
+  const savedTunnelPairingUrl = desktopServerExposureState?.tunnelPairingUrl ?? null;
+  const tunnelPairingUrlValue = tunnelPairingUrlInput ?? savedTunnelPairingUrl ?? "";
+  const renderTunnelPairingRow = () => (
+    <SettingsRow
+      title="Allow pairing through a tunnel (server stays on this Mac only)"
+      description={
+        <>
+          <span className="block">
+            The server stays on 127.0.0.1. Point a tunnel such as cloudflared at it, then pair with
+            a token from <code>t3 pair</code> through the tunnel URL. T3 Code restarts when this
+            changes.
+          </span>
+          <Input
+            className="mt-2 max-w-sm"
+            value={tunnelPairingUrlValue}
+            onChange={(event) => setTunnelPairingUrlInput(event.target.value)}
+            onBlur={() => {
+              const url = tunnelPairingUrlValue.trim();
+              if (url === (savedTunnelPairingUrl ?? "")) return;
+              void handleTunnelPairingChange({
+                enabled: desktopServerExposureState?.tunnelPairingEnabled ?? false,
+                url: url.length > 0 ? url : null,
+              });
+            }}
+            placeholder="Tunnel URL, for example https://t3.example.com"
+            aria-label="Tunnel URL"
+            disabled={isUpdatingTunnelPairing}
+            spellCheck={false}
+          />
+        </>
+      }
+      control={
+        <Switch
+          checked={desktopServerExposureState?.tunnelPairingEnabled ?? false}
+          disabled={isUpdatingTunnelPairing || tunnelPairingUrlValue.trim().length === 0}
+          onCheckedChange={(checked) => {
+            const url = tunnelPairingUrlValue.trim();
+            void handleTunnelPairingChange({
+              enabled: checked,
+              url: url.length > 0 ? url : null,
+            });
+          }}
+          aria-label="Allow pairing through a tunnel"
+        />
+      }
+    />
+  );
   const renderAuthorizedClients = (presentation: AccessSectionPresentation) => (
     <>
       {desktopAccessManagementError ? (
@@ -3701,6 +3782,7 @@ export function ConnectionsSettings() {
             {canManageLocalBackend && desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
+                {renderTunnelPairingRow()}
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
                 {renderWslRow()}

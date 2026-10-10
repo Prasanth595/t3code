@@ -12,6 +12,8 @@ const serverExposureState: DesktopServerExposureState = {
   mode: "network-accessible",
   tailscaleServeEnabled: false,
   tailscaleServePort: 443,
+  tunnelPairingEnabled: false,
+  tunnelPairingUrl: null,
 };
 
 const advertisedEndpoints: ReadonlyArray<AdvertisedEndpoint> = [];
