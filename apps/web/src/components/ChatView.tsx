@@ -1,5 +1,6 @@
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
+import { ForkThreadDialog } from "./chat/ForkThreadDialog";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   isThreadWokeUnseen,
@@ -1278,6 +1279,10 @@ export default function ChatView(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [forkSource, setForkSource] = useState<{ sourceThreadId: ThreadId; runId: RunId } | null>(
+    null,
+  );
+  useEffect(() => setForkSource(null), [routeThreadKey]);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
@@ -5829,45 +5834,66 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
 
-  const onForkFromRun = async (input: {
-    readonly sourceThreadId: ThreadId;
-    readonly runId: RunId;
-  }) => {
-    if (!activeThread || activeEnvironmentUnavailable) return;
-    const targetThreadId = newThreadId();
-    const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
-    const result = await forkThreadFromRun({
-      environmentId,
-      input: {
-        sourceThreadId: input.sourceThreadId,
-        targetThreadId,
-        runId: input.runId,
-        title: `${activeThread.title} fork`,
-      },
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
+  const onForkFromRun = useCallback(
+    async (input: { readonly sourceThreadId: ThreadId; readonly runId: RunId }) => {
+      if (!activeThread || activeEnvironmentUnavailable) return;
+      setForkSource(input);
+    },
+    [activeThread, activeEnvironmentUnavailable, setForkSource],
+  );
+  const onForkWorkspaceSelected = useCallback(
+    async (
+      workspaceStrategy: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    ) => {
+      if (!activeThread || activeEnvironmentUnavailable) return;
+      if (forkSource === null) return;
+      const targetThreadId = newThreadId();
+      const targetThreadRef = scopeThreadRef(environmentId, targetThreadId);
+      const result = await forkThreadFromRun({
+        environmentId,
+        input: {
+          sourceThreadId: forkSource.sourceThreadId,
+          targetThreadId,
+          runId: forkSource.runId,
+          title: `${activeThread.title} fork`,
+          workspaceStrategy,
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadError(
+            activeThread.id,
+            error instanceof Error ? error.message : "Failed to fork this response.",
+          );
+        }
+        return;
+      }
+      setForkSource(null);
+      const targetThreadReady = await waitForThreadShell(targetThreadRef);
+      if (!targetThreadReady) {
         setThreadError(
           activeThread.id,
-          error instanceof Error ? error.message : "Failed to fork this response.",
+          "The fork was created, but its thread data did not reach this client. Reconnect and try opening it from the sidebar.",
         );
+        return;
       }
-      return;
-    }
-    const targetThreadReady = await waitForThreadShell(targetThreadRef);
-    if (!targetThreadReady) {
-      setThreadError(
-        activeThread.id,
-        "The fork was created, but its thread data did not reach this client. Reconnect and try opening it from the sidebar.",
-      );
-      return;
-    }
-    await navigate({
-      to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(targetThreadRef),
-    });
-  };
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(targetThreadRef),
+      });
+    },
+    [
+      activeEnvironmentUnavailable,
+      activeThread,
+      environmentId,
+      forkThreadFromRun,
+      forkSource,
+      navigate,
+      setForkSource,
+      setThreadError,
+    ],
+  );
   const onForkFromRunStable = useStableCallback(onForkFromRun);
   const onCompactContext = () => {
     if (compactDisabled) return;
@@ -7827,6 +7853,15 @@ export default function ChatView(props: ChatViewProps) {
       ref={setWorkspaceLayoutElement}
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background"
     >
+      {forkSource && activeThread ? (
+        <ForkThreadDialog
+          worktreePath={activeThread.worktreePath}
+          branch={activeThread.branch}
+          isGitRepo={isGitRepo}
+          onClose={() => setForkSource(null)}
+          onSelect={onForkWorkspaceSelected}
+        />
+      ) : null}
       <DeviceSetupDialogHost
         threadKey={activeThreadKey}
         threadRef={activeThreadRef}

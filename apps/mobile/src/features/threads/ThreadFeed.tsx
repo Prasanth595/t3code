@@ -4,6 +4,7 @@ import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdown
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentation";
 import { ThreadContextDivider } from "./thread-context-divider";
+import { ThreadForkSheet } from "./ThreadForkSheet";
 import { ThreadHandoffDivider, ThreadHandoffRow } from "./thread-handoff-row";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -361,6 +362,8 @@ function UserMessageCopyButton(props: {
 
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly iconColor: ColorValue;
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly sourceTitle: string;
@@ -373,6 +376,7 @@ function AssistantForkButton(props: {
   const forkFromRun = useAtomCommand(threadEnvironment.forkFromRun, "fork from response");
   const navigation = useNavigation();
   const [busy, setBusy] = useState(false);
+  const [choosingWorkspace, setChoosingWorkspace] = useState(false);
   const canFork = canForkProjectedAssistantItem({
     projectedItem: props.projectedItem,
     capabilities: support.providerSession?.capabilities,
@@ -382,54 +386,73 @@ function AssistantForkButton(props: {
   if (!canFork || runId === null) return null;
 
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="Fork from this response"
-      disabled={busy}
-      onPress={() => {
-        const targetThreadId = ThreadId.make(uuidv4());
-        setBusy(true);
-        void Haptics.selectionAsync();
-        void forkFromRun({
-          environmentId: props.environmentId,
-          input: {
-            sourceThreadId: props.projectedItem.sourceThreadId,
-            targetThreadId,
-            runId,
-            title: `${props.sourceTitle} fork`,
-            creationSource: "mobile",
-          },
-        })
-          .then(async (result) => {
-            if (result._tag !== "Success") return;
-            const targetThreadReady = await waitForThreadShell(props.environmentId, targetThreadId);
-            if (!targetThreadReady) {
-              Dialog.alert(
-                "Fork created",
-                "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
-              );
-              return;
-            }
-            navigation.navigate("Thread", {
+    <>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Fork from this response"
+        disabled={busy}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          setChoosingWorkspace(true);
+        }}
+        className="h-7 w-7 items-center justify-center disabled:opacity-40"
+      >
+        {busy ? (
+          <AppActivityIndicator size="small" />
+        ) : (
+          <SymbolView
+            name="arrow.triangle.branch"
+            size={13}
+            tintColor={props.iconColor}
+            type="monochrome"
+          />
+        )}
+      </Pressable>
+      {choosingWorkspace ? (
+        <ThreadForkSheet
+          environmentId={props.environmentId}
+          threadId={props.threadId}
+          workspaceRoot={props.workspaceRoot}
+          onClose={() => setChoosingWorkspace(false)}
+          onSelect={(workspaceStrategy) => {
+            setChoosingWorkspace(false);
+            const targetThreadId = ThreadId.make(uuidv4());
+            setBusy(true);
+            void Haptics.selectionAsync();
+            void forkFromRun({
               environmentId: props.environmentId,
-              threadId: targetThreadId,
-            });
-          })
-          .finally(() => setBusy(false));
-      }}
-      className="h-7 w-7 items-center justify-center disabled:opacity-40"
-    >
-      {busy ? (
-        <AppActivityIndicator size="small" />
-      ) : (
-        <SymbolView
-          name="arrow.triangle.branch"
-          size={13}
-          tintColor={props.iconColor}
-          type="monochrome"
+              input: {
+                sourceThreadId: props.projectedItem.sourceThreadId,
+                targetThreadId,
+                runId,
+                title: `${props.sourceTitle} fork`,
+                creationSource: "mobile",
+                workspaceStrategy,
+              },
+            })
+              .then(async (result) => {
+                if (result._tag !== "Success") return;
+                const targetThreadReady = await waitForThreadShell(
+                  props.environmentId,
+                  targetThreadId,
+                );
+                if (!targetThreadReady) {
+                  Dialog.alert(
+                    "Fork created",
+                    "Its thread data did not reach this client. Reconnect and try opening it from the thread list.",
+                  );
+                  return;
+                }
+                navigation.navigate("Thread", {
+                  environmentId: props.environmentId,
+                  threadId: targetThreadId,
+                });
+              })
+              .finally(() => setBusy(false));
+          }}
         />
-      )}
-    </Pressable>
+      ) : null}
+    </>
   );
 }
 
@@ -1427,6 +1450,8 @@ function renderFeedEntry(
             {message.projectedItem ? (
               <AssistantForkButton
                 environmentId={props.environmentId}
+                threadId={props.threadId}
+                workspaceRoot={props.workspaceRoot ?? null}
                 iconColor={iconSubtleColor}
                 projectedItem={message.projectedItem}
                 sourceTitle={props.threadTitle}

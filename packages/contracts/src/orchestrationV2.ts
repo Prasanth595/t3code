@@ -2912,6 +2912,12 @@ export const OrchestrationV2Command = Schema.Union([
     sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
     sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    workspace: Schema.optional(
+      Schema.Struct({
+        branch: Schema.NullOr(TrimmedNonEmptyString),
+        worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+      }),
+    ),
     title: Schema.optional(TrimmedNonEmptyString),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
@@ -3149,6 +3155,9 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  forkSource: Schema.optional(
+    Schema.Struct({ sourceThreadId: ThreadId, sourcePoint: OrchestrationV2ThreadForkSourcePoint }),
+  ),
   initialMessage: Schema.optional(
     Schema.Struct({
       messageId: Schema.optional(MessageId),

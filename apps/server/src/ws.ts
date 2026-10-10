@@ -1942,6 +1942,7 @@ const layerWsRpc = (
                     runtimeMode: input.runtimeMode,
                     interactionMode: input.interactionMode,
                     workspaceStrategy: input.workspaceStrategy,
+                    ...(input.forkSource === undefined ? {} : { forkSource: input.forkSource }),
                     ...(input.initialMessage === undefined
                       ? {}
                       : {
