@@ -2406,6 +2406,20 @@ code {
   border-right-width: var(--theme-border-width);
 }
 
+/* The strip under the composer draws its box on ::before, so the class
+   rules above miss it. */
+:root[data-theme-border-width] [data-slot="composer-context-strip"]::before {
+  border-width: var(--theme-border-width);
+  border-top-width: 0;
+}
+:root[data-theme-radius] [data-slot="composer-context-strip"]::before {
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+:root[data-theme-shadow] [data-slot="composer-context-strip"]::before {
+  box-shadow: var(--theme-shadow);
+}
+
 /* Raised surfaces and solid buttons take the theme shadow. */
 :root[data-theme-shadow]
   :is(

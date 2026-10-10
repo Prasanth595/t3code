@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build the fork macOS arm64 app, signed with the self-made fork certificate.
 # It builds only the zip that the updater uses. The CI release adds the DMG.
-# Usage: scripts/fork-desktop-mac.sh [--publish]
+# Usage: scripts/fork-desktop-mac.sh [--publish | --install]
+# --install replaces the app in /Applications and restarts it. No GitHub round trip.
 # --publish uploads the build as a prerelease on the fork, so installed fork apps update to it.
 # See docs/fork.md.
 set -euo pipefail
@@ -10,9 +11,11 @@ readonly FORK_REPOSITORY="Yarden-zamir/t3code"
 readonly SIGN_IDENTITY="Yarden Zamir T3 Fork"
 
 publish=false
+install=false
 case "${1:-}" in
   "") ;;
   --publish) publish=true ;;
+  --install) install=true ;;
   *) echo "Unknown argument: $1" >&2; exit 2 ;;
 esac
 
@@ -51,8 +54,27 @@ T3CODE_DESKTOP_UPDATE_REPOSITORY="$FORK_REPOSITORY" \
 verify_dir="$(mktemp -d)"
 ditto -x -k release/*-arm64.zip "$verify_dir"
 codesign --verify --deep --strict "$verify_dir"/*.app
-rm -rf "$verify_dir"
 echo "Built $version in $repo_root/release"
+
+if [[ "$install" == true ]]; then
+  app_name="$(basename "$verify_dir"/*.app)"
+  installed="/Applications/$app_name"
+  # One backup only: the previous install. Older backups are not kept.
+  backup="$repo_root/../_shared/backup/$app_name"
+  mkdir -p "$(dirname "$backup")"
+  osascript -e "quit app \"${app_name%.app}\"" || true
+  for _ in $(seq 1 30); do pgrep -f "$installed/Contents/MacOS/" >/dev/null || break; sleep 1; done
+  if pgrep -f "$installed/Contents/MacOS/" >/dev/null; then
+    echo "$app_name did not quit; the install stopped." >&2
+    exit 1
+  fi
+  rm -rf "$backup"
+  [[ -d "$installed" ]] && mv "$installed" "$backup"
+  mv "$verify_dir/$app_name" "$installed"
+  open "$installed"
+  echo "Installed $version to $installed"
+fi
+rm -rf "$verify_dir"
 
 if [[ "$publish" == true ]]; then
   shopt -s nullglob
