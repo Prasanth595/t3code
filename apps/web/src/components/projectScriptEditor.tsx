@@ -99,6 +99,8 @@ export interface NewProjectScriptInput {
   previewUrl: string | null;
   /** When true, automatically open the preview panel pointed at `previewUrl`. */
   autoOpenPreview: boolean;
+  /** When true, run without opening or focusing the terminal drawer. */
+  runInBackground: boolean;
 }
 
 export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
@@ -113,6 +115,7 @@ export const EMPTY_PROJECT_SCRIPT_INPUT: NewProjectScriptInput = {
   keybinding: null,
   previewUrl: null,
   autoOpenPreview: false,
+  runInBackground: false,
 };
 
 /** What the editor dialog should open with. `scriptId: null` means "add". */
@@ -139,6 +142,7 @@ export function editorRequestForScript(
       keybinding: keybindingValueForCommand(keybindings, commandForProjectScript(script.id)),
       previewUrl: script.previewUrl ?? null,
       autoOpenPreview: script.autoOpenPreview ?? false,
+      runInBackground: script.runInBackground ?? false,
     },
   };
 }
@@ -189,6 +193,7 @@ export function ProjectScriptEditorDialog({
   const [keybinding, setKeybinding] = useState("");
   const [previewUrl, setPreviewUrl] = useState("");
   const [autoOpenPreview, setAutoOpenPreview] = useState(false);
+  const [runInBackground, setRunInBackground] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useComposerMenuState(!canEditActions);
   const [savingRequest, setSavingRequest] = useState<ProjectScriptEditorRequest | null>(null);
@@ -221,6 +226,7 @@ export function ProjectScriptEditorDialog({
     setKeybinding(request.initial.keybinding ?? "");
     setPreviewUrl(request.initial.previewUrl ?? "");
     setAutoOpenPreview(request.initial.autoOpenPreview);
+    setRunInBackground(request.initial.runInBackground);
     setValidationError(request.error ?? null);
     setSavingRequest(null);
   }, [request, setIconPickerOpen]);
@@ -297,6 +303,7 @@ export function ProjectScriptEditorDialog({
           : {}),
         previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
         autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
+        runInBackground,
       } satisfies NewProjectScriptInput;
     } catch (error) {
       setValidationError(error instanceof Error ? error.message : "Failed to save action.");
@@ -481,6 +488,13 @@ export function ProjectScriptEditorDialog({
                     checked={autoOpenPreview}
                     disabled={previewUrl.trim().length === 0}
                     onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
+                  />
+                </label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
+                  <span>Run in background (do not open the terminal)</span>
+                  <Switch
+                    checked={runInBackground}
+                    onCheckedChange={(checked) => setRunInBackground(Boolean(checked))}
                   />
                 </label>
                 {validationError && <p className="text-sm text-destructive">{validationError}</p>}

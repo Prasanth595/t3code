@@ -16,9 +16,35 @@ import {
   primaryProjectScript,
   projectScriptIdFromCommand,
   releaseClaimedRoles,
+  shouldShowScriptTerminal,
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
+  const backgroundInput = {
+    name: "Navgator",
+    command: "bash navgator.sh",
+    icon: "play",
+    runOnWorktreeCreate: false,
+    waitForSetup: false,
+    runOnSettle: false,
+    previewUrl: null,
+    autoOpenPreview: false,
+  } as const;
+
+  it("stores runInBackground only when it is on", () => {
+    const on = buildProjectScript("nav", { ...backgroundInput, runInBackground: true });
+    expect(on.runInBackground).toBe(true);
+    const off = buildProjectScript("nav", { ...backgroundInput, runInBackground: false });
+    expect("runInBackground" in off).toBe(false);
+  });
+
+  it("shows the terminal drawer unless the script runs in background", () => {
+    const script = buildProjectScript("nav", { ...backgroundInput, runInBackground: false });
+    expect(shouldShowScriptTerminal(script)).toBe(true);
+    expect(shouldShowScriptTerminal({ ...script, runInBackground: false })).toBe(true);
+    expect(shouldShowScriptTerminal({ ...script, runInBackground: true })).toBe(false);
+  });
+
   it("builds scripts with preview settings", () => {
     expect(
       buildProjectScript("dev", {
@@ -30,6 +56,7 @@ describe("projectScripts helpers", () => {
         runOnSettle: false,
         previewUrl: "http://localhost:5733",
         autoOpenPreview: true,
+        runInBackground: false,
       }),
     ).toEqual({
       id: "dev",
@@ -53,6 +80,7 @@ describe("projectScripts helpers", () => {
         runOnSettle: false,
         previewUrl: null,
         autoOpenPreview: false,
+        runInBackground: false,
       }),
     ).toEqual({
       id: "test",
@@ -70,6 +98,7 @@ describe("projectScripts helpers", () => {
       icon: "configure",
       previewUrl: null,
       autoOpenPreview: false,
+      runInBackground: false,
       runOnSettle: false,
     } as const;
     expect(
@@ -170,6 +199,7 @@ describe("projectScripts helpers", () => {
       waitForSetup: false,
       previewUrl: null,
       autoOpenPreview: false,
+      runInBackground: false,
     } as const;
     const holder = {
       id: "holder",

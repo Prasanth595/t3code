@@ -119,6 +119,7 @@ export function ProjectActionsSettings() {
         keybinding: null,
         previewUrl: fileScript.previewUrl ?? null,
         autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
+        runInBackground: fileScript.runInBackground ?? false,
       };
       const result = await submit(null, payload);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {

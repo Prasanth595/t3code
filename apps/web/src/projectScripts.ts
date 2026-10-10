@@ -16,6 +16,7 @@ export interface ProjectScriptInput {
   readonly runOnSettle: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
+  readonly runInBackground: boolean;
 }
 
 export function buildProjectScript(id: string, input: ProjectScriptInput): ProjectScript {
@@ -33,7 +34,13 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
           previewUrl: input.previewUrl,
           autoOpenPreview: input.autoOpenPreview,
         }),
+    ...(input.runInBackground ? { runInBackground: true } : {}),
   };
+}
+
+/** A background script runs in a new terminal without opening or focusing the drawer. */
+export function shouldShowScriptTerminal(script: ProjectScript): boolean {
+  return script.runInBackground !== true;
 }
 
 /**

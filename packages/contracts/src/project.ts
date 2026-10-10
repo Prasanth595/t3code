@@ -42,6 +42,8 @@ export const ProjectScript = Schema.Struct({
   async: Schema.optional(Schema.Boolean),
   previewUrl: Schema.optional(TrimmedNonEmptyString),
   autoOpenPreview: Schema.optional(Schema.Boolean),
+  /** Run without opening or focusing the terminal drawer. */
+  runInBackground: Schema.optional(Schema.Boolean),
 });
 export type ProjectScript = typeof ProjectScript.Type;
 

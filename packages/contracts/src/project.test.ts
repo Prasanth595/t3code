@@ -19,6 +19,7 @@ import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectWriteFileError,
+  ProjectScript,
 } from "./project.ts";
 
 const decodeProjectCreatePayload = Schema.decodeUnknownSync(ProjectCreatePayload);
@@ -262,3 +263,19 @@ effectIt.effect("an icon kind from a newer server shows the default icon", () =>
     assert.strictEqual(broken._tag, "Failure");
   }),
 );
+
+describe("ProjectScript", () => {
+  const decodeProjectScript = Schema.decodeUnknownSync(ProjectScript);
+  const base = {
+    id: "nav",
+    name: "Navgator",
+    command: "bash nav.sh",
+    icon: "play",
+    runOnWorktreeCreate: false,
+  };
+
+  it("accepts runInBackground and keeps an absent value absent", () => {
+    expect(decodeProjectScript({ ...base, runInBackground: true }).runInBackground).toBe(true);
+    expect("runInBackground" in decodeProjectScript(base)).toBe(false);
+  });
+});

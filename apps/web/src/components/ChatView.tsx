@@ -319,6 +319,7 @@ import {
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   buildProjectScript,
+  shouldShowScriptTerminal,
   commandForProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
@@ -4979,7 +4980,15 @@ export default function ChatView(props: ChatViewProps) {
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      const wantsNewTerminal = Boolean(options?.preferNewTerminal) || isBaseTerminalBusy;
+      const showTerminal = shouldShowScriptTerminal(script);
+      // A background script gets its own terminal so it never types into a shell
+      // the user is not looking at. The session stays listed in the drawer.
+      // Limit: the command runs inside an interactive shell, so no exit status
+      // reaches the client and a failing command is not reported. Only open and
+      // write failures surface. Revisit when the terminal API reports per-command
+      // exit codes, or move background scripts to a server-side runner.
+      const wantsNewTerminal =
+        Boolean(options?.preferNewTerminal) || isBaseTerminalBusy || !showTerminal;
       const shouldCreateNewTerminal =
         wantsNewTerminal ||
         !canReuseTerminal ||
@@ -4991,11 +5000,11 @@ export default function ChatView(props: ChatViewProps) {
         cwd: targetCwd,
         worktreePath: targetWorktreePath,
       });
-      setTerminalOpen(true);
+      if (showTerminal) setTerminalOpen(true);
       if (!activeThreadRef) {
         return;
       }
-      setTerminalFocusRequestId((value) => value + 1);
+      if (showTerminal) setTerminalFocusRequestId((value) => value + 1);
 
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {

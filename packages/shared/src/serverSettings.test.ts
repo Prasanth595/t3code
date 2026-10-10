@@ -68,6 +68,24 @@ describe("serverSettings helpers", () => {
     expect(applyServerSettingsPatch(edited, { deviceHosts: [] }).deviceHosts).toEqual([]);
   });
 
+  it("keeps runInBackground through global and project script saves", () => {
+    const projectId = ProjectId.make("project-background");
+    const script = {
+      id: "nav",
+      name: "Navgator",
+      command: "bash nav.sh",
+      icon: "play" as const,
+      runOnWorktreeCreate: false,
+      runInBackground: true,
+    };
+    const saved = applyServerSettingsPatch(FOLDED_SERVER_SETTINGS, {
+      globalScripts: [script],
+      projectScriptOverrides: { [projectId]: [script] },
+    });
+    expect(saved.globalScripts).toEqual([script]);
+    expect(resolveProjectScripts(saved, { id: projectId, scripts: [] })).toEqual([script]);
+  });
+
   it("inherits actions, preserves existing actions, and supports empty overrides and reset", () => {
     const project = { id: ProjectId.make("project-actions"), scripts: [] };
     const action = {
