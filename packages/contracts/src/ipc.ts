@@ -503,6 +503,9 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
   tailscaleServeEnabled: boolean;
   tailscaleServePort: number;
+  // Fork: tunnel pairing (see apps/desktop DesktopServerExposure).
+  tunnelPairingEnabled: boolean;
+  tunnelPairingUrl: string | null;
 }
 
 export const DesktopServerExposureStateSchema = Schema.Struct({
@@ -511,6 +514,8 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   advertisedHost: Schema.NullOr(Schema.String),
   tailscaleServeEnabled: Schema.Boolean,
   tailscaleServePort: Schema.Number,
+  tunnelPairingEnabled: Schema.Boolean,
+  tunnelPairingUrl: Schema.NullOr(Schema.String),
 });
 
 export interface PickFolderOptions {
@@ -1186,6 +1191,11 @@ export interface DesktopBridge {
   setTailscaleServeEnabled: (input: {
     readonly enabled: boolean;
     readonly port?: number;
+  }) => Promise<DesktopServerExposureState>;
+  // Fork: `url` must be an https origin when `enabled` is true.
+  setTunnelPairing: (input: {
+    readonly enabled: boolean;
+    readonly url: string | null;
   }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   getWslState: () => Promise<DesktopWslState>;

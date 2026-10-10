@@ -28,6 +28,8 @@ const DesktopSettingsPatch = Schema.Struct({
   serverExposureMode: Schema.optionalKey(Schema.Literals(["local-only", "network-accessible"])),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
+  tunnelPairingEnabled: Schema.optionalKey(Schema.Boolean),
+  tunnelPairingUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
   updateChannel: Schema.optionalKey(Schema.Literals(["latest", "nightly"])),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   wslBackendEnabled: Schema.optionalKey(Schema.Boolean),
@@ -130,6 +132,8 @@ describe("DesktopSettings", () => {
         serverExposureMode: "local-only",
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
+        tunnelPairingEnabled: false,
+        tunnelPairingUrl: null,
         updateChannel: "nightly",
         updateChannelConfiguredByUser: false,
         wslBackendEnabled: false,
@@ -160,6 +164,8 @@ describe("DesktopSettings", () => {
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
+          tunnelPairingEnabled: false,
+          tunnelPairingUrl: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
@@ -268,6 +274,8 @@ describe("DesktopSettings", () => {
           serverExposureMode: "network-accessible",
           tailscaleServeEnabled: true,
           tailscaleServePort: 8443,
+          tunnelPairingEnabled: false,
+          tunnelPairingUrl: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
@@ -325,6 +333,8 @@ describe("DesktopSettings", () => {
             serverExposureMode: "network-accessible",
             tailscaleServeEnabled: true,
             tailscaleServePort: 8443,
+            tunnelPairingEnabled: false,
+            tunnelPairingUrl: null,
             updateChannel: "nightly",
             updateChannelConfiguredByUser: true,
             wslBackendEnabled: false,
@@ -402,6 +412,8 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          tunnelPairingEnabled: false,
+          tunnelPairingUrl: null,
           updateChannel: "nightly",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,
@@ -431,6 +443,8 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          tunnelPairingEnabled: false,
+          tunnelPairingUrl: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: true,
           wslBackendEnabled: false,
@@ -439,6 +453,26 @@ describe("DesktopSettings", () => {
         } satisfies DesktopAppSettings.DesktopSettings);
       }),
       { appVersion: "0.0.17-nightly.20260415.1" },
+    ),
+  );
+
+  it.effect("loads tunnel pairing only with a valid https tunnel URL", () =>
+    withSettings(
+      Effect.gen(function* () {
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* writeSettingsPatch({
+          tunnelPairingEnabled: true,
+          tunnelPairingUrl: "https://t3.example.com",
+        });
+        const valid = yield* settings.load;
+        assert.equal(valid.tunnelPairingEnabled, true);
+        assert.equal(valid.tunnelPairingUrl, "https://t3.example.com");
+
+        yield* writeSettingsPatch({ tunnelPairingEnabled: true, tunnelPairingUrl: "not a url" });
+        const invalid = yield* settings.load;
+        assert.equal(invalid.tunnelPairingEnabled, false);
+        assert.equal(invalid.tunnelPairingUrl, null);
+      }),
     ),
   );
 
@@ -459,6 +493,8 @@ describe("DesktopSettings", () => {
           serverExposureMode: "local-only",
           tailscaleServeEnabled: true,
           tailscaleServePort: 443,
+          tunnelPairingEnabled: false,
+          tunnelPairingUrl: null,
           updateChannel: "latest",
           updateChannelConfiguredByUser: false,
           wslBackendEnabled: false,

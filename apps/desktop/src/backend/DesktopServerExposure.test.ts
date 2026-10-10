@@ -1,3 +1,4 @@
+import * as Option from "effect/Option";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -199,6 +200,8 @@ describe("DesktopServerExposure", () => {
           advertisedHost: "192.168.1.20",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
+          tunnelPairingEnabled: false,
+          tunnelPairingUrl: null,
         });
 
         const backendConfig = yield* serverExposure.backendConfig;
@@ -242,6 +245,51 @@ describe("DesktopServerExposure", () => {
     ),
   );
 
+  it.effect("keeps loopback and advertises the tunnel URL only while tunnel pairing is on", () =>
+    withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const invalid = yield* serverExposure
+          .setTunnelPairing({ enabled: true, url: "http://t3.example.com" })
+          .pipe(Effect.flip);
+        assert.equal(invalid._tag, "DesktopTunnelPairingInvalidUrlError");
+
+        const enabled = yield* serverExposure.setTunnelPairing({
+          enabled: true,
+          url: "https://t3.example.com/",
+        });
+        assert.equal(enabled.requiresRelaunch, true);
+        assert.equal(enabled.state.tunnelPairingUrl, "https://t3.example.com");
+
+        const backendConfig = yield* serverExposure.backendConfig;
+        assert.equal(backendConfig.bindHost, "127.0.0.1");
+        assert.deepEqual(
+          Option.getOrNull(backendConfig.tunnelPairingUrl),
+          "https://t3.example.com",
+        );
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.isTrue(
+          endpoints.some((endpoint) => endpoint.httpBaseUrl.startsWith("https://t3.example.com")),
+        );
+
+        const disabled = yield* serverExposure.setTunnelPairing({
+          enabled: false,
+          url: "https://t3.example.com",
+        });
+        assert.equal(disabled.requiresRelaunch, true);
+        assert.isTrue(Option.isNone((yield* serverExposure.backendConfig).tunnelPairingUrl));
+        // The URL stays saved for the next time pairing is turned on.
+        assert.equal((yield* settings.get).tunnelPairingUrl, "https://t3.example.com");
+      }),
+    ),
+  );
+
   it.effect("preserves persistence request context and the settings failure chain", () => {
     const diskFailure = new Error("disk exploded");
     const settingsFailure = new DesktopAppSettings.DesktopSettingsWriteError({
@@ -255,6 +303,7 @@ describe("DesktopServerExposure", () => {
       setMainWindowBounds: () => Effect.die("unexpected main window bounds update"),
       setServerExposureMode: () => Effect.fail(settingsFailure),
       setTailscaleServe: () => Effect.fail(settingsFailure),
+      setTunnelPairing: () => Effect.die("unexpected tunnel pairing update"),
       setUpdateChannel: () => Effect.die("unexpected update channel change"),
       setWslBackendEnabled: () => Effect.die("unexpected WSL backend toggle"),
       setWslDistro: () => Effect.die("unexpected WSL distro change"),

@@ -58,6 +58,23 @@ export const setTailscaleServeEnabled = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const setTunnelPairing = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.SET_TUNNEL_PAIRING_CHANNEL,
+  payload: DesktopServerExposure.TunnelPairingInput,
+  result: DesktopServerExposureStateSchema,
+  handler: Effect.fn("desktop.ipc.serverExposure.setTunnelPairing")(function* (input) {
+    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const change = yield* serverExposure.setTunnelPairing(input);
+    if (change.requiresRelaunch) {
+      yield* lifecycle.relaunch(
+        change.state.tunnelPairingEnabled ? "tunnel-pairing-enabled" : "tunnel-pairing-disabled",
+      );
+    }
+    return change.state;
+  }),
+});
+
 export const getAdvertisedEndpoints = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.GET_ADVERTISED_ENDPOINTS_CHANNEL,
   payload: Schema.Void,

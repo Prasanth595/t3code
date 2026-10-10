@@ -58,10 +58,12 @@ const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExp
     httpBaseUrl: new URL("http://127.0.0.1:3773"),
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
+    tunnelPairingUrl: Option.none(),
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),
   setTailscaleServeEnabled: () => Effect.die("unexpected setTailscaleServeEnabled"),
+  setTunnelPairing: () => Effect.die("unexpected setTunnelPairing"),
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposure["Service"]);
 

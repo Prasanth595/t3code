@@ -242,6 +242,38 @@ export class DesktopTailscaleServePersistenceError extends Schema.TaggedError<De
   }
 }
 
+export class DesktopTunnelPairingInvalidUrlError extends Schema.TaggedError<DesktopTunnelPairingInvalidUrlError>()(
+  "DesktopTunnelPairingInvalidUrlError",
+  { url: Schema.NullOr(Schema.String) },
+) {
+  override get message(): string {
+    return `Tunnel pairing needs an https origin such as https://t3.example.com, got ${this.url ?? "nothing"}.`;
+  }
+}
+
+export class DesktopTunnelPairingPersistenceError extends Schema.TaggedError<DesktopTunnelPairingPersistenceError>()(
+  "DesktopTunnelPairingPersistenceError",
+  {
+    enabled: Schema.Boolean,
+    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
+  },
+) {
+  override get message(): string {
+    return `Failed to persist desktop tunnel pairing settings (enabled: ${this.enabled}).`;
+  }
+}
+
+export const DesktopTunnelPairingError = Schema.Union([
+  DesktopTunnelPairingInvalidUrlError,
+  DesktopTunnelPairingPersistenceError,
+]);
+export type DesktopTunnelPairingError = typeof DesktopTunnelPairingError.Type;
+
+export const TunnelPairingInput = Schema.Struct({
+  enabled: Schema.Boolean,
+  url: Schema.NullOr(Schema.String),
+});
+
 export const DesktopServerExposureSetModeError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
@@ -252,6 +284,8 @@ export const DesktopServerExposureError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
   DesktopTailscaleServePersistenceError,
+  DesktopTunnelPairingInvalidUrlError,
+  DesktopTunnelPairingPersistenceError,
 ]);
 export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
 
@@ -261,6 +295,8 @@ export interface DesktopServerExposureBackendConfig {
   readonly httpBaseUrl: URL;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  // Fork: set only while tunnel pairing is on.
+  readonly tunnelPairingUrl: Option.Option<string>;
 }
 
 export interface DesktopServerExposureChange {
@@ -283,6 +319,9 @@ export class DesktopServerExposure extends Context.Service<
       readonly enabled: boolean;
       readonly port?: number;
     }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
+    readonly setTunnelPairing: (
+      input: typeof TunnelPairingInput.Type,
+    ) => Effect.Effect<DesktopServerExposureChange, DesktopTunnelPairingError>;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
@@ -299,6 +338,8 @@ interface RuntimeState {
   readonly advertisedHost: Option.Option<string>;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  readonly tunnelPairingEnabled: boolean;
+  readonly tunnelPairingUrl: Option.Option<string>;
 }
 
 interface ResolvedRuntimeState {
@@ -324,7 +365,14 @@ const toContractState = (state: RuntimeState): DesktopServerExposureState => ({
   advertisedHost: Option.getOrNull(state.advertisedHost),
   tailscaleServeEnabled: state.tailscaleServeEnabled,
   tailscaleServePort: state.tailscaleServePort,
+  tunnelPairingEnabled: state.tunnelPairingEnabled,
+  tunnelPairingUrl: Option.getOrNull(state.tunnelPairingUrl),
 });
+
+// Fork: the tunnel URL reaches the backend and the endpoint list only while
+// tunnel pairing is on.
+const activeTunnelPairingUrl = (state: RuntimeState): Option.Option<string> =>
+  state.tunnelPairingEnabled ? state.tunnelPairingUrl : Option.none();
 
 const toBackendConfig = (state: RuntimeState): DesktopServerExposureBackendConfig => ({
   port: state.port,
@@ -332,6 +380,7 @@ const toBackendConfig = (state: RuntimeState): DesktopServerExposureBackendConfi
   httpBaseUrl: state.httpBaseUrl,
   tailscaleServeEnabled: state.tailscaleServeEnabled,
   tailscaleServePort: state.tailscaleServePort,
+  tunnelPairingUrl: activeTunnelPairingUrl(state),
 });
 
 const toResolvedExposure = (state: RuntimeState): ResolvedDesktopServerExposure => ({
@@ -361,6 +410,8 @@ function runtimeStateFromResolvedExposure(input: {
     advertisedHost: Option.fromNullishOr(input.exposure.advertisedHost),
     tailscaleServeEnabled: input.settings.tailscaleServeEnabled,
     tailscaleServePort: input.settings.tailscaleServePort,
+    tunnelPairingEnabled: input.settings.tunnelPairingEnabled,
+    tunnelPairingUrl: Option.fromNullishOr(input.settings.tunnelPairingUrl),
   };
 }
 
@@ -535,13 +586,51 @@ export const make = Effect.gen(function* () {
     changePermit.withPermit,
   );
 
+  const setTunnelPairing = Effect.fn("desktop.serverExposure.setTunnelPairing")(function* (
+    input: typeof TunnelPairingInput.Type,
+  ) {
+    yield* Effect.annotateCurrentSpan({ enabled: input.enabled });
+    const url = input.url === null ? null : DesktopAppSettings.normalizeTunnelPairingUrl(input.url);
+    // An invalid URL is rejected, never stored. Turning pairing off with no
+    // URL is fine; a blank URL clears the stored one.
+    if (
+      (input.url !== null && input.url.trim().length > 0 && url === null) ||
+      (input.enabled && url === null)
+    ) {
+      return yield* new DesktopTunnelPairingInvalidUrlError({ url: input.url });
+    }
+    const result = yield* desktopSettings
+      .setTunnelPairing({ enabled: input.enabled, url })
+      .pipe(
+        Effect.mapError(
+          (cause) => new DesktopTunnelPairingPersistenceError({ enabled: input.enabled, cause }),
+        ),
+      );
+    const previous = yield* Ref.get(stateRef);
+    const nextState = yield* Ref.updateAndGet(stateRef, (current) => ({
+      ...current,
+      tunnelPairingEnabled: result.settings.tunnelPairingEnabled,
+      tunnelPairingUrl: Option.fromNullishOr(result.settings.tunnelPairingUrl),
+    }));
+    return {
+      state: toContractState(nextState),
+      // The backend reads the URL only at start, so restart when it changes.
+      requiresRelaunch:
+        Option.getOrNull(activeTunnelPairingUrl(previous)) !==
+        Option.getOrNull(activeTunnelPairingUrl(nextState)),
+    };
+  }, changePermit.withPermit);
+
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
     const currentNetworkInterfaces = yield* readNetworkInterfaces;
     const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
       port: state.port,
       exposure: toResolvedExposure(state),
-      customHttpsEndpointUrls: config.desktopHttpsEndpointUrls,
+      customHttpsEndpointUrls: [
+        ...config.desktopHttpsEndpointUrls,
+        ...Option.toArray(activeTunnelPairingUrl(state)),
+      ],
     });
 
     // Don't spawn the Tailscale CLI when the user hasn't opted into any
@@ -570,6 +659,7 @@ export const make = Effect.gen(function* () {
     configureFromSettings,
     setMode,
     setTailscaleServeEnabled,
+    setTunnelPairing,
     getAdvertisedEndpoints,
   });
 });

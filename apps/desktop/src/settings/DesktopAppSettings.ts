@@ -33,6 +33,10 @@ export interface DesktopSettings {
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
+  // Fork: keep the server on loopback but accept one-time-token pairing
+  // through a tunnel at `tunnelPairingUrl` (an https origin).
+  readonly tunnelPairingEnabled: boolean;
+  readonly tunnelPairingUrl: string | null;
   readonly updateChannel: DesktopUpdateChannel;
   readonly updateChannelConfiguredByUser: boolean;
   // Was a "local" | "wsl" swap mode in an earlier iteration of the WSL
@@ -82,6 +86,8 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
+  tunnelPairingEnabled: false,
+  tunnelPairingUrl: null,
   updateChannel: "latest",
   updateChannelConfiguredByUser: false,
   wslBackendEnabled: false,
@@ -104,6 +110,8 @@ const DesktopSettingsDocument = Schema.Struct({
   serverExposureMode: Schema.optionalKey(DesktopServerExposureModeSchema),
   tailscaleServeEnabled: Schema.optionalKey(Schema.Boolean),
   tailscaleServePort: Schema.optionalKey(Schema.Number),
+  tunnelPairingEnabled: Schema.optionalKey(Schema.Boolean),
+  tunnelPairingUrl: Schema.optionalKey(Schema.NullOr(Schema.String)),
   updateChannel: Schema.optionalKey(DesktopUpdateChannelSchema),
   updateChannelConfiguredByUser: Schema.optionalKey(Schema.Boolean),
   // Newer form of the WSL toggle. `wslMode` is still accepted on load so
@@ -171,6 +179,11 @@ export class DesktopAppSettings extends Context.Service<
       readonly enabled: boolean;
       readonly port: Option.Option<number>;
     }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    // Callers validate `url` with normalizeTunnelPairingUrl first.
+    readonly setTunnelPairing: (input: {
+      readonly enabled: boolean;
+      readonly url: string | null;
+    }) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setUpdateChannel: (
       channel: DesktopUpdateChannel,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
@@ -202,6 +215,13 @@ function normalizeTailscaleServePort(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65_535
     ? value
     : DEFAULT_TAILSCALE_SERVE_PORT;
+}
+
+/** Fork: the https origin of `value`, or null when it is not a bare https origin. */
+export function normalizeTunnelPairingUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const url = URL.parse(value.trim());
+  return url !== null && url.protocol === "https:" && url.pathname === "/" ? url.origin : null;
 }
 
 function normalizeWslDistro(value: unknown): string | null {
@@ -240,6 +260,11 @@ function normalizeDesktopSettingsDocument(
       parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
     tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
     tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
+    tunnelPairingUrl: normalizeTunnelPairingUrl(parsed.tunnelPairingUrl),
+    // Pairing without a usable URL has nothing to advertise, so it stays off.
+    tunnelPairingEnabled:
+      parsed.tunnelPairingEnabled === true &&
+      normalizeTunnelPairingUrl(parsed.tunnelPairingUrl) !== null,
     updateChannel: updateChannelConfiguredByUser
       ? Option.getOrElse(parsedUpdateChannel, () => defaultSettings.updateChannel)
       : defaultSettings.updateChannel,
@@ -277,6 +302,12 @@ function toDesktopSettingsDocument(
   }
   if (settings.tailscaleServePort !== defaults.tailscaleServePort) {
     document.tailscaleServePort = settings.tailscaleServePort;
+  }
+  if (settings.tunnelPairingEnabled !== defaults.tunnelPairingEnabled) {
+    document.tunnelPairingEnabled = settings.tunnelPairingEnabled;
+  }
+  if (settings.tunnelPairingUrl !== defaults.tunnelPairingUrl) {
+    document.tunnelPairingUrl = settings.tunnelPairingUrl;
   }
   if (settings.updateChannel !== defaults.updateChannel) {
     document.updateChannel = settings.updateChannel;
@@ -340,6 +371,15 @@ function setTailscaleServe(
         tailscaleServeEnabled: input.enabled,
         tailscaleServePort: port,
       };
+}
+
+function setTunnelPairing(
+  settings: DesktopSettings,
+  input: { readonly enabled: boolean; readonly url: string | null },
+): DesktopSettings {
+  return settings.tunnelPairingEnabled === input.enabled && settings.tunnelPairingUrl === input.url
+    ? settings
+    : { ...settings, tunnelPairingEnabled: input.enabled, tunnelPairingUrl: input.url };
 }
 
 function setUpdateChannel(
@@ -558,6 +598,12 @@ export const make = Effect.gen(function* () {
       persist((settings) => setTailscaleServe(settings, input)).pipe(
         Effect.withSpan("desktop.settings.setTailscaleServe", { attributes: input }),
       ),
+    setTunnelPairing: (input) =>
+      persist((settings) => setTunnelPairing(settings, input)).pipe(
+        Effect.withSpan("desktop.settings.setTunnelPairing", {
+          attributes: { enabled: input.enabled, url: input.url ?? "" },
+        }),
+      ),
     setUpdateChannel: (channel) =>
       persist((settings) => setUpdateChannel(settings, channel)).pipe(
         Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
@@ -616,6 +662,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),
+        setTunnelPairing: (input) => update((settings) => setTunnelPairing(settings, input)),
         setUpdateChannel: (channel) => update((settings) => setUpdateChannel(settings, channel)),
         setWslBackendEnabled: (enabled) =>
           update((settings) => setWslBackendEnabled(settings, enabled)),

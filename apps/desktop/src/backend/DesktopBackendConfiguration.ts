@@ -94,6 +94,7 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_DESKTOP_HTTPS_ENDPOINTS",
   "T3CODE_TAILSCALE_SERVE",
   "T3CODE_TAILSCALE_SERVE_PORT",
+  "T3CODE_TUNNEL_PAIRING_URL",
 ] as const;
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
@@ -573,6 +574,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       shellEnvironmentPrepared: true,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
       tailscaleServePort: backendExposure.tailscaleServePort,
+      ...Option.match(backendExposure.tunnelPairingUrl, {
+        onNone: () => ({}),
+        onSome: (tunnelPairingUrl) => ({ tunnelPairingUrl }),
+      }),
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,
       desktopBrowserFd: 6,
