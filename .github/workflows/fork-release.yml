@@ -8,6 +8,9 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+  # TEMPORARY: lets the branch test this workflow before it reaches main. Remove before merge.
+  push:
+    branches: [feat/fork-releases]
 
 concurrency:
   group: fork-release
