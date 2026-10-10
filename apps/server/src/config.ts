@@ -108,6 +108,9 @@ export class ServerConfig extends Context.Service<
     // Fork: public https origin of a tunnel to this loopback server. When set,
     // a desktop server also accepts one-time-token pairing.
     readonly tunnelPairingUrl?: string | undefined;
+    // Fork: https origins of sibling web pages (for example other tunnels behind
+    // the same Cloudflare Access) that may call this server with cookies.
+    readonly trustedBrowserOrigins?: ReadonlyArray<string> | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

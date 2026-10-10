@@ -21,7 +21,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig } from "./config.ts";
+import { resolveServerConfig, resolveTrustedBrowserOrigins } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -1227,3 +1227,29 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       }),
   );
 });
+
+it.effect("accepts trusted browser origins as comma or newline separated https origins", () =>
+  Effect.gen(function* () {
+    assert.deepEqual(yield* resolveTrustedBrowserOrigins(undefined), []);
+    assert.deepEqual(
+      yield* resolveTrustedBrowserOrigins(
+        " https://t3-mac.example.com/,\nhttps://t3-vps.example.com ",
+      ),
+      ["https://t3-mac.example.com", "https://t3-vps.example.com"],
+    );
+  }),
+);
+
+it.effect("rejects a trusted browser origin that is not a bare https origin", () =>
+  Effect.gen(function* () {
+    for (const raw of [
+      "http://t3.example.com",
+      "https://t3.example.com/path",
+      "t3.example.com",
+      "https://t3.example.com, *",
+    ]) {
+      const error = yield* Effect.flip(resolveTrustedBrowserOrigins(raw));
+      assert.include(String(error.cause), "T3CODE_TRUSTED_BROWSER_ORIGINS");
+    }
+  }),
+);

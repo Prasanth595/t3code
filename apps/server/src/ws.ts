@@ -1712,6 +1712,9 @@ const layerWsRpc = (
               remoteOpenTargets.resolveTargets(),
             ),
             directEndpoints: yield* resolveAvailableEditorsForConfig(directEndpoints.resolve()),
+            ...(config.trustedBrowserOrigins === undefined
+              ? {}
+              : { trustedBrowserOrigins: config.trustedBrowserOrigins }),
             observability: {
               logsDirectoryPath: config.logsDir,
               localTracingEnabled: true,

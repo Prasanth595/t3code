@@ -168,6 +168,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  trustedBrowserOrigins: Config.String("T3CODE_TRUSTED_BROWSER_ORIGINS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -253,6 +257,34 @@ const resolveTunnelPairingUrl = (raw: string | undefined) => {
         }),
       );
 };
+
+// Fork: each trusted browser origin must be a bare https origin. A bad entry
+// fails startup, so a typo never grants cookies to an unexpected page.
+export const resolveTrustedBrowserOrigins = (raw: string | undefined) =>
+  Effect.forEach(
+    (raw ?? "")
+      .replaceAll("\n", ",")
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+    (entry) => {
+      const url = URL.parse(entry);
+      const isOrigin =
+        url !== null &&
+        url.protocol === "https:" &&
+        url.pathname === "/" &&
+        url.search === "" &&
+        url.hash === "" &&
+        url.username === "";
+      return isOrigin
+        ? Effect.succeed(url.origin)
+        : Effect.fail(
+            new CliError.UserError({
+              cause: `T3CODE_TRUSTED_BROWSER_ORIGINS entries must be https origins such as https://t3.example.com, got ${entry}.`,
+            }),
+          );
+    },
+  );
 
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
@@ -420,6 +452,9 @@ export const resolveServerConfig = (
     const tunnelPairingUrl = yield* resolveTunnelPairingUrl(
       env.tunnelPairingUrl ?? bootstrap?.tunnelPairingUrl,
     );
+    const trustedBrowserOrigins = yield* resolveTrustedBrowserOrigins(
+      env.trustedBrowserOrigins ?? bootstrap?.trustedBrowserOrigins,
+    );
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -502,6 +537,7 @@ export const resolveServerConfig = (
       tailscaleServeEnabled,
       tailscaleServePort,
       ...(tunnelPairingUrl === undefined ? {} : { tunnelPairingUrl }),
+      ...(trustedBrowserOrigins.length === 0 ? {} : { trustedBrowserOrigins }),
     };
 
     return config;

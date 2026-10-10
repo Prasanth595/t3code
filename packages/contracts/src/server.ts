@@ -739,6 +739,12 @@ export const ServerConfig = Schema.Struct({
    * servers that predate the feature; empty when bound to loopback only.
    */
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
+  /**
+   * Fork: https origins this server lets call it with cookies
+   * (T3CODE_TRUSTED_BROWSER_ORIGINS). A page served by this server sends
+   * cookies to these origins when they are siblings. Absent when unset.
+   */
+  trustedBrowserOrigins: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   observability: ServerObservability,
   settings: ServerSettings,
   /** Whether shell subscriptions can emit an opt-in catch-up completion marker. */

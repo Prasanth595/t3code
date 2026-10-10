@@ -240,6 +240,12 @@ export const layerBrowserApiCors = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
+    const trustedOrigins = config.trustedBrowserOrigins ?? [];
+    const shared = {
+      allowedMethods: browserApiCorsAllowedMethods,
+      allowedHeaders: browserApiCorsAllowedHeaders,
+      maxAge: 600,
+    };
     // Dev uses credentialed requests from Vite or the Electron custom origin, so both must be
     // explicit. Packaged desktop omits credentials and uses Effect's default wildcard origin.
     //
@@ -247,17 +253,40 @@ export const layerBrowserApiCors = Layer.unwrap(
     // origin — a tailnet name, a LAN IP, a phone. Browser dev normally proxies
     // through Vite and is same-origin (no preflight at all), so this is a
     // safety net for the desktop renderer and any direct-to-backend caller.
-    return HttpRouter.cors({
-      ...(devOrigin
-        ? {
-            allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
-            credentials: true,
-          }
-        : {}),
-      allowedMethods: browserApiCorsAllowedMethods,
-      allowedHeaders: browserApiCorsAllowedHeaders,
-      maxAge: 600,
+    if (devOrigin) {
+      return HttpRouter.cors({
+        allowedOrigins: [
+          devOrigin,
+          ...DESKTOP_RENDERER_ORIGINS,
+          ...config.devAllowedOrigins,
+          ...trustedOrigins,
+        ],
+        credentials: true,
+        ...shared,
+      });
+    }
+    if (trustedOrigins.length === 0) {
+      return HttpRouter.cors(shared);
+    }
+    // Fork: T3CODE_TRUSTED_BROWSER_ORIGINS. A trusted origin gets its exact
+    // origin with credentials, so its cookies (for example Cloudflare Access)
+    // reach this server. Every other origin keeps the wildcard without credentials.
+    const wildcard = HttpMiddleware.cors(shared);
+    const credentialed = HttpMiddleware.cors({
+      allowedOrigins: trustedOrigins,
+      credentials: true,
+      ...shared,
     });
+    return HttpRouter.middleware(
+      (httpApp) =>
+        Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
+          const origin = request.headers["origin"];
+          return origin !== undefined && trustedOrigins.includes(origin)
+            ? credentialed(httpApp)
+            : wildcard(httpApp);
+        }),
+      { global: true },
+    );
   }),
 );
 
