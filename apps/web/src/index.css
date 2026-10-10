@@ -2415,6 +2415,11 @@ code {
   border-radius: var(--radius);
   bottom: var(--chat-composer-context-extension, 0px);
 }
+/* The outline leaves a seam open at the bottom for the strip. With a theme
+   border, the strip has no top edge, so close the seam. */
+:root[data-theme-radius] :is([data-slot="composer-host"], [data-chat-composer-main-surface])::after {
+  clip-path: none;
+}
 :root[data-theme-radius] [data-slot="composer-context-strip"]::before {
   background-color: var(--chat-composer-glass-surface);
 }
