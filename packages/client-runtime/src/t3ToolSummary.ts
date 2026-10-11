@@ -408,9 +408,9 @@ export function summarizeT3ToolCalls(
       );
       const started = outcomes.filter((outcome) => outcome !== "failed").length;
       const failed = outcomes.length - started;
+      failedCount += failed;
       if (outcomes.length > 0 && started === 0) {
         label = `Could not start ${quantity(failed, "review guide")}`;
-        failedCount += failed;
       } else {
         label = phrase(
           "Started",

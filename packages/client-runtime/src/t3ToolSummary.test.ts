@@ -35,8 +35,8 @@ describe("summarizeT3ToolCalls", () => {
     expect(
       summarizeT3ToolCalls("write-pr-guides", [
         completed({}, guides("started", "running", "failed")),
-      ]).label,
-    ).toBe("Started 2 review guides, 1 failed");
+      ]),
+    ).toEqual({ label: "Started 2 review guides, 1 failed", failedCount: 1 });
     const allFailed = summarizeT3ToolCalls("write-pr-guides", [
       completed({}, guides("failed", "failed")),
     ]);

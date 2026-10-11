@@ -394,7 +394,7 @@ const WritePullRequestGuidesTool = Tool.make("write_pull_request_guides", {
   .annotate(Tool.Title, "Write pull request guides")
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.Idempotent, false)
   .annotate(Tool.OpenWorld, true);
 
 const ReadPullRequestGuideTool = Tool.make("read_pull_request_guide", {
