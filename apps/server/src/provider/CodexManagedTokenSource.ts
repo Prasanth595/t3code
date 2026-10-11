@@ -60,13 +60,13 @@ export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSourc
           server.once("error", reject);
           server.listen(0, "127.0.0.1", () => resolve(server));
         }),
-      catch: () =>
+      catch: (cause) =>
         new ProviderSetupError({
           instanceId,
           operation: "runtime",
           detail: "Could not start the managed Codex credential bridge.",
+          cause,
         }),
-    }),
     (server) =>
       Effect.promise(
         () =>
