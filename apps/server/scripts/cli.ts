@@ -6,7 +6,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -21,7 +20,11 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
 } from "./cliErrors.ts";
-import { checkNpmVersionInstallable, publishPlatformsThenLauncher } from "./publishOrder.ts";
+import {
+  checkNpmVersionInstallable,
+  publishPlatformsThenLauncher,
+  readPlatformManifest,
+} from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -168,10 +171,6 @@ const buildExeCmd = Command.make(
 // publish subcommand
 // ---------------------------------------------------------------------------
 
-const decodePlatformManifest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String })),
-);
-
 /**
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
  * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
@@ -219,14 +218,11 @@ const publishCmd = Command.make(
       // The tarball names carry no version, so each package's name and version
       // come from the package.json unpacked beside its tarball.
       const platformSpecs = new Map(
-        yield* Effect.forEach(platformTarballs, (tarball) => {
-          const manifestPath = path.join(scopeDir, path.basename(tarball, ".tgz"), "package.json");
-          return fs.readFileString(manifestPath).pipe(
-            Effect.flatMap(decodePlatformManifest),
-            Effect.map((spec) => [tarball, spec] as const),
-            Effect.mapError(() => new ServerCliBuildAssetMissingError({ assetPath: manifestPath })),
-          );
-        }),
+        yield* Effect.forEach(platformTarballs, (tarball) =>
+          readPlatformManifest(
+            path.join(scopeDir, path.basename(tarball, ".tgz"), "package.json"),
+          ).pipe(Effect.map((spec) => [tarball, spec] as const)),
+        ),
       );
 
       const args = ["publish", "--access", config.access, "--tag", config.tag];

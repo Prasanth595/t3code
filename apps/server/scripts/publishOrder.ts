@@ -1,13 +1,16 @@
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
+  ServerCliBuildAssetMissingError,
   ServerCliNpmPackageNotReadyError,
   ServerCliNpmPackagesNotInstallableError,
+  ServerCliPlatformManifestInvalidError,
 } from "./cliErrors.ts";
 
 const READY_DEADLINE = "10 minutes";
@@ -104,8 +107,6 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
 }) {
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
   const packageSpec = `${spec.name}@${spec.version}`;
-  const notReady = (reason: string) =>
-    new ServerCliNpmPackageNotReadyError({ packageSpec, reason });
   const send = <A>(
     step: string,
     request: HttpClientRequest.HttpClientRequest,
@@ -114,10 +115,22 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
     ) => Effect.Effect<A, ServerCliNpmPackageNotReadyError>,
   ) =>
     client.execute(request).pipe(
-      Effect.mapError((error) => notReady(`${step} ${error.reason._tag}`)),
+      Effect.mapError(
+        (error) =>
+          new ServerCliNpmPackageNotReadyError({
+            packageSpec,
+            reason: `${step} ${error.reason._tag}`,
+            cause: error,
+          }),
+      ),
       Effect.flatMap((response) =>
         response.status < 200 || response.status >= 300
-          ? Effect.fail(notReady(`${step} HTTP ${response.status}`))
+          ? Effect.fail(
+              new ServerCliNpmPackageNotReadyError({
+                packageSpec,
+                reason: `${step} HTTP ${response.status}`,
+              }),
+            )
           : read(response),
       ),
       // Closing the scope aborts the request, so an error response whose body
@@ -125,7 +138,10 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
       Effect.scoped,
       Effect.timeoutOrElse({
         duration: "10 seconds",
-        orElse: () => Effect.fail(notReady(`${step} timed out`)),
+        orElse: () =>
+          Effect.fail(
+            new ServerCliNpmPackageNotReadyError({ packageSpec, reason: `${step} timed out` }),
+          ),
       }),
     );
 
@@ -138,10 +154,44 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
       response.json.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(NpmVersionMetadata)),
         Effect.map((metadata) => metadata.dist.tarball),
-        Effect.mapError(() => notReady("metadata has no dist.tarball")),
+        Effect.mapError(
+          (cause) =>
+            new ServerCliNpmPackageNotReadyError({
+              packageSpec,
+              reason: "metadata has no dist.tarball",
+              cause,
+            }),
+        ),
       ),
   );
   // npm's tarball HEAD answers without a Content-Length, so only the status
   // counts.
   yield* send("tarball", HttpClientRequest.head(tarballUrl), () => Effect.void);
+});
+
+const decodePlatformManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String })),
+);
+
+/**
+ * Reads a platform package's name and version from its package.json. A file
+ * that cannot be read is a missing build asset; one that is not JSON or lacks
+ * a string name and version is an invalid manifest.
+ */
+export const readPlatformManifest = Effect.fn("readPlatformManifest")(function* (
+  manifestPath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.readFileString(manifestPath).pipe(
+    Effect.mapError(
+      (cause) => new ServerCliBuildAssetMissingError({ assetPath: manifestPath, cause }),
+    ),
+    Effect.flatMap((text) =>
+      decodePlatformManifest(text).pipe(
+        Effect.mapError(
+          (cause) => new ServerCliPlatformManifestInvalidError({ assetPath: manifestPath, cause }),
+        ),
+      ),
+    ),
+  );
 });

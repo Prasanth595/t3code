@@ -2,13 +2,20 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
+import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { ServerCliNpmPackageNotReadyError } from "./cliErrors.ts";
-import { checkNpmVersionInstallable, publishPlatformsThenLauncher } from "./publishOrder.ts";
+import {
+  checkNpmVersionInstallable,
+  publishPlatformsThenLauncher,
+  readPlatformManifest,
+} from "./publishOrder.ts";
 
 const platformTarballs = ["a.tgz", "b.tgz", "c.tgz"];
 const launcherTarball = "t3.tgz";
@@ -228,9 +235,12 @@ const tarballUrl = "https://registry.npmjs.org/@t3code/t3-linux-x64/-/t3-linux-x
 
 // A fake npm registry that records each request, and the abort signal the
 // client hands it, which fires once the client releases that response. GET
-// answers with the version's metadata and HEAD with the tarball status. npm's
-// tarball HEAD sends no Content-Length, and neither does this one.
-const fakeRegistry = (status: { readonly metadata: number; readonly tarball: number }) => {
+// answers with `metadata` and HEAD with the tarball status. npm's tarball HEAD
+// sends no Content-Length, and neither does this one.
+const fakeRegistry = (
+  status: { readonly metadata: number; readonly tarball: number },
+  metadata: unknown = { ...platformPackage, dist: { tarball: tarballUrl } },
+) => {
   const requests: Array<string> = [];
   const signals: Array<AbortSignal> = [];
   const layer = Layer.succeed(
@@ -240,12 +250,9 @@ const fakeRegistry = (status: { readonly metadata: number; readonly tarball: num
       signals.push(signal);
       const response =
         request.method === "GET"
-          ? Response.json(
-              status.metadata === 200
-                ? { ...platformPackage, dist: { tarball: tarballUrl } }
-                : { error: "Not found" },
-              { status: status.metadata },
-            )
+          ? Response.json(status.metadata === 200 ? metadata : { error: "Not found" }, {
+              status: status.metadata,
+            })
           : new Response(null, { status: status.tarball });
       return Effect.succeed(HttpClientResponse.fromWeb(request, response));
     }),
@@ -297,6 +304,26 @@ it.effect("rejects a version npm has no metadata for without requesting its tarb
     assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
     assert.strictEqual(error.packageSpec, "@t3code/t3-linux-x64@1.2.3");
     assert.include(error.reason, "404");
+    assert.isUndefined(error.cause);
+    assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`]);
+  }),
+);
+
+it.effect("rejects a version whose metadata names no tarball without requesting one", () =>
+  Effect.gen(function* () {
+    const registry = fakeRegistry(
+      { metadata: 200, tarball: 200 },
+      { ...platformPackage, dist: {} },
+    );
+
+    const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
+      Effect.provide(registry.layer),
+      Effect.flip,
+    );
+
+    assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
+    assert.strictEqual(error.reason, "metadata has no dist.tarball");
+    assert.isTrue(Schema.isSchemaError(error.cause));
     assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`]);
   }),
 );
@@ -313,18 +340,20 @@ it.effect("rejects a version whose tarball npm does not serve yet", () =>
     assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
     assert.include(error.reason, "tarball");
     assert.include(error.reason, "404");
+    assert.isUndefined(error.cause);
   }),
 );
 
 it.effect("rejects a version when its metadata request cannot reach npm", () =>
   Effect.gen(function* () {
-    const registry = yield* fakeUnansweredRegistry((request) =>
-      Effect.fail(
-        new HttpClientError.HttpClientError({
-          reason: new HttpClientError.TransportError({ request, description: "connection reset" }),
-        }),
-      ),
-    );
+    const transportErrors: Array<HttpClientError.HttpClientError> = [];
+    const registry = yield* fakeUnansweredRegistry((request) => {
+      const transportError = new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({ request, description: "connection reset" }),
+      });
+      transportErrors.push(transportError);
+      return Effect.fail(transportError);
+    });
 
     const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
       Effect.provide(registry.layer),
@@ -334,7 +363,10 @@ it.effect("rejects a version when its metadata request cannot reach npm", () =>
     assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
     assert.strictEqual(error.packageSpec, "@t3code/t3-linux-x64@1.2.3");
     assert.include(error.reason, "metadata");
+    assert.notInclude(error.message, "connection reset");
     assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`]);
+    assert.strictEqual(transportErrors.length, 1);
+    assert.strictEqual(error.cause, transportErrors[0]);
   }),
 );
 
@@ -354,6 +386,7 @@ it.effect("rejects a version when npm does not answer within 10 seconds", () =>
     const error = yield* Effect.flip(Fiber.join(fiber));
     assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
     assert.include(error.reason, "timed out");
+    assert.isUndefined(error.cause);
   }),
 );
 
@@ -367,9 +400,79 @@ it.effect("releases the response when npm answers with an error", () =>
     );
 
     assert.strictEqual(error.reason, "metadata HTTP 503");
+    assert.isUndefined(error.cause);
     assert.deepStrictEqual(
       registry.signals.map((signal) => signal.aborted),
       [true],
     );
+  }),
+);
+
+const manifestPath = "/packages/@t3code/t3-linux-x64/package.json";
+
+// A fake filesystem in which every file reads as `text`.
+const fakeManifest = (text: string) =>
+  FileSystem.layerNoop({ readFileString: () => Effect.succeed(text) });
+
+it.effect("reads a platform package's name and version from its manifest", () =>
+  Effect.gen(function* () {
+    const spec = yield* readPlatformManifest(manifestPath).pipe(
+      Effect.provide(fakeManifest(JSON.stringify({ ...platformPackage, os: ["linux"] }))),
+    );
+
+    assert.deepStrictEqual(spec, platformPackage);
+  }),
+);
+
+it.effect("reports a platform manifest it cannot read as a missing build asset", () =>
+  Effect.gen(function* () {
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFileString",
+      description: "permission denied",
+      pathOrDescriptor: manifestPath,
+    });
+
+    const error = yield* readPlatformManifest(manifestPath).pipe(
+      Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.fail(cause) })),
+      Effect.flip,
+    );
+
+    assert.strictEqual(error._tag, "ServerCliBuildAssetMissingError");
+    assert.strictEqual(error.assetPath, manifestPath);
+    assert.strictEqual(error.cause, cause);
+    assert.strictEqual(
+      error.message,
+      `Missing build asset: ${manifestPath}. Run the build subcommand first.`,
+    );
+  }),
+);
+
+it.effect("reports a platform manifest that is not JSON as invalid", () =>
+  Effect.gen(function* () {
+    const error = yield* readPlatformManifest(manifestPath).pipe(
+      Effect.provide(fakeManifest("{")),
+      Effect.flip,
+    );
+
+    assert.strictEqual(error._tag, "ServerCliPlatformManifestInvalidError");
+    assert.strictEqual(error.assetPath, manifestPath);
+    assert.isTrue(Schema.isSchemaError(error.cause));
+    assert.strictEqual(error.message, `Invalid platform package manifest: ${manifestPath}`);
+  }),
+);
+
+it.effect("reports a platform manifest without a version as invalid", () =>
+  Effect.gen(function* () {
+    const error = yield* readPlatformManifest(manifestPath).pipe(
+      Effect.provide(fakeManifest(JSON.stringify({ name: platformPackage.name }))),
+      Effect.flip,
+    );
+
+    assert.strictEqual(error._tag, "ServerCliPlatformManifestInvalidError");
+    assert.strictEqual(error.assetPath, manifestPath);
+    assert.isTrue(Schema.isSchemaError(error.cause));
+    assert.strictEqual(error.message, `Invalid platform package manifest: ${manifestPath}`);
   }),
 );

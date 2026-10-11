@@ -40,10 +40,23 @@ export class ServerCliBuildAssetMissingError extends Schema.TaggedError<ServerCl
   "ServerCliBuildAssetMissingError",
   {
     assetPath: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     return `Missing build asset: ${this.assetPath}. Run the build subcommand first.`;
+  }
+}
+
+export class ServerCliPlatformManifestInvalidError extends Schema.TaggedError<ServerCliPlatformManifestInvalidError>()(
+  "ServerCliPlatformManifestInvalidError",
+  {
+    assetPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Invalid platform package manifest: ${this.assetPath}`;
   }
 }
 
@@ -52,6 +65,7 @@ export class ServerCliNpmPackageNotReadyError extends Schema.TaggedError<ServerC
   {
     packageSpec: Schema.String,
     reason: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
