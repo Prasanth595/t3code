@@ -1,32 +1,33 @@
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface PanelTabCloseButtonProps {
-  children: ReactNode;
   label: string;
   onClick: () => void;
   tooltip?: string;
 }
 
-/** Inside a `group/tab` row, swaps the tab identity for its close action on hover or focus. */
-export function PanelTabCloseButton({
-  children,
-  label,
-  onClick,
-  tooltip,
-}: PanelTabCloseButtonProps) {
+/**
+ * Fades the trailing edge of a tab title that fills its `pr-2` row, while `PanelTabCloseButton`
+ * floats over it. The clear 8px is the part of the title the button covers.
+ */
+export const panelTabTitleFadeClassName =
+  "group-hover/tab:[mask-image:linear-gradient(to_left,transparent_8px,black_20px)] group-has-[:focus-visible]/tab:[mask-image:linear-gradient(to_left,transparent_8px,black_20px)] pointer-coarse:[mask-image:linear-gradient(to_left,transparent_8px,black_20px)]";
+
+/**
+ * Close action that follows the title in a `relative group/tab` row with `pr-2`. It floats over the
+ * row's trailing edge, so it takes no space and the row never changes width. Shown on hover or
+ * keyboard focus, and always on touch screens, which cannot hover.
+ */
+export function PanelTabCloseButton({ label, onClick, tooltip }: PanelTabCloseButtonProps) {
   const button = (
     <button
       type="button"
-      className="cursor-pointer group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
+      className="cursor-pointer pointer-events-none absolute top-1/2 right-0.5 flex size-3.5 -translate-y-1/2 items-center justify-center rounded-sm opacity-0 hover:bg-muted group-hover/tab:pointer-events-auto group-hover/tab:opacity-100 group-has-[:focus-visible]/tab:pointer-events-auto group-has-[:focus-visible]/tab:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100"
       aria-label={label}
       onClick={onClick}
     >
-      <span className="relative flex size-3 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
-        {children}
-      </span>
-      <X className="hidden size-3 group-hover/tab:block group-focus-visible/close:block" />
+      <X className="size-3" />
     </button>
   );
 
