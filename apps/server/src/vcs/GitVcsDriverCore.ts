@@ -563,7 +563,7 @@ function fetchFailureDetail(stderr: string): string | undefined {
   }
   if (
     lines.some((line) =>
-      /^(?:(?:fatal: |ssh: )?Could not resolve host(?:name)?\b|fatal: unable to access .+: (?:Could not resolve host|Failed to connect)\b|ssh: connect to host \S+ port \d+: (?:Connection timed out|Connection refused|Network is unreachable)\b)/i.test(
+      /^(?:(?:fatal: |ssh: )?Could not resolve host(?:name)?\b|fatal: unable to access .+: (?:Could not resolve host|Failed to connect)\b|ssh: connect to host \S+ port \d+: (?:Connection timed out|Operation timed out|Connection refused|Network is unreachable|No route to host|Host is down)\b)/i.test(
         line,
       ),
     )
@@ -586,7 +586,7 @@ function fetchFailureDetail(stderr: string): string | undefined {
       ),
     )
   ) {
-    return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
+    return "Git could not update a local reference. Another Git operation or a stale lock may be blocking Git; check the repository on the server, then retry.";
   }
   return undefined;
 }
@@ -2521,11 +2521,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // After a successful pull, HEAD before and after decides the result, so its output is not
     // needed. A large fast-forward's diffstat can exceed the output cap, which must not fail a
     // pull Git applied.
-    yield* executeGit("GitVcsDriver.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
-      timeoutMs: 30_000,
-      fallbackErrorDetail: "git pull failed",
-      appendTruncationMarker: true,
-    });
+    // A failure names its cause with the same fixed diagnoses as fetch, never Git's own output.
+    const pullArgs = ["pull", "--ff-only"];
+    const pull = yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.pullCurrentBranch.pull",
+      cwd,
+      pullArgs,
+      { timeoutMs: 30_000, appendTruncationMarker: true, allowNonZeroExit: true },
+    );
+    if (pull.exitCode !== 0) {
+      const reason = classifyGitFailure(pull.stderr);
+      return yield* new GitCommandError({
+        ...gitCommandContext({
+          operation: "GitVcsDriver.pullCurrentBranch.pull",
+          cwd,
+          args: pullArgs,
+        }),
+        ...(reason === null ? {} : { reason }),
+        detail: fetchFailureDetail(pull.stderr) ?? "git pull failed",
+        ...(pull.exitCode === null ? {} : { exitCode: pull.exitCode }),
+        stdoutLength: pull.stdout.length,
+        stderrLength: pull.stderr.length,
+      });
+    }
     const afterSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.afterSha",
       cwd,

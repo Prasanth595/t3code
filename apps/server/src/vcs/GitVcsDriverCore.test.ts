@@ -574,7 +574,7 @@ describe("pull output beyond the output cap", () => {
 
           assert.equal(error.operation, "GitVcsDriver.pullCurrentBranch.pull");
           assert.equal(error.exitCode, 128);
-          assert.notInclude(error.detail, "exceeded");
+          assert.equal(error.detail, "git pull failed");
         }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
       }),
     ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
@@ -931,6 +931,16 @@ it.effect.each([
   {
     name: "connection failure",
     stderr: "ssh: connect to host example.com port 22: Connection refused",
+    expected: "could not reach the remote",
+  },
+  {
+    name: "macOS connection timeout",
+    stderr: "ssh: connect to host example.com port 22: Operation timed out",
+    expected: "could not reach the remote",
+  },
+  {
+    name: "unroutable host",
+    stderr: "ssh: connect to host example.com port 22: No route to host",
     expected: "could not reach the remote",
   },
   {
@@ -3441,6 +3451,52 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isAbove(error.stderrLength ?? 0, 0);
         assert.notInclude(error.detail, missingRemote);
         assert.notProperty(error, "stderr");
+      }),
+    );
+
+    it.effect("explains a pull whose upstream remote is gone", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        const missingRemote = `${cwd}/private-missing-remote`;
+        yield* git(cwd, ["remote", "set-url", "origin", missingRemote]);
+
+        const error = yield* driver.pullCurrentBranch(cwd).pipe(Effect.flip);
+
+        assert.include(error.detail, "could not access the remote repository");
+        assert.equal(error.reason, "remote_unreachable");
+        assert.notInclude(error.message, missingRemote);
+      }),
+    );
+
+    it.effect("explains a pull the remote rejects for a missing SSH key", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const secret = "secret-pull-token";
+        // Stands in for ssh: prints OpenSSH's refusal only under the C locale, the way a localized
+        // ssh would print something else, so the diagnosis depends on pull fixing the locale.
+        yield* writeTextFile(
+          cwd,
+          ".git/fake-ssh.cjs",
+          `console.error(process.env.LC_ALL === "C" ? "git@example.com: Permission denied (publickey).\\n${secret}" : "${secret}"); process.exit(255);`,
+        );
+        yield* git(cwd, ["config", "core.sshCommand", "node .git/fake-ssh.cjs"]);
+        yield* git(cwd, ["remote", "add", "origin", "git@example.com:owner/repo.git"]);
+        yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+        yield* git(cwd, ["branch", `--set-upstream-to=origin/${initialBranch}`]);
+
+        const error = yield* driver.pullCurrentBranch(cwd).pipe(Effect.flip);
+
+        assert.include(error.detail, "could not authenticate");
+        assert.equal(error.reason, "authentication_failed");
+        assert.notInclude(error.message, secret);
       }),
     );
 
