@@ -3289,7 +3289,7 @@ function applyClaudeTaskTool(
   }
   if (toolName === "TaskCreate") {
     const created = claudeTaskField(result, "task");
-    const id = claudeTaskString(created, "id");
+    const id = claudeTaskString(created, "id") ?? claudeCreatedTaskIdFromText(result);
     const text = claudeTaskString(created, "subject") ?? claudeTaskString(input, "subject");
     if (id === undefined || text === undefined) return undefined;
     return new Map(tasks).set(id, { text, status: "pending" });
@@ -3310,6 +3310,14 @@ function applyClaudeTaskTool(
   const status = claudeTaskStatus(nativeStatus) ?? task.status;
   if (text === task.text && status === task.status) return undefined;
   return new Map(tasks).set(id, { text, status });
+}
+
+// Subagent results carry no structured `tool_use_result`, only the text
+// "Task #3 created successfully: <subject>".
+function claudeCreatedTaskIdFromText(result: unknown): string | undefined {
+  return typeof result === "string"
+    ? /^Task #(\S+) created successfully/.exec(result)?.[1]
+    : undefined;
 }
 
 function claudeTaskSteps(tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2PlanStep> {
@@ -7392,8 +7400,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             yield* emitToolCallArtifacts(artifacts);
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);
-            // A subagent's task tools must not replace the parent's list.
-            if (parentToolUseId === null && !isClaudeToolResultError(toolResult)) {
+            // Subagents share the session's task list (their TaskUpdate and
+            // TaskCreate write to the parent's store), so their task tools
+            // update the parent turn's list too.
+            if (!isClaudeToolResultError(toolResult)) {
               const taskLists = yield* Ref.get(taskListsByNativeThread);
               const taskList = applyClaudeTaskTool(
                 taskLists.get(liveQuery.nativeThreadId) ?? new Map(),

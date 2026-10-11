@@ -3993,7 +3993,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             {
               type: "tool_result",
               tool_use_id: toolUseId,
-              content: "Task tool finished.",
+              content:
+                parentToolUseId !== null && tool.name === "TaskCreate"
+                  ? `Task #${tool.output.task.id} created successfully: ${tool.output.task.subject}`
+                  : "Task tool finished.",
               is_error: options?.isError ?? false,
             },
             ...(options?.extraToolResult
@@ -4001,7 +4004,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               : []),
           ],
         },
-        tool_use_result: tool.output,
+        // Like real Claude, subagent results carry only the text, no `tool_use_result`.
+        ...(parentToolUseId === null ? { tool_use_result: tool.output } : {}),
         parent_tool_use_id: parentToolUseId,
         uuid: nextUuid(),
         session_id: WAKE_NATIVE_SESSION,
@@ -4046,7 +4050,56 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       harness.events.flatMap((event) =>
         event.type === "plan.updated" && event.plan.kind === "todo_list" ? [event.plan] : [],
       );
-    return { startTurn, call, finishTurn, plans };
+    // Registers a running subagent so frames carrying its tool_use_id as
+    // parent_tool_use_id are processed instead of held for an unknown owner.
+    const launchSubagent = Effect.fnUntraced(function* (toolUseId: string) {
+      const uuid = nextUuid();
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "assistant",
+          message: {
+            id: `msg_${uuid}`,
+            model: "claude-sonnet-4-6",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: toolUseId,
+                name: "Agent",
+                input: { description: "Work on tasks", prompt: "Update the shared tasks." },
+              },
+            ],
+            stop_reason: "tool_use",
+            stop_sequence: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+          parent_tool_use_id: null,
+          uuid,
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: `task-${toolUseId}`,
+          tool_use_id: toolUseId,
+          description: "Work on tasks",
+          subagent_type: "general-purpose",
+          task_type: "local_agent",
+          prompt: "Update the shared tasks.",
+          uuid: nextUuid(),
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+    });
+    return { startTurn, call, launchSubagent, finishTurn, plans };
   });
 
   const createTask = (id: string, subject: string): TaskToolCall => ({
@@ -4277,20 +4330,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("keeps subagent TaskCreate, TaskUpdate and TaskList out of the main plan", () =>
+  it.effect("applies subagent task tools to the parent turn's shared task list", () =>
     Effect.gen(function* () {
       const harness = yield* makeTaskToolHarness;
       yield* harness.startTurn();
       yield* harness.call(createTask("1", "Main task"));
+      yield* harness.launchSubagent("tool-parent-agent");
       const child = { parentToolUseId: "tool-parent-agent" };
-      yield* harness.call(createTask("2", "Child task"), child);
       yield* harness.call(updateTask({ taskId: "1", status: "completed" }), child);
-      yield* harness.call({ name: "TaskList", input: {}, output: { tasks: [] } }, child);
-      yield* harness.call(updateTask({ taskId: "1", status: "in_progress" }));
+      yield* harness.call(createTask("2", "Child task"), child);
+      yield* harness.call(updateTask({ taskId: "2", status: "in_progress" }), {
+        ...child,
+        isError: true,
+      });
       yield* harness.finishTurn();
-      assert.lengthOf(harness.plans(), 2);
-      assert.deepEqual(harness.plans().at(-1)?.steps, [
-        { id: "task-1", text: "Main task", status: "running" },
+      const plans = harness.plans();
+      assert.lengthOf(plans, 3);
+      assert.equal(new Set(plans.map((plan) => plan.id)).size, 1);
+      assert.deepEqual(plans.at(-1)?.steps, [
+        { id: "task-1", text: "Main task", status: "completed" },
+        { id: "task-2", text: "Requested Child task", status: "pending" },
       ]);
     }).pipe(
       Effect.scoped,
