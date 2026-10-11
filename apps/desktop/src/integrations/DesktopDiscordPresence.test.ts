@@ -3,7 +3,9 @@ import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 
-import type { DesktopDiscordPresence } from "@t3tools/contracts";
+import { DEFAULT_CLIENT_SETTINGS, type DesktopDiscordPresence } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 
 import type { DiscordActivity } from "./discord/discordIpc.ts";
 import { make, type DiscordPresenceConnector } from "./DesktopDiscordPresence.ts";
@@ -31,7 +33,7 @@ it.effect("discards a pending publish when disabled", () =>
     yield* Fiber.join(disabling);
     expect(activities).toEqual([null]);
     expect(closes).toBe(1);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("serializes connection attempts and ignores an old client's close", () =>
@@ -65,7 +67,7 @@ it.effect("serializes connection attempts and ignores an old client's close", ()
     expect(yield* service.getStatus()).toBe("connected");
     yield* service.set(presence);
     expect(connects).toBe(2);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 const presence: DesktopDiscordPresence = {
@@ -106,7 +108,7 @@ it.effect("connects once and mirrors the activity, then clears on null", () =>
     yield* service.set(null);
     expect(lastOf(activities)).toBeNull();
     expect(closes).toBe(1);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("re-renders the current activity when the field selection changes", () =>
@@ -127,7 +129,7 @@ it.effect("re-renders the current activity when the field selection changes", ()
     const pushed = activities.length;
     yield* service.configure(["model"]);
     expect(activities.length).toBe(pushed);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("uses the build channel's art and version in the activity", () =>
@@ -151,7 +153,7 @@ it.effect("uses the build channel's art and version in the activity", () =>
         large_text: "T3 Code (Nightly) 0.0.45-nightly.20261011",
       },
     });
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("reports nothing while Discord is unavailable and reconnects on the next update", () =>
@@ -172,7 +174,7 @@ it.effect("reports nothing while Discord is unavailable and reconnects on the ne
     yield* service.set(presence);
     expect(attempts).toBe(2);
     expect(lastOf(activities)).toMatchObject({ state: "Running an agent" });
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("stays inert when no Discord client id is configured", () =>
@@ -192,7 +194,7 @@ it.effect("stays inert when no Discord client id is configured", () =>
     yield* service.configure(["model"]);
     expect(connects).toBe(0);
     expect(closed).toBe(0);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("reports connection status transitions the settings UI can show", () =>
@@ -216,7 +218,7 @@ it.effect("reports connection status transitions the settings UI can show", () =
     yield* service.set(presence);
     expect(yield* service.getStatus()).toBe("connected");
     expect(statuses).toEqual(["disconnected", "connected"]);
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
 );
 
 it.effect("reports a disconnect when the socket closes", () =>
@@ -232,5 +234,30 @@ it.effect("reports a disconnect when the socket closes", () =>
     expect(yield* service.getStatus()).toBe("connected");
     close();
     expect(yield* service.getStatus()).toBe("disconnected");
-  }).pipe(Effect.scoped),
+  }).pipe(Effect.provide(DesktopClientSettings.layerTest()), Effect.scoped),
+);
+
+it.effect("uses the saved field selection on the first publish", () =>
+  Effect.gen(function* () {
+    const activities: Array<DiscordActivity | null> = [];
+    const service = yield* make({
+      connector: async () => fakeClient(activities),
+      clientId: "42",
+    });
+    yield* service.set(presence);
+    expect(lastOf(activities)).toEqual({
+      state: "Claude Sonnet 4.5",
+      assets: { large_image: "black", large_text: "T3 Code" },
+    });
+  }).pipe(
+    Effect.provide(
+      DesktopClientSettings.layerTest(
+        Option.some({
+          ...DEFAULT_CLIENT_SETTINGS,
+          discordPresenceFields: ["model"],
+        }),
+      ),
+    ),
+    Effect.scoped,
+  ),
 );

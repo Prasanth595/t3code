@@ -30,6 +30,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 import { DiscordIpcClient, type DiscordActivity } from "./discord/discordIpc.ts";
 import {
   DEFAULT_DISCORD_PRESENCE_BRANDING,
@@ -78,18 +79,16 @@ function resolveDiscordClientId(environment: NodeJS.ProcessEnv): string {
     : __T3CODE_BUILD_DISCORD_CLIENT_ID__.trim();
 }
 
-export interface DesktopDiscordPresenceService {
-  /** Publishes the summary, or clears presence when `null`. Best-effort. */
-  readonly set: (presence: DiscordPresenceState | null) => Effect.Effect<void>;
-  /** Sets which facts the activity presents; re-applies the current summary. */
-  readonly configure: (fields: ReadonlyArray<DiscordPresenceField>) => Effect.Effect<void>;
-  /** Current connection state, for the settings UI. */
-  readonly getStatus: () => Effect.Effect<DesktopDiscordPresenceStatus>;
-}
-
 export class DesktopDiscordPresence extends Context.Service<
   DesktopDiscordPresence,
-  DesktopDiscordPresenceService
+  {
+    /** Publishes the summary, or clears presence when `null`. Best-effort. */
+    readonly set: (presence: DiscordPresenceState | null) => Effect.Effect<void>;
+    /** Sets which facts the activity presents; re-applies the current summary. */
+    readonly configure: (fields: ReadonlyArray<DiscordPresenceField>) => Effect.Effect<void>;
+    /** Current connection state, for the settings UI. */
+    readonly getStatus: () => Effect.Effect<DesktopDiscordPresenceStatus>;
+  }
 >()("@t3tools/desktop/integrations/DesktopDiscordPresence") {}
 
 export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
@@ -102,14 +101,25 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
   const clientId = (options.clientId ?? resolveDiscordClientId(environment)).trim();
   const branding = options.branding ?? DEFAULT_DISCORD_PRESENCE_BRANDING;
   const sessionStartedAtMs = clock.currentTimeMillisUnsafe();
+  const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+  const initialFields =
+    options.fields ??
+    (yield* clientSettings.get.pipe(
+      Effect.map((stored) =>
+        Option.match(stored, {
+          onNone: () => DEFAULT_DISCORD_PRESENCE_FIELDS,
+          onSome: (settings) => settings.discordPresenceFields,
+        }),
+      ),
+      // Do not publish default fields when the user's saved selection cannot be read.
+      Effect.catch(() => Effect.succeed([])),
+    ));
 
   const desired = yield* Ref.make<DiscordPresenceState | null>(null);
   const connection = yield* Ref.make<DiscordPresenceClient | null>(null);
   const applyMutex = yield* Semaphore.make(1);
   let connectionToken: object | null = null;
-  const fields = yield* Ref.make<ReadonlyArray<DiscordPresenceField>>(
-    options.fields ?? DEFAULT_DISCORD_PRESENCE_FIELDS,
-  );
+  const fields = yield* Ref.make<ReadonlyArray<DiscordPresenceField>>(initialFields);
   // `unconfigured` means this build has no Discord app id at all; otherwise we
   // are `connecting` until the first publish attempt resolves.
   const status = yield* Ref.make<DesktopDiscordPresenceStatus>(

@@ -74,6 +74,10 @@ export function DiscordPresenceCoordinator() {
   );
   const [activeThread, setActiveThread] = useState<ActiveThreadPresence>(EMPTY_ACTIVE);
   const lastPublished = useRef<DesktopDiscordPresence | null>(null);
+  const hasActiveEnvironment = environmentIds.some((id) => id === activeEnvironmentId);
+  if (!hasActiveEnvironment && activeThread !== EMPTY_ACTIVE) {
+    setActiveThread(EMPTY_ACTIVE);
+  }
 
   const reportCounts = useCallback(
     (environmentId: EnvironmentId, next: EnvironmentPresenceCounts) => {
@@ -116,8 +120,8 @@ export function DiscordPresenceCoordinator() {
       attentionThreads += value.attention;
     }
     const presence: DesktopDiscordPresence = {
-      projectName: activeEnvironmentId === undefined ? null : activeThread.projectName,
-      modelLabel: activeEnvironmentId === undefined ? null : activeThread.modelLabel,
+      projectName: hasActiveEnvironment ? activeThread.projectName : null,
+      modelLabel: hasActiveEnvironment ? activeThread.modelLabel : null,
       workingThreads: Math.min(999, workingThreads),
       attentionThreads: Math.min(999, attentionThreads),
     };
@@ -132,7 +136,7 @@ export function DiscordPresenceCoordinator() {
       return;
     lastPublished.current = presence;
     void bridge?.setDiscordPresence?.(presence).catch(() => undefined);
-  }, [active, activeEnvironmentId, activeThread, bridge, counts, environmentIds, pushAvailable]);
+  }, [active, hasActiveEnvironment, activeThread, bridge, counts, environmentIds, pushAvailable]);
 
   if (!pushAvailable || !active) return null;
 
