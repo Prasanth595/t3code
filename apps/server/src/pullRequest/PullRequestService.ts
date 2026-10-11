@@ -385,6 +385,12 @@ export interface SupportedProject {
    * is served by this checkout.
    */
   readonly repositoryKey: string | null;
+  /**
+   * The project a hand-off checks this change request out in, where that is not `project`: a
+   * project that only lends its credentials is not a checkout of the repository, so the one the
+   * reference was read from is named instead, and the checkout itself decides.
+   */
+  readonly checkout?: OrchestrationProjectShell;
 }
 
 /**
@@ -961,6 +967,7 @@ export const make = Effect.gen(function* () {
                     ...route,
                     repository,
                     remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
+                    ...(own !== undefined && own.host === host ? { checkout: own.project } : {}),
                   },
             );
           }),
@@ -974,7 +981,9 @@ export const make = Effect.gen(function* () {
     const project = yield* requireProject(input);
     return {
       ...input,
-      projectId: project.project.id,
+      // A read through a lending project stays the asking project's, so routing it again names
+      // that project as the checkout.
+      projectId: (project.checkout ?? project.project).id,
       host: project.host,
       repository: project.repository,
     };
@@ -1671,7 +1680,7 @@ export const make = Effect.gen(function* () {
           observeRead,
           Effect.map(({ value: changeRequest, observedAt }): PullRequestSummary => ({
             provider: project.api.kind,
-            projectId: project.project.id,
+            projectId: (project.checkout ?? project.project).id,
             repository: project.repository,
             number: changeRequest.number,
             title: changeRequest.title,
@@ -1762,9 +1771,9 @@ export const make = Effect.gen(function* () {
           Effect.map(([{ value: changeRequest, observedAt }, viewer]): PullRequestDetail => ({
             provider: project.api.kind,
             capabilities: project.api.capabilities,
-            projectId: project.project.id,
-            projectTitle: project.project.title,
-            workspaceRoot: project.project.workspaceRoot,
+            projectId: (project.checkout ?? project.project).id,
+            projectTitle: (project.checkout ?? project.project).title,
+            workspaceRoot: (project.checkout ?? project.project).workspaceRoot,
             repository: project.repository,
             number: changeRequest.number,
             title: changeRequest.title,
@@ -2860,7 +2869,7 @@ export const make = Effect.gen(function* () {
       project.api.kind,
       project.host.toLowerCase(),
       project.repository.toLowerCase(),
-      project.project.id,
+      (project.checkout ?? project.project).id,
       project.project.workspaceRoot,
       String(input.number),
       input.expectedAccountId ?? "",
