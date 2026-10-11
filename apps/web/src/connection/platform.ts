@@ -12,10 +12,12 @@ import {
   type ConnectionAttemptError,
   ConnectionTransientError,
   Connectivity,
+  environmentMismatchError,
   mapRemoteEnvironmentError,
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
+  sshTargetKey,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
@@ -26,6 +28,7 @@ import {
   AuthStandardClientScopes,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
+  type DesktopSshEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -181,48 +184,198 @@ function sshPreparationError(cause: unknown) {
   });
 }
 
-export const provisionDesktopSshEnvironment = Effect.fn(
-  "web.connectionPlatform.ssh.provisionDesktop",
-)(function* (
-  bridge: DesktopBridge,
-  target: DesktopSshEnvironmentTarget,
-  expectedEnvironmentId?: EnvironmentId,
-) {
-  const bootstrap = yield* Effect.tryPromise({
-    try: () =>
-      bridge.ensureSshEnvironment(target, {
-        issuePairingToken: true,
-      }),
-    catch: sshPreparationError,
+const missingSshPairingCredentialError = () =>
+  new ConnectionBlockedError({
+    reason: "authentication",
+    detail: "The SSH environment did not issue a pairing credential.",
   });
-  const pairingToken = bootstrap.pairingToken;
-  if (pairingToken === null) {
-    return yield* new ConnectionBlockedError({
-      reason: "authentication",
-      detail: "The SSH environment did not issue a pairing credential.",
+
+/**
+ * SSH environments through the desktop bridge. The desktop runs setup one call
+ * at a time per target, and a call cannot be stopped once sent. On a slow host
+ * an attempt can time out while its setup still runs, so the gateway keeps
+ * two things between attempts:
+ *
+ * - A setup call whose attempt gave up, until it finishes. The next attempt
+ *   awaits it instead of queueing another setup behind it, and spends the
+ *   pairing credential it mints. The desktop keeps the tunnel either way.
+ * - The bearer from the last pairing, for weeks. Reconnects present it instead
+ *   of pairing again, which starts the remote CLI and adds a server session.
+ */
+export function makeDesktopSshEnvironmentGateway(
+  readBridge: () => DesktopBridge | undefined,
+): ClientCapabilities.SshEnvironmentGateway["Service"] {
+  const abandonedSetups = new Map<
+    string,
+    {
+      readonly issuePairingToken: boolean;
+      readonly setup: Promise<DesktopSshEnvironmentBootstrap>;
+    }
+  >();
+  const bearers = new Map<
+    string,
+    { readonly environmentId: EnvironmentId; readonly bearerToken: string }
+  >();
+
+  const desktopBridge = Effect.suspend(() => {
+    const bridge = readBridge();
+    return bridge === undefined
+      ? Effect.fail(
+          new ConnectionBlockedError({
+            reason: "unsupported",
+            detail: "SSH environments are only available in the desktop app.",
+          }),
+        )
+      : Effect.succeed(bridge);
+  });
+
+  const ensure = (
+    bridge: DesktopBridge,
+    target: DesktopSshEnvironmentTarget,
+    issuePairingToken: boolean,
+  ) =>
+    Effect.tryPromise({
+      try: (signal) => {
+        const key = sshTargetKey(target);
+        const abandoned = abandonedSetups.get(key);
+        let setup: Promise<DesktopSshEnvironmentBootstrap>;
+        if (abandoned?.issuePairingToken === issuePairingToken) {
+          abandonedSetups.delete(key);
+          setup = abandoned.setup;
+        } else {
+          setup = bridge.ensureSshEnvironment(target, { issuePairingToken });
+        }
+        signal.addEventListener("abort", () => {
+          const entry = { issuePairingToken, setup };
+          abandonedSetups.set(key, entry);
+          const forget = () => {
+            if (abandonedSetups.get(key) === entry) abandonedSetups.delete(key);
+          };
+          setup.then(forget, forget);
+        });
+        return setup;
+      },
+      catch: sshPreparationError,
     });
-  }
-  const descriptor = yield* Effect.tryPromise({
-    try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
-    catch: sshPreparationError,
-  });
-  if (expectedEnvironmentId !== undefined && descriptor.environmentId !== expectedEnvironmentId) {
-    return yield* new ConnectionBlockedError({
-      reason: "configuration",
-      detail: `That host reaches ${descriptor.label}, a different machine. Add it as its own environment instead.`,
+
+  // A stored bearer goes only to the environment that issued it.
+  const usableBearer = Effect.fn("web.connectionPlatform.ssh.usableBearer")(function* (
+    bridge: DesktopBridge,
+    httpBaseUrl: string,
+    bearer: { readonly environmentId: EnvironmentId; readonly bearerToken: string },
+  ) {
+    const descriptor = yield* Effect.tryPromise({
+      try: () => bridge.fetchSshEnvironmentDescriptor(httpBaseUrl),
+      catch: sshPreparationError,
     });
-  }
-  const access = yield* Effect.tryPromise({
-    try: () => bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, pairingToken),
-    catch: sshPreparationError,
+    if (descriptor.environmentId !== bearer.environmentId) {
+      return false;
+    }
+    const session = yield* Effect.tryPromise({
+      try: () => bridge.fetchSshSessionState(httpBaseUrl, bearer.bearerToken),
+      catch: sshPreparationError,
+    });
+    return session.authenticated;
   });
-  return {
-    environmentId: descriptor.environmentId,
-    label: descriptor.label,
-    bootstrap,
-    bearerToken: access.access_token,
-  };
-});
+
+  // Mints a pairing credential and reads which machine minted it. Callers check
+  // that machine before `exchangePairingToken` spends the one-time credential.
+  const beginPairing = Effect.fn("web.connectionPlatform.ssh.beginPairing")(function* (
+    bridge: DesktopBridge,
+    target: DesktopSshEnvironmentTarget,
+  ) {
+    const bootstrap = yield* ensure(bridge, target, true);
+    const pairingToken = bootstrap.pairingToken;
+    if (pairingToken === null) {
+      return yield* missingSshPairingCredentialError();
+    }
+    const descriptor = yield* Effect.tryPromise({
+      try: () => bridge.fetchSshEnvironmentDescriptor(bootstrap.httpBaseUrl),
+      catch: sshPreparationError,
+    });
+    return { bootstrap, pairingToken, descriptor };
+  });
+
+  const exchangePairingToken = Effect.fn("web.connectionPlatform.ssh.exchangePairingToken")(
+    function* (bridge: DesktopBridge, pairing: Effect.Success<ReturnType<typeof beginPairing>>) {
+      const access = yield* Effect.tryPromise({
+        try: () =>
+          bridge.bootstrapSshBearerSession(pairing.bootstrap.httpBaseUrl, pairing.pairingToken),
+        catch: sshPreparationError,
+      });
+      bearers.set(sshTargetKey(pairing.bootstrap.target), {
+        environmentId: pairing.descriptor.environmentId,
+        bearerToken: access.access_token,
+      });
+      return access.access_token;
+    },
+  );
+
+  return ClientCapabilities.SshEnvironmentGateway.of({
+    provision: Effect.fn("web.connectionPlatform.ssh.provision")(
+      function* (target, expectedEnvironmentId) {
+        const bridge = yield* desktopBridge;
+        const pairing = yield* beginPairing(bridge, target);
+        const { descriptor } = pairing;
+        if (
+          expectedEnvironmentId !== undefined &&
+          descriptor.environmentId !== expectedEnvironmentId
+        ) {
+          return yield* new ConnectionBlockedError({
+            reason: "configuration",
+            detail: `That host reaches ${descriptor.label}, a different machine. Add it as its own environment instead.`,
+          });
+        }
+        return {
+          environmentId: descriptor.environmentId,
+          label: descriptor.label,
+          bootstrap: pairing.bootstrap,
+          bearerToken: yield* exchangePairingToken(bridge, pairing),
+        };
+      },
+    ),
+    prepare: Effect.fn("web.connectionPlatform.ssh.prepare")(function* (input) {
+      const bridge = yield* desktopBridge;
+      const key = sshTargetKey(input.target);
+      const bearer = bearers.get(key);
+      if (bearer?.environmentId === input.expectedEnvironmentId) {
+        const bootstrap = yield* ensure(bridge, input.target, false);
+        if (yield* usableBearer(bridge, bootstrap.httpBaseUrl, bearer)) {
+          return { bootstrap, bearerToken: bearer.bearerToken };
+        }
+      }
+      bearers.delete(key);
+      const pairing = yield* beginPairing(bridge, input.target);
+      if (pairing.descriptor.environmentId !== input.expectedEnvironmentId) {
+        return yield* environmentMismatchError({
+          expected: input.expectedEnvironmentId,
+          actual: pairing.descriptor.environmentId,
+        });
+      }
+      return {
+        bootstrap: pairing.bootstrap,
+        bearerToken: yield* exchangePairingToken(bridge, pairing),
+      };
+    }),
+    disconnect: Effect.fn("web.connectionPlatform.ssh.disconnect")(function* (target) {
+      const bridge = readBridge();
+      if (bridge === undefined) {
+        return;
+      }
+      const key = sshTargetKey(target);
+      abandonedSetups.delete(key);
+      bearers.delete(key);
+      yield* Effect.tryPromise({
+        try: () => bridge.disconnectSshEnvironment(target),
+        catch: (cause) =>
+          new ConnectionTransientError({
+            reason: "remote-unavailable",
+            detail: `Could not disconnect the SSH environment: ${String(cause)}`,
+          }),
+      });
+    }),
+  });
+}
 
 const layerCapabilities = Layer.effectContext(
   Effect.sync(() => {
@@ -272,65 +425,7 @@ const layerCapabilities = Layer.effectContext(
           }),
       }).pipe(Effect.map(Option.fromNullishOr)),
     });
-    const ssh = ClientCapabilities.SshEnvironmentGateway.of({
-      provision: Effect.fn("web.connectionPlatform.ssh.provision")(
-        function* (target, expectedEnvironmentId) {
-          const bridge = window.desktopBridge;
-          if (bridge === undefined) {
-            return yield* new ConnectionBlockedError({
-              reason: "unsupported",
-              detail: "SSH environments are only available in the desktop app.",
-            });
-          }
-          return yield* provisionDesktopSshEnvironment(bridge, target, expectedEnvironmentId);
-        },
-      ),
-      prepare: Effect.fn("web.connectionPlatform.ssh.prepare")(function* (input) {
-        const bridge = window.desktopBridge;
-        if (bridge === undefined) {
-          return yield* new ConnectionBlockedError({
-            reason: "unsupported",
-            detail: "SSH environments are only available in the desktop app.",
-          });
-        }
-        const bootstrap = yield* Effect.tryPromise({
-          try: () =>
-            bridge.ensureSshEnvironment(input.target, {
-              issuePairingToken: true,
-            }),
-          catch: sshPreparationError,
-        });
-        if (bootstrap.pairingToken === null) {
-          return yield* new ConnectionBlockedError({
-            reason: "authentication",
-            detail: "The SSH environment did not issue a pairing credential.",
-          });
-        }
-        const access = yield* Effect.tryPromise({
-          try: () =>
-            bridge.bootstrapSshBearerSession(bootstrap.httpBaseUrl, bootstrap.pairingToken!),
-          catch: sshPreparationError,
-        });
-        return {
-          bootstrap,
-          bearerToken: access.access_token,
-        };
-      }),
-      disconnect: Effect.fn("web.connectionPlatform.ssh.disconnect")(function* (target) {
-        const bridge = window.desktopBridge;
-        if (bridge === undefined) {
-          return;
-        }
-        yield* Effect.tryPromise({
-          try: () => bridge.disconnectSshEnvironment(target),
-          catch: (cause) =>
-            new ConnectionTransientError({
-              reason: "remote-unavailable",
-              detail: `Could not disconnect the SSH environment: ${String(cause)}`,
-            }),
-        });
-      }),
-    });
+    const ssh = makeDesktopSshEnvironmentGateway(() => window.desktopBridge);
 
     return Context.make(ClientCapabilities.CloudSession, cloudSession).pipe(
       Context.add(ClientCapabilities.PrimaryEnvironmentAuth, primaryAuth),

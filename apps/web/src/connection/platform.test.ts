@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
@@ -17,9 +18,9 @@ import {
   canReuseCachedPlatformRegistration,
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
+  makeDesktopSshEnvironmentGateway,
   nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
-  provisionDesktopSshEnvironment,
   readPrimaryEnvironmentTargetResult,
   secondaryRegistrationsToRetainAfterTopologyRead,
   secondaryBearerExpiresAtEpochMs,
@@ -33,19 +34,65 @@ const TARGET: DesktopSshEnvironmentTarget = {
   port: 22,
 };
 
-function makeBridge(
-  calls: string[],
-  options?: { readonly failDescriptor?: boolean },
-): DesktopBridge {
-  return {
-    ensureSshEnvironment: async (target: DesktopSshEnvironmentTarget) => {
-      calls.push("ensure");
-      return {
+const ENVIRONMENT_ID = EnvironmentId.make("environment-ssh");
+
+const OTHER_ENVIRONMENT_ID = EnvironmentId.make("some-other-machine");
+
+const PREPARE_INPUT = {
+  connectionId: "ssh:environment-ssh:devbox",
+  expectedEnvironmentId: ENVIRONMENT_ID,
+  target: TARGET,
+};
+
+function deferred() {
+  let resolve!: () => void;
+  let reject!: (cause: unknown) => void;
+  const promise = new Promise<void>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
+// Runs the attempt up to its desktop setup call before the test continues.
+const FORK_NOW = { startImmediately: true } as const;
+
+const bearerFor = (environmentId: EnvironmentId) => `bearer-for-${environmentId}`;
+
+interface FakeSshHost {
+  /** Bridge calls in order: `ensure` pairs, `tunnel` does not. */
+  readonly calls: string[];
+  /** Every setup promise the desktop returned. */
+  readonly setups: Promise<unknown>[];
+  readonly bridge: DesktopBridge;
+}
+
+function makeSshHost(options?: {
+  readonly failDescriptor?: boolean;
+  readonly environmentId?: () => EnvironmentId;
+  readonly authenticated?: boolean;
+  /** Settles when the desktop finishes the given setup call (0-based). */
+  readonly setupDone?: (call: number) => Promise<void>;
+}): FakeSshHost {
+  const calls: string[] = [];
+  const setups: Promise<unknown>[] = [];
+  const currentEnvironment = () => options?.environmentId?.() ?? ENVIRONMENT_ID;
+  const bridge = {
+    ensureSshEnvironment: (
+      target: DesktopSshEnvironmentTarget,
+      ensureOptions?: { readonly issuePairingToken?: boolean },
+    ) => {
+      const issuePairingToken = ensureOptions?.issuePairingToken === true;
+      const call = setups.length;
+      calls.push(issuePairingToken ? "ensure" : "tunnel");
+      const setup = (options?.setupDone?.(call) ?? Promise.resolve()).then(() => ({
         target,
         httpBaseUrl: "http://127.0.0.1:3201/",
         wsBaseUrl: "ws://127.0.0.1:3201/",
-        pairingToken: "pairing-token",
-      };
+        pairingToken: issuePairingToken ? "pairing-token" : null,
+      }));
+      setups.push(setup);
+      return setup;
     },
     fetchSshEnvironmentDescriptor: async () => {
       calls.push("descriptor");
@@ -53,7 +100,7 @@ function makeBridge(
         throw new Error("descriptor unavailable");
       }
       return {
-        environmentId: EnvironmentId.make("environment-ssh"),
+        environmentId: currentEnvironment(),
         label: "SSH environment",
         platform: {
           os: "linux",
@@ -65,10 +112,17 @@ function makeBridge(
         },
       };
     },
+    fetchSshSessionState: async (_httpBaseUrl: string, bearerToken: string) => {
+      calls.push("session");
+      return {
+        authenticated:
+          (options?.authenticated ?? true) && bearerToken === bearerFor(currentEnvironment()),
+      };
+    },
     bootstrapSshBearerSession: async () => {
       calls.push("token");
       return {
-        access_token: "bearer-token",
+        access_token: bearerFor(currentEnvironment()),
         issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
         token_type: "Bearer",
         expires_in: 3_600,
@@ -76,46 +130,163 @@ function makeBridge(
       };
     },
   } as unknown as DesktopBridge;
+  return { calls, setups, bridge };
 }
 
 describe("desktop SSH pairing", () => {
   it.effect("fetches the descriptor before consuming the one-time credential", () =>
     Effect.gen(function* () {
-      const calls: string[] = [];
+      const host = makeSshHost();
 
-      const provisioned = yield* provisionDesktopSshEnvironment(makeBridge(calls), TARGET);
+      const provisioned = yield* makeDesktopSshEnvironmentGateway(() => host.bridge).provision(
+        TARGET,
+      );
 
-      expect(provisioned.environmentId).toBe(EnvironmentId.make("environment-ssh"));
-      expect(calls).toEqual(["ensure", "descriptor", "token"]);
+      expect(provisioned.environmentId).toBe(ENVIRONMENT_ID);
+      expect(host.calls).toEqual(["ensure", "descriptor", "token"]);
     }),
   );
 
   it.effect("does not consume the credential when adding a route to a different machine", () =>
     Effect.gen(function* () {
-      const calls: string[] = [];
+      const host = makeSshHost();
 
-      const error = yield* provisionDesktopSshEnvironment(
-        makeBridge(calls),
-        TARGET,
-        EnvironmentId.make("some-other-machine"),
-      ).pipe(Effect.flip);
+      const error = yield* makeDesktopSshEnvironmentGateway(() => host.bridge)
+        .provision(TARGET, OTHER_ENVIRONMENT_ID)
+        .pipe(Effect.flip);
 
       expect(error).toMatchObject({ reason: "configuration" });
-      expect(calls).toEqual(["ensure", "descriptor"]);
+      expect(host.calls).toEqual(["ensure", "descriptor"]);
     }),
   );
 
   it.effect("does not consume the credential when descriptor discovery fails", () =>
     Effect.gen(function* () {
-      const calls: string[] = [];
+      const host = makeSshHost({ failDescriptor: true });
 
-      yield* provisionDesktopSshEnvironment(
-        makeBridge(calls, { failDescriptor: true }),
-        TARGET,
-      ).pipe(Effect.flip);
+      yield* makeDesktopSshEnvironmentGateway(() => host.bridge)
+        .provision(TARGET)
+        .pipe(Effect.flip);
 
-      expect(calls).toEqual(["ensure", "descriptor"]);
+      expect(host.calls).toEqual(["ensure", "descriptor"]);
     }),
+  );
+
+  it.effect("reconnects with the bearer from the last pairing", () =>
+    Effect.gen(function* () {
+      const host = makeSshHost();
+      const gateway = makeDesktopSshEnvironmentGateway(() => host.bridge);
+      const provisioned = yield* gateway.provision(TARGET);
+      host.calls.length = 0;
+
+      const prepared = yield* gateway.prepare(PREPARE_INPUT);
+
+      expect(prepared.bearerToken).toBe(provisioned.bearerToken);
+      expect(host.calls).toEqual(["tunnel", "descriptor", "session"]);
+    }),
+  );
+
+  it.effect("pairs again when the server no longer honors the bearer", () =>
+    Effect.gen(function* () {
+      const host = makeSshHost({ authenticated: false });
+      const gateway = makeDesktopSshEnvironmentGateway(() => host.bridge);
+      yield* gateway.prepare(PREPARE_INPUT);
+      host.calls.length = 0;
+
+      yield* gateway.prepare(PREPARE_INPUT);
+
+      expect(host.calls).toEqual([
+        "tunnel",
+        "descriptor",
+        "session",
+        "ensure",
+        "descriptor",
+        "token",
+      ]);
+    }),
+  );
+
+  it.effect("does not present the bearer to a different machine", () =>
+    Effect.gen(function* () {
+      let environmentId = ENVIRONMENT_ID;
+      const host = makeSshHost({ environmentId: () => environmentId });
+      const gateway = makeDesktopSshEnvironmentGateway(() => host.bridge);
+      yield* gateway.provision(TARGET);
+      environmentId = OTHER_ENVIRONMENT_ID;
+      host.calls.length = 0;
+
+      const error = yield* gateway.prepare(PREPARE_INPUT).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ reason: "configuration" });
+      expect(host.calls).toEqual(["tunnel", "descriptor", "ensure", "descriptor"]);
+    }),
+  );
+
+  it.effect("keeps no bearer from a machine the route did not expect", () =>
+    Effect.gen(function* () {
+      let environmentId = OTHER_ENVIRONMENT_ID;
+      const host = makeSshHost({ environmentId: () => environmentId });
+      const gateway = makeDesktopSshEnvironmentGateway(() => host.bridge);
+      const error = yield* gateway.prepare(PREPARE_INPUT).pipe(Effect.flip);
+      expect(error).toMatchObject({ reason: "configuration" });
+      expect(host.calls).toEqual(["ensure", "descriptor"]);
+      environmentId = ENVIRONMENT_ID;
+      host.calls.length = 0;
+
+      const prepared = yield* gateway.prepare(PREPARE_INPUT);
+
+      expect(prepared.bearerToken).toBe(bearerFor(ENVIRONMENT_ID));
+      expect(host.calls).toEqual(["ensure", "descriptor", "token"]);
+    }),
+  );
+
+  it.effect("hands a timed-out attempt's setup to the next attempt", () =>
+    Effect.gen(function* () {
+      const setupDone = deferred();
+      const host = makeSshHost({ setupDone: () => setupDone.promise });
+      const gateway = makeDesktopSshEnvironmentGateway(() => host.bridge);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const timedOut = yield* Effect.forkChild(gateway.prepare(PREPARE_INPUT), FORK_NOW);
+        yield* Fiber.interrupt(timedOut);
+      }
+
+      const next = yield* Effect.forkChild(gateway.prepare(PREPARE_INPUT), FORK_NOW);
+      setupDone.resolve();
+      const prepared = yield* Fiber.join(next);
+
+      expect(prepared.bearerToken).toBe(bearerFor(ENVIRONMENT_ID));
+      expect(host.calls).toEqual(["ensure", "descriptor", "token"]);
+    }),
+  );
+
+  it.effect.each(["failed", "succeeded"] as const)(
+    "starts its own setup once the abandoned one %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const setupDone = deferred();
+        const host = makeSshHost({
+          setupDone: (call) => (call === 0 ? setupDone.promise : Promise.resolve()),
+        });
+        const gateway = makeDesktopSshEnvironmentGateway(() => host.bridge);
+        const timedOut = yield* Effect.forkChild(gateway.prepare(PREPARE_INPUT), FORK_NOW);
+        yield* Fiber.interrupt(timedOut);
+        if (outcome === "failed") {
+          setupDone.reject(new Error("remote launch failed"));
+        } else {
+          setupDone.resolve();
+        }
+        // The gateway subscribed first, so it has already let the setup go.
+        yield* Effect.promise(() =>
+          host.setups[0]!.then(
+            () => undefined,
+            () => undefined,
+          ),
+        );
+
+        yield* gateway.prepare(PREPARE_INPUT);
+
+        expect(host.calls).toEqual(["ensure", "ensure", "descriptor", "token"]);
+      }),
   );
 });
 
