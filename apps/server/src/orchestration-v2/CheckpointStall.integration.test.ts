@@ -31,15 +31,15 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as SqlClient from "effect/sql/SqlClient";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
-it.effect.each(["codex", "claudeAgent"] as const)(
-  "checkpoint retry exhaustion and Stop recover %s and its held queue",
-  (provider) =>
+it.effect(
+  "checkpoint retry exhaustion and Stop recover the shared fake-provider path and held queue",
+  () =>
     Effect.scoped(
       Effect.gen(function* () {
         const captureStarted = yield* Deferred.make<void>();
         let stopCapture = false;
-        const driver = ProviderDriverKind.make(provider);
-        const instanceId = ProviderInstanceId.make(provider);
+        const driver = ProviderDriverKind.make("codex");
+        const instanceId = ProviderInstanceId.make("codex");
         const modelSelection = { instanceId, model: "test-model" };
         const cwd = yield* checkpointWorkspace("checkpoint-exhaustion");
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();

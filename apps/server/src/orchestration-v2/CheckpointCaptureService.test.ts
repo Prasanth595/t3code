@@ -494,207 +494,288 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     }),
   );
 
-  // A cancelled run's checkpoint is the rollback point for the message after
-  // it, so capture records it without reporting the run as completed.
-  it.effect.each(["cancelled", "capture-wins", "stop-wins"] as const)(
+  const seedCaptureRun = (key: string, status: "cancelled" | "waiting") =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const cancelledAt = DateTime.add(now, { seconds: 1 });
+      const cancelledThreadId = ThreadId.make(`thread:checkpoint-capture-cancelled:${key}`);
+      const cancelledRunId = RunId.make(`run:checkpoint-capture-cancelled:${key}`);
+      const cancelledScopeId = CheckpointScopeId.make(`scope:checkpoint-capture-cancelled:${key}`);
+      const cancelledRootNodeId = NodeId.make(`node:checkpoint-capture-cancelled-root:${key}`);
+      const cancelledProviderThreadId = ProviderThreadId.make(
+        `provider-thread:checkpoint-capture-cancelled:${key}`,
+      );
+      yield* projectionStore.apply({
+        id: EventId.make(`event:checkpoint-capture-cancelled:thread:${key}`),
+        type: "thread.created",
+        threadId: cancelledThreadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: cancelledThreadId,
+          projectId,
+          title: "Checkpoint capture after cancel",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: cancelledThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const runningRun: OrchestrationV2Run = {
+        id: cancelledRunId,
+        threadId: cancelledThreadId,
+        ordinal: 1,
+        providerInstanceId,
+        modelSelection,
+        providerThreadId: cancelledProviderThreadId,
+        userMessageId: MessageId.make(`message:checkpoint-capture-cancelled:${key}`),
+        rootNodeId: cancelledRootNodeId,
+        activeAttemptId: null,
+        status: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      };
+      const runningRootNode = {
+        id: cancelledRootNodeId,
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        parentNodeId: null,
+        rootNodeId: cancelledRootNodeId,
+        kind: "root_turn" as const,
+        status: "running" as const,
+        countsForRun: true,
+        providerThreadId: cancelledProviderThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: cancelledScopeId,
+        startedAt: now,
+        completedAt: null,
+      };
+      const scope = {
+        id: cancelledScopeId,
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        parentScopeId: null,
+        providerThreadId: cancelledProviderThreadId,
+        kind: "root_run" as const,
+        ordinalWithinParent: 0,
+        advancesAppRunCount: true,
+        cwd: "/repo",
+        createdAt: now,
+      };
+      yield* projectionStore.apply({
+        id: EventId.make(`event:checkpoint-capture-cancelled:provider-thread:${key}`),
+        type: "provider-thread.updated",
+        threadId: cancelledThreadId,
+        nodeId: cancelledRootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: cancelledProviderThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: cancelledThreadId,
+          ownerNodeId: cancelledRootNodeId,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make(`event:checkpoint-capture-cancelled:scope:${key}`),
+        type: "checkpoint-scope.created",
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        occurredAt: now,
+        payload: scope,
+      });
+      yield* projectionStore.apply({
+        id: EventId.make(`event:checkpoint-capture-cancelled:baseline:${key}`),
+        type: "checkpoint.captured",
+        threadId: cancelledThreadId,
+        nodeId: cancelledRootNodeId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id: CheckpointId.make(`checkpoint:cancelled-baseline-0:${key}`),
+          threadId: cancelledThreadId,
+          scopeId: cancelledScopeId,
+          runId: null,
+          nodeId: cancelledRootNodeId,
+          parentCheckpointId: null,
+          ordinalWithinScope: 0,
+          appRunOrdinal: null,
+          ref: CheckpointRef.make(`checkpoint-ref:cancelled-baseline-0:${key}`),
+          status: "ready",
+          files: [],
+          capturedAt: now,
+        },
+      });
+      // The turn runs, then finalizes as cancelled the way RunExecutionService
+      // writes it, which also enqueues this capture.
+      for (const [runStatus, completedAt] of [
+        ["running", null],
+        [status, status === "cancelled" ? cancelledAt : null],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-cancelled:run-${runStatus}`),
+          type: "run.updated",
+          threadId: cancelledThreadId,
+          runId: cancelledRunId,
+          nodeId: cancelledRootNodeId,
+          providerInstanceId,
+          occurredAt: completedAt ?? now,
+          payload: { ...runningRun, status: runStatus, completedAt },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-capture-cancelled:node-${runStatus}`),
+          type: "node.updated",
+          threadId: cancelledThreadId,
+          runId: cancelledRunId,
+          nodeId: cancelledRootNodeId,
+          providerInstanceId,
+          occurredAt: completedAt ?? now,
+          payload: { ...runningRootNode, status: runStatus, completedAt },
+        });
+      }
+
+      const captured = {
+        id: CheckpointId.make(`checkpoint:cancelled-captured-1:${key}`),
+        threadId: cancelledThreadId,
+        scopeId: cancelledScopeId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        parentCheckpointId: CheckpointId.make(`checkpoint:cancelled-baseline-0:${key}`),
+        ordinalWithinScope: 1,
+        appRunOrdinal: 1,
+        ref: CheckpointRef.make(`checkpoint-ref:cancelled-captured-1:${key}`),
+        status: "ready" as const,
+        files: [],
+        capturedAt: cancelledAt,
+      };
+      return {
+        projectionStore,
+        cancelledAt,
+        cancelledThreadId,
+        cancelledRunId,
+        cancelledScopeId,
+        captured,
+      };
+    });
+
+  // A cancelled checkpoint remains the rollback point, including on redelivery.
+  it.effect("records the checkpoint of a cancelled run without completing it", () =>
+    Effect.gen(function* () {
+      const {
+        projectionStore,
+        cancelledAt,
+        cancelledThreadId,
+        cancelledRunId,
+        cancelledScopeId,
+        captured,
+      } = yield* seedCaptureRun("cancelled", "cancelled");
+      const commits = yield* Ref.make(0);
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ThreadCommandExecutor.layer,
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              materializeBaselineCheckpoint: () =>
+                Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
+              capture: () => Effect.succeed(captured),
+            }),
+            // Commit straight into the projection so the test reads what a
+            // client would see after the capture lands.
+            Layer.mock(EventSink.EventSinkV2)({
+              writeIfRunCurrent: (input) =>
+                Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
+                  Effect.andThen(Ref.update(commits, (count) => count + 1)),
+                  Effect.as({ committed: true } as never),
+                  Effect.orDie,
+                ),
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+        yield* service.execute({
+          threadId: cancelledThreadId,
+          runId: cancelledRunId,
+          scopeId: cancelledScopeId,
+        });
+        // A redelivered effect finds the recorded checkpoint and commits nothing.
+        yield* service.execute({
+          threadId: cancelledThreadId,
+          runId: cancelledRunId,
+          scopeId: cancelledScopeId,
+        });
+      }).pipe(Effect.provide(layerCapture));
+
+      assert.equal(yield* Ref.get(commits), 1);
+      const projected = yield* projectionStore.getCheckpointCaptureContext(cancelledThreadId, {
+        runId: cancelledRunId,
+        scopeId: cancelledScopeId,
+      });
+      assert.equal(projected.run?.status, "cancelled");
+      assert.equal(projected.run?.checkpointId, captured.id);
+      const completedAt = projected.run?.completedAt;
+      assert.equal(
+        completedAt ? DateTime.formatIso(completedAt) : completedAt,
+        DateTime.formatIso(cancelledAt),
+      );
+      assert.equal(projected.rootNode?.status, "cancelled");
+      assert.deepEqual([...projected.readyCheckpointOrdinals].toSorted(), [0, 1]);
+    }),
+  );
+
+  it.effect.each(["capture-wins", "stop-wins"] as const)(
     "serializes capture settlement and Stop, order=%s",
     (order) =>
       Effect.gen(function* () {
-        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-        const now = yield* DateTime.now;
-        const cancelledAt = DateTime.add(now, { seconds: 1 });
-        const cancelledThreadId = ThreadId.make(`thread:checkpoint-capture-cancelled:${order}`);
-        const cancelledRunId = RunId.make(`run:checkpoint-capture-cancelled:${order}`);
-        const cancelledScopeId = CheckpointScopeId.make(
-          `scope:checkpoint-capture-cancelled:${order}`,
-        );
-        const cancelledRootNodeId = NodeId.make(`node:checkpoint-capture-cancelled-root:${order}`);
-        const cancelledProviderThreadId = ProviderThreadId.make(
-          `provider-thread:checkpoint-capture-cancelled:${order}`,
-        );
-        yield* projectionStore.apply({
-          id: EventId.make(`event:checkpoint-capture-cancelled:thread:${order}`),
-          type: "thread.created",
-          threadId: cancelledThreadId,
-          occurredAt: now,
-          payload: {
-            createdBy: "user",
-            creationSource: "web",
-            id: cancelledThreadId,
-            projectId,
-            title: "Checkpoint capture after cancel",
-            providerInstanceId,
-            modelSelection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: null,
-            activeProviderThreadId: null,
-            lineage: {
-              parentThreadId: null,
-              relationshipToParent: null,
-              rootThreadId: cancelledThreadId,
-            },
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-            archivedAt: null,
-            settledOverride: null,
-            settledAt: null,
-            lastVisitedAt: null,
-            deletedAt: null,
-          },
-        });
-        const runningRun: OrchestrationV2Run = {
-          id: cancelledRunId,
-          threadId: cancelledThreadId,
-          ordinal: 1,
-          providerInstanceId,
-          modelSelection,
-          providerThreadId: cancelledProviderThreadId,
-          userMessageId: MessageId.make(`message:checkpoint-capture-cancelled:${order}`),
-          rootNodeId: cancelledRootNodeId,
-          activeAttemptId: null,
-          status: "running",
-          requestedAt: now,
-          startedAt: now,
-          completedAt: null,
-          checkpointId: null,
-          contextHandoffId: null,
-        };
-        const runningRootNode = {
-          id: cancelledRootNodeId,
-          threadId: cancelledThreadId,
-          runId: cancelledRunId,
-          parentNodeId: null,
-          rootNodeId: cancelledRootNodeId,
-          kind: "root_turn" as const,
-          status: "running" as const,
-          countsForRun: true,
-          providerThreadId: cancelledProviderThreadId,
-          providerTurnId: null,
-          nativeItemRef: null,
-          runtimeRequestId: null,
-          checkpointScopeId: cancelledScopeId,
-          startedAt: now,
-          completedAt: null,
-        };
-        const scope = {
-          id: cancelledScopeId,
-          threadId: cancelledThreadId,
-          runId: cancelledRunId,
-          nodeId: cancelledRootNodeId,
-          parentScopeId: null,
-          providerThreadId: cancelledProviderThreadId,
-          kind: "root_run" as const,
-          ordinalWithinParent: 0,
-          advancesAppRunCount: true,
-          cwd: "/repo",
-          createdAt: now,
-        };
-        yield* projectionStore.apply({
-          id: EventId.make(`event:checkpoint-capture-cancelled:provider-thread:${order}`),
-          type: "provider-thread.updated",
-          threadId: cancelledThreadId,
-          nodeId: cancelledRootNodeId,
-          driver,
-          providerInstanceId,
-          occurredAt: now,
-          payload: {
-            id: cancelledProviderThreadId,
-            driver,
-            providerInstanceId,
-            providerSessionId: null,
-            appThreadId: cancelledThreadId,
-            ownerNodeId: cancelledRootNodeId,
-            nativeThreadRef: null,
-            nativeConversationHeadRef: null,
-            status: "idle",
-            firstRunOrdinal: 1,
-            lastRunOrdinal: 1,
-            handoffIds: [],
-            forkedFrom: null,
-            createdAt: now,
-            updatedAt: now,
-          },
-        });
-        yield* projectionStore.apply({
-          id: EventId.make(`event:checkpoint-capture-cancelled:scope:${order}`),
-          type: "checkpoint-scope.created",
-          threadId: cancelledThreadId,
-          runId: cancelledRunId,
-          nodeId: cancelledRootNodeId,
-          occurredAt: now,
-          payload: scope,
-        });
-        yield* projectionStore.apply({
-          id: EventId.make(`event:checkpoint-capture-cancelled:baseline:${order}`),
-          type: "checkpoint.captured",
-          threadId: cancelledThreadId,
-          nodeId: cancelledRootNodeId,
-          driver,
-          providerInstanceId,
-          occurredAt: now,
-          payload: {
-            id: CheckpointId.make(`checkpoint:cancelled-baseline-0:${order}`),
-            threadId: cancelledThreadId,
-            scopeId: cancelledScopeId,
-            runId: null,
-            nodeId: cancelledRootNodeId,
-            parentCheckpointId: null,
-            ordinalWithinScope: 0,
-            appRunOrdinal: null,
-            ref: CheckpointRef.make(`checkpoint-ref:cancelled-baseline-0:${order}`),
-            status: "ready",
-            files: [],
-            capturedAt: now,
-          },
-        });
-        // The turn runs, then finalizes as cancelled the way RunExecutionService
-        // writes it, which also enqueues this capture.
-        for (const [status, completedAt] of [
-          ["running", null],
-          [
-            order === "cancelled" ? "cancelled" : "waiting",
-            order === "cancelled" ? cancelledAt : null,
-          ],
-        ] as const) {
-          yield* projectionStore.apply({
-            id: EventId.make(`event:checkpoint-capture-cancelled:run-${status}`),
-            type: "run.updated",
-            threadId: cancelledThreadId,
-            runId: cancelledRunId,
-            nodeId: cancelledRootNodeId,
-            providerInstanceId,
-            occurredAt: completedAt ?? now,
-            payload: { ...runningRun, status, completedAt },
-          });
-          yield* projectionStore.apply({
-            id: EventId.make(`event:checkpoint-capture-cancelled:node-${status}`),
-            type: "node.updated",
-            threadId: cancelledThreadId,
-            runId: cancelledRunId,
-            nodeId: cancelledRootNodeId,
-            providerInstanceId,
-            occurredAt: completedAt ?? now,
-            payload: { ...runningRootNode, status, completedAt },
-          });
-        }
-
-        const captured = {
-          id: CheckpointId.make(`checkpoint:cancelled-captured-1:${order}`),
-          threadId: cancelledThreadId,
-          scopeId: cancelledScopeId,
-          runId: cancelledRunId,
-          nodeId: cancelledRootNodeId,
-          parentCheckpointId: CheckpointId.make(`checkpoint:cancelled-baseline-0:${order}`),
-          ordinalWithinScope: 1,
-          appRunOrdinal: 1,
-          ref: CheckpointRef.make(`checkpoint-ref:cancelled-captured-1:${order}`),
-          status: "ready" as const,
-          files: [],
-          capturedAt: cancelledAt,
-        };
+        const {
+          projectionStore,
+          cancelledAt,
+          cancelledThreadId,
+          cancelledRunId,
+          cancelledScopeId,
+          captured,
+        } = yield* seedCaptureRun(order, "waiting");
         const commits = yield* Ref.make(0);
         const gitStarted = yield* Deferred.make<void>();
         const releaseGit = yield* Deferred.make<void>();
@@ -721,12 +802,10 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                 materializeBaselineCheckpoint: () =>
                   Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
                 capture: () =>
-                  order === "cancelled"
-                    ? Effect.succeed(captured)
-                    : Deferred.succeed(gitStarted, undefined).pipe(
-                        Effect.andThen(Deferred.await(releaseGit)),
-                        Effect.as(captured),
-                      ),
+                  Deferred.succeed(gitStarted, undefined).pipe(
+                    Effect.andThen(Deferred.await(releaseGit)),
+                    Effect.as(captured),
+                  ),
               }),
               // Commit straight into the projection so the test reads what a
               // client would see after the capture lands.
@@ -762,11 +841,6 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             runId: cancelledRunId,
             scopeId: cancelledScopeId,
           });
-          if (order === "cancelled") {
-            yield* capture;
-            yield* capture;
-            return;
-          }
           // Model the command's durable read/plan/commit under the same real keyed
           // lock. The barriers prove capture's Git work never holds this lock.
           const stop = Deferred.succeed(stopAttempted, undefined).pipe(
@@ -829,28 +903,11 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           runId: cancelledRunId,
           scopeId: cancelledScopeId,
         });
-        assert.equal(
-          projected.run?.status,
-          order === "cancelled"
-            ? "cancelled"
-            : order === "capture-wins"
-              ? "completed"
-              : "interrupted",
-        );
+        assert.equal(projected.run?.status, order === "capture-wins" ? "completed" : "interrupted");
         assert.equal(projected.run?.checkpointId, order === "stop-wins" ? null : captured.id);
-        const completedAt = projected.run?.completedAt;
-        if (order === "cancelled")
-          assert.equal(
-            completedAt ? DateTime.formatIso(completedAt) : completedAt,
-            DateTime.formatIso(cancelledAt),
-          );
         assert.equal(
           projected.rootNode?.status,
-          order === "cancelled"
-            ? "cancelled"
-            : order === "capture-wins"
-              ? "completed"
-              : "interrupted",
+          order === "capture-wins" ? "completed" : "interrupted",
         );
         assert.deepEqual(
           [...projected.readyCheckpointOrdinals].toSorted(),
