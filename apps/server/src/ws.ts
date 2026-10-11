@@ -2658,7 +2658,8 @@ const layerWsRpc = (
             Effect.mapError(
               (cause) =>
                 new ProjectReadFileError({
-                  ...input,
+                  cwd: input.cwd,
+                  relativePath: input.relativePath,
                   ...projectFileFailureContext(cause),
                   cause,
                 }),
