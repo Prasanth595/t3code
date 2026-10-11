@@ -8,7 +8,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { SettingsTarget } from "./settings-environment-filter";
 import {
-  planMobileAutoSettleScopePatch,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -56,134 +55,17 @@ describe("mobile usage-limit settings across environments", () => {
   );
 });
 
-function environment(
-  environmentId: EnvironmentId,
-  settings: ServerSettings,
-  supportsScope = false,
-): SettingsTarget {
+function environment(environmentId: EnvironmentId, settings: ServerSettings): SettingsTarget {
   return {
     environmentId,
     serverConfig: {
       settings,
-      environment: {
-        capabilities: { projectSettingsOverrides: true, threadAutoSettlementScope: supportsScope },
-      },
+      environment: { capabilities: { projectSettingsOverrides: true } },
     },
   } as SettingsTarget;
 }
 
 describe("mobile project settings scope", () => {
-  it.each([false, true])(
-    "filters settlement scope per server with project scope %s",
-    (projectSelected) => {
-      const capable = environment(firstId, DEFAULT_SERVER_SETTINGS, true);
-      const legacy = environment(secondId, DEFAULT_SERVER_SETTINGS);
-      const targets = resolveMobileSettingsTargets(
-        [capable, legacy],
-        projectSelected
-          ? [
-              { environmentId: firstId, id: firstProject },
-              { environmentId: secondId, id: secondProject },
-            ]
-          : null,
-      );
-      const writes = planMobileScopedSettingsPatch(targets, projectSelected, {
-        sidebarAutoSettleAfterDays: null,
-        sidebarAutoSettleScope: "all",
-      });
-      expect(writes).toEqual([
-        {
-          environmentId: firstId,
-          patch: projectSelected
-            ? {
-                projectSettingsOverrides: {
-                  [firstProject]: {
-                    sidebarAutoSettleAfterDays: null,
-                    sidebarAutoSettleScope: "all",
-                  },
-                },
-              }
-            : { sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" },
-        },
-        {
-          environmentId: secondId,
-          patch: projectSelected
-            ? {
-                projectSettingsOverrides: { [secondProject]: { sidebarAutoSettleAfterDays: null } },
-              }
-            : { sidebarAutoSettleAfterDays: null },
-        },
-      ]);
-    },
-  );
-
-  it("keeps each environment's duration when changing the inactivity scope", () => {
-    const targets = resolveMobileSettingsTargets(
-      [
-        environment(firstId, { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 30 }, true),
-        environment(
-          secondId,
-          { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
-          true,
-        ),
-      ],
-      null,
-    );
-    expect(planMobileAutoSettleScopePatch(targets, false, "without-pr", 3)).toEqual([
-      { environmentId: firstId, patch: { sidebarAutoSettleScope: "without-pr" } },
-      {
-        environmentId: secondId,
-        patch: { sidebarAutoSettleScope: "without-pr", sidebarAutoSettleAfterDays: 3 },
-      },
-    ]);
-  });
-
-  it("keeps each project override's duration when changing the inactivity scope", () => {
-    const targets = resolveMobileSettingsTargets(
-      [
-        environment(
-          firstId,
-          {
-            ...DEFAULT_SERVER_SETTINGS,
-            projectSettingsOverrides: { [firstProject]: { sidebarAutoSettleAfterDays: 14 } },
-          },
-          true,
-        ),
-        environment(
-          secondId,
-          {
-            ...DEFAULT_SERVER_SETTINGS,
-            sidebarAutoSettleAfterDays: 7,
-            projectSettingsOverrides: { [secondProject]: { sidebarAutoSettleAfterDays: null } },
-          },
-          true,
-        ),
-      ],
-      [
-        { environmentId: firstId, id: firstProject },
-        { environmentId: secondId, id: secondProject },
-      ],
-    );
-    expect(planMobileAutoSettleScopePatch(targets, true, "all", 3)).toEqual([
-      {
-        environmentId: firstId,
-        patch: {
-          projectSettingsOverrides: {
-            [firstProject]: { sidebarAutoSettleAfterDays: 14, sidebarAutoSettleScope: "all" },
-          },
-        },
-      },
-      {
-        environmentId: secondId,
-        patch: {
-          projectSettingsOverrides: {
-            [secondProject]: { sidebarAutoSettleAfterDays: 3, sidebarAutoSettleScope: "all" },
-          },
-        },
-      },
-    ]);
-  });
-
   it("edits each checkout's own override without changing either environment default", () => {
     const firstSettings: ServerSettings = {
       ...DEFAULT_SERVER_SETTINGS,

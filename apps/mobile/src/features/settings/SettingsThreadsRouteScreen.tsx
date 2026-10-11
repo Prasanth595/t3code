@@ -10,12 +10,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
-import { ControlPillMenu } from "../../components/ControlPill";
 import { AppText as Text } from "../../components/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { SettingsControlRow } from "./components/SettingsControlRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -27,7 +25,6 @@ import {
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
-  planMobileAutoSettleScopePatch,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -95,7 +92,12 @@ function AutoSettleSettingsRows() {
     return null;
   }
 
-  const runWrites = (writes: ReturnType<typeof planMobileScopedSettingsPatch>) => {
+  const writeToAll = (
+    patch: Partial<AutoSettleSettings> & {
+      autoResumeLimitedThreads?: boolean;
+      snoozeLimitedThreads?: boolean;
+    },
+  ) => {
     if (
       writeInFlight.current ||
       !syncTargets.every((target) =>
@@ -103,6 +105,7 @@ function AutoSettleSettingsRows() {
       )
     )
       return;
+    const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
     if (writes.length === 0) return;
     writeInFlight.current = true;
     setPendingTargets(syncTargets);
@@ -117,29 +120,18 @@ function AutoSettleSettingsRows() {
       setPendingWrites((count) => count - 1);
     });
   };
-  const writeToAll = (
-    patch: Partial<AutoSettleSettings> & {
-      autoResumeLimitedThreads?: boolean;
-      snoozeLimitedThreads?: boolean;
-    },
-  ) => runWrites(planMobileScopedSettingsPatch(syncTargets, projectSelected, patch));
 
   const { patch: autoSettlePatch, mismatches } = planAutoSettleSettingsSync(
     {
       environmentId: reference.environment.environmentId,
       projectId: reference.projectId,
       settings: referenceSettings,
-      supportsScope:
-        reference.environment.serverConfig.environment.capabilities.threadAutoSettlementScope ===
-        true,
     },
     displayTargets.map((target) => ({
       environmentId: target.environment.environmentId,
       projectId: target.projectId,
       label: target.environment.label,
       settings: target.settings,
-      supportsScope:
-        target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true,
     })),
   );
 
@@ -154,8 +146,7 @@ function AutoSettleSettingsRows() {
     syncTargets.some(
       (target) =>
         target.sources.sidebarAutoSettleOnMerge === "project" ||
-        target.sources.sidebarAutoSettleAfterDays === "project" ||
-        target.sources.sidebarAutoSettleScope === "project",
+        target.sources.sidebarAutoSettleAfterDays === "project",
     );
   const clearProjectOverrides = () => {
     if (
@@ -168,7 +159,6 @@ function AutoSettleSettingsRows() {
     const writes = planMobileScopedSettingsClear(syncTargets, [
       "sidebarAutoSettleOnMerge",
       "sidebarAutoSettleAfterDays",
-      "sidebarAutoSettleScope",
     ]);
     if (writes.length === 0) return;
     writeInFlight.current = true;
@@ -225,75 +215,15 @@ function AutoSettleSettingsRows() {
           disabled={disabled}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
-        <ControlPillMenu
-          accessibilityLabel="Auto-settle inactive threads"
-          actions={[
-            {
-              id: "off",
-              title: "Off",
-              state: afterDays === null ? "on" : "off",
-              attributes: { disabled },
-            },
-            {
-              id: "all",
-              title: "All threads",
-              attributes: { disabled },
-              state:
-                afterDays !== null && referenceSettings.sidebarAutoSettleScope === "all"
-                  ? "on"
-                  : "off",
-            },
-            {
-              id: "without-pr",
-              title: "Threads without a PR",
-              state:
-                afterDays !== null && referenceSettings.sidebarAutoSettleScope === "without-pr"
-                  ? "on"
-                  : "off",
-              attributes: {
-                disabled:
-                  disabled ||
-                  syncTargets.some(
-                    (target) =>
-                      target.environment.serverConfig.environment.capabilities
-                        .threadAutoSettlementScope !== true,
-                  ),
-              },
-            },
-          ]}
-          onPressAction={({ nativeEvent }) => {
-            if (disabled) return;
-            const value = nativeEvent.event;
-            if (value !== "off" && value !== "all" && value !== "without-pr") return;
-            if (value === "off") {
-              writeToAll({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" });
-              return;
-            }
-            runWrites(
-              planMobileAutoSettleScopePatch(
-                syncTargets,
-                projectSelected,
-                value,
-                AUTO_SETTLE_DEFAULT_DAYS,
-              ),
-            );
-          }}
-        >
-          <SettingsControlRow
-            icon="clock"
-            label="Auto-settle inactive threads"
-            subtitle={
-              afterDays === null
-                ? "Off"
-                : referenceSettings.sidebarAutoSettleScope === "all"
-                  ? "All threads"
-                  : "Threads without a PR"
-            }
-            disabled={disabled}
-          >
-            {null}
-          </SettingsControlRow>
-        </ControlPillMenu>
+        <SettingsSwitchRow
+          icon="clock"
+          label="Auto-settle inactive threads"
+          value={afterDays !== null}
+          disabled={disabled}
+          onValueChange={(value) =>
+            writeToAll({ sidebarAutoSettleAfterDays: value ? AUTO_SETTLE_DEFAULT_DAYS : null })
+          }
+        />
         {afterDays !== null ? (
           <View className="flex-row items-center gap-4 px-4 py-4 android:min-h-14 android:py-3">
             <View className="w-[22px] android:w-6" />

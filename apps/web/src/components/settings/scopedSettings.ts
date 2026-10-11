@@ -20,7 +20,6 @@ import {
 } from "@t3tools/shared/projectSettings";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
-import * as Struct from "effect/Struct";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -33,10 +32,7 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: {
-        readonly projectSettingsOverrides?: boolean | undefined;
-        readonly threadAutoSettlementScope?: boolean | undefined;
-      };
+      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
     };
   } | null;
 }
@@ -231,7 +227,7 @@ export function planScopedSettingsPatch(
   const unscopableKeys = isProjectScope
     ? serverKeys.filter((key) => !isProjectScopedSettingKey(key))
     : [];
-  const plannedServerWrites: ScopedServerWrite[] =
+  const serverWrites: ScopedServerWrite[] =
     serverKeys.length === 0
       ? []
       : isProjectScope
@@ -294,29 +290,6 @@ export function planScopedSettingsPatch(
                   : serverPatch,
             }))
           : [];
-  const serverWrites = plannedServerWrites.map((write) => {
-    const environment = connectedEnvironments.find(
-      (target) => target.environmentId === write.environmentId,
-    );
-    if (environment?.serverConfig?.environment?.capabilities.threadAutoSettlementScope === true)
-      return write;
-    const patch = Struct.omit(write.patch, ["sidebarAutoSettleScope"]);
-    return {
-      ...write,
-      patch:
-        patch.projectSettingsOverrides === undefined
-          ? patch
-          : {
-              ...patch,
-              projectSettingsOverrides: Object.fromEntries(
-                Object.entries(patch.projectSettingsOverrides).map(([projectId, entry]) => [
-                  projectId,
-                  entry === null ? null : Struct.omit(entry, ["sidebarAutoSettleScope"]),
-                ]),
-              ),
-            },
-    };
-  });
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
   const unavailableReason =
@@ -330,50 +303,6 @@ export function planScopedSettingsPatch(
             ? "Connect the selected checkouts, or update their environments, to save a project override."
             : `Connect ${scope.kind === "environment" ? scope.label : "an environment"} to save this setting.`;
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
-}
-
-/**
- * Changing the inactivity scope keeps each target's own duration. Only a
- * target whose inactivity rule is off gets `defaultDays` so the scope applies.
- */
-export function planAutoSettleScopePatch(
-  scope: ResolvedSettingsScope,
-  environments: readonly ScopedSettingsEnvironment[],
-  targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "projectId" | "settings">[],
-  value: ServerSettings["sidebarAutoSettleScope"],
-  defaultDays: number,
-) {
-  const plan = planScopedSettingsPatch(scope, environments, { sidebarAutoSettleScope: value });
-  const isOff = (environmentId: EnvironmentId, projectId: ProjectId | null) =>
-    targets.some(
-      (target) =>
-        target.environmentId === environmentId &&
-        target.projectId === projectId &&
-        target.settings.sidebarAutoSettleAfterDays === null,
-    );
-  const serverWrites = plan.serverWrites.map((write) => {
-    const overrides = write.patch.projectSettingsOverrides;
-    if (overrides === undefined) {
-      return isOff(write.environmentId, null)
-        ? { ...write, patch: { ...write.patch, sidebarAutoSettleAfterDays: defaultDays } }
-        : write;
-    }
-    return {
-      ...write,
-      patch: {
-        ...write.patch,
-        projectSettingsOverrides: Object.fromEntries(
-          Object.entries(overrides).map(([projectId, entry]) => [
-            projectId,
-            entry !== null && isOff(write.environmentId, projectId as ProjectId)
-              ? { ...entry, sidebarAutoSettleAfterDays: defaultDays }
-              : entry,
-          ]),
-        ),
-      },
-    };
-  });
-  return { ...plan, serverWrites };
 }
 
 /** Remove the keys' project overrides so each member inherits its environment value again. */

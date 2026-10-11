@@ -82,7 +82,6 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
-  useUpdateAutoSettleScope,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
@@ -580,9 +579,11 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Working section"]
         : []),
       ...(settings.sidebarAutoSettleAfterDays !==
-        DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ||
-      settings.sidebarAutoSettleScope !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope
+      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
+        : []),
+      ...(settings.sidebarAutoSettleScope !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope
+        ? ["Keep threads with a PR"]
         : []),
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
@@ -2041,19 +2042,7 @@ function FontFamilySettingsRow({
   );
 }
 
-const AUTO_SETTLE_OPTIONS = [
-  { value: "off", label: "Off" },
-  { value: "all", label: "All threads" },
-  { value: "without-pr", label: "Threads without a PR" },
-] as const;
-
-type AutoSettleMode = (typeof AUTO_SETTLE_OPTIONS)[number]["value"];
-
-const DEFAULT_INACTIVITY_SETTINGS = {
-  sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-  sidebarAutoSettleScope: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope,
-};
-const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_INACTIVITY_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
+const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
 function AutoSettleDaysInput({
   value,
@@ -2198,7 +2187,6 @@ export function GeneralSettingsPanel() {
   ] as const;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const updateAutoSettleScope = useUpdateAutoSettleScope();
   const navigate = useNavigate();
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // The representative environment supplies the provider list for pickers;
@@ -2219,30 +2207,9 @@ export function GeneralSettingsPanel() {
     connectedEnvironments.every(
       (target) => target.serverConfig?.environment.capabilities.threadAutoSettlement === true,
     );
-  const mixedAutoSettle = useScopedSettingsMixed([
-    "sidebarAutoSettleAfterDays",
-    "sidebarAutoSettleScope",
-  ]);
-  const supportsAutoSettleScope = connectedEnvironments.every(
-    (environment) =>
-      environment.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
+  const supportsAutoSettlementScope = connectedEnvironments.every(
+    (target) => target.serverConfig?.environment.capabilities.threadAutoSettlementScope === true,
   );
-  const autoSettleAfterDays = settings.sidebarAutoSettleAfterDays;
-  const autoSettleScope = settings.sidebarAutoSettleScope;
-  const autoSettleMode = autoSettleAfterDays === null ? "off" : autoSettleScope;
-  const autoSettleChanged =
-    autoSettleAfterDays !== DEFAULT_INACTIVITY_SETTINGS.sidebarAutoSettleAfterDays ||
-    autoSettleScope !== DEFAULT_INACTIVITY_SETTINGS.sidebarAutoSettleScope;
-
-  function changeAutoSettleMode(value: AutoSettleMode | null) {
-    if (value === null) return;
-    if (value === "off") {
-      updateSettings({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" });
-      return;
-    }
-    updateAutoSettleScope(value, AUTO_SETTLE_DEFAULT_DAYS);
-  }
-
   const supportsRestartContinuation =
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every(
@@ -2475,48 +2442,34 @@ export function GeneralSettingsPanel() {
 
             <SettingsRow
               serverScoped
-              settingKeys={["sidebarAutoSettleAfterDays", "sidebarAutoSettleScope"]}
+              settingKeys={["sidebarAutoSettleAfterDays"]}
               {...searchableSetting("auto-settle-inactive-threads")}
-              description={
-                mixedAutoSettle
-                  ? "The selected targets use different inactivity rules."
-                  : autoSettleMode === "without-pr"
-                    ? "Sidebar threads without a PR settle automatically after this long."
-                    : "Sidebar threads with no activity for this long settle automatically."
-              }
+              description="Sidebar threads with no activity for this long settle automatically."
               resetAction={
-                autoSettleChanged ? (
+                settings.sidebarAutoSettleAfterDays !==
+                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
                   <SettingResetButton
                     label="auto-settle"
-                    onClick={() => updateSettings(DEFAULT_INACTIVITY_SETTINGS)}
+                    onClick={() =>
+                      updateSettings({
+                        sidebarAutoSettleAfterDays:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                      })
+                    }
                   />
                 ) : null
               }
               control={
-                <Select<AutoSettleMode>
-                  items={AUTO_SETTLE_OPTIONS}
-                  value={mixedAutoSettle ? null : autoSettleMode}
-                  onValueChange={changeAutoSettleMode}
-                >
-                  <SelectTrigger
-                    size="sm"
-                    className="w-full sm:w-56"
-                    aria-label="Auto-settle inactive threads"
-                  >
-                    <SelectValue placeholder={mixedAutoSettle ? "Mixed" : undefined} />
-                  </SelectTrigger>
-                  <SelectPopup align="end" alignItemWithTrigger={false}>
-                    {AUTO_SETTLE_OPTIONS.map(({ value, label }) => (
-                      <SelectItem
-                        key={value}
-                        value={value}
-                        disabled={value === "without-pr" && !supportsAutoSettleScope}
-                      >
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettleAfterDays"]}
+                  checked={settings.sidebarAutoSettleAfterDays !== null}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                    })
+                  }
+                  aria-label="Auto-settle inactive threads"
+                />
               }
             />
             {settings.sidebarAutoSettleAfterDays !== null ? (
@@ -2529,6 +2482,24 @@ export function GeneralSettingsPanel() {
                   <AutoSettleDaysInput
                     value={settings.sidebarAutoSettleAfterDays}
                     onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                  />
+                }
+              />
+            ) : null}
+            {settings.sidebarAutoSettleAfterDays !== null && supportsAutoSettlementScope ? (
+              <SettingsRow
+                serverScoped
+                settingKeys={["sidebarAutoSettleScope"]}
+                title="Keep threads with a PR"
+                description="Inactivity does not settle threads with a pull request. Merge and close still do."
+                control={
+                  <ScopedSwitch
+                    settingKeys={["sidebarAutoSettleScope"]}
+                    checked={settings.sidebarAutoSettleScope === "without-pr"}
+                    onCheckedChange={(checked) =>
+                      updateSettings({ sidebarAutoSettleScope: checked ? "without-pr" : "all" })
+                    }
+                    aria-label="Keep threads with a PR"
                   />
                 }
               />

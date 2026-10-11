@@ -13,7 +13,6 @@ import {
 } from "@t3tools/shared/projectSettings";
 
 import type { SettingsTarget } from "./settings-environment-filter";
-import * as Struct from "effect/Struct";
 
 export interface ScopedMobileSettingsTarget {
   readonly environment: SettingsTarget;
@@ -52,15 +51,8 @@ export function planMobileScopedSettingsPatch(
   projectSelected: boolean,
   patch: ServerSettingsPatch,
 ) {
-  const supportedPatch = (target: ScopedMobileSettingsTarget) =>
-    target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true
-      ? patch
-      : Struct.omit(patch, ["sidebarAutoSettleScope"]);
   if (!projectSelected) {
-    return targets.map((target) => ({
-      environmentId: target.environment.environmentId,
-      patch: supportedPatch(target),
-    }));
+    return targets.map((target) => ({ environmentId: target.environment.environmentId, patch }));
   }
   const keys = Object.keys(patch);
   if (
@@ -79,7 +71,7 @@ export function planMobileScopedSettingsPatch(
     const current =
       target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
     const next: Record<string, unknown> = { ...current };
-    for (const [key, value] of Object.entries(supportedPatch(target))) {
+    for (const [key, value] of Object.entries(patch)) {
       // A picker's "Inherit" sends null; for keys whose override cannot
       // store null that means remove the override.
       if (
@@ -99,51 +91,6 @@ export function planMobileScopedSettingsPatch(
     environmentId,
     patch: { projectSettingsOverrides } as ServerSettingsPatch,
   }));
-}
-
-/**
- * Changing the inactivity scope keeps each target's own duration. Only a
- * target whose inactivity rule is off gets `defaultDays` so the scope applies.
- */
-export function planMobileAutoSettleScopePatch(
-  targets: readonly ScopedMobileSettingsTarget[],
-  projectSelected: boolean,
-  value: ServerSettings["sidebarAutoSettleScope"],
-  defaultDays: number,
-) {
-  const isOff = (environmentId: EnvironmentId, projectId: ProjectId | null) =>
-    targets.some(
-      (target) =>
-        target.environment.environmentId === environmentId &&
-        target.projectId === projectId &&
-        target.settings.sidebarAutoSettleAfterDays === null,
-    );
-  return planMobileScopedSettingsPatch(targets, projectSelected, {
-    sidebarAutoSettleScope: value,
-  }).map(({ environmentId, patch }) => {
-    const overrides = patch.projectSettingsOverrides;
-    if (overrides === undefined) {
-      return {
-        environmentId,
-        patch: isOff(environmentId, null)
-          ? { ...patch, sidebarAutoSettleAfterDays: defaultDays }
-          : patch,
-      };
-    }
-    return {
-      environmentId,
-      patch: {
-        projectSettingsOverrides: Object.fromEntries(
-          Object.entries(overrides).map(([projectId, entry]) => [
-            projectId,
-            entry !== null && isOff(environmentId, projectId as ProjectId)
-              ? { ...entry, sidebarAutoSettleAfterDays: defaultDays }
-              : entry,
-          ]),
-        ),
-      } as ServerSettingsPatch,
-    };
-  });
 }
 
 /** A mixed selection has no single value to display. */
