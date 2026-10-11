@@ -793,11 +793,20 @@ function makeProviderThread(input: {
  * Unwrap a codex-acp style MCP call result (`{ result, error }` around MCP
  * `content`/`structuredContent`) the same way the native Codex adapter does,
  * so recovered MCP items render identical output. Unknown shapes pass through.
+ *
+ * Grok wraps results one level deeper (`{ type: "MCP", output: { OkayOutput:
+ * "<json string>" } }`, Rust Result serialization); return that string so the
+ * shared reader parses it like any other result envelope.
  */
-function acpMcpToolCallOutput(rawOutput: unknown): unknown {
+export function acpMcpToolCallOutput(rawOutput: unknown): unknown {
   const record = unknownRecord(rawOutput);
   if (record === undefined) return rawOutput;
-  if (!("result" in record) && !("error" in record)) return rawOutput;
+  if (!("result" in record) && !("error" in record)) {
+    const output = unknownRecord(record.output);
+    const okay = output === undefined ? undefined : output.OkayOutput;
+    if (typeof okay === "string") return okay;
+    return rawOutput;
+  }
   const result = unknownRecord(record.result);
   const resultOutput =
     result === undefined ? undefined : (result.structuredContent ?? result.content ?? undefined);
@@ -3471,7 +3480,7 @@ export function makeAcpAdapterV2(
                     type: "dynamic_tool",
                     toolName: toolCall.title ?? toolCall.kind ?? null,
                     input: rawInput ?? {},
-                    ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                    ...(rawOutput === undefined ? {} : { output: acpMcpToolCallOutput(rawOutput) }),
                   };
                 }
             }

@@ -95,6 +95,16 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
   }
+  // Bare MCP text blocks (`{ type: "text", text: "<json>" }`) carry the
+  // result as a string with no envelope keys. Some ACP agents (CodeBuddy)
+  // persist the block itself, so parse its text but keep the object when
+  // the text holds no result data.
+  if (typeof value.text === "string") {
+    const nested = readResult(value.text, budget, depth + 1);
+    if (nested.data !== undefined || nested.failed) {
+      return { ...nested, failed: failed || nested.failed };
+    }
+  }
   return { data: value, failed };
 }
 

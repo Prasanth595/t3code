@@ -170,6 +170,21 @@ describe("compactDynamicToolOutput", () => {
       compactDynamicToolOutput([{ type: "content", content: { type: "text", text: json } }]),
     ).toEqual({ htmlRender });
   });
+
+  it("extracts htmlRender from a bare MCP text block", () => {
+    const htmlRender = {
+      attachmentId: "thread-1-00000000-0000-4000-8000-000000000001-html",
+      title: "Chart",
+      height: 420,
+    };
+    const json = JSON.stringify({ htmlRender });
+    expect(compactDynamicToolOutput({ type: "text", text: json })).toEqual({ htmlRender });
+    // Plain text and unrelated shapes keep their previous readings.
+    expect(compactDynamicToolOutput({ type: "text", text: "Private plain text" })).toBeUndefined();
+    expect(compactDynamicToolOutput({ threadId: "thread-1", text: "Private note" })).toEqual({
+      threadId: "thread-1",
+    });
+  });
 });
 
 describe("toolOutputIndicatesFailure", () => {
