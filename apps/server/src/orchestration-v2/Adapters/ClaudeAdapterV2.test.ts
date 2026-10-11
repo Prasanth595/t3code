@@ -928,6 +928,20 @@ describe("ClaudeAdapterV2 context usage", () => {
       undefined,
     );
   });
+
+  it("reports the configured auto-compact window when it is below the context window", () => {
+    const thresholdFor = (autoCompactWindow: string) =>
+      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
+        { input_tokens: 1, output_tokens: 1 },
+        CLAUDE_TEST_MODEL_SELECTION,
+        "2026-08-29T00:00:00.000Z",
+        autoCompactWindow,
+      ).autoCompactThreshold;
+
+    assert.strictEqual(thresholdFor("150000"), 150_000);
+    assert.strictEqual(thresholdFor("650000"), undefined);
+    assert.strictEqual(thresholdFor(""), undefined);
+  });
 });
 
 describe("ClaudeAdapterV2 session permissions", () => {
