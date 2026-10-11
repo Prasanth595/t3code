@@ -310,7 +310,12 @@ describe("mergeClaudeWorkflowProgress", () => {
     const workflow = mergeClaudeWorkflowProgress({
       previous: undefined,
       message: snapshotFrame([
-        agent({ state: "done", lastProgressAt: 8_640_000_000_000_001, startedAt: 8_640_000_000_000_001, queuedAt: Number.MAX_SAFE_INTEGER }),
+        agent({
+          state: "done",
+          lastProgressAt: 8_640_000_000_000_001,
+          startedAt: 8_640_000_000_000_001,
+          queuedAt: Number.MAX_SAFE_INTEGER,
+        }),
         agent({ index: 2, startedAt: 8_640_000_000_000_000, queuedAt: 0 }),
       ]),
     });
