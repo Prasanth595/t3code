@@ -156,6 +156,7 @@ export function SourceControlWritingSettingsSection() {
       textGenerationModelSelection: resolveReviewGuideModelSelection(
         settings,
         textGenerationProviders,
+        target?.projectId ?? null,
       ),
     },
     textGenerationProviders,

@@ -166,10 +166,14 @@ export function resolveSourceControlWriterModelSelection(
  */
 export function resolveReviewGuideModelSelection(
   settings: ServerSettings,
-  providers?: ReadonlyArray<ServerProvider>,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.reviewGuideModelSelection;
-  if (selection && isModelSelectionProviderEnabled(settings, selection)) {
+  if (
+    selection &&
+    resolveProjectProviderInstanceEnabled(settings, projectId, selection.instanceId)
+  ) {
     const provider = providers?.find((candidate) => candidate.instanceId === selection.instanceId);
     if (
       providers === undefined ||
@@ -180,7 +184,7 @@ export function resolveReviewGuideModelSelection(
       return selection;
     }
   }
-  return resolveSourceControlWriterModelSelection(settings, providers);
+  return resolveSourceControlWriterModelSelection(settings, providers, projectId);
 }
 
 export interface PersistedServerObservabilitySettings {
