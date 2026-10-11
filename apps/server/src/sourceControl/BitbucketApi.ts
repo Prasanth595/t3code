@@ -723,9 +723,9 @@ export const make = Effect.gen(function* () {
       ),
       Effect.flatMap((response) => decodeResponse(operation, schema, response)),
       Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
-      Effect.catchTag("TimeoutError", (cause) =>
-        Effect.fail(new BitbucketRequestError({ operation, cause })),
-      ),
+      Effect.catchTags({
+        TimeoutError: (cause) => Effect.fail(new BitbucketRequestError({ operation, cause })),
+      }),
     );
 
   const resolveRepository = Effect.fn("BitbucketApi.resolveRepository")(function* (input: {
@@ -965,9 +965,10 @@ export const make = Effect.gen(function* () {
       ),
       // Cap redirects plus final body consumption, not just response headers.
       Effect.timeout(BITBUCKET_API_REQUEST_TIMEOUT),
-      Effect.catchTag("TimeoutError", (cause) =>
-        Effect.fail(new BitbucketRequestError({ operation: "request", cause })),
-      ),
+      Effect.catchTags({
+        TimeoutError: (cause) =>
+          Effect.fail(new BitbucketRequestError({ operation: "request", cause })),
+      }),
     );
 
   return BitbucketApi.of({
