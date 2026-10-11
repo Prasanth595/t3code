@@ -16,12 +16,24 @@ describe("HTML in native Markdown", () => {
       markdownHtmlContent(
         '<img width="900" alt="Before > after [settings]" src="https://example.com/before.png?a=1&amp;b=2" />',
       ),
-    ).toBe("![Before > after \\[settings\\]](<https://example.com/before.png?a=1&b=2>)");
+    ).toBe("![Before > after \\[settings\\]](<https://example.com/before.png?a=1&amp;b=2>)");
     expect(
       markdownHtmlContent(
         "<a href='https://example.com'><img src='https://example.com/banner.svg' alt='Review' /></a>",
       ),
     ).toBe("![Review](<https://example.com/banner.svg>)");
+  });
+
+  it("decodes HTML attributes once and preserves entity-shaped query values through Markdown", () => {
+    const markdown =
+      '<img alt="&amp;lt;" src="https://example.com/shot.png?label=&amp;lt;&amp;sig=a%26b">';
+    expect(markdownImageSources(markdown)).toEqual([
+      "https://example.com/shot.png?label=&lt;&sig=a%26b",
+    ]);
+    const paragraph = parseMarkdownDocument(markdown).children[0];
+    expect(paragraph?.type).toBe("paragraph");
+    if (paragraph?.type === "paragraph")
+      expect(paragraph.children[0]).toMatchObject({ type: "image", alt: "&lt;" });
   });
 
   it("ignores code delimiters in HTML attributes and comments when collecting screenshots", () => {

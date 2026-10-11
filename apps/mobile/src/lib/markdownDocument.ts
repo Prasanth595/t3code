@@ -13,7 +13,7 @@ function decodeCodePoint(codePoint: number, entity: string): string {
   return String.fromCodePoint(codePoint);
 }
 
-function decodeHtmlEntitiesOnce(value: string): string {
+function decodeHtmlEntities(value: string): string {
   return value.replace(
     /&(?:#(\d+)|#x([0-9a-f]+)|amp|apos|gt|lt|nbsp|quot);/gi,
     (entity, decimal: string | undefined, hexadecimal: string | undefined) => {
@@ -41,18 +41,6 @@ function decodeHtmlEntitiesOnce(value: string): string {
       }
     },
   );
-}
-
-function decodeHtmlEntities(value: string): string {
-  let decoded = value;
-  for (let pass = 0; pass < 2; pass += 1) {
-    const next = decodeHtmlEntitiesOnce(decoded);
-    if (next === decoded) {
-      break;
-    }
-    decoded = next;
-  }
-  return decoded;
 }
 
 const HTML_TAG = /<!--[\s\S]*?-->|<\/?[a-z](?:[^>"']|"[^"]*"|'[^']*')*>/gi;
@@ -119,8 +107,12 @@ export function markdownHtmlContent(content: string): string {
     if (/^<img\b/i.test(tag)) {
       const src = attribute(tag, "src");
       if (!src) return "";
-      const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]]/g, "\\$&");
-      const href = src.replace(/</g, "%3C").replace(/>/g, "%3E").replace(/\n/g, "");
+      const alt = (attribute(tag, "alt") ?? "").replace(/&/g, "&amp;").replace(/[\\[\]]/g, "\\$&");
+      const href = src
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "%3C")
+        .replace(/>/g, "%3E")
+        .replace(/\n/g, "");
       return `![${alt}](<${href}>)`;
     }
     if (/^<summary\b/i.test(tag)) return "\n\n**";
