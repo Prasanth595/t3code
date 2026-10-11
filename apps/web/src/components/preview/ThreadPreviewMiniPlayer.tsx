@@ -53,6 +53,7 @@ import type {
 } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { previewBridge } from "./previewBridge";
 import { describePreviewError } from "./errorCodeMessages";
+import { showPreviewPopup } from "./showPreviewPopup";
 import {
   clampPreviewMiniPlayerPosition,
   NO_PREVIEW_MINI_PLAYER_OBSTACLES,
@@ -272,6 +273,7 @@ function BrowserMiniPlayer({ threadRef, tabId, miniPlayer }: Props & { readonly 
                   />
                 ) : undefined
               }
+              onPopup={(popupTabId) => showPreviewPopup(threadRef, popupTabId, "floating")}
               className="size-full"
             />
           </div>
