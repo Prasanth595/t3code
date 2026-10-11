@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -10,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -102,6 +104,18 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   SSH_ASKPASS: "",
   SSH_ASKPASS_REQUIRE: "never",
 } satisfies NodeJS.ProcessEnv);
+const SSH_OVERRIDE_ENV_KEYS = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"] as const;
+// Forces ssh's debug3 lines from these two functions onto stderr at any
+// LogLevel. OpenSSH logs no channel data or window adjustments, so a small
+// fetch gains about 15 short lines; control traffic such as keepalives and
+// rekeys can add a few more.
+const SSH_SIGNING_LOG_VERBOSE =
+  "LogVerbose=sshconnect2.c:sign_and_send_pubkey():*,packet.c:ssh_packet_send2_wrapped():*";
+const SSH_SIGNING_PROBE_TIMEOUT = Duration.seconds(1);
+// Separate from the command timeout, so the wait stays bounded without one.
+const SSH_KEY_AUTHORIZATION_WAIT = Duration.seconds(10);
+const SSH_KEY_AUTHORIZATION_TIMEOUT_DETAIL =
+  "SSH key authorization timed out. Approve or unlock the SSH key in your SSH agent on the computer running T3 Code, then retry, or use an HTTPS remote.";
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
@@ -589,6 +603,24 @@ function fetchFailureDetail(stderr: string): string | undefined {
     return "Git could not update a local reference. Another Git operation or a stale lock may be blocking the fetch; check the repository on the server, then retry.";
   }
   return undefined;
+}
+
+// ssh logs this just before it asks the agent, or a local security key, to sign.
+function isSshSigningRequestLine(line: string): boolean {
+  return (
+    line.startsWith("debug3:") &&
+    line.includes("sign_and_send_pubkey") &&
+    line.includes("signing using ")
+  );
+}
+
+// The signed userauth request is the first packet ssh queues once signing returns.
+function isSshPacketSentLine(line: string): boolean {
+  return (
+    line.startsWith("debug3:") &&
+    line.includes("ssh_packet_send2_wrapped") &&
+    line.includes("send packet:")
+  );
 }
 
 interface Trace2Monitor {
@@ -1162,6 +1194,94 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         LC_ALL: "C",
       },
     });
+
+  // `ssh -G` resolves the configuration and exits without connecting. OpenSSH
+  // before 8.5 rejects LogVerbose, and passing it to a real connection would
+  // fail the fetch, so it is only passed once this probe succeeds.
+  const sshAcceptsSigningLog = yield* Effect.cached(
+    commandSpawner
+      .exitCode(
+        ChildProcess.make("ssh", ["-G", "-F", "none", "-o", SSH_SIGNING_LOG_VERBOSE, "localhost"], {
+          stdout: "ignore",
+          stderr: "ignore",
+        }),
+      )
+      .pipe(
+        Effect.map((exitCode) => exitCode === 0),
+        Effect.timeout(SSH_SIGNING_PROBE_TIMEOUT),
+        Effect.orElseSucceed(() => false),
+      ),
+  );
+
+  // Only Git's default OpenSSH transport is watched. A configured command or
+  // variant may not be OpenSSH, and Git for Windows runs its own bundled ssh,
+  // which the probe cannot vouch for.
+  const watchesSshSigning = Effect.fnUntraced(function* (cwd: string) {
+    if (hostPlatform === "win32") return false;
+    if (SSH_OVERRIDE_ENV_KEYS.some((key) => process.env[key] !== undefined)) return false;
+    // Exit 1 means neither key is set in any config scope.
+    const sshConfigUnset = yield* executeGit(
+      "GitVcsDriver.fetchRemote.sshConfig",
+      cwd,
+      ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"],
+      { allowNonZeroExit: true },
+    ).pipe(Effect.match({ onFailure: () => false, onSuccess: (result) => result.exitCode === 1 }));
+    return sshConfigUnset && (yield* sshAcceptsSigningLog);
+  });
+
+  // While an SSH agent waits for the user to approve a key, ssh blocks in the
+  // sign request and git makes no progress until the command times out, which
+  // reads as a network failure. With SSH_SIGNING_LOG_VERBOSE, ssh logs a line
+  // just before each sign request and one for every packet it queues, and the
+  // signed request is the first packet after it. A sign request with no packet
+  // after it for SSH_KEY_AUTHORIZATION_WAIT fails the command with an
+  // authorization error, and interrupting git's run kills it.
+  const executeGitWithSshSigningLimit = Effect.fnUntraced(function* (
+    operation: string,
+    cwd: string,
+    args: readonly string[],
+    options: ExecuteGitOptions = {},
+  ) {
+    // When the outstanding sign request was logged, or null once a packet follows it.
+    const pendingSince = yield* Queue.sliding<number | null>(1);
+    const execution = executeGitWithStableDiagnostics(operation, cwd, args, {
+      ...options,
+      env: { ...options.env, GIT_SSH_COMMAND: `ssh -o '${SSH_SIGNING_LOG_VERBOSE}'` },
+      progress: {
+        onStderrLine: (line) =>
+          isSshSigningRequestLine(line)
+            ? Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) => Queue.offer(pendingSince, now)),
+                Effect.asVoid,
+              )
+            : isSshPacketSentLine(line)
+              ? Queue.offer(pendingSince, null).pipe(Effect.asVoid)
+              : Effect.void,
+      },
+    });
+    const signingStalled = Effect.gen(function* () {
+      let since: number | null = null;
+      while (true) {
+        if (since === null) {
+          since = yield* Queue.take(pendingSince);
+          continue;
+        }
+        const remainingMs =
+          since + Duration.toMillis(SSH_KEY_AUTHORIZATION_WAIT) - (yield* Clock.currentTimeMillis);
+        const next = yield* Queue.take(pendingSince).pipe(
+          Effect.timeoutOption(Math.max(0, remainingMs)),
+        );
+        if (Option.isNone(next)) {
+          return yield* new GitCommandError({
+            ...gitCommandContext({ operation, cwd, args }),
+            detail: SSH_KEY_AUTHORIZATION_TIMEOUT_DETAIL,
+          });
+        }
+        since = next.value;
+      }
+    });
+    return yield* execution.pipe(Effect.raceFirst(signingStalled));
+  });
 
   const runGit = (
     operation: string,
@@ -3668,15 +3788,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
       };
-      const fetchAll = executeGitWithStableDiagnostics(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        args,
-        {
-          ...options,
-          allowNonZeroExit: true,
-        },
-      ).pipe(
+      const runFetch = (yield* watchesSshSigning(input.cwd))
+        ? executeGitWithSshSigningLimit
+        : executeGitWithStableDiagnostics;
+      const fetchAll = runFetch("GitVcsDriver.fetchRemote", input.cwd, args, {
+        ...options,
+        allowNonZeroExit: true,
+      }).pipe(
         Effect.flatMap((result) =>
           result.exitCode === 0
             ? Effect.void
@@ -3705,12 +3823,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...args,
         `+refs/heads/${branch}:refs/remotes/${input.remoteName}/${branch}`,
       ];
-      const result = yield* executeGitWithStableDiagnostics(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        scopedArgs,
-        { ...options, allowNonZeroExit: true },
-      );
+      const result = yield* runFetch("GitVcsDriver.fetchRemote", input.cwd, scopedArgs, {
+        ...options,
+        allowNonZeroExit: true,
+      });
       if (result.exitCode === 0) return;
       if (
         result.stderr

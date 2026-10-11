@@ -10,6 +10,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
@@ -3625,6 +3626,208 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("remote operations", () => {
+    const sshKeyFingerprint = "SHA256:t3TestKeyFingerprint";
+    const sshSigningLine = `debug3: sshconnect2.c:sign_and_send_pubkey():1582 (bin=/usr/bin/ssh, pid=4242): signing using ssh-ed25519 ${sshKeyFingerprint}`;
+    const sshPacketLine =
+      "debug3: packet.c:ssh_packet_send2_wrapped():1224 (bin=/usr/bin/ssh, pid=4242): send packet: type 50";
+    const sshSigningCommand =
+      "ssh -o 'LogVerbose=sshconnect2.c:sign_and_send_pubkey():*,packet.c:ssh_packet_send2_wrapped():*'";
+    const sshAuthorizationDetail =
+      "SSH key authorization timed out. Approve or unlock the SSH key in your SSH agent on the computer running T3 Code, then retry, or use an HTTPS remote.";
+    const sshEnvKeys = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"] as const;
+
+    interface SshFetchScenario {
+      readonly name: string;
+      readonly stderr: ReadonlyArray<string>;
+      readonly refName?: string;
+      readonly sshConfig?: string;
+      readonly sshProbeExitCode?: number;
+      readonly gitSshCommand?: string;
+      readonly platform?: NodeJS.Platform;
+    }
+
+    // Starts a fetch once its stderr has been read. The spawner answers the ssh
+    // config read and the OpenSSH probe itself, so no test depends on the
+    // machine's git config or ssh, and holds every fetch open until `exit` completes.
+    const startSshFetch = Effect.fnUntraced(function* (scenario: SshFetchScenario) {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const outputRead = yield* Deferred.make<void>();
+      const exit = yield* Deferred.make<void>();
+      const fetchEnvs: Array<NodeJS.ProcessEnv | undefined> = [];
+      const counts = { probes: 0, released: 0 };
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command))
+            return yield* Effect.die("unexpected command");
+          if (command.command === "ssh") {
+            counts.probes++;
+            return ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              exitCode: Effect.succeed(
+                ChildProcessSpawner.ExitCode(scenario.sshProbeExitCode ?? 0),
+              ),
+            });
+          }
+          if (command.args[0] === "config") {
+            return scenario.sshConfig === undefined
+              ? ChildProcessSpawner.makeHandle({
+                  ...makeSuccessfulHandle(""),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                })
+              : makeSuccessfulHandle(scenario.sshConfig);
+          }
+          if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+          fetchEnvs.push(command.options.env);
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              counts.released++;
+            }),
+          );
+          return ChildProcessSpawner.makeHandle({
+            ...makeSuccessfulHandle(""),
+            exitCode: Deferred.await(exit).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+            stderr: Stream.encodeText(
+              Stream.make(scenario.stderr.map((line) => `${line}\n`).join("")),
+            ).pipe(Stream.ensuring(Deferred.succeed(outputRead, undefined))),
+          });
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(HostProcess.Platform, scenario.platform ?? "linux"),
+        Effect.provide(layerServerConfig),
+      );
+      const fetching = yield* driver
+        .fetchRemote({
+          cwd: yield* makeTmpDir(),
+          remoteName: "origin",
+          ...(scenario.refName === undefined ? {} : { refName: scenario.refName }),
+        })
+        .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(outputRead);
+      return { driver, fetching, exit, fetchEnvs, counts };
+    });
+
+    // The driver reads the SSH overrides from the server's own environment.
+    const withSshEnv =
+      (scenario: SshFetchScenario) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        Effect.acquireUseRelease(
+          Effect.sync(() => {
+            const previous = new Map(sshEnvKeys.map((key) => [key, process.env[key]]));
+            for (const key of sshEnvKeys) delete process.env[key];
+            if (scenario.gitSshCommand !== undefined) {
+              process.env.GIT_SSH_COMMAND = scenario.gitSshCommand;
+            }
+            return previous;
+          }),
+          () => effect,
+          (previous) =>
+            Effect.sync(() => {
+              for (const [key, value] of previous) {
+                if (value === undefined) delete process.env[key];
+                else process.env[key] = value;
+              }
+            }),
+        );
+
+    const stalledSigningScenarios: ReadonlyArray<SshFetchScenario> = [
+      { name: "a scoped fetch", refName: "main", stderr: [sshPacketLine, sshSigningLine] },
+      { name: "a fetch of every branch", stderr: [sshPacketLine, sshSigningLine] },
+      {
+        name: "a second signing request",
+        refName: "main",
+        stderr: [sshSigningLine, sshPacketLine, sshSigningLine],
+      },
+    ];
+    it.effect.each(stalledSigningScenarios)(
+      "reports a pending SSH key approval during $name",
+      (scenario) =>
+        Effect.gen(function* () {
+          const { fetching, fetchEnvs, counts } = yield* startSshFetch(scenario);
+          yield* TestClock.adjust("11 seconds");
+          // Real time bounds the join, so a fetch that keeps waiting fails the
+          // assertion instead of hanging the test.
+          const result = yield* Fiber.join(fetching).pipe(
+            Effect.timeoutOption("1 second"),
+            TestClock.withLive,
+          );
+
+          assert.isTrue(Option.isSome(result), "fetch still running after the SSH approval wait");
+          if (Option.isNone(result)) return;
+          assert.isTrue(Result.isFailure(result.value));
+          if (Result.isSuccess(result.value)) return;
+          const error = result.value.failure;
+          assert.equal(error.detail, sshAuthorizationDetail);
+          assert.isUndefined(error.reason);
+          assert.equal(error.argumentCount, scenario.refName === undefined ? 3 : 4);
+          assert.notInclude(error.message, sshKeyFingerprint);
+          assert.notInclude(yield* encodeGitCommandError(error), sshKeyFingerprint);
+          assert.equal(fetchEnvs.length, 1);
+          assert.equal(fetchEnvs[0]?.GIT_SSH_COMMAND, sshSigningCommand);
+          assert.equal(counts.probes, 1);
+          assert.equal(counts.released, 1);
+        }).pipe(withSshEnv(scenario)),
+    );
+
+    const slowNetworkScenario: SshFetchScenario = {
+      name: "a slow network",
+      refName: "main",
+      stderr: [sshSigningLine, sshPacketLine],
+    };
+    it.effect("lets a fetch whose key was signed wait on a slow network", () =>
+      Effect.gen(function* () {
+        const { driver, fetching, exit, fetchEnvs, counts } =
+          yield* startSshFetch(slowNetworkScenario);
+        yield* TestClock.adjust("11 seconds");
+        yield* Deferred.succeed(exit, undefined);
+        assert.isTrue(Result.isSuccess(yield* Fiber.join(fetching)));
+
+        // A second fetch reuses the first one's OpenSSH probe.
+        yield* driver.fetchRemote({ cwd: yield* makeTmpDir(), remoteName: "origin" });
+        assert.equal(fetchEnvs.length, 2);
+        assert.isAtMost(counts.probes, 1);
+        assert.equal(counts.released, 2);
+      }).pipe(withSshEnv(slowNetworkScenario)),
+    );
+
+    const unwatchedTransportScenarios: ReadonlyArray<SshFetchScenario> = [
+      {
+        name: "a custom core.sshCommand",
+        refName: "main",
+        stderr: [sshSigningLine],
+        sshConfig: "core.sshcommand ssh -i custom-key\n",
+      },
+      {
+        name: "GIT_SSH_COMMAND in the environment",
+        refName: "main",
+        stderr: [sshSigningLine],
+        gitSshCommand: "ssh -i custom-key",
+      },
+      {
+        name: "an SSH client without LogVerbose",
+        refName: "main",
+        stderr: [sshSigningLine],
+        sshProbeExitCode: 255,
+      },
+      { name: "Windows", refName: "main", stderr: [sshSigningLine], platform: "win32" },
+    ];
+    it.effect.each(unwatchedTransportScenarios)("keeps the command timeout for $name", (scenario) =>
+      Effect.gen(function* () {
+        const { fetching, fetchEnvs, counts } = yield* startSshFetch(scenario);
+        yield* TestClock.adjust("31 seconds");
+        const result = yield* Fiber.join(fetching);
+
+        assert.isTrue(Result.isFailure(result));
+        if (Result.isFailure(result)) {
+          assert.equal(result.failure.detail, "Git command timed out.");
+        }
+        assert.equal(fetchEnvs.length, 1);
+        assert.equal(fetchEnvs[0]?.GIT_SSH_COMMAND, scenario.gitSshCommand);
+        assert.equal(counts.released, 1);
+      }).pipe(withSshEnv(scenario)),
+    );
+
     it.effect.each(["offline", "auth", "timeout"] as const)(
       "does not retry a scoped fetch after %s",
       (failure) =>
