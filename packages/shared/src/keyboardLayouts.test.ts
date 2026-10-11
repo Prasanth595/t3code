@@ -53,6 +53,24 @@ describe("expandQueryAcrossKeyboardLayouts", () => {
     expect(expandQueryAcrossKeyboardLayouts("ىهلاف")).toEqual(["nibt", "night"]);
   });
 
+  it("reads each overlapping key on its own", () => {
+    // `لالا` is two lam-alef keys, two `gh` pairs, or one of each in either order.
+    expect([...expandQueryAcrossKeyboardLayouts("لالا")].toSorted()).toEqual([
+      "bb",
+      "bgh",
+      "ghb",
+      "ghgh",
+    ]);
+  });
+
+  it("keeps only the two extreme readings once overlaps would multiply past the cap", () => {
+    // Five overlapping keys would give 32 readings.
+    expect([...expandQueryAcrossKeyboardLayouts("لالالالالا")].toSorted()).toEqual([
+      "bbbbb",
+      "ghghghghgh",
+    ]);
+  });
+
   it("reads the Thai number row, which carries letters instead of digits", () => {
     // `ภ` is the `4` key on Kedmanee and `น` the `o` key, so a model id stays reachable.
     expect(expandQueryAcrossKeyboardLayouts("ภน")).toContain("4o");

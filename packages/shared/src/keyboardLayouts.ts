@@ -206,6 +206,60 @@ function mapCharactersThroughMultiCharacterKeys(
   return mapped;
 }
 
+/**
+ * Readings at most for one query on a layout whose keys overlap. Each overlapping
+ * occurrence doubles them, so a query that repeats one past this cap keeps only
+ * the all-pairs and no-pairs readings.
+ */
+const MAX_OVERLAPPING_READINGS = 16;
+
+/**
+ * Reads each overlapping occurrence both ways, independently: as its one
+ * multi-character key and as separate keys. `لالا` on Arabic is `bb`, `bgh`,
+ * `ghb` and `ghgh`, and only the typist knows which they pressed. Null once the
+ * readings would pass {@link MAX_OVERLAPPING_READINGS}.
+ */
+function mapCharactersEveryWay(
+  characters: ReadonlyArray<string>,
+  characterMap: ReadonlyMap<string, string>,
+): ReadonlyArray<string> | null {
+  // The readings of each suffix, so every suffix is read once however many
+  // prefixes lead to it.
+  const suffixReadings = new Map<number, ReadonlyArray<string> | null>();
+
+  const readFrom = (start: number): ReadonlyArray<string> | null => {
+    if (start >= characters.length) return [""];
+    const known = suffixReadings.get(start);
+    if (known !== undefined) return known;
+
+    const character = characters[start]!;
+    const next = characters[start + 1];
+    // Characters this layout does not place, such as spaces, pass through.
+    const single = lookupCharacter(characterMap, character) ?? character;
+    const pairMatch = next === undefined ? undefined : characterMap.get(character + next);
+
+    let readings: ReadonlyArray<string> | null = null;
+    const afterSingle = readFrom(start + 1);
+    if (afterSingle !== null) {
+      const separate = afterSingle.map((tail) => single + tail);
+      if (pairMatch === undefined) {
+        readings = separate;
+      } else {
+        const afterPair = readFrom(start + 2);
+        if (afterPair !== null) {
+          const combined = [...afterPair.map((tail) => pairMatch + tail), ...separate];
+          readings = combined.length > MAX_OVERLAPPING_READINGS ? null : combined;
+        }
+      }
+    }
+
+    suffixReadings.set(start, readings);
+    return readings;
+  };
+
+  return readFrom(0);
+}
+
 function mapQueryAcrossKeyboardLayouts(query: string): ReadonlyArray<string> {
   const trigger = findNonAsciiCharacter(query);
   if (trigger === undefined) return NO_LAYOUT_VARIANTS;
@@ -218,10 +272,17 @@ function mapQueryAcrossKeyboardLayouts(query: string): ReadonlyArray<string> {
   const variants = new Set<string>();
   for (const layoutId of layoutIds) {
     const characterMap = characterMapsByLayoutId.get(layoutId)!;
-    variants.add(mapCharactersThroughMultiCharacterKeys(characters, characterMap));
-    if (ambiguousLayoutIds.has(layoutId)) {
-      variants.add(mapCharactersSeparately(characters, characterMap));
+    if (!ambiguousLayoutIds.has(layoutId)) {
+      variants.add(mapCharactersThroughMultiCharacterKeys(characters, characterMap));
+      continue;
     }
+    const everyReading = mapCharactersEveryWay(characters, characterMap);
+    if (everyReading !== null) {
+      for (const reading of everyReading) variants.add(reading);
+      continue;
+    }
+    variants.add(mapCharactersThroughMultiCharacterKeys(characters, characterMap));
+    variants.add(mapCharactersSeparately(characters, characterMap));
   }
   variants.delete(lowercased);
 
@@ -248,10 +309,11 @@ let lastVariants: ReadonlyArray<string> = NO_LAYOUT_VARIANTS;
  * every layout that places its first non-ASCII character, so Latin-script names
  * still match. The result is lowercased, deduplicated, and excludes both the
  * query itself and any reading that is still not plain ASCII. A layout whose
- * keys overlap contributes both readings, one taking every multi-character key
- * and one taking none, since only the typist knows which keys were pressed.
- * Expect a handful: one reading per layout that places that character, two from
- * the overlapping ones, less whatever dedup and the ASCII filter drop.
+ * keys overlap reads each overlapping occurrence both ways, since only the typist
+ * knows which keys were pressed (up to 16 readings; past that, only the
+ * all-pairs and no-pairs ones). Expect a handful: one reading per layout that
+ * places that character, more from the overlapping ones, less whatever dedup and
+ * the ASCII filter drop.
  *
  * A query that is already plain ASCII returns nothing: every supported layout is
  * a non-Latin script, so that single test keeps Latin queries off this path.
