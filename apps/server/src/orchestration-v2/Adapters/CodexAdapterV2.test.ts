@@ -2987,11 +2987,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     readonly scenario: string;
     /** Omit to leave `config/read` unanswered. */
     readonly configReadReply?: Record<string, unknown>;
+    /** Omit when the adapter does not send `configRequirements/read`. */
+    readonly requirementsReply?: Record<string, unknown>;
     readonly sandboxPolicy: Record<string, unknown>;
   }) => {
     const nativeThreadId = `${input.scenario}-thread`;
     const nativeTurnId = `${input.scenario}-turn`;
     const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "fetch" });
+    const turnStartId = input.requirementsReply === undefined ? 4 : 5;
     return makeCodexReplayTranscript({
       scenario: input.scenario,
       entries: [
@@ -3010,11 +3013,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 frame: { id: 3, ...input.configReadReply },
               },
             ]),
+        ...(input.requirementsReply === undefined
+          ? []
+          : [
+              {
+                type: "expect_outbound" as const,
+                label: "configRequirements/read",
+                frame: { id: 4, method: "configRequirements/read" },
+              },
+              {
+                type: "emit_inbound" as const,
+                label: "configRequirements/read",
+                frame: { id: 4, ...input.requirementsReply },
+              },
+            ]),
         {
           type: "expect_outbound",
           label: "turn/start",
           frame: {
-            id: 4,
+            id: turnStartId,
             method: "turn/start",
             params: {
               threadId: nativeThreadId,
@@ -3032,7 +3049,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           type: "emit_inbound",
           label: "turn/start",
           frame: {
-            id: 4,
+            id: turnStartId,
             result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
           },
         },
@@ -3090,6 +3107,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             origins: {},
           },
         },
+        requirementsReply: { result: { requirements: null } },
         sandboxPolicy: {
           type: "workspaceWrite",
           writableRoots: ["/cache"],
@@ -3099,6 +3117,64 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         },
       }),
     ),
+  );
+
+  const configuredNetworkAccessReply = {
+    result: {
+      config: { sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true } },
+      origins: {},
+    },
+  };
+
+  it.effect("keeps the bare workspace-write policy under managed permission profiles", () =>
+    runAutoModeTurn(
+      autoModeTurnTranscript({
+        scenario: "workspace-write-config-managed",
+        configReadReply: configuredNetworkAccessReply,
+        requirementsReply: {
+          result: {
+            requirements: { allowedPermissionProfiles: { ":workspace": true, ":read-only": true } },
+          },
+        },
+        sandboxPolicy: { type: "workspaceWrite" },
+      }),
+    ),
+  );
+
+  it.effect("skips configRequirements/read when the config has no workspace-write table", () =>
+    runAutoModeTurn(
+      autoModeTurnTranscript({
+        scenario: "workspace-write-config-absent",
+        configReadReply: { result: { config: {}, origins: {} } },
+        sandboxPolicy: { type: "workspaceWrite" },
+      }),
+    ),
+  );
+
+  it.effect("copies the table when requirements do not manage permission profiles", () =>
+    runAutoModeTurn(
+      autoModeTurnTranscript({
+        scenario: "workspace-write-config-unmanaged-requirements",
+        configReadReply: configuredNetworkAccessReply,
+        requirementsReply: {
+          result: { requirements: { allowedSandboxModes: ["read-only", "workspace-write"] } },
+        },
+        sandboxPolicy: { type: "workspaceWrite", writableRoots: ["/cache"], networkAccess: true },
+      }),
+    ),
+  );
+
+  it.effect(
+    "keeps the bare workspace-write policy when Codex rejects configRequirements/read",
+    () =>
+      runAutoModeTurn(
+        autoModeTurnTranscript({
+          scenario: "workspace-write-config-requirements-unsupported",
+          configReadReply: configuredNetworkAccessReply,
+          requirementsReply: { error: { code: -32601, message: "Method not found" } },
+          sandboxPolicy: { type: "workspaceWrite" },
+        }),
+      ),
   );
 
   it.effect("sends the bare workspace-write policy when Codex rejects config/read", () =>

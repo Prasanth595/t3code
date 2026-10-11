@@ -1379,6 +1379,18 @@ const decodeCodexWorkspaceWriteConfig = Schema.decodeUnknownEffect(
   }),
 );
 
+// Decodes only `allowedPermissionProfiles`, the requirement that makes Codex
+// ignore `[sandbox_workspace_write]`.
+const decodeCodexPermissionProfileRequirements = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    requirements: Schema.optionalKey(
+      Schema.NullOr(
+        Schema.Struct({ allowedPermissionProfiles: Schema.optionalKey(Schema.Unknown) }),
+      ),
+    ),
+  }),
+);
+
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
   Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
 );
@@ -6242,6 +6254,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ? yield* client.raw.request("config/read", { cwd: turnInput.runtimePolicy.cwd }).pipe(
                   Effect.flatMap(decodeCodexWorkspaceWriteConfig),
                   Effect.map((response) => response.config.sandbox_workspace_write),
+                  // Under managed permission profiles Codex ignores this table,
+                  // so copying it would grant what the admin's profile excludes.
+                  Effect.flatMap((config) =>
+                    config == null
+                      ? Effect.succeed(config)
+                      : client.raw.request("configRequirements/read", undefined).pipe(
+                          Effect.flatMap(decodeCodexPermissionProfileRequirements),
+                          Effect.map((response) =>
+                            response.requirements?.allowedPermissionProfiles == null
+                              ? config
+                              : undefined,
+                          ),
+                        ),
+                  ),
                   Effect.timeout("5 seconds"),
                   Effect.catch((cause) =>
                     Effect.logWarning("orchestration-v2.codex-workspace-write-config-failed", {
