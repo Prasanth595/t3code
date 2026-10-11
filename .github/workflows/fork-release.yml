@@ -357,10 +357,13 @@ jobs:
 
       # The first platform to finish creates the release, the other adds its files.
       # Each platform has its own updater manifest: nightly-mac.yml and nightly.yml.
+      # The release creates a tag. GITHUB_TOKEN cannot create a tag on a commit
+      # whose workflow files differ from main, which happens when main moved
+      # during the run. FORK_SYNC_TOKEN has the workflow scope.
       - name: Publish to the release
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
           MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || 'nightly.yml' }}
         run: |
           set -euo pipefail
