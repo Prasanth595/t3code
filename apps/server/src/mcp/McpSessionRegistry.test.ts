@@ -195,22 +195,31 @@ it.effect("hands the startup stdio wrapper to every issued session config", () =
           }),
         ),
         Effect.map(({ config }) => config),
-        Effect.provide(McpSessionRegistry.layer),
         Effect.provide(
-          Layer.effect(
-            ServerConfig.ServerConfig,
-            ServerConfig.ServerConfig.pipe(
-              Effect.map((config) =>
-                ServerConfig.make(
-                  mcpStdioWrapper === undefined ? config : { ...config, mcpStdioWrapper },
+          McpSessionRegistry.layer.pipe(
+            Layer.provide(
+              Layer.effect(
+                ServerConfig.ServerConfig,
+                ServerConfig.ServerConfig.pipe(
+                  Effect.map((config) =>
+                    ServerConfig.make(
+                      mcpStdioWrapper === undefined ? config : { ...config, mcpStdioWrapper },
+                    ),
+                  ),
                 ),
+              ).pipe(
+                Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-reg-" })),
               ),
             ),
-          ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-reg-" }))),
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(HttpServer.HttpServer, fakeHttpServer),
+                Layer.succeed(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+                NodeServices.layer,
+              ),
+            ),
+          ),
         ),
-        Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
-        Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
-        Effect.provide(NodeServices.layer),
       );
 
     const wrapper = { command: "/opt/mcp-wrapper", args: ["--audit"] };
