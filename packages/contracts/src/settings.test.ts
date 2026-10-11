@@ -24,9 +24,9 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("ClientSettings LaTeX rendering", () => {
-  it("renders math by default in new and existing settings", () => {
-    expect(decodeClientSettings({}).latexRenderingMode).toBe("on");
-    expect(decodeClientSettings({ chatWidth: "wide" }).latexRenderingMode).toBe("on");
+  it("leaves math rendering off until it is turned on, in new and existing settings", () => {
+    expect(decodeClientSettings({}).latexRenderingMode).toBe("off");
+    expect(decodeClientSettings({ chatWidth: "wide" }).latexRenderingMode).toBe("off");
   });
 
   it.each(["off", "readable", "on"])(

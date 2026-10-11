@@ -24,9 +24,9 @@ of the selected theme.
 ## Math display
 
 On web and desktop, use **Settings → Appearance → LaTeX rendering** to choose how equations
-appear in chat. **On** typesets them by default. Choose **Readable** for plain text with readable
-fractions, powers, and integral limits, or **Off** to keep the original source. This preference
-is saved separately on each device or browser. Copying an equation preserves its LaTeX source.
+appear in chat. It is **Off** by default, which keeps the original source. Choose **On** to typeset
+equations, or **Readable** for plain text with readable fractions, powers, and integral limits. This
+preference is saved separately on each device or browser. Copying an equation preserves its LaTeX source.
 
 ## Composer context
 

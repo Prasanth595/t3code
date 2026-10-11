@@ -332,7 +332,7 @@ export const ClientSettingsSchema = Schema.Struct({
   chatWidth: ChatWidth.pipe(Schema.withDecodingDefault(Effect.succeed("comfortable" as const))),
   // Web and desktop render explicit LaTeX; native mobile keeps its existing renderer.
   latexRenderingMode: LatexRenderingMode.pipe(
-    Schema.withDecodingDefault(Effect.succeed("on" as const)),
+    Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
