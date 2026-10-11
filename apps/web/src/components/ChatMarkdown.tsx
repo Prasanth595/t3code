@@ -2653,10 +2653,14 @@ function useChatMarkdownState({
     return revealFileInFileManager(filePath);
   };
   const openMarkdownFileInEditor = async (fileLinkMeta: MarkdownFileLinkMeta) => {
+    const isLatestLookup = threadRef
+      ? claimWorkspaceBasenameLookup(scopedThreadKey(threadRef))
+      : () => true;
     const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
     const match = workspaceRelativePath
       ? await findWorkspaceBasenameMatch(workspaceRelativePath)
       : null;
+    if (!isLatestLookup()) return AsyncResult.success(undefined);
     if (!match || !cwd) {
       return openInPreferredEditor(fileLinkMeta.targetPath);
     }
@@ -2666,10 +2670,14 @@ function useChatMarkdownState({
     return openInPreferredEditor(resolvePathLinkTarget(withPosition, cwd));
   };
   const openMarkdownFileInBrowser = async (fileLinkMeta: MarkdownFileLinkMeta) => {
+    const isLatestLookup = threadRef
+      ? claimWorkspaceBasenameLookup(scopedThreadKey(threadRef))
+      : () => true;
     const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
     const match = workspaceRelativePath
       ? await findWorkspaceBasenameMatch(workspaceRelativePath)
       : null;
+    if (!isLatestLookup()) return AsyncResult.success(undefined);
     return openMarkdownFileInPreview(
       match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
     );
