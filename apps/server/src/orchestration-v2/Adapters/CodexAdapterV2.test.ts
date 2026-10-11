@@ -2985,7 +2985,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   const autoModeTurnTranscript = (input: {
     readonly scenario: string;
-    readonly configReadReply: Record<string, unknown>;
+    /** Omit to leave `config/read` unanswered. */
+    readonly configReadReply?: Record<string, unknown>;
     readonly sandboxPolicy: Record<string, unknown>;
   }) => {
     const nativeThreadId = `${input.scenario}-thread`;
@@ -3000,7 +3001,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           label: "config/read",
           frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
         },
-        { type: "emit_inbound", label: "config/read", frame: { id: 3, ...input.configReadReply } },
+        ...(input.configReadReply === undefined
+          ? []
+          : [
+              {
+                type: "emit_inbound" as const,
+                label: "config/read",
+                frame: { id: 3, ...input.configReadReply },
+              },
+            ]),
         {
           type: "expect_outbound",
           label: "turn/start",
@@ -3099,6 +3108,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         configReadReply: { error: { code: -32601, message: "Method not found" } },
         sandboxPolicy: { type: "workspaceWrite" },
       }),
+    ),
+  );
+
+  it.effect("sends the bare workspace-write policy when config/read does not answer", () =>
+    Effect.gen(function* () {
+      const transcript = autoModeTurnTranscript({
+        scenario: "workspace-write-config-timeout",
+        sandboxPolicy: { type: "workspaceWrite" },
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      const started = yield* harness.runtime
+        .startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`${transcript.scenario}-attempt`),
+            text: "fetch",
+          }),
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" },
+        })
+        .pipe(Effect.forkScoped);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(started);
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
     ),
   );
 
