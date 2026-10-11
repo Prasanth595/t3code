@@ -56,6 +56,7 @@ import {
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { composerThreadReferenceText } from "./composerThreadReference";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -3430,10 +3431,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Sync refs back to parent
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (isLiteralPendingAnswer) return;
+    if (activePendingProgress?.activeQuestion) return;
     promptRef.current = prompt;
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
-  }, [isLiteralPendingAnswer, prompt, promptRef]);
+  }, [activePendingProgress?.activeQuestion, prompt, promptRef]);
 
   useEffect(() => {
     if (composerSubmissionError === null) return;
@@ -4132,7 +4133,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const shell = readThreadShell(item.thread);
         if (!shell) return;
         const record = threadContextRecord(item.thread, shell.title);
-        const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
+        const answeringQuestion = activePendingProgress?.activeQuestion != null;
+        const replacement = `${composerThreadReferenceText(record, answeringQuestion)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
@@ -4145,15 +4147,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
-          addComposerDraftThreadContexts(composerDraftTarget, [record], {
-            appendReference: false,
-          });
+          if (!answeringQuestion) {
+            addComposerDraftThreadContexts(composerDraftTarget, [record], {
+              appendReference: false,
+            });
+          }
           setComposerHighlightedItemId(null);
         }
         return;
       }
     },
     [
+      activePendingProgress?.activeQuestion,
       addComposerDraftReviewComment,
       addComposerDraftThreadContexts,
       applyPromptReplacement,
