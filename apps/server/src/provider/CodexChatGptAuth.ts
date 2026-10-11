@@ -441,7 +441,6 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     method: string,
     context: ProviderAuthFlowContext,
   ) {
-    yield* options.onCredentialsReplaced ?? Effect.void;
     const endpoints = yield* discover;
     const existing = yield* read;
     const previous = Option.getOrUndefined(existing);
@@ -667,6 +666,12 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
       const scopes = tokens.scope.split(/\s+/).filter(Boolean);
       yield* withSessionLock(
         Effect.gen(function* () {
+          const active = yield* read;
+          const activate = scopes.includes(REQUIRED_SCOPE) || Option.isNone(active);
+          // Failed sign-in leaves the running connection intact. A declined
+          // grant for another profile also leaves the active credentials alone.
+          if (activate || (Option.isSome(active) && active.value.clientId === clientId))
+            yield* options.onCredentialsReplaced ?? Effect.void;
           yield* saveRegistration({
             clientId,
             redirectUri,
@@ -685,7 +690,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
               scopes,
               ...identity,
             },
-            scopes.includes(REQUIRED_SCOPE) || Option.isNone(yield* read),
+            activate,
           );
         }),
       );

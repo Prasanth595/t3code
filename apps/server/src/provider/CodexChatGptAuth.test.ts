@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Fiber from "effect/Fiber";
 import * as Deferred from "effect/Deferred";
+import * as ScopedCache from "effect/ScopedCache";
 import * as TestClock from "effect/testing/TestClock";
 import { subscribeChatGptHandoff } from "./CodexChatGptHandoff.ts";
 import { FetchHttpClient } from "effect/http";
@@ -20,6 +21,7 @@ import * as ProviderCredentialStore from "./ProviderCredentialStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import { makeCodexChatGptAuth } from "./CodexChatGptAuth.ts";
+import { makeCodexManagedTokenSource } from "./CodexManagedTokenSource.ts";
 
 const assertSameCallback = (actual: string | null, expected: string | null) => {
   const left = new URL(actual!);
@@ -221,10 +223,16 @@ const makeHarnessFor = Effect.fnUntraced(function* (
           }),
     flush: Effect.void,
   });
+  const tokenSources = yield* ScopedCache.make({
+    capacity: 1,
+    lookup: (clientId: string): ReturnType<typeof makeCodexManagedTokenSource> =>
+      makeCodexManagedTokenSource(instanceId, clientId, auth.access),
+  });
   const auth = yield* makeCodexChatGptAuth({
     instanceId,
     discoveryUrl: `${origin}/discovery`,
     resource: `${origin}/v1`,
+    onCredentialsReplaced: ScopedCache.invalidateAll(tokenSources),
   }).pipe(
     Effect.provideService(AnalyticsService.AnalyticsService, analytics),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
@@ -278,6 +286,10 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   });
   return {
     auth,
+    tokenSource: Effect.gen(function* () {
+      const credentials = Option.getOrThrow(yield* auth.read);
+      return yield* ScopedCache.get(tokenSources, credentials.clientId);
+    }),
     analyticsEvents,
     secrets,
     environmentId,
@@ -386,6 +398,16 @@ const makeHarnessFor = Effect.fnUntraced(function* (
   };
 });
 const makeHarness = makeHarnessFor(instanceId);
+const readManagedToken = (source: { url: string; secret: string }, clientId: string) =>
+  Effect.promise(async () => {
+    const response = await fetch(source.url, {
+      headers: {
+        authorization: `Bearer ${source.secret}`,
+        "x-t3-codex-account": clientId,
+      },
+    });
+    return { status: response.status, token: await response.text() };
+  });
 const provision = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(
     Effect.scoped,
@@ -1359,6 +1381,68 @@ it.effect(
     ),
 );
 
+it.effect.each(["cancel", "expired code", "wrong subject", "invalid nonce"])(
+  "preserves the live credential bridge after reconnect fails: %s",
+  (failure) =>
+    provision(
+      Effect.gen(function* () {
+        const h = yield* makeHarness;
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        const before = Option.getOrThrow(yield* h.auth.read);
+        const source = yield* h.tokenSource;
+        assert.deepEqual(yield* readManagedToken(source, before.clientId), {
+          status: 200,
+          token: before.accessToken,
+        });
+        if (failure === "cancel") {
+          const { waiting } = yield* h.startRemote();
+          yield* h.auth.controller.cancel("owner", waiting.flowId!);
+          yield* h.phase("cancelled");
+        } else {
+          if (failure === "expired code") h.setCodeError("invalid_grant");
+          if (failure === "wrong subject") h.setIdentity("another-user", "another@example.test");
+          if (failure === "invalid nonce") h.setInvalidNonce();
+          yield* h.signIn;
+          yield* h.phase("failed");
+        }
+        assert.deepEqual(Option.getOrThrow(yield* h.auth.read), before);
+        assert.deepEqual(yield* readManagedToken(source, before.clientId), {
+          status: 200,
+          token: before.accessToken,
+        });
+      }),
+    ),
+);
+
+it.effect(
+  "successful same-account reconnect retires the old bridge and issues a fresh capability",
+  () =>
+    provision(
+      Effect.gen(function* () {
+        const h = yield* makeHarness;
+        yield* h.signIn;
+        yield* h.phase("succeeded");
+        const source = yield* h.tokenSource;
+        const { waiting, callbackUrl } = yield* h.startRemote();
+        // Token reads wait for the auth lock while sign-in is pending, but the
+        // listener itself must remain available until credentials are saved.
+        const pending = yield* Effect.promise(() => fetch(source.url));
+        assert.strictEqual(pending.status, 401);
+        yield* h.auth.controller.complete("owner", { flowId: waiting.flowId!, callbackUrl });
+        yield* h.phase("succeeded");
+        const old = yield* Effect.tryPromise(() => fetch(source.url)).pipe(Effect.result);
+        assert.strictEqual(old._tag, "Failure");
+        const replacement = yield* h.tokenSource;
+        assert.notStrictEqual(replacement.secret, source.secret);
+        assert.deepEqual(yield* readManagedToken(replacement, "oaiapp_test"), {
+          status: 200,
+          token: Option.getOrThrow(yield* h.auth.read).accessToken,
+        });
+      }),
+    ),
+);
+
 it.effect("declined sharing on an older profile does not replace the active account", () =>
   provision(
     Effect.gen(function* () {
@@ -1370,6 +1454,7 @@ it.effect("declined sharing on an older profile does not replace the active acco
       yield* h.changeAccount;
       yield* h.phase("succeeded");
       const before = h.storedRecords();
+      const source = yield* h.tokenSource;
       h.setIdentity("user-test", "hidden@example.test");
       h.setCallbackClientId("oaiapp_test");
       h.declineSharing();
@@ -1382,6 +1467,10 @@ it.effect("declined sharing on an older profile does not replace the active acco
         Option.getOrThrow(yield* h.auth.read),
         before.find((record) => record.clientId === "oaiapp_other_account"),
       );
+      assert.deepEqual(yield* readManagedToken(source, "oaiapp_other_account"), {
+        status: 200,
+        token: Option.getOrThrow(yield* h.auth.read).accessToken,
+      });
     }),
   ),
 );
