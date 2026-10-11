@@ -268,8 +268,13 @@ const layerBase: Layer.Layer<
           ),
           Effect.uninterruptible,
         );
+        // Every streamed agent event is a write, so its statements would
+        // dominate the trace file. The sql.transaction span still times each
+        // write; the statements inside it are not traced.
         return sql
-          .withTransaction(Effect.tap(transaction, () => takeLane))
+          .withTransaction(
+            Effect.tap(transaction.pipe(Effect.withTracerEnabled(false)), () => takeLane),
+          )
           .pipe(
             Effect.tap(publish),
             Effect.ensuring(
