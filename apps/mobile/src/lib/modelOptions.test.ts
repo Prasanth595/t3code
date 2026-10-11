@@ -514,9 +514,9 @@ describe("mobile model options", () => {
         }),
       ).toBe(submitted);
     }
-    expect(buildModelOptions(null, submitted).map((option) => option.selection)).toContainEqual(
-      submitted,
-    );
+    expect(
+      buildModelOptions(null, submitted, undefined, null).map((option) => option.selection),
+    ).toContainEqual(submitted);
   });
 
   it("resolves new tasks from draft, project, sticky, then provider defaults", () => {
