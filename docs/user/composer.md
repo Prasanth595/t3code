@@ -254,10 +254,10 @@ opens it when selected. Your prompt only carries a reference: the agent reads th
 history on demand, so attaching a long thread costs nothing until the agent looks. Attaching a
 thread does not change it, and the agent cannot send messages to it unless you ask.
 
-Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
-say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing
-the thumbnail asks first when the image is still mentioned in your text, then removes both. Files
-exist only as chips: deleting a file's last chip removes the file from the message.
+Images appear on the thumbnail shelf above the text. Adding an image does not add a chip to your
+prompt. Removing a thumbnail asks first when the image is still mentioned in your text, then
+removes both. Files exist only as chips: deleting a file's last chip removes the file from the
+message.
 
 Copy text that holds chips and paste it into another draft, in the same thread or another one,
 and the chips come along with what they point to. Images and files are fetched again from the

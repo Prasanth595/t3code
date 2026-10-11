@@ -155,12 +155,13 @@ data-URL path, via the optional `id` on `UploadChatImageAttachment`); the server
 rewrites every image and file record to the persisted id it assigns, so the stored message binds
 records to real resources. Optimistic rows bind to local ids and are replaced by the server copy.
 
-In the composer, attaching a file or image inserts a chip at the caret (appended when the editor
-cannot take input). Files exist only as chips: a file whose last chip is deleted is removed and
-its upload released, and drafts that predate references get a chip appended on hydration. Images
-keep the thumbnail shelf as their inventory; deleting a chip leaves the image, and removing a
-thumbnail that is still referenced asks for confirmation before removing both. Old drafts do not
-gain image chips.
+In the composer, attaching a file inserts a chip at the caret (appended when the editor cannot
+take input). A normal image attachment stays on the thumbnail shelf without an inline chip. Image
+chips can still appear when replacing an explicit selection or when the editor cannot accept input.
+Files exist only as chips: a file whose last chip is deleted is removed and its upload released,
+and drafts that predate references get a chip appended on hydration. Deleting an image chip leaves
+the image, and removing a thumbnail that is still referenced asks for confirmation before removing
+both. Old drafts do not gain image chips.
 
 In the transcript an image chip opens the gallery preview, a video chip opens the media preview,
 and another file chip opens or downloads the file. The gallery still shows every image; file rows
