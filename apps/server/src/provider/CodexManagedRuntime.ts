@@ -1,11 +1,10 @@
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
-import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Scope from "effect/Scope";
+import * as ScopedCache from "effect/ScopedCache";
 import {
   resolveSelfInvocation,
   selfInvocationArgs,
@@ -57,22 +56,22 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   const config = yield* ServerConfig.ServerConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // Only the selected account needs a bridge. The cache owns each listener's
+  // scope, so replacing an account closes its previous endpoint immediately.
+  const tokenSources = yield* ScopedCache.make({
+    capacity: 1,
+    lookup: (clientId: string): ReturnType<typeof makeCodexManagedTokenSource> =>
+      makeCodexManagedTokenSource(options.instanceId, clientId, auth.access),
+  });
   const auth = yield* makeCodexChatGptAuth({
     instanceId: options.instanceId,
     defaultReturnUrl: new URL(
       "/welcome",
       config.devUrl ?? `http://localhost:${config.port}`,
     ).toString(),
+    onCredentialsReplaced: ScopedCache.invalidateAll(tokenSources),
   });
   const launchArgs = managedCodexLaunchArgs(yield* resolveSelfInvocation());
-  const scope = yield* Scope.Scope;
-  const tokenSources = yield* Cache.make({
-    capacity: Number.POSITIVE_INFINITY,
-    lookup: (clientId: string) =>
-      makeCodexManagedTokenSource(options.instanceId, clientId, auth.access).pipe(
-        Effect.provideService(Scope.Scope, scope),
-      ),
-  });
   const homeLayout = yield* resolveManagedCodexHomeLayout(
     config.stateDir,
     options.instanceId,
@@ -91,7 +90,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       ),
     );
     const credentials = yield* auth.access;
-    const source = yield* Cache.get(tokenSources, credentials.clientId);
+    const source = yield* ScopedCache.get(tokenSources, credentials.clientId);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),

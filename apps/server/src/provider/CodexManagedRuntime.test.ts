@@ -256,6 +256,59 @@ it.effect.each(
             return stdout;
           });
           assert.equal(replacementToken, "dummy-other-account-access");
+          const oldListenerReached = yield* Effect.promise(() =>
+            fetch(effective.environment.T3CODE_MANAGED_CODEX_AUTH_URL!).then(
+              () => true,
+              () => false,
+            ),
+          );
+          assert.isFalse(oldListenerReached);
+          yield* runtime.auth.controller.logout(Effect.void);
+          const signedOutListenerReached = yield* Effect.promise(() =>
+            fetch(replacement.environment.T3CODE_MANAGED_CODEX_AUTH_URL!).then(
+              () => true,
+              () => false,
+            ),
+          );
+          assert.isFalse(signedOutListenerReached);
+          // Model a later sign-in to the same registration without replacing
+          // the provider. Its old capability must not become usable again.
+          yield* store.set(
+            new TextEncoder().encode(
+              JSON.stringify({
+                ...expired,
+                clientId: "another-account",
+                accessToken: "dummy-reconnected-access",
+                expiresAt: (yield* Clock.currentTimeMillis) + 3_600_000,
+              }),
+            ),
+          );
+          const reconnected = yield* runtime.resolve;
+          assert.notEqual(
+            reconnected.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET,
+            replacement.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET,
+          );
+          const oldCapabilityStatus = yield* Effect.promise(() =>
+            fetch(replacement.environment.T3CODE_MANAGED_CODEX_AUTH_URL!, {
+              headers: {
+                Authorization: `Bearer ${replacement.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET}`,
+                "X-T3-Codex-Account": "another-account",
+              },
+            }).then(
+              (response) => response.status,
+              () => null,
+            ),
+          );
+          assert.notEqual(oldCapabilityStatus, 200);
+          const reconnectedToken = yield* Effect.promise(async () => {
+            const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(
+              authSetting("command"),
+              authSetting("args"),
+              { env: reconnected.environment, timeout: 25_000 },
+            );
+            return stdout;
+          });
+          assert.equal(reconnectedToken, "dummy-reconnected-access");
           assert.isUndefined(effective.environment.OPENAI_API_KEY);
           assert.isUndefined(effective.environment.OPENAI_BASE_URL);
           assert.isUndefined(effective.environment.T3CODE_CODEX_LAUNCH_ARGS);

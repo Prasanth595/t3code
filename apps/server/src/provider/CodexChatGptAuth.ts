@@ -106,6 +106,8 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
   readonly defaultReturnUrl?: string;
   readonly reconnectProfile?: ChatGptReconnectProfile | null;
   readonly telemetryFlow?: "direct" | "primary_handoff";
+  /** Retire issued runtime credentials on sign-in, logout or credential replacement, not renewal. */
+  readonly onCredentialsReplaced?: Effect.Effect<void>;
 }) {
   const analytics = yield* Effect.serviceOption(AnalyticsService.AnalyticsService);
   const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
@@ -439,6 +441,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     method: string,
     context: ProviderAuthFlowContext,
   ) {
+    yield* options.onCredentialsReplaced ?? Effect.void;
     const endpoints = yield* discover;
     const existing = yield* read;
     const previous = Option.getOrUndefined(existing);
@@ -786,6 +789,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     ),
   );
   const logout = Effect.gen(function* () {
+    yield* options.onCredentialsReplaced ?? Effect.void;
     const credentials = Option.getOrUndefined(yield* read);
     let confirmed = !credentials?.refreshToken;
     if (credentials?.refreshToken) {
@@ -967,6 +971,7 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
           "import",
           "The transferred identity conflicts with the saved ChatGPT connection.",
         );
+      yield* options.onCredentialsReplaced ?? Effect.void;
       yield* saveRegistration(registration);
       yield* save(profile.credentials, true);
     });
@@ -985,6 +990,8 @@ export const makeCodexChatGptAuth = Effect.fn("makeCodexChatGptAuth")(function* 
     read,
     access,
     exportProfile,
-    revoke: lock.withPermit(withSessionLock(remove)),
+    revoke: lock.withPermit(
+      withSessionLock((options.onCredentialsReplaced ?? Effect.void).pipe(Effect.andThen(remove))),
+    ),
   };
 });
