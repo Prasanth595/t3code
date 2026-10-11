@@ -392,7 +392,11 @@ Sends a message to any ordinary or delegated thread in the environment:
 - `auto` starts an idle thread, steers a fully active turn, or queues behind a
   turn that is not yet steerable;
 - `queue` creates a separate follow-up run after active work;
-- `steer` requires a steerable active provider turn; and
+- `steer` requires a steerable active provider turn;
+- `background` is for notifications: it starts an idle thread, steers only when
+  the provider will not interrupt tools, and otherwise queues without
+  interrupting or restarting the active turn. A pending question or approval
+  holds it until answered; and
 - `restart` requires an active provider turn and uses the orchestrator's
   interrupt-and-restart path.
 

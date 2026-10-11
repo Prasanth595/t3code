@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ProviderSetupError,
   RunAttemptId,
+  TurnItemId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -340,7 +341,33 @@ function makeLocalCommandHarness(input: {
     providerTurns: [],
     contextHandoffs: [],
     contextTransfers: [],
-    turnItems: [],
+    turnItems: input.pendingBackgroundQuestion
+      ? [
+          {
+            id: TurnItemId.make("item-native-account-command"),
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            messageId,
+            inputIntent: "turn_start",
+            text: input.text,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          } as OrchestrationV2ThreadProjection["turnItems"][number],
+        ]
+      : [],
     visibleTurnItems: [],
     runtimeRequests: [],
     subagents: [],
@@ -947,6 +974,7 @@ for (const when of ["before-open", "during-open"] as const) {
       expect(after.runtimeRequests[0]?.status).toBe("pending");
       expect(after.nodes[0]?.status).toBe("pending");
       expect(after.attempts[0]?.status).toBe("pending");
+      expect(after.turnItems).toMatchObject([{ type: "user_message", inputIntent: "queued_turn" }]);
       expect(harness.startRootRun).not.toHaveBeenCalled();
       expect(harness.open).toHaveBeenCalledTimes(when === "before-open" ? 0 : 1);
     }),

@@ -120,12 +120,11 @@ export const layer: Layer.Layer<
     // it active while a human answer needs to start its own turn.
     const deferBackgroundRunLocked = (threadId: ThreadId, runId: RunId) =>
       Effect.gen(function* () {
-        const current = yield* projectionStore.getThreadRecords(threadId, [
-          "runs",
-          "nodes",
-          "attempts",
-          "runtimeRequests",
-        ]);
+        const current = yield* projectionStore.getThreadRecords(
+          threadId,
+          ["runs", "nodes", "attempts", "runtimeRequests", "turnItems"],
+          { turnItemTypes: ["user_message"] },
+        );
         const run = current.runs.find((row) => row.id === runId);
         if (
           run === undefined ||
@@ -140,6 +139,12 @@ export const layer: Layer.Layer<
             threadId,
             cause: "Background run has no unstarted execution identity.",
           });
+        const userItem = current.turnItems.find(
+          (item) =>
+            item.type === "user_message" &&
+            item.messageId === run.userMessageId &&
+            item.inputIntent !== "queued_turn",
+        );
         const now = yield* DateTime.now;
         const payloads = [
           {
@@ -166,6 +171,16 @@ export const layer: Layer.Layer<
             type: "node.updated" as const,
             payload: { ...node, status: "pending" as const, startedAt: null },
           },
+          // A queued message is composer state: its transcript row must hide
+          // if the queued run is cancelled before the provider receives it.
+          ...(userItem === undefined
+            ? []
+            : [
+                {
+                  type: "turn-item.updated" as const,
+                  payload: { ...userItem, inputIntent: "queued_turn" as const, updatedAt: now },
+                },
+              ]),
         ];
         const events = yield* Effect.forEach(payloads, (event) =>
           Effect.gen(function* () {
