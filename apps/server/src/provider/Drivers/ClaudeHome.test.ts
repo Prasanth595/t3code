@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect's symlink cannot make the junctions Windows users link these homes with.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -5,8 +7,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-
-import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 import {
   claudeSignedOutMessage,
@@ -77,10 +77,12 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
         yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" }),
       );
       const home = (name: string) => path.join(root, name);
+      const linkDirectory = (target: string, link: string) =>
+        Effect.promise(() => NodeFSP.symlink(target, link, "junction"));
       const linkProjects = (name: string, target: string) =>
         fileSystem
           .makeDirectory(home(name))
-          .pipe(Effect.andThen(fileSystem.symlink(target, path.join(home(name), "projects"))));
+          .pipe(Effect.andThen(linkDirectory(target, path.join(home(name), "projects"))));
 
       yield* fileSystem.makeDirectory(path.join(home("shared"), "projects"), { recursive: true });
       yield* fileSystem.makeDirectory(path.join(home("separate"), "projects"), { recursive: true });
@@ -88,7 +90,7 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       yield* linkProjects("overlay", path.join(home("shared"), "projects"));
       yield* linkProjects("chained", path.join(home("overlay"), "projects"));
       yield* linkProjects("dangling", path.join(home("missing"), "projects"));
-      yield* fileSystem.symlink(home("shared"), home("alias"));
+      yield* linkDirectory(home("shared"), home("alias"));
       for (const account of ["personal", "work"]) {
         yield* fileSystem.makeDirectory(path.join(home("transcripts"), account), {
           recursive: true,
@@ -102,42 +104,36 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
     const ownProjectsKey = (homePath: string) =>
       Effect.map(Path.Path, (path) => `claude:projects:${path.join(homePath, "projects")}`);
 
-    it.effect.skipIf(!symlinksSupported)(
-      "groups auth-overlay homes with the home their projects symlink points at",
-      () =>
-        Effect.gen(function* () {
-          const home = yield* makeClaudeHomes;
-          const sharedKey = yield* ownProjectsKey(home("shared"));
+    it.effect("groups auth-overlay homes with the home their projects link points at", () =>
+      Effect.gen(function* () {
+        const home = yield* makeClaudeHomes;
+        const sharedKey = yield* ownProjectsKey(home("shared"));
 
-          expect(yield* keyFor(home("shared"))).toBe(sharedKey);
-          expect(yield* keyFor(home("overlay"))).toBe(sharedKey);
-          expect(yield* keyFor(home("chained"))).toBe(sharedKey);
-          expect(yield* keyFor(home("alias"))).toBe(sharedKey);
-          expect(yield* keyFor("", { CLAUDE_CONFIG_DIR: home("overlay") })).toBe(sharedKey);
-          expect(yield* keyFor(home("separate"))).toBe(yield* ownProjectsKey(home("separate")));
-        }),
+        expect(yield* keyFor(home("shared"))).toBe(sharedKey);
+        expect(yield* keyFor(home("overlay"))).toBe(sharedKey);
+        expect(yield* keyFor(home("chained"))).toBe(sharedKey);
+        expect(yield* keyFor(home("alias"))).toBe(sharedKey);
+        expect(yield* keyFor("", { CLAUDE_CONFIG_DIR: home("overlay") })).toBe(sharedKey);
+        expect(yield* keyFor(home("separate"))).toBe(yield* ownProjectsKey(home("separate")));
+      }),
     );
 
-    it.effect.skipIf(!symlinksSupported)(
-      "keeps a home without resolvable projects in its own group",
-      () =>
-        Effect.gen(function* () {
-          const home = yield* makeClaudeHomes;
+    it.effect("keeps a home without resolvable projects in its own group", () =>
+      Effect.gen(function* () {
+        const home = yield* makeClaudeHomes;
 
-          expect(yield* keyFor(home("fresh"))).toBe(yield* ownProjectsKey(home("fresh")));
-          expect(yield* keyFor(home("dangling"))).toBe(yield* ownProjectsKey(home("dangling")));
-          expect(yield* keyFor(home("missing"))).toBe(yield* ownProjectsKey(home("missing")));
-        }),
+        expect(yield* keyFor(home("fresh"))).toBe(yield* ownProjectsKey(home("fresh")));
+        expect(yield* keyFor(home("dangling"))).toBe(yield* ownProjectsKey(home("dangling")));
+        expect(yield* keyFor(home("missing"))).toBe(yield* ownProjectsKey(home("missing")));
+      }),
     );
 
-    it.effect.skipIf(!symlinksSupported)(
-      "keeps homes whose projects link to sibling directories apart",
-      () =>
-        Effect.gen(function* () {
-          const home = yield* makeClaudeHomes;
+    it.effect("keeps homes whose projects link to sibling directories apart", () =>
+      Effect.gen(function* () {
+        const home = yield* makeClaudeHomes;
 
-          expect(yield* keyFor(home("personal"))).not.toBe(yield* keyFor(home("work")));
-        }),
+        expect(yield* keyFor(home("personal"))).not.toBe(yield* keyFor(home("work")));
+      }),
     );
 
     it("points the signed-out hint at the configured Claude home", () => {
