@@ -20,6 +20,7 @@ import {
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2MessageSender,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   type OrchestrationV2ThreadProjection,
@@ -62,15 +63,19 @@ export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 export interface ThreadManagementProvenance {
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  readonly sender?: OrchestrationV2MessageSender;
 }
 
 export function withCreationProvenance(
   command: OrchestrationV2Command,
-  provenance: ThreadManagementProvenance,
+  { sender, ...provenance }: ThreadManagementProvenance,
 ): OrchestrationV2Command {
   switch (command.type) {
+    case "message.dispatch": {
+      const { sender: _claimed, ...unclaimed } = command;
+      return { ...unclaimed, ...provenance, ...(sender === undefined ? {} : { sender }) };
+    }
     case "thread.create":
-    case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":
     case "delegated_task.request":

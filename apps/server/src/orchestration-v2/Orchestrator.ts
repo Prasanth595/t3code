@@ -3873,6 +3873,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly creationSource: OrchestrationV2ConversationMessage["creationSource"];
     readonly scheduledTaskId?: OrchestrationV2ConversationMessage["scheduledTaskId"];
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
+    readonly sender?: OrchestrationV2ConversationMessage["sender"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
   }) =>
@@ -4027,6 +4028,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? {}
               : { scheduledTaskId: input.scheduledTaskId }),
             ...(input.senderThreadId === undefined ? {} : { senderThreadId: input.senderThreadId }),
+            ...(input.sender === undefined ? {} : { sender: input.sender }),
             id: input.messageId,
             threadId: input.command.threadId,
             runId: messageInput.runId,
@@ -4955,6 +4957,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
+          ...(command.sender === undefined ? {} : { sender: command.sender }),
           forceRestart: dispatchMode.type === "restart_active",
         });
         return;
@@ -5154,6 +5157,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
+          ...(command.sender === undefined ? {} : { sender: command.sender }),
           id: command.messageId,
           threadId: command.threadId,
           runId,
@@ -5498,6 +5502,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.senderThreadId === undefined
             ? {}
             : { senderThreadId: command.senderThreadId }),
+          ...(command.sender === undefined ? {} : { sender: command.sender }),
           id: command.messageId,
           threadId: command.threadId,
           runId,
@@ -6190,6 +6195,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? {}
           : { scheduledTaskId: command.scheduledTaskId }),
         ...(command.senderThreadId === undefined ? {} : { senderThreadId: command.senderThreadId }),
+        ...(command.sender === undefined ? {} : { sender: command.sender }),
         id: command.messageId,
         threadId: command.threadId,
         runId,
@@ -7762,6 +7768,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(queuedMessage.senderThreadId === undefined
           ? {}
           : { senderThreadId: queuedMessage.senderThreadId }),
+        ...(queuedMessage.sender === undefined ? {} : { sender: queuedMessage.sender }),
         forceRestart: false,
       });
     });

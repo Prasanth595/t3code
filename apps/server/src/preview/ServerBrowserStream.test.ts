@@ -41,6 +41,7 @@ const makeAuth = (
             sessionId: AuthSessionId.make("stream-test"),
             subject: "stream-test",
             method: "bearer-access-token",
+            client: { deviceType: "unknown" },
             scopes,
           });
     },

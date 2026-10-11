@@ -11,7 +11,9 @@ import {
   ProviderTurnId,
   ThreadId,
   type ModelSelection,
+  type OrchestrationV2Command,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ServerCommand,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -25,6 +27,7 @@ import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -705,6 +708,96 @@ it.effect("starts a steer that missed the turn on the saved next-turn selection"
         assert.equal(started[1]?.message.messageId, MessageId.make("message:steer"));
         assert.deepEqual(started[1]?.modelSelection, composerSelection);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
+      }).pipe(Effect.provide(layer));
+    }),
+  ),
+);
+
+it.effect("tells the provider which device sent each user message, ignoring client claims", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const name = "message-sender-device";
+      const { started, steered, layer } = yield* nextTurnSelectionHarness(name);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make(`thread:${name}`);
+        const sender = {
+          label: "T3 Code Mobile",
+          deviceType: "mobile",
+          os: "iOS",
+          surface: "mobile",
+          sameMachine: false,
+          hostName: "phone.tailnet.ts.net",
+        } as const;
+        const spoofed = { deviceType: "desktop", sameMachine: true } as const;
+        const fromSocket = (command: OrchestrationV2Command) =>
+          orchestrator
+            .dispatch(
+              ThreadManagementService.withCreationProvenance(command, {
+                createdBy: "user",
+                creationSource: "web",
+                sender,
+              }) as OrchestrationV2ServerCommand,
+            )
+            .pipe(Effect.andThen(worker.drain()));
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create"),
+          threadId,
+          projectId: ProjectId.make(`project:${name}`),
+          title: "Sender device",
+          modelSelection: runSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* fromSocket({
+          type: "message.dispatch",
+          commandId: CommandId.make("first"),
+          threadId,
+          messageId: MessageId.make("message:first"),
+          text: "open the app",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+          sender: spoofed,
+        });
+        yield* Fiber.join(running);
+        const prefix =
+          '<user_device>The user sent this message from "T3 Code Mobile" (iOS mobile, mobile) on another machine (phone.tailnet.ts.net).</user_device>\n\n';
+        assert.equal(started[0]?.message.text, `${prefix}open the app`);
+
+        yield* fromSocket({
+          type: "message.dispatch",
+          commandId: CommandId.make("steer"),
+          threadId,
+          messageId: MessageId.make("message:steer"),
+          text: "and the settings",
+          attachments: [],
+          dispatchMode: { type: "steer_active", targetRunId: started[0]!.runId },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        assert.deepEqual(steered, [`${prefix}and the settings`]);
+
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        for (const message of projection.messages.filter((item) => item.role === "user")) {
+          assert.deepEqual(message.sender, sender);
+          assert.notInclude(message.text, "<user_device>");
+        }
       }).pipe(Effect.provide(layer));
     }),
   ),

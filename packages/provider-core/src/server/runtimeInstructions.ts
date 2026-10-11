@@ -1,3 +1,5 @@
+import type { OrchestrationV2MessageSender } from "@t3tools/contracts";
+
 const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked. When asked to monitor, watch, or babysit a PR and watch_pull_request is available, call it and end your turn: T3 Code wakes you when checks finish, someone else comments, or the branch conflicts, so do not poll or run your own watcher. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.
 </pull_request_linking>`;
@@ -25,4 +27,28 @@ export function buildRuntimeInstructions(runtime: {
 
 function toSingleLine(value: string): string {
   return value.replaceAll(/\s+/g, " ").trim();
+}
+
+/**
+ * Prefixes a user message with the device it was sent from. The agent runs on the server's
+ * machine, so browsers, permission prompts, and localhost links may not reach the user.
+ * Slash commands pass through untouched because adapters parse them from the text.
+ */
+export function withUserDevice(text: string, sender: OrchestrationV2MessageSender | undefined) {
+  if (sender === undefined || text.trimStart().startsWith("/")) return text;
+  const label = toSingleLine(sender.label ?? "");
+  const device = [sender.os, sender.deviceType === "unknown" ? undefined : sender.deviceType]
+    .map((part) => toSingleLine(part ?? ""))
+    .filter((part) => part !== "")
+    .join(" ");
+  const details = [device, sender.surface ?? ""].filter((part) => part !== "").join(", ");
+  const source = label
+    ? `"${label}"${details ? ` (${details})` : ""}`
+    : details
+      ? `a device (${details})`
+      : "an unknown device";
+  const machine = sender.sameMachine
+    ? "on this machine"
+    : `on another machine (${toSingleLine(sender.hostName ?? "") || "unknown host"})`;
+  return `<user_device>The user sent this message from ${source} ${machine}.</user_device>\n\n${text}`;
 }

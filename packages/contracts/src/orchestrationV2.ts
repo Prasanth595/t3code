@@ -9,6 +9,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ClientSurface,
   CommandId,
   ContextHandoffId,
   ContextTransferId,
@@ -36,6 +37,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { AuthClientMetadataDeviceType } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import {
   OrchestrationGetFullThreadDiffInput,
@@ -1201,12 +1203,25 @@ export const OrchestrationV2Notification = Schema.Struct({
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
+// The device a user typed a message from, stamped by the server from the sending socket's
+// session. The agent runs on the server's machine, which may not be the user's.
+export const OrchestrationV2MessageSender = Schema.Struct({
+  label: Schema.optional(TrimmedNonEmptyString),
+  deviceType: AuthClientMetadataDeviceType,
+  os: Schema.optional(TrimmedNonEmptyString),
+  surface: Schema.optional(ClientSurface),
+  sameMachine: Schema.Boolean,
+  hostName: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2MessageSender = typeof OrchestrationV2MessageSender.Type;
+
 export const OrchestrationV2ConversationMessage = Schema.Struct({
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
   // The sending agent's thread in this environment, separate from the receiving thread.
   senderThreadId: Schema.optional(ThreadId),
+  sender: Schema.optional(OrchestrationV2MessageSender),
   id: MessageId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
@@ -2951,6 +2966,7 @@ export const OrchestrationV2Command = Schema.Union([
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
+    sender: Schema.optional(OrchestrationV2MessageSender),
     commandId: CommandId,
     threadId: ThreadId,
     messageId: MessageId,

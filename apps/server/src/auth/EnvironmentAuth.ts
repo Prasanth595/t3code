@@ -109,6 +109,7 @@ export interface AuthenticatedSession {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
+  readonly client: AuthClientMetadata;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt?: DateTime.DateTime;
@@ -762,6 +763,7 @@ export const make = Effect.gen(function* () {
         sessionId: session.sessionId,
         subject: session.subject,
         method: session.method,
+        client: session.client,
         scopes: session.scopes,
         ...(session.proofKeyThumbprint ? { proofKeyThumbprint: session.proofKeyThumbprint } : {}),
         ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
@@ -1261,6 +1263,7 @@ export const make = Effect.gen(function* () {
               sessionId: session.sessionId,
               subject: session.subject,
               method: session.method,
+              client: session.client,
               scopes: session.scopes,
               ...(session.expiresAt ? { expiresAt: session.expiresAt } : {}),
             })),
