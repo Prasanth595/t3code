@@ -334,6 +334,26 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
     HttpClient.make(() => Effect.never),
   );
 
+  // HTTP 200 headers followed by an incomplete body that never closes.
+  const bodyStallsAfterHeadersLayer = Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("{"));
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+      ),
+    ),
+  );
+
   const StoredTokenJson = Schema.fromJsonString(
     Schema.Struct({
       accessToken: Schema.String,
@@ -358,68 +378,85 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
     }),
   );
 
-  it.effect("fails the refresh instead of hanging when the token endpoint stalls", () =>
+  it.effect("fails if the device authorization body stalls after headers", () =>
     Effect.gen(function* () {
-      const stored = new Map<string, Uint8Array>();
-      stored.set(
-        "cloud-cli-oauth-token",
-        new TextEncoder().encode(
-          encodeStoredToken({
-            accessToken: "expired-access",
-            refreshToken: "refresh-token-1",
-            expiresAtEpochMs: 1,
-          }),
-        ),
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(bodyStallsAfterHeadersLayer),
+        provideTestEnv,
+        Effect.flip,
+        Effect.forkChild,
       );
-      const secrets = ServerSecretStore.ServerSecretStore.of({
-        get: (name) =>
-          Effect.succeed(
-            stored.has(name) ? Option.some(stored.get(name)!) : Option.none<Uint8Array>(),
-          ),
-        set: (name, value) =>
-          Effect.sync(() => {
-            stored.set(name, value);
-          }),
-        create: (name, value) =>
-          Effect.sync(() => {
-            stored.set(name, value);
-          }),
-        getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
-        remove: (name) =>
-          Effect.sync(() => {
-            stored.delete(name);
-          }),
-      });
-      const queue = yield* Queue.make<Terminal.UserInput>();
-      const launcher = ExternalLauncher.ExternalLauncher.of({
-        resolveAvailableEditors: () => Effect.succeed([]),
-        resolveFileManagerRevealKind: () => Effect.succeed(undefined),
-        launchBrowser: () => Effect.void,
-        launchEditor: () => Effect.void,
-      });
-      const crypto = Crypto.make({
-        randomBytes: (size) => new Uint8Array(size).fill(7),
-        digest: (_algorithm, data) => Effect.succeed(data),
-      });
-      const managerLayer = Layer.provide(
-        CliTokenManager.layer,
-        Layer.mergeAll(
-          hangingHttpClientLayer,
-          Layer.succeed(Crypto.Crypto, crypto),
-          Layer.succeed(ServerSecretStore.ServerSecretStore, secrets),
-          Layer.succeed(Terminal.Terminal, makeTestTerminal(queue)),
-          Layer.succeed(ExternalLauncher.ExternalLauncher, launcher),
-        ),
-      );
-
-      const fiber = yield* Effect.gen(function* () {
-        const manager = yield* CliTokenManager.CloudCliTokenManager;
-        return yield* manager.getExisting;
-      }).pipe(Effect.provide(managerLayer), provideTestEnv, Effect.flip, Effect.forkChild);
-      yield* TestClock.adjust(Duration.seconds(10));
+      yield* TestClock.adjust(Duration.seconds(11));
       const result = yield* Fiber.join(fiber);
 
-      assert.instanceOf(result, CliTokenManager.CloudCliCredentialRefreshError);
+      assert.isTrue(isAuthorizationError(result));
+    }),
+  );
+
+  it.effect("fails refresh if the token endpoint stalls before or after headers", () =>
+    Effect.gen(function* () {
+      for (const httpClientLayer of [hangingHttpClientLayer, bodyStallsAfterHeadersLayer]) {
+        const stored = new Map<string, Uint8Array>();
+        stored.set(
+          "cloud-cli-oauth-token",
+          new TextEncoder().encode(
+            encodeStoredToken({
+              accessToken: "expired-access",
+              refreshToken: "refresh-token-1",
+              expiresAtEpochMs: 1,
+            }),
+          ),
+        );
+        const secrets = ServerSecretStore.ServerSecretStore.of({
+          get: (name) =>
+            Effect.succeed(
+              stored.has(name) ? Option.some(stored.get(name)!) : Option.none<Uint8Array>(),
+            ),
+          set: (name, value) =>
+            Effect.sync(() => {
+              stored.set(name, value);
+            }),
+          create: (name, value) =>
+            Effect.sync(() => {
+              stored.set(name, value);
+            }),
+          getOrCreateRandom: (_name, bytes) => Effect.succeed(new Uint8Array(bytes)),
+          remove: (name) =>
+            Effect.sync(() => {
+              stored.delete(name);
+            }),
+        });
+        const queue = yield* Queue.make<Terminal.UserInput>();
+        const launcher = ExternalLauncher.ExternalLauncher.of({
+          resolveAvailableEditors: () => Effect.succeed([]),
+          resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+          launchBrowser: () => Effect.void,
+          launchEditor: () => Effect.void,
+        });
+        const crypto = Crypto.make({
+          randomBytes: (size) => new Uint8Array(size).fill(7),
+          digest: (_algorithm, data) => Effect.succeed(data),
+        });
+        const managerLayer = Layer.provide(
+          CliTokenManager.layer,
+          Layer.mergeAll(
+            httpClientLayer,
+            Layer.succeed(Crypto.Crypto, crypto),
+            Layer.succeed(ServerSecretStore.ServerSecretStore, secrets),
+            Layer.succeed(Terminal.Terminal, makeTestTerminal(queue)),
+            Layer.succeed(ExternalLauncher.ExternalLauncher, launcher),
+          ),
+        );
+
+        const fiber = yield* Effect.gen(function* () {
+          const manager = yield* CliTokenManager.CloudCliTokenManager;
+          return yield* manager.getExisting;
+        }).pipe(Effect.provide(managerLayer), provideTestEnv, Effect.flip, Effect.forkChild);
+        yield* TestClock.adjust(Duration.seconds(10));
+        const result = yield* Fiber.join(fiber);
+
+        assert.instanceOf(result, CliTokenManager.CloudCliCredentialRefreshError);
+      }
     }),
   );
 });
