@@ -395,6 +395,14 @@ export interface ThreadManagementServiceShape {
     readonly commandId: CommandId;
     readonly instanceId: ProviderInstanceId;
   }) => Effect.Effect<void, ThreadManagementProviderInstanceDisabledError>;
+  /**
+   * Effective enablement for candidate selection, without the receipt-replay
+   * exemption `assertProviderInstanceEnabled` grants an accepted command.
+   */
+  readonly isProviderInstanceEnabledForProject: (input: {
+    readonly projectId: ProjectId;
+    readonly instanceId: ProviderInstanceId;
+  }) => Effect.Effect<boolean>;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -524,6 +532,15 @@ const make = Effect.gen(function* () {
         input.commandId,
         input.projectId,
         input.instanceId,
+      );
+
+  const isProviderInstanceEnabledForProject: ThreadManagementServiceShape["isProviderInstanceEnabledForProject"] =
+    (input) =>
+      serverSettings.getSettings.pipe(
+        Effect.orDie,
+        Effect.map((current) =>
+          resolveProjectProviderInstanceEnabled(current, input.projectId, input.instanceId),
+        ),
       );
 
   const ensureLegacyTranscript = Effect.fn(
@@ -1086,6 +1103,7 @@ const make = Effect.gen(function* () {
     listProjectThreads,
     sendToThread,
     assertProviderInstanceEnabled,
+    isProviderInstanceEnabledForProject,
     waitForThread,
     settleAfterRun,
     settleThread,
