@@ -199,6 +199,7 @@ function resolveProjectOverrides(
     const fallback = fallbackTextGenerationModelSelection(
       settings.providerInstances,
       (instanceId) => resolveProjectProviderInstanceEnabled(settings, projectId, instanceId),
+      { includeConfiguredInstances: true },
     );
     if (fallback !== null) effective.textGenerationModelSelection = fallback;
   }
