@@ -215,7 +215,6 @@ import {
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import {
   collectInlineContextIds,
-  stripInlineContextReferences,
   type ComposerContextReference,
   ensureInlineContextReferences,
   formatInlineContextReference,
@@ -5824,15 +5823,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // runs. An explicit selection replace and states where the editor refuses
     // input (connecting, approval, pending questions, project selection) still
     // get chips so the image is never invisible, unless paste-as-text explicitly
-    // requests no inline image chip.
+    // requests no inline image chip. A normal image attachment stays on the
+    // thumbnail shelf, even when the prompt already contains prose.
     const imageAttachmentsGetChips =
       !options?.skipImageInlineChip &&
       (options?.selection !== undefined ||
         isConnecting ||
         isComposerApprovalState ||
         pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        stripInlineContextReferences(promptRef.current).trim().length > 0);
+        projectSelectionRequired);
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (via the pending counter)
