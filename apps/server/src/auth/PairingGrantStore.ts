@@ -19,6 +19,7 @@ import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
@@ -225,6 +226,11 @@ export class PairingGrantStore extends Context.Service<
       BootstrapCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<BootstrapCredentialChange>;
+    readonly subscribeChanges: Effect.Effect<
+      PubSub.Subscription<BootstrapCredentialChange>,
+      never,
+      Scope.Scope
+    >;
     readonly revoke: (id: string) => Effect.Effect<boolean, BootstrapCredentialInternalError>;
     readonly consume: (
       credential: string,
@@ -628,6 +634,7 @@ export const make = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
+    subscribeChanges: PubSub.subscribe(changesPubSub),
     revoke,
     consume,
   });

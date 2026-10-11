@@ -603,6 +603,49 @@ const MAX_CLIENT_APP_VERSION_LENGTH = 64;
 const MAX_CLIENT_BROWSER_LENGTH = 64;
 const MAX_CLIENT_DEVICE_MODEL_LENGTH = 80;
 
+export const subscribeAuthAccess = Effect.fn("ws.subscribeAuthAccess")(function* (
+  currentSessionId: AuthSessionId,
+) {
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
+  const sessions = yield* SessionStore.SessionStore;
+  // Buffer both stores before reading; RPC backpressure can hold the snapshot
+  // until its ACK, delaying consumption of the live tail.
+  const pairingLinkChanges = yield* bootstrapCredentials.subscribeChanges;
+  const clientChanges = yield* sessions.subscribeChanges;
+  const initialSnapshot = yield* Effect.all({
+    pairingLinks: serverAuth.listPairingLinks(),
+    clientSessions: serverAuth.listClientSessions(currentSessionId),
+  }).pipe(Effect.mapError((error) => new AuthAccessStreamError({ message: error.message })));
+  const revisionRef = yield* Ref.make(1);
+  const accessChanges: Stream.Stream<
+    PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
+  > = Stream.merge(
+    Stream.fromSubscription(pairingLinkChanges),
+    Stream.fromSubscription(clientChanges),
+  );
+
+  const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
+    Stream.mapEffect((change) =>
+      Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
+        Effect.map((revision) => toAuthAccessStreamEvent(change, revision, currentSessionId)),
+      ),
+    ),
+  );
+
+  return Stream.concat(
+    rpcInitialItems([
+      {
+        version: 1 as const,
+        revision: 1,
+        type: "snapshot" as const,
+        payload: initialSnapshot,
+      },
+    ]),
+    liveEvents,
+  );
+});
+
 export function hasCompatibleOrchestrationProtocol(url: URL): boolean {
   return (
     url.searchParams.get(ORCHESTRATION_PROTOCOL_QUERY_PARAM) ===
@@ -1321,8 +1364,6 @@ const layerWsRpc = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const withPullRequestViewer = pullRequests.withRoutingCredential;
-      const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
-      const sessions = yield* SessionStore.SessionStore;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
@@ -1667,19 +1708,6 @@ const layerWsRpc = (
         yield* providerRegistry.refreshInstance(input.instanceId);
         return { disabled: true } as const;
       });
-      const loadAuthAccessSnapshot = () =>
-        Effect.all({
-          pairingLinks: serverAuth.listPairingLinks(),
-          clientSessions: serverAuth.listClientSessions(currentSessionId),
-        }).pipe(
-          Effect.mapError(
-            (error) =>
-              new AuthAccessStreamError({
-                message: error.message,
-              }),
-          ),
-        );
-
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
         Effect.gen(function* () {
           const keybindingsConfig = yield* keybindings.loadConfigState;
@@ -3090,37 +3118,7 @@ const layerWsRpc = (
             }),
           ),
         [WS_METHODS.subscribeAuthAccess]: (_input) =>
-          Stream.unwrap(
-            Effect.gen(function* () {
-              const initialSnapshot = yield* loadAuthAccessSnapshot();
-              const revisionRef = yield* Ref.make(1);
-              const accessChanges: Stream.Stream<
-                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
-              > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
-
-              const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
-                Stream.mapEffect((change) =>
-                  Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
-                    Effect.map((revision) =>
-                      toAuthAccessStreamEvent(change, revision, currentSessionId),
-                    ),
-                  ),
-                ),
-              );
-
-              return Stream.concat(
-                rpcInitialItems([
-                  {
-                    version: 1 as const,
-                    revision: 1,
-                    type: "snapshot" as const,
-                    payload: initialSnapshot,
-                  },
-                ]),
-                liveEvents,
-              );
-            }),
-          ),
+          Stream.unwrap(subscribeAuthAccess(currentSessionId)),
         [WS_METHODS.subscribeBackgroundPolicy]: (_input) =>
           Stream.unwrap(
             Effect.map(backgroundPolicy.subscribe, ({ latest, changes }) =>
