@@ -403,15 +403,23 @@ const make = Effect.gen(function* () {
       headSha: currentHeadSha,
       startedAt: yield* nowIso,
     };
-    // Claimed atomically, so two readers pressing Generate start one run between them.
+    // Claimed atomically, so two readers pressing Generate start one run between them. The head
+    // is read again under the claim: a press that read an older head before a push must not
+    // replace the run another press started for the new one.
     const claimed = yield* ownership.withPermits(1)(
-      Ref.modify(runs, (current) => {
-        const existing = current.get(runKey);
-        if (existing?._tag === "Running" && existing.headSha === currentHeadSha) {
-          return [existing, current] as const;
-        }
-        return [running, new Map(current).set(runKey, running)] as const;
-      }),
+      pullRequests.detail(input).pipe(
+        Effect.flatMap((latest) =>
+          (latest.headSha ?? null) !== currentHeadSha
+            ? Ref.get(runs).pipe(Effect.map((current) => current.get(runKey) ?? null))
+            : Ref.modify(runs, (current) => {
+                const existing = current.get(runKey);
+                if (existing?._tag === "Running" && existing.headSha === currentHeadSha) {
+                  return [existing, current] as const;
+                }
+                return [running, new Map(current).set(runKey, running)] as const;
+              }),
+        ),
+      ),
     );
     if (claimed !== running) return { guide: stored, run: claimed, currentHeadSha };
 
