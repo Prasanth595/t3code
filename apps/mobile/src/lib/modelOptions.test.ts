@@ -51,7 +51,7 @@ describe("mobile model options", () => {
       ],
     } as unknown as ServerConfig;
 
-    expect(groupByProvider(buildModelOptions(config, null))).toMatchObject([
+    expect(groupByProvider(buildModelOptions(config, null, undefined, null))).toMatchObject([
       {
         providerKey: "codex",
         providerLabel: "Codex",
@@ -87,7 +87,7 @@ describe("mobile model options", () => {
       ],
     } as unknown as ServerConfig;
 
-    const [group] = groupByProvider(buildModelOptions(config, null));
+    const [group] = groupByProvider(buildModelOptions(config, null, undefined, null));
 
     expect(group).toMatchObject({
       providerKey: "acpRegistry_antigravity",
@@ -131,7 +131,7 @@ describe("mobile model options", () => {
       model: "github-copilot/claude-fable-5",
     };
 
-    const options = buildModelOptions(config, selection);
+    const options = buildModelOptions(config, selection, undefined, null);
 
     expect(options).toMatchObject(
       sources.map((source) => ({
@@ -185,26 +185,41 @@ describe("mobile model options", () => {
       ],
     } as unknown as ServerConfig;
 
-    const [option] = buildModelOptions(config, {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-test",
-    });
+    const [option] = buildModelOptions(
+      config,
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-test",
+      },
+      undefined,
+      null,
+    );
 
     expect(option?.capabilities?.optionDescriptors?.[0]?.id).toBe("serviceTier");
     expect(option?.selection.options).toBeUndefined();
 
-    const [emptyOption] = buildModelOptions(config, {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-test",
-      options: [],
-    });
+    const [emptyOption] = buildModelOptions(
+      config,
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-test",
+        options: [],
+      },
+      undefined,
+      null,
+    );
     expect(emptyOption?.selection).toEqual(option?.selection);
 
-    const [explicitOption] = buildModelOptions(config, {
-      instanceId: ProviderInstanceId.make("codex"),
-      model: "gpt-test",
-      options: [{ id: "serviceTier", value: "priority" }],
-    });
+    const [explicitOption] = buildModelOptions(
+      config,
+      {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-test",
+        options: [{ id: "serviceTier", value: "priority" }],
+      },
+      undefined,
+      null,
+    );
     expect(explicitOption?.selection.options).toEqual([{ id: "serviceTier", value: "priority" }]);
   });
 
@@ -220,12 +235,13 @@ describe("mobile model options", () => {
     const config = { providers } as unknown as ServerConfig;
     const selection = { instanceId: ProviderInstanceId.make("codex"), model: "test" };
 
-    expect(buildModelOptions(config, selection).map((option) => option.providerKey)).toEqual([
-      "codex",
-      "claudeAgent",
-    ]);
-    expect(buildModelOptions(config, selection, selection.instanceId)).toEqual(
-      buildModelOptions(config, selection).filter((option) => option.providerKey === "codex"),
+    expect(
+      buildModelOptions(config, selection, undefined, null).map((option) => option.providerKey),
+    ).toEqual(["codex", "claudeAgent"]);
+    expect(buildModelOptions(config, selection, selection.instanceId, null)).toEqual(
+      buildModelOptions(config, selection, undefined, null).filter(
+        (option) => option.providerKey === "codex",
+      ),
     );
   });
 
@@ -251,8 +267,8 @@ describe("mobile model options", () => {
         providers: state === "missing" ? [] : [provider],
         settings: { providerInstances: { google_work: { driver: "antigravity" } } },
       } as unknown as ServerConfig;
-      const options = buildModelOptions(config, selection, selection.instanceId);
-      expect(options).toEqual(buildModelOptions(config, selection));
+      const options = buildModelOptions(config, selection, selection.instanceId, null);
+      expect(options).toEqual(buildModelOptions(config, selection, undefined, null));
       expect(options).toHaveLength(1);
       expect(options[0]).toMatchObject({ selection, isUnavailable: true });
     },
@@ -293,12 +309,12 @@ describe("mobile model options", () => {
       model: "gpt-5.6-sol",
     };
 
-    expect(resolveSelectableModelSelection(config, usable)).toBe(usable);
-    expect(resolveSelectableModelSelection(config, disabled)).toBeNull();
-    expect(resolveSelectableModelSelection(config, removed)).toBeNull();
-    expect(isModelSelectionUnavailable(config, disabled)).toBe(false);
+    expect(resolveSelectableModelSelection(config, usable, null)).toBe(usable);
+    expect(resolveSelectableModelSelection(config, disabled, null)).toBeNull();
+    expect(resolveSelectableModelSelection(config, removed, null)).toBeNull();
+    expect(isModelSelectionUnavailable(config, disabled, null)).toBe(false);
     // An offline environment has no config to validate.
-    expect(resolveSelectableModelSelection(null, disabled)).toBe(disabled);
+    expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
   });
 
   describe("Antigravity selections", () => {
@@ -351,11 +367,11 @@ describe("mobile model options", () => {
         providers: config.providers.map((provider) => ({ ...provider, ...update })),
       };
 
-      expect(resolveSelectableModelSelection(unavailableConfig, selection)).toBe(selection);
-      expect(resolveDefaultableModelSelection(unavailableConfig, selection)).toBe(selection);
-      expect(isModelSelectionUnavailable(unavailableConfig, selection)).toBe(true);
-      expect(buildModelOptions(unavailableConfig, null)).toEqual([]);
-      const [option] = buildModelOptions(unavailableConfig, selection);
+      expect(resolveSelectableModelSelection(unavailableConfig, selection, null)).toBe(selection);
+      expect(resolveDefaultableModelSelection(unavailableConfig, selection, null)).toBe(selection);
+      expect(isModelSelectionUnavailable(unavailableConfig, selection, null)).toBe(true);
+      expect(buildModelOptions(unavailableConfig, null, undefined, null)).toEqual([]);
+      const [option] = buildModelOptions(unavailableConfig, selection, undefined, null);
       expect(option).toMatchObject({
         key: `google_work:${selection.model}`,
         label: model.name,
@@ -380,9 +396,9 @@ describe("mobile model options", () => {
         })),
       };
 
-      expect(resolveDefaultableModelSelection(changedConfig, selection)).toBe(selection);
-      expect(isModelSelectionUnavailable(changedConfig, selection)).toBe(true);
-      const options = buildModelOptions(changedConfig, selection);
+      expect(resolveDefaultableModelSelection(changedConfig, selection, null)).toBe(selection);
+      expect(isModelSelectionUnavailable(changedConfig, selection, null)).toBe(true);
+      const options = buildModelOptions(changedConfig, selection, undefined, null);
       const missing = options.find((option) => option.selection.model === selection.model);
       expect(missing).toMatchObject({
         label: selection.model,
@@ -395,18 +411,20 @@ describe("mobile model options", () => {
       expect(
         resolveNewTaskModelSelection({
           draftSelection: null,
-          projectDefaultSelection: resolveDefaultableModelSelection(changedConfig, selection),
+          projectDefaultSelection: resolveDefaultableModelSelection(changedConfig, selection, null),
           stickySelection: null,
           modelOptions: options,
         }),
       ).toBe(selection);
 
-      const [restored] = buildModelOptions(config, selection);
-      expect(isModelSelectionUnavailable(config, selection)).toBe(false);
+      const [restored] = buildModelOptions(config, selection, undefined, null);
+      expect(isModelSelectionUnavailable(config, selection, null)).toBe(false);
       expect(restored?.isUnavailable).not.toBe(true);
       expect(restored?.selection).toBe(selection);
-      expect(resolveDefaultableModelSelection(config, selection)).toBe(selection);
-      expect(buildModelOptions(config, null)[0]?.selection.options).toBeUndefined();
+      expect(resolveDefaultableModelSelection(config, selection, null)).toBe(selection);
+      expect(
+        buildModelOptions(config, null, undefined, null)[0]?.selection.options,
+      ).toBeUndefined();
     });
 
     it("uses configured instance metadata when provider status is missing", () => {
@@ -419,9 +437,11 @@ describe("mobile model options", () => {
         },
       } as unknown as ServerConfig;
 
-      expect(resolveDefaultableModelSelection(missingStatusConfig, selection)).toBe(selection);
-      expect(isModelSelectionUnavailable(missingStatusConfig, selection)).toBe(true);
-      expect(buildModelOptions(missingStatusConfig, selection)).toMatchObject([
+      expect(resolveDefaultableModelSelection(missingStatusConfig, selection, null)).toBe(
+        selection,
+      );
+      expect(isModelSelectionUnavailable(missingStatusConfig, selection, null)).toBe(true);
+      expect(buildModelOptions(missingStatusConfig, selection, undefined, null)).toMatchObject([
         {
           providerDriver: "antigravity",
           providerLabel: "Google Work",
@@ -434,12 +454,12 @@ describe("mobile model options", () => {
     it("keeps offline selections without assuming that an unknown instance is Antigravity", () => {
       const unknownConfig = { ...config, providers: [] };
 
-      expect(resolveDefaultableModelSelection(null, selection)).toBe(selection);
-      expect(isModelSelectionUnavailable(null, selection)).toBe(false);
-      expect(buildModelOptions(null, selection)[0]?.selection).toBe(selection);
-      expect(buildModelOptions(null, selection)[0]?.isUnavailable).not.toBe(true);
-      expect(isModelSelectionUnavailable(unknownConfig, selection)).toBe(false);
-      expect(resolveSelectableModelSelection(unknownConfig, selection)).toBeNull();
+      expect(resolveDefaultableModelSelection(null, selection, null)).toBe(selection);
+      expect(isModelSelectionUnavailable(null, selection, null)).toBe(false);
+      expect(buildModelOptions(null, selection, undefined, null)[0]?.selection).toBe(selection);
+      expect(buildModelOptions(null, selection, undefined, null)[0]?.isUnavailable).not.toBe(true);
+      expect(isModelSelectionUnavailable(unknownConfig, selection, null)).toBe(false);
+      expect(resolveSelectableModelSelection(unknownConfig, selection, null)).toBeNull();
     });
   });
 
@@ -470,11 +490,11 @@ describe("mobile model options", () => {
     const current = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" };
     const legacy = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
 
-    expect(resolveDefaultableModelSelection(config, current)).toBe(current);
+    expect(resolveDefaultableModelSelection(config, current, null)).toBe(current);
     // A legacy last-used selection falls through to the provider default.
-    expect(resolveDefaultableModelSelection(config, legacy)).toBeNull();
+    expect(resolveDefaultableModelSelection(config, legacy, null)).toBeNull();
     // Offline: nothing to validate against, selection passes through.
-    expect(resolveDefaultableModelSelection(null, legacy)).toBe(legacy);
+    expect(resolveDefaultableModelSelection(null, legacy, null)).toBe(legacy);
   });
 
   it("resolves new tasks from draft, project, sticky, then provider defaults", () => {

@@ -130,10 +130,16 @@ export function fallbackTextGenerationModelSelection(
   };
 }
 
+/**
+ * `projectId` has no default: a caller that forgets it would otherwise fall
+ * back to the machine's own writer choice, silently ignoring a project that
+ * turned the writer's instance off. Pass `null` explicitly outside a
+ * project's scope.
+ */
 export function resolveSourceControlWriterModelSelection(
   settings: ServerSettings,
-  providers?: ReadonlyArray<ServerProvider>,
-  projectId: ProjectId | null = null,
+  providers: ReadonlyArray<ServerProvider> | undefined,
+  projectId: ProjectId | null,
 ): ModelSelection {
   const selection = settings.sourceControlWriterModelSelection;
   if (

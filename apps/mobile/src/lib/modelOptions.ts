@@ -122,11 +122,15 @@ function normalizeSelectionOptions(
 /**
  * Whether the selection cannot be sent as is: the project turned its instance
  * off, or a known Antigravity selection needs setup or a different model.
+ *
+ * `projectId` has no default: a caller that forgets it would silently check
+ * only the machine-wide state and miss a project that turned this instance
+ * off. Pass `null` explicitly outside a project's scope.
  */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
-  projectId: ProjectId | null = null,
+  projectId: ProjectId | null,
 ): boolean {
   if (!config || !selection) {
     return false;
@@ -171,11 +175,13 @@ export function describeUnavailableModelSelection(
  * Keep Antigravity selections when setup or catalog changes make them
  * unavailable. Other providers fall through to the server default when they
  * are disabled, missing, or signed out. Without config, keep stored selections.
+ *
+ * `projectId` has no default; see `isModelSelectionUnavailable`.
  */
 export function resolveSelectableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
-  projectId: ProjectId | null = null,
+  projectId: ProjectId | null,
 ): ModelSelection | null {
   if (!selection || !config) {
     return selection;
@@ -200,11 +206,13 @@ export function resolveSelectableModelSelection(
  * Reject legacy models for implicit defaults, except Antigravity selections,
  * which must not silently change after a catalog update. Explicit picks in
  * the settings sheet are unaffected.
+ *
+ * `projectId` has no default; see `isModelSelectionUnavailable`.
  */
 export function resolveDefaultableModelSelection(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null,
-  projectId: ProjectId | null = null,
+  projectId: ProjectId | null,
 ): ModelSelection | null {
   const usable = resolveSelectableModelSelection(config, selection, projectId);
   if (!usable || !config) {
@@ -231,11 +239,14 @@ export function resolveNewTaskModelSelection(input: {
   );
 }
 
+/**
+ * `projectId` has no default; see `isModelSelectionUnavailable`.
+ */
 export function buildModelOptions(
   config: T3ServerConfig | null | undefined,
   fallbackModelSelection: ModelSelection | null,
-  providerInstanceId?: ModelSelection["instanceId"],
-  projectId: ProjectId | null = null,
+  providerInstanceId: ModelSelection["instanceId"] | undefined,
+  projectId: ProjectId | null,
   includeHidden = false,
 ): ReadonlyArray<ModelOption> {
   const options = new Map<string, ModelOption>();
