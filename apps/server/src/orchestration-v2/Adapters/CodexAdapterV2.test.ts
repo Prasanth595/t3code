@@ -1462,6 +1462,45 @@ describe("CodexAdapterV2 background command detail", () => {
   });
 });
 
+describe("CodexAdapterV2 native subagent continuation detail", () => {
+  it("includes the child result", () => {
+    assert.equal(
+      CodexAdapterV2.codexNativeSubagentContinuationDetail({
+        title: "/root/reviewer",
+        prompt: "",
+        status: "completed",
+        result: "Review found one missing null check.",
+      }),
+      "Subagent finished: /root/reviewer\n\nResult:\nReview found one missing null check.",
+    );
+  });
+
+  it("describes a failure and omits an empty result", () => {
+    assert.equal(
+      CodexAdapterV2.codexNativeSubagentContinuationDetail({
+        title: null,
+        prompt: "Check the migration",
+        status: "failed",
+        result: "  ",
+      }),
+      "Subagent failed: Check the migration",
+    );
+  });
+
+  it("keeps the tail of a long result", () => {
+    const detail = CodexAdapterV2.codexNativeSubagentContinuationDetail({
+      title: "x".repeat(300),
+      prompt: "",
+      status: "interrupted",
+      result: `${"y".repeat(5_000)}TAIL`,
+    });
+    assert.include(detail, `Subagent was stopped: ${"x".repeat(200)}...`);
+    assert.include(detail, "Result:\n...");
+    assert.include(detail, "TAIL");
+    assert.notInclude(detail, "y".repeat(4_001));
+  });
+});
+
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 const CODEX_TEST_MODEL_SELECTION = {
   instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
@@ -4339,6 +4378,332 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  const WAKE_THREAD = "native-codex-subagent-wake-thread";
+  const WAKE_TURN = "native-codex-subagent-wake-turn";
+  const WAKE_PROMPT = "Review the diff in a subagent and reply STARTED.";
+  const WAKE_LAYERS = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+  );
+
+  const wakeSubagentStarted = (
+    childThreadId: string,
+    itemId: string,
+    agentPath: string,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    label: `item/completed/${itemId}`,
+    frame: {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "subAgentActivity",
+          id: itemId,
+          kind: "started",
+          agentThreadId: childThreadId,
+          agentPath,
+        },
+        threadId: WAKE_THREAD,
+        turnId: WAKE_TURN,
+        completedAtMs: 1782622441000,
+      },
+    },
+  });
+
+  const wakeChildTurn = (
+    childThreadId: string,
+    turnId: string,
+    status: "inProgress" | "completed",
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    label: `turn/${status === "inProgress" ? "started" : "completed"}/${turnId}`,
+    frame: {
+      method: status === "inProgress" ? "turn/started" : "turn/completed",
+      params: {
+        threadId: childThreadId,
+        turn: makeCodexReplayTurn({ id: turnId, status }),
+      },
+    },
+  });
+
+  const wakeChildAnswer = (input: {
+    readonly childThreadId: string;
+    readonly turnId: string;
+    readonly itemId: string;
+    readonly text: string;
+    readonly afterMs?: number;
+  }): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    label: `item/completed/${input.itemId}`,
+    ...(input.afterMs === undefined ? {} : { afterMs: input.afterMs }),
+    frame: {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "agentMessage",
+          id: input.itemId,
+          text: input.text,
+          phase: "final_answer",
+          memoryCitation: null,
+        },
+        threadId: input.childThreadId,
+        turnId: input.turnId,
+        completedAtMs: 1782622470000,
+      },
+    },
+  });
+
+  const wakeActivityCompleted = (
+    childThreadId: string,
+    itemId: string,
+    agentPath: string,
+  ): CodexReplay.CodexAppServerReplayEntry => ({
+    type: "emit_inbound",
+    label: `item/completed/${itemId}`,
+    frame: {
+      method: "item/completed",
+      params: {
+        item: {
+          type: "subAgentActivity",
+          id: itemId,
+          kind: "completed",
+          agentThreadId: childThreadId,
+          agentPath,
+        },
+        threadId: WAKE_THREAD,
+        turnId: WAKE_TURN,
+        completedAtMs: 1782622471000,
+      },
+    },
+  });
+
+  const wakeRootFinished = (): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+    {
+      type: "emit_inbound",
+      label: "item/completed/root-answer",
+      frame: {
+        method: "item/completed",
+        params: {
+          item: {
+            type: "agentMessage",
+            id: "root-answer-subagent-wake",
+            text: "STARTED",
+            phase: "final_answer",
+            memoryCitation: null,
+          },
+          threadId: WAKE_THREAD,
+          turnId: WAKE_TURN,
+          completedAtMs: 1782622442000,
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "turn/completed",
+      frame: {
+        method: "turn/completed",
+        params: {
+          threadId: WAKE_THREAD,
+          turn: makeCodexReplayTurn({ id: WAKE_TURN, status: "completed" }),
+        },
+      },
+    },
+  ];
+
+  const wakePreamble = () =>
+    codexReplayPreamble({
+      nativeThreadId: WAKE_THREAD,
+      nativeTurnId: WAKE_TURN,
+      prompt: WAKE_PROMPT,
+    });
+
+  const startWakeTurn = (harness: {
+    readonly runtime: {
+      readonly startTurn: (
+        input: ReturnType<typeof makeCodexTestTurnInput>,
+      ) => Effect.Effect<unknown>;
+    };
+    readonly threadId: ThreadId;
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) =>
+    Effect.gen(function* () {
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-subagent-wake"),
+          text: WAKE_PROMPT,
+        }),
+      );
+    });
+
+  it.effect("wakes a settled parent once when a native subagent finishes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const childThreadId = "native-codex-subagent-wake-child";
+        const childTurnId = "native-codex-subagent-wake-child-turn";
+        const result = "Review found one missing null check.";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-native-subagent-wake",
+            entries: [
+              ...wakePreamble(),
+              wakeSubagentStarted(childThreadId, "spawn-reviewer", "/root/reviewer"),
+              wakeChildTurn(childThreadId, childTurnId, "inProgress"),
+              ...wakeRootFinished(),
+              wakeChildAnswer({
+                childThreadId,
+                turnId: childTurnId,
+                itemId: "child-review",
+                text: result,
+                afterMs: 30_000,
+              }),
+              wakeChildTurn(childThreadId, childTurnId, "completed"),
+              wakeActivityCompleted(childThreadId, "spawn-reviewer-done", "/root/reviewer"),
+            ],
+          }),
+        );
+
+        yield* startWakeTurn(harness);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+        assert.equal(harness.terminalEvents()[0]?.status, "completed");
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        assert.lengthOf(harness.continuationRequests, 0);
+
+        yield* TestClock.adjust("30 seconds");
+        yield* awaitUntil(
+          () => harness.continuationRequests.length === 1,
+          "native subagent continuation",
+        );
+        for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
+        assert.lengthOf(harness.continuationRequests, 1);
+        const request = harness.continuationRequests[0];
+        const completed = harness
+          .subagentUpdates()
+          .find((event) => event.subagent.status === "completed")?.subagent;
+        assert.isDefined(completed?.childThreadId);
+        assert.equal(request?.threadId, harness.threadId);
+        assert.equal(request?.providerThreadId, harness.providerThread.id);
+        assert.equal(request?.driver, CodexAdapterV2.CODEX_DRIVER_KIND);
+        assert.equal(request?.delivery, "message_text");
+        assert.equal(request?.detail, `Subagent finished: /root/reviewer\n\nResult:\n${result}`);
+        assert.deepEqual(request?.notification, {
+          source: { kind: "subagent", childThreadId: completed?.childThreadId },
+          outcome: "completed",
+          summary: 'Subagent "/root/reviewer" finished',
+          detail: "/root/reviewer",
+        });
+        assert.lengthOf(harness.terminalEvents(), 1);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(WAKE_LAYERS)),
+    ),
+  );
+
+  it.effect("does not wake a parent whose turn is still running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const childThreadId = "native-codex-subagent-inline-child";
+        const childTurnId = "native-codex-subagent-inline-turn";
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-native-subagent-inline",
+            entries: [
+              ...wakePreamble(),
+              wakeSubagentStarted(childThreadId, "spawn-inline", "/root/inline"),
+              wakeChildTurn(childThreadId, childTurnId, "inProgress"),
+              wakeChildAnswer({
+                childThreadId,
+                turnId: childTurnId,
+                itemId: "child-inline",
+                text: "Inline result.",
+              }),
+              wakeChildTurn(childThreadId, childTurnId, "completed"),
+              ...wakeRootFinished(),
+            ],
+          }),
+        );
+
+        yield* startWakeTurn(harness);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+        const completed = harness
+          .subagentUpdates()
+          .find((event) => event.subagent.status === "completed");
+        assert.isDefined(completed);
+        assert.lengthOf(harness.continuationRequests, 0);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(WAKE_LAYERS)),
+    ),
+  );
+
+  it.effect("wakes once per native subagent when several finish together", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const children = [
+          {
+            threadId: "native-codex-subagent-wake-a",
+            turnId: "native-codex-subagent-wake-a-turn",
+            path: "/root/alpha",
+            result: "Alpha found a missing test.",
+          },
+          {
+            threadId: "native-codex-subagent-wake-b",
+            turnId: "native-codex-subagent-wake-b-turn",
+            path: "/root/beta",
+            result: "Beta found a stale comment.",
+          },
+        ] as const;
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario: "codex-native-subagent-wake-pair",
+            entries: [
+              ...wakePreamble(),
+              ...children.flatMap((child, index) => [
+                wakeSubagentStarted(child.threadId, `spawn-${index}`, child.path),
+                wakeChildTurn(child.threadId, child.turnId, "inProgress"),
+              ]),
+              ...wakeRootFinished(),
+              ...children.flatMap((child, index) => [
+                wakeChildAnswer({
+                  childThreadId: child.threadId,
+                  turnId: child.turnId,
+                  itemId: `child-answer-${index}`,
+                  text: child.result,
+                  ...(index === 0 ? { afterMs: 30_000 } : {}),
+                }),
+                wakeChildTurn(child.threadId, child.turnId, "completed"),
+                wakeActivityCompleted(child.threadId, `done-${index}`, child.path),
+              ]),
+            ],
+          }),
+        );
+
+        yield* startWakeTurn(harness);
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+        assert.lengthOf(harness.continuationRequests, 0);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        yield* TestClock.adjust("30 seconds");
+        yield* awaitUntil(
+          () => harness.continuationRequests.length === children.length,
+          "both subagent continuations",
+        );
+        for (let attempt = 0; attempt < 50; attempt++) yield* Effect.yieldNow;
+        assert.lengthOf(harness.continuationRequests, children.length);
+        assert.deepEqual(
+          harness.continuationRequests.map((request) => request.detail),
+          children.map((child) => `Subagent finished: ${child.path}\n\nResult:\n${child.result}`),
+        );
+        assert.isTrue(
+          harness.continuationRequests.every((request) => request.delivery === "message_text"),
+        );
+        assert.lengthOf(harness.terminalEvents(), 1);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+      }).pipe(Effect.provide(WAKE_LAYERS)),
+    ),
   );
 
   // "thread_unloaded": the thread was settled, so T3 unsubscribed and Codex

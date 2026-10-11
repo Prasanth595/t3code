@@ -436,6 +436,40 @@ export function codexBackgroundCommandDetail(item: {
   return outputTail.length === 0 ? header : `${header}\n\nOutput tail:\n${outputTail}`;
 }
 
+const NATIVE_SUBAGENT_DETAIL_LABEL_MAX_LENGTH = 200;
+const NATIVE_SUBAGENT_DETAIL_RESULT_MAX_LENGTH = 4_000;
+
+/**
+ * Prompt text for a parent that already finished its turn. The child result is
+ * the whole wake: Codex has no buffered CLI output to attach the way Claude does.
+ */
+export function codexNativeSubagentContinuationDetail(task: {
+  readonly title: string | null;
+  readonly prompt: string;
+  readonly status: "completed" | "failed" | "cancelled" | "interrupted";
+  readonly result: string | null;
+}): string {
+  const rawLabel = task.title?.trim() || task.prompt.trim() || "Subagent";
+  const label =
+    rawLabel.length > NATIVE_SUBAGENT_DETAIL_LABEL_MAX_LENGTH
+      ? `${rawLabel.slice(0, NATIVE_SUBAGENT_DETAIL_LABEL_MAX_LENGTH)}...`
+      : rawLabel;
+  const verb =
+    task.status === "failed"
+      ? "failed"
+      : task.status === "cancelled" || task.status === "interrupted"
+        ? "was stopped"
+        : "finished";
+  const header = `Subagent ${verb}: ${label}`;
+  const result = (task.result ?? "").trim();
+  if (result.length === 0) return header;
+  const body =
+    result.length > NATIVE_SUBAGENT_DETAIL_RESULT_MAX_LENGTH
+      ? `...${result.slice(-NATIVE_SUBAGENT_DETAIL_RESULT_MAX_LENGTH)}`
+      : result;
+  return `${header}\n\nResult:\n${body}`;
+}
+
 export interface CodexDynamicToolProjection extends McpToolPresentation {
   readonly toolName: string;
   readonly title?: string;
@@ -1856,9 +1890,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<string, PendingCodexRuntimeRequest>(),
         );
         /**
-         * Turn contexts retained past turn/completed while background command
-         * items started in that turn are still running, so late item events
-         * keep projecting instead of being dropped.
+         * Turn contexts retained past turn/completed while background commands,
+         * persistent tools, or native subagents started in that turn are still
+         * running, so a late completion can wake the parent instead of being dropped.
          */
         const settledTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const runningCommandItemsByTurn = yield* Ref.make(
@@ -2160,13 +2194,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return true;
             }
             const tools = (yield* Ref.get(runningDynamicToolsByTurn)).get(nativeTurnId);
-            if (tools === undefined) {
-              return false;
-            }
-            for (const item of tools.values()) {
-              if (isPersistentCodexDynamicTool(item)) {
-                return true;
+            if (tools !== undefined) {
+              for (const item of tools.values()) {
+                if (isPersistentCodexDynamicTool(item)) {
+                  return true;
+                }
               }
+            }
+            for (const subagent of (yield* Ref.get(subagentThreads)).values()) {
+              if (subagent.parentContext.nativeTurnId !== nativeTurnId) continue;
+              if (isOrchestrationV2WorkActive(subagent.task.status)) return true;
             }
             return false;
           });
@@ -2439,6 +2476,84 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return [next, updated];
           });
 
+        /**
+         * A native child that finishes after its root turn already settled has
+         * no buffered provider wake. Offer one message_text continuation so the
+         * parent reads the result. An in-flight parent turn, a nested child,
+         * and an interrupted root do not get one.
+         */
+        const offerSettledNativeSubagentContinuation = (input: {
+          readonly subagent: CodexSubagentThreadContext;
+          /** The child turn itself is ending, so an empty result is final. */
+          readonly childTurnSettled: boolean;
+        }) =>
+          Effect.gen(function* () {
+            const task = input.subagent.task;
+            if (isOrchestrationV2WorkActive(task.status)) return;
+            const parent = input.subagent.parentContext;
+            if (parent.subagent !== null || continuationRequests === undefined) return;
+            const nativeTurnId = parent.nativeTurnId;
+            if (!(yield* Ref.get(settledTurns)).has(nativeTurnId)) return;
+            if ((yield* Ref.get(interruptingNativeTurns)).has(nativeTurnId)) return;
+            const result = (task.result ?? "").trim();
+            if (!input.childTurnSettled && result.length === 0) {
+              const active = yield* Ref.get(activeTurns);
+              for (const nativeChildTurnId of input.subagent.nativeTurnIds) {
+                if (active.has(nativeChildTurnId)) return;
+              }
+            }
+            const offerKey = `subagent:${task.id}`;
+            const alreadyOffered = yield* Ref.modify(offeredContinuationItemsByTurn, (current) => {
+              const items = current.get(nativeTurnId);
+              if (items !== undefined && items.has(offerKey)) {
+                return [true, current] as const;
+              }
+              const updated = new Map(current);
+              const updatedItems = new Set(items ?? []);
+              updatedItems.add(offerKey);
+              updated.set(nativeTurnId, updatedItems);
+              return [false, updated] as const;
+            });
+            if (alreadyOffered) return;
+            const terminalStatus =
+              task.status === "failed" ||
+              task.status === "cancelled" ||
+              task.status === "interrupted"
+                ? task.status
+                : "completed";
+            const outcome =
+              terminalStatus === "failed"
+                ? "failed"
+                : terminalStatus === "completed"
+                  ? "completed"
+                  : "cancelled";
+            const label = task.title?.trim() || task.prompt.trim() || undefined;
+            yield* continuationRequests.offer({
+              threadId: parent.projectionThreadId,
+              providerThreadId: parent.providerThread.id,
+              driver: CODEX_PROVIDER,
+              detail: codexNativeSubagentContinuationDetail({
+                title: task.title,
+                prompt: task.prompt,
+                status: terminalStatus,
+                result: task.result,
+              }),
+              delivery: "message_text",
+              notification: {
+                ...backgroundWorkNotification([
+                  {
+                    kind: "subagent",
+                    label,
+                    outcome,
+                    ...(task.childThreadId === null ? {} : { childThreadId: task.childThreadId }),
+                  },
+                ]),
+                ...(label === undefined ? {} : { detail: label }),
+              },
+            });
+            yield* releaseSettledTurnIfIdle(nativeTurnId);
+          });
+
         const emitSubagentTaskUpdate = (input: {
           readonly subagent: CodexSubagentThreadContext;
           readonly status: OrchestrationV2Subagent["status"];
@@ -2446,6 +2561,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt?: DateTime.Utc | null;
           readonly startedAt?: DateTime.Utc;
           readonly reopen?: boolean;
+          readonly childTurnSettled?: boolean;
         }) =>
           Effect.gen(function* () {
             const now = yield* DateTime.now;
@@ -2508,6 +2624,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 result: task.result,
               },
             });
+            if (!isOrchestrationV2WorkActive(status)) {
+              yield* offerSettledNativeSubagentContinuation({
+                subagent: input.subagent,
+                childTurnSettled: input.childTurnSettled === true,
+              });
+            }
           });
 
         const emitSubagentProviderTurnStarted = (
@@ -5867,6 +5989,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   subagent: input.context.subagent,
                   status: input.status,
                   completedAt: input.completedAt,
+                  childTurnSettled: !isOrchestrationV2WorkActive(input.status),
                 });
               }
               if (input.status === "interrupted" || input.status === "failed") {
@@ -5903,9 +6026,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               const interruptInProgress = (yield* Ref.get(interruptingNativeTurns)).has(
                 input.nativeTurnId,
               );
-              // Completed turns can retain late background command context and
-              // leftover persistent dynamic tools. Interrupted and failed turns
-              // never wake from late item events.
+              // Completed turns can retain late background command context,
+              // leftover persistent dynamic tools, and native subagents that
+              // are still running. Interrupted and failed turns never wake
+              // from late item events.
               const retainSettledContext =
                 input.status === "completed" &&
                 (yield* turnHasRetainedBackgroundWork(input.nativeTurnId));
