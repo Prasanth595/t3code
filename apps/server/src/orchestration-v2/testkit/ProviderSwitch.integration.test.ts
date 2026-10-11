@@ -700,6 +700,65 @@ describe("orchestration v2 provider switching", () => {
           if (scenario.includes("retry")) yield* Ref.set(failStartOnce, true);
           yield* dispatch(targetOrdinal, current, targetSelection);
           yield* wait(targetOrdinal);
+          if (scenario.startsWith("compact")) {
+            const rejected = yield* orchestrator.getThreadProjection(threadId);
+            const compactRun = rejected.runs.at(-1)!;
+            const handoff = rejected.contextHandoffs.at(-1)!;
+            assert.equal(compactRun.status, "failed");
+            assert.isNull(compactRun.startedAt);
+            const error = rejected.turnItems.find(
+              (item) => item.type === "error" && item.runId === compactRun.id,
+            );
+            assert.equal(
+              error?.type === "error" ? error.failure.class : undefined,
+              "validation_error",
+            );
+            assert.include(
+              error?.type === "error" ? error.failure.message : "",
+              "Context handoff replaces compaction",
+            );
+            assert.lengthOf(yield* Ref.get(capturedTurns), 1);
+            assert.lengthOf(yield* Ref.get(injectedHistory), 0);
+            assert.equal(handoff.status, "ready");
+            assert.isUndefined(handoff.delivery);
+            if (scenario === "compact-legacy") {
+              const { history: _history, ...legacyHandoff } = handoff;
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: EventId.make("legacy-handoff-shape"),
+                    type: "context-handoff.updated",
+                    threadId,
+                    runId: handoff.targetRunId,
+                    occurredAt: yield* DateTime.now,
+                    payload: legacyHandoff,
+                  },
+                ],
+              });
+            }
+            yield* dispatch(targetOrdinal + 1, "Continue after compact", targetSelection);
+            yield* wait(targetOrdinal + 1);
+            const continued = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(continued.runs.at(-1)?.status, "completed");
+            assert.equal(
+              continued.contextHandoffs.find((record) => record.id === handoff.id)?.delivery
+                ?.status,
+              scenario === "compact-native" ? "injected" : "inline",
+            );
+            const turns = yield* Ref.get(capturedTurns);
+            assert.lengthOf(turns, 2);
+            assert.equal(turns.at(-1)?.driver, CLAUDE_DRIVER);
+            if (scenario === "compact-native") {
+              assert.equal(turns.at(-1)?.text, "Continue after compact");
+              assert.include(
+                yield* encodeJson(yield* Ref.get(injectedHistory)),
+                "Original request with constraints",
+              );
+            } else {
+              assert.include(turns.at(-1)!.text, "Original request with constraints");
+            }
+            return;
+          }
           if (scenario.includes("retry")) {
             const failed = yield* orchestrator.getThreadProjection(threadId);
             assert.equal(failed.runs.at(-1)?.status, "failed");
@@ -840,35 +899,7 @@ describe("orchestration v2 provider switching", () => {
           if (scenario.startsWith("screenshot")) {
             assert.deepEqual((yield* Ref.get(capturedTurns)).at(-1)!.attachments, screenshots);
           }
-          if (scenario === "compact-fallback" || scenario === "compact-legacy") {
-            if (scenario === "compact-legacy") {
-              const { history: _history, ...legacyHandoff } = handoff;
-              yield* eventSink.write({
-                events: [
-                  {
-                    id: EventId.make("legacy-handoff-shape"),
-                    type: "context-handoff.updated",
-                    threadId,
-                    runId: handoff.targetRunId,
-                    occurredAt: yield* DateTime.now,
-                    payload: legacyHandoff,
-                  },
-                ],
-              });
-            }
-            assert.isUndefined(handoff.delivery);
-            yield* dispatch(3, "Continue after compact", CLAUDE_MODEL_SELECTION);
-            yield* wait(3);
-            assert.include(
-              (yield* Ref.get(capturedTurns)).at(-1)!.text,
-              "Original request with constraints",
-            );
-            assert.equal(
-              (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs.at(-1)?.delivery
-                ?.status,
-              "inline",
-            );
-          } else if (
+          if (
             scenario === "delivery-write-failure" ||
             (scenario.startsWith("screenshot") && scenario.endsWith("fallback"))
           ) {
