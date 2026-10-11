@@ -286,7 +286,7 @@ export function selectComposerTasksPlan(
   activeRunSettled: boolean,
 ): ActivePlanState | null {
   if (projection === null || plan === null) return null;
-  if (!activeRunSettled && plan.runId === activeRunId) return plan;
+  if (activeRunId !== null && !activeRunSettled && plan.runId === activeRunId) return plan;
   if (plan.steps.every((step) => step.status === "completed")) return null;
   const planProviderThreadId = projection.runs.find(
     (run) => run.id === plan.runId,
