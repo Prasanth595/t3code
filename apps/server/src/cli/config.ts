@@ -327,7 +327,11 @@ export const resolveCloudflareAccess = (raw: {
       `T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN must be a host such as team.cloudflareaccess.com, got ${teamDomain}.`,
     );
   }
-  return Effect.succeed({ teamDomain, aud, subjects } satisfies ServerConfig.CloudflareAccessConfig);
+  return Effect.succeed({
+    teamDomain,
+    aud,
+    subjects,
+  } satisfies ServerConfig.CloudflareAccessConfig);
 };
 
 const resolveOptionPrecedence = <Value>(

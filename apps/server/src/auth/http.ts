@@ -18,11 +18,7 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
-import type {
-  AuthEnvironmentScope,
-  AuthSessionState,
-  DpopFailureReason,
-} from "@t3tools/contracts";
+import type { AuthEnvironmentScope, AuthSessionState, DpopFailureReason } from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
