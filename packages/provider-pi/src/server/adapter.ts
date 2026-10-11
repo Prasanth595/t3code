@@ -623,8 +623,6 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // them, minus every key the session has written since. At most one
       // source's capped items, dropped once the rollback's fork is answered.
       let rollbackStatuses: Map<string, ContributionStatusItem> | null = null;
-      // Targets of `t3.status_generation` markers still queued, oldest first.
-      const statusGenerationTargets: Array<OrchestrationV2ProviderThread["appThreadId"]> = [];
       /**
        * Starts a new status generation on `threadId` in event order: statuses
        * read before the marker are cleared, later ones land on `threadId`, or
@@ -635,10 +633,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         threadId: OrchestrationV2ProviderThread["appThreadId"],
         rollback = false,
       ) =>
-        Effect.sync(() => statusGenerationTargets.push(threadId)).pipe(
-          Effect.andThen(
-            Queue.offer(connection.events, { type: "t3.status_generation", rollback }),
-          ),
+        // The marker carries its own target, so concurrent callers cannot
+        // pair a marker with another caller's thread.
+        Queue.offer(connection.events, { type: "t3.status_generation", rollback, threadId }).pipe(
           Effect.asVoid,
         );
       let threadState: PiThreadState | null = null;
@@ -2249,7 +2246,10 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 ? new Map((yield* statusSource.items).map((item) => [item.key, item]))
                 : null;
             yield* statusSource.clearAll;
-            yield* statusSource.bindThread(statusGenerationTargets.shift() ?? null);
+            yield* statusSource.bindThread(
+              (event["threadId"] as OrchestrationV2ProviderThread["appThreadId"] | undefined) ??
+                null,
+            );
             return;
           }
           case "t3.status_settle": {
