@@ -719,6 +719,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
               interruptThread: () => Effect.die("interrupt must not dispatch above the ceiling"),
             }),
           ),
+          Layer.provide(ServerSettings.layerTest()),
           Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
           Layer.provide(Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({})),
           Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
