@@ -328,7 +328,10 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const created = yield* projects
         .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
         .pipe(Effect.mapError(projectFailure));
-      if (scripts !== undefined) yield* writeProjectSettings(created.id, { scripts });
+      yield* writeProjectSettings(created.id, {
+        scripts,
+        defaultModelSelection: input.defaultModelSelection,
+      });
       return yield* withResolvedSettings(created);
     }),
   ),

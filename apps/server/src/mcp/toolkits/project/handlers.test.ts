@@ -291,6 +291,16 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     yield* handle({ title: "Existing", workspaceRoot: "/work/existing" });
     expect(registered).toEqual(["/work/existing"]);
 
+    // A path keeps the model default, which lives in project settings.
+    const configured = yield* handle({
+      title: "Configured path",
+      workspaceRoot: "/work/configured",
+      defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+    });
+    expect(configured.at(-1)?.result).toMatchObject({
+      defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" },
+    });
+
     // Fields this mode cannot apply are rejected, not dropped.
     for (const extra of [
       { scripts: [] },

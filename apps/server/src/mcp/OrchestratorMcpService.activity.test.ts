@@ -7,12 +7,15 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   RunId,
+  ScheduledTaskError,
   ScheduledTaskId,
+  type ScheduledTaskUpsertInput,
   ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { expect, it } from "vite-plus/test";
 
@@ -522,5 +525,53 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       .deleteScheduledTask(makeScope(), { scheduledTaskId: ScheduledTaskId.make("task-foreign") })
       .pipe(Effect.flip);
     expect(staleDelete.code).toBe("parent_not_active");
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("scheduleTask from a client without a thread uses the project model from project settings", async () => {
+  const selection = { instanceId: parentInstanceId, model: "gpt-5.4" };
+  const saved: Array<ScheduledTaskUpsertInput> = [];
+  const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+        Layer.mock(ProjectService.ProjectService)({
+          // The aggregate field is empty, as on a server that folded project settings.
+          getById: () =>
+            Effect.succeed(Option.some({ id: projectId, defaultModelSelection: null } as never)),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          upsert: (input) =>
+            Effect.sync(() => saved.push(input)).pipe(
+              Effect.andThen(Effect.fail(new ScheduledTaskError({ message: "stop after save" }))),
+            ),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        ServerSettings.layerTest({
+          projectSettingsOverrides: { [projectId]: { defaultModelSelection: selection } },
+        }),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    yield* service
+      .scheduleTask(
+        {
+          environmentId,
+          requestNamespace: "client:session-1",
+          thread: undefined,
+          client: { sessionId: "session-1", label: "t3 tool cli", access: "full-access" },
+          capabilities: new Set(["orchestration"]),
+          issuedAt: 1,
+        },
+        { projectId, prompt: "repair the fork", schedule: { type: "webhook" } },
+      )
+      .pipe(Effect.flip);
+    expect(saved.map((input) => input.modelSelection)).toEqual([selection]);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

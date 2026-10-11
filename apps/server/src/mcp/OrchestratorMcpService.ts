@@ -58,6 +58,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -84,8 +85,8 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
   clientRuntimeModeCeiling,
   type McpInvocationScope,
@@ -919,18 +920,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** A client has no thread to inherit a model from, so it falls back to the project default. */
-  const projectDefaultModelSelection = (
-    project: Effect.Success<ReturnType<typeof requireProject>>,
-  ) =>
-    project.defaultModelSelection === null
-      ? Effect.fail(
-          failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          ),
-        )
-      : Effect.succeed(project.defaultModelSelection);
+  /**
+   * A client has no thread to inherit a model from, so it falls back to the
+   * project default the app resolves: the project override, then the environment.
+   */
+  const projectDefaultModelSelection = Effect.fn("OrchestratorMcp.projectDefaultModelSelection")(
+    function* (project: Effect.Success<ReturnType<typeof requireProject>>) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError((error) =>
+          failure("orchestration_error", `Unable to read settings: ${error.message}`),
+        ),
+      );
+      const selection = resolveProjectSettings(settings, project.id, project).settings
+        .defaultModelSelection;
+      if (selection === null) {
+        return yield* failure(
+          "invalid_request",
+          `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
+        );
+      }
+      return selection;
+    },
+  );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>
