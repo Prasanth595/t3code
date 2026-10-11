@@ -38,6 +38,8 @@ import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
 import { CLAUDE_TODO_LIST_MODEL_SELECTION, claudeTodoListInput } from "./claude_todo_list/input.ts";
 import { assertClaudeTodoListOutput } from "./claude_todo_list/output.ts";
+import { claudeSubagentTodoListInput } from "./claude_subagent_todo_list/input.ts";
+import { assertClaudeSubagentTodoListOutput } from "./claude_subagent_todo_list/output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
 import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
@@ -415,6 +417,21 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./claude_todo_list/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_TODO_LIST_MODEL_SELECTION,
         assertOutput: assertClaudeTodoListOutput,
+      },
+    ],
+  },
+  {
+    name: "claude_subagent_todo_list",
+    buildInput: claudeSubagentTodoListInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_subagent_todo_list/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_TODO_LIST_MODEL_SELECTION,
+        assertOutput: assertClaudeSubagentTodoListOutput,
       },
     ],
   },

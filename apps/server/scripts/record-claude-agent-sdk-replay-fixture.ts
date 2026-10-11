@@ -79,6 +79,7 @@ import {
   CLAUDE_TODO_LIST_MODEL_SELECTION,
   CLAUDE_TODO_LIST_SECOND_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/claude_todo_list/input.ts";
+import { CLAUDE_SUBAGENT_TODO_LIST_PROMPT } from "../src/orchestration-v2/testkit/fixtures/claude_subagent_todo_list/input.ts";
 import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_PROMPT,
@@ -255,6 +256,15 @@ const CLAUDE_RECORDINGS = {
   claude_todo_list: {
     prompts: [CLAUDE_TODO_LIST_FIRST_PROMPT, CLAUDE_TODO_LIST_SECOND_PROMPT],
     defaultTranscriptFile: "fixtures/claude_todo_list/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    model: CLAUDE_TODO_LIST_MODEL_SELECTION.model,
+    environment: { CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
+  },
+  // A subagent updates and extends the task list its parent created.
+  claude_subagent_todo_list: {
+    prompts: [CLAUDE_SUBAGENT_TODO_LIST_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_subagent_todo_list/claude_transcript.ndjson",
     queryMode: "streaming",
     enableTools: true,
     model: CLAUDE_TODO_LIST_MODEL_SELECTION.model,
@@ -526,7 +536,10 @@ if ("environment" in recording) {
 
 if (
   shouldRemoveCwd &&
-  (scenario === "tool_call_read_only" || scenario === "subagent" || scenario === "claude_todo_list")
+  (scenario === "tool_call_read_only" ||
+    scenario === "subagent" ||
+    scenario === "claude_todo_list" ||
+    scenario === "claude_subagent_todo_list")
 ) {
   await runFileSystem(
     Effect.gen(function* () {
