@@ -34,6 +34,7 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -172,6 +173,7 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
@@ -265,6 +267,14 @@ const make = Effect.gen(function* () {
             return true;
           }
 
+          const nativeOwner = yield* projections.findNativeSessionOwner({
+            driver: ProviderDriverKind.make(thread.source),
+            nativeId: thread.providerSessionId,
+          });
+          if (nativeOwner !== null && nativeOwner !== threadId) {
+            return false;
+          }
+
           const driver = ProviderDriverKind.make(thread.source);
           const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
           const providerThreadId = idAllocator.derive.providerThread({
@@ -298,8 +308,8 @@ const make = Effect.gen(function* () {
             createdAt,
             updatedAt,
             archivedAt: null,
-            settledOverride: "settled",
-            settledAt: updatedAt,
+            settledOverride: null,
+            settledAt: null,
             unsettledAt: null,
             snoozedUntil: null,
             snoozedAt: null,
@@ -396,7 +406,35 @@ const make = Effect.gen(function* () {
     return { importedCount, skippedCount } satisfies AgentSessionImportResult;
   });
 
-  return { importRecentAgentThreads };
+  const placeKnownSessions = Effect.fn("placeKnownAgentSessions")(function* () {
+    const shells = yield* projects
+      .listShells()
+      .pipe(
+        Effect.mapError(
+          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+        ),
+      );
+    let importedCount = 0;
+    let skippedCount = 0;
+    for (const shell of shells) {
+      const placed = yield* importRecentAgentThreads({
+        projectId: shell.id,
+        expectedWorkspaceRoot: shell.workspaceRoot,
+      }).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not place agent sessions in the sidebar", {
+            projectId: shell.id,
+            cause,
+          }).pipe(Effect.as({ importedCount: 0, skippedCount: 0 })),
+        ),
+      );
+      importedCount += placed.importedCount;
+      skippedCount += placed.skippedCount;
+    }
+    return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+  });
+
+  return { importRecentAgentThreads, placeKnownSessions };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;

@@ -49,7 +49,10 @@ function at(offsetMs: number): DateTime.Utc {
 }
 
 type SettlementShell = OrchestrationV2ThreadShell &
-  Pick<ProjectionStore.ProjectionSettlementCandidate, "latestUserAuthoredMessageAt">;
+  Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "historyOrigin" | "latestUserAuthoredMessageAt"
+  >;
 
 // A fixture's user message is one the user wrote unless the test sets
 // latestUserAuthoredMessageAt on its own.
@@ -274,6 +277,39 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: shell() }),
+    ).toBeNull();
+  });
+
+  it("settles a placed agent session on the configured inactivity window", () => {
+    const placed = shell({
+      id: ThreadId.make("import:codex:session"),
+      historyOrigin: "v1_import",
+      latestUserMessageAt: null,
+      updatedAt: at(-4 * DAY_MS),
+    });
+    const input = {
+      thread: placed,
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-4 * DAY_MS));
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: 5 }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleAfterDays: null }),
+    ).toBeNull();
+    expect(
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        thread: shell({
+          historyOrigin: "v1_import",
+          latestUserMessageAt: at(-DAY_MS),
+          updatedAt: at(-10 * DAY_MS),
+        }),
+      }),
     ).toBeNull();
   });
 

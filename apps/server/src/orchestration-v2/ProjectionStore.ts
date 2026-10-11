@@ -32,6 +32,7 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProjectId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderThreadId,
@@ -206,7 +207,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingRuntimeRequest"
   | "pendingBackgroundTasks"
 > &
-  Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
+  Pick<OrchestrationV2AppThread, "historyOrigin" | "lastSnoozeWakeAt"> & {
     readonly latestUserAuthoredMessageAt: DateTime.Utc | null;
   };
 
@@ -406,6 +407,14 @@ export interface ProjectionStoreV2Shape {
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
+  /**
+   * App thread that already owns this native provider session, if any.
+   * Deleted threads do not count, so a removed row can be placed again.
+   */
+  readonly findNativeSessionOwner: (input: {
+    readonly driver: ProviderDriverKind;
+    readonly nativeId: string;
+  }) => Effect.Effect<ThreadId | null, ProjectionStoreV2Error>;
   /**
    * Active (not deleted, not archived) threads with at least one pull request
    * link, in shell snapshot order, or only `threadId` when given. Skips run,
@@ -5584,6 +5593,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    const findNativeSessionOwner: ProjectionStoreV2Shape["findNativeSessionOwner"] = (input) =>
+      sql<{ thread_id: string }>`
+        SELECT p.thread_id AS thread_id
+        FROM orchestration_v2_projection_provider_threads p
+        JOIN orchestration_v2_projection_threads t ON t.thread_id = p.thread_id
+        WHERE t.deleted_at IS NULL
+          AND json_extract(p.payload_json, '$.nativeThreadRef.driver') = ${input.driver}
+          AND json_extract(p.payload_json, '$.nativeThreadRef.nativeId') = ${input.nativeId}
+        LIMIT 1
+      `.pipe(
+        Effect.map((rows) => (rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id))),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = (
       threadId,
     ) =>
@@ -5945,6 +5968,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThreadShell,
       getThread,
       getSettlementCandidates,
+      findNativeSessionOwner,
       getThreadsWithPullRequests,
       getThreadProjection,
       getTurnStartContext,
@@ -6065,6 +6089,21 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           return projection.thread;
         }),
+      findNativeSessionOwner: (input) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) => {
+            for (const projection of state.projections.values()) {
+              if (projection.thread.deletedAt !== null) continue;
+              const ownsSession = projection.providerThreads.some(
+                (providerThread) =>
+                  providerThread.nativeThreadRef?.driver === input.driver &&
+                  providerThread.nativeThreadRef.nativeId === input.nativeId,
+              );
+              if (ownsSession) return projection.thread.id;
+            }
+            return null;
+          }),
+        ),
       getSettlementCandidates: (threadId) =>
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;
@@ -6084,6 +6123,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const shell = threadShellFromProjection(projection);
               return {
                 ...shell,
+                historyOrigin: projection.thread.historyOrigin,
                 lastSnoozeWakeAt: projection.thread.lastSnoozeWakeAt ?? null,
                 latestUserAuthoredMessageAt: shell.latestUserAuthoredMessageAt ?? null,
               };

@@ -38,6 +38,13 @@ export interface SettlementPullRequest {
 const DAY_MS = 24 * 60 * 60 * 1_000;
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 
+/** Claude and Codex sessions placed from their transcript files, not migrated v1 threads. */
+function isPlacedAgentSession(
+  thread: Pick<ProjectionStore.ProjectionSettlementCandidate, "historyOrigin" | "id">,
+): boolean {
+  return thread.historyOrigin === "v1_import" && thread.id.startsWith("import:");
+}
+
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
 }
@@ -232,18 +239,21 @@ export function resolveAutoSettlementAt(input: {
     toMillis(thread.latestRunRequestedAt),
     toMillis(thread.latestRunStartedAt),
     toMillis(thread.latestRunCompletedAt),
+    isPlacedAgentSession(thread) ? toMillis(thread.updatedAt) : null,
   ]);
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return activityAtMs === null ? thread.createdAt : DateTime.makeUnsafe(activityAtMs);
   }
-  if (input.autoSettleAfterDays === null || activityAtMs === null) return null;
+  const inactivityWindowMs =
+    input.autoSettleAfterDays === null ? null : input.autoSettleAfterDays * DAY_MS;
+  if (inactivityWindowMs === null || activityAtMs === null) return null;
   // A passed wake timer restarts inactivity. An earlier wake can only delay settlement.
   const snoozedUntilMs = toMillis(thread.snoozedUntil);
   const timerWakeAtMs =
     snoozedUntilMs !== null && snoozedUntilMs <= input.nowMs ? snoozedUntilMs : null;
   const inactivityAtMs =
     latestMillis([activityAtMs, toMillis(thread.lastSnoozeWakeAt), timerWakeAtMs]) ?? activityAtMs;
-  return inactivityAtMs < input.nowMs - input.autoSettleAfterDays * DAY_MS
+  return inactivityAtMs < input.nowMs - inactivityWindowMs
     ? DateTime.makeUnsafe(inactivityAtMs)
     : null;
 }

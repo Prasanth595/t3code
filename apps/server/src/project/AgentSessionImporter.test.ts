@@ -13,6 +13,7 @@ import * as Stream from "effect/Stream";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionRuntime from "../persistence/ProviderSessionRuntime.ts";
 import * as AgentSessionImporter from "./AgentSessionImporter.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
@@ -68,6 +69,9 @@ it.effect("imports messages once and preserves the provider native resume bindin
             Effect.succeed(
               Option.some({ id: projectId, workspaceRoot: "/workspace/project" } as never),
             ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          findNativeSessionOwner: () => Effect.succeed(null),
         }),
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>
@@ -143,5 +147,182 @@ it.effect("imports messages once and preserves the provider native resume bindin
       }),
     ]);
     expect(recorded).toHaveLength(2);
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("places a session active so the sidebar auto-settle setting can decide", () => {
+  const writes: Array<ReadonlyArray<OrchestrationV2DomainEvent>> = [];
+  const updatedAt = "2026-10-01T00:00:00.000Z";
+  const session = (providerSessionId: string): AgentSessionScanner.AgentSessionRecentThread => ({
+    _tag: "Importable",
+    source: {
+      provider: "codex",
+      providerInstanceId,
+      providerSessionId,
+      filePath: `/tmp/${providerSessionId}.jsonl`,
+      size: 100,
+      mtimeMs: Date.parse(updatedAt),
+      device: 3,
+      inode: 4,
+      birthtimeMs: 1,
+    },
+    thread: {
+      source: "codex",
+      providerInstanceId,
+      providerSessionId,
+      title: providerSessionId,
+      model: "gpt-5.4",
+      createdAt: updatedAt,
+      updatedAt,
+      messages: [{ role: "user", text: "Hello", createdAt: updatedAt }],
+    },
+  });
+  const layerTest = AgentSessionImporter.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(
+          AgentSessionScanner.AgentSessionScanner,
+          AgentSessionScanner.AgentSessionScanner.of({
+            scan: Effect.die("unused"),
+            recentThreads: () => Stream.fromIterable([session("quiet"), session("fresh")]),
+          }),
+        ),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({ id: projectId, workspaceRoot: "/workspace/project" } as never),
+            ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          findNativeSessionOwner: () => Effect.succeed(null),
+        }),
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.fail(
+              new Orchestrator.OrchestratorProjectionError({
+                threadId: ThreadId.make("import:codex:missing"),
+              }),
+            ),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write: (input) =>
+            Effect.sync(() => {
+              writes.push(input.events);
+              return [];
+            }),
+        }),
+        Layer.mock(ProviderSessionRuntime.ProviderSessionRuntimeRepository)({
+          list: () => Effect.succeed([]),
+          upsert: () => Effect.void,
+          recordImportedTranscript: () => Effect.void,
+        }),
+        IdAllocator.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const importer = yield* AgentSessionImporter.AgentSessionImporter;
+    expect(yield* importer.importRecentAgentThreads({ projectId })).toEqual({
+      importedCount: 2,
+      skippedCount: 0,
+    });
+    const created = writes.flatMap((events) =>
+      events.filter((event) => event.type === "thread.created"),
+    );
+    expect(created.map((event) => event.payload.id)).toEqual([
+      ThreadId.make("import:codex:quiet"),
+      ThreadId.make("import:codex:fresh"),
+    ]);
+    expect(created[0]?.payload).toMatchObject({
+      projectId,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lineage: { relationshipToParent: null },
+    });
+    expect(created[1]?.payload).toMatchObject({
+      projectId,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lineage: { relationshipToParent: null },
+    });
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("does not place a session that already belongs to another thread", () => {
+  const writes: Array<ReadonlyArray<OrchestrationV2DomainEvent>> = [];
+  const layerTest = AgentSessionImporter.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(
+          AgentSessionScanner.AgentSessionScanner,
+          AgentSessionScanner.AgentSessionScanner.of({
+            scan: Effect.die("unused"),
+            recentThreads: () =>
+              Stream.succeed({
+                _tag: "Importable",
+                source: {
+                  provider: "codex",
+                  providerInstanceId,
+                  providerSessionId,
+                  filePath: "/tmp/native-codex-thread.jsonl",
+                  size: 100,
+                  mtimeMs: 2,
+                  device: 3,
+                  inode: 4,
+                  birthtimeMs: 1,
+                },
+                thread: {
+                  source: "codex",
+                  providerInstanceId,
+                  providerSessionId,
+                  title: "Already open",
+                  model: "gpt-5.4",
+                  createdAt: "2026-10-11T00:00:00.000Z",
+                  updatedAt: "2026-10-11T00:00:00.000Z",
+                  messages: [],
+                },
+              }),
+          }),
+        ),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({ id: projectId, workspaceRoot: "/workspace/project" } as never),
+            ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          findNativeSessionOwner: () => Effect.succeed(ThreadId.make("thread-already-open")),
+        }),
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () =>
+            Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId })),
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write: (input) =>
+            Effect.sync(() => {
+              writes.push(input.events);
+              return [];
+            }),
+        }),
+        Layer.mock(ProviderSessionRuntime.ProviderSessionRuntimeRepository)({
+          list: () => Effect.succeed([]),
+          upsert: () => Effect.void,
+          recordImportedTranscript: () => Effect.void,
+        }),
+        IdAllocator.layer,
+      ),
+    ),
+  );
+
+  return Effect.gen(function* () {
+    const importer = yield* AgentSessionImporter.AgentSessionImporter;
+    expect(yield* importer.importRecentAgentThreads({ projectId })).toEqual({
+      importedCount: 0,
+      skippedCount: 1,
+    });
+    expect(writes).toEqual([]);
   }).pipe(Effect.provide(layerTest));
 });

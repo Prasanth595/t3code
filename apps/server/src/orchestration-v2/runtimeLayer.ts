@@ -1,5 +1,7 @@
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -226,12 +228,28 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
   ),
 );
 
+const layerPlaceKnownAgentSessions = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const importer = yield* AgentSessionImporter.AgentSessionImporter;
+    // Official thread events, so a later app update still renders the same rows.
+    yield* importer.placeKnownSessions().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("agent session sidebar placement failed", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+      Effect.forkScoped,
+    );
+  }),
+);
+
 const layerAgentSessionImporterProvided = AgentSessionImporter.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       AgentSessionScanner.layer,
       layerProjectService,
       layerOrchestratorProvided,
+      ProjectionStore.layer,
       layerEventSinkProvided,
       IdAllocator.layer,
       ProviderSessionRuntime.layer,
@@ -360,5 +378,6 @@ export const layerProduction = Layer.mergeAll(
   ),
   layerProviderContinuationWorkerProvided,
   layerAgentSessionImporterProvided,
+  layerPlaceKnownAgentSessions.pipe(Layer.provide(layerAgentSessionImporterProvided)),
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(Layer.provide(Scheduler.layer), Layer.provideMerge(layerEventInfrastructure));

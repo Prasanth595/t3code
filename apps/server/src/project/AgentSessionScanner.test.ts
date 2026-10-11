@@ -1482,9 +1482,11 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         expect(threads.map((thread) => thread.providerSessionId)).toEqual([
           "codex-recent",
           "claude-recent",
+          "claude-old",
         ]);
         expect(threads.map((thread) => thread.messages.map((message) => message.text))).toEqual([
           ["Review this code", "Looks good"],
+          ["Fix the project", "Done"],
           ["Fix the project", "Done"],
         ]);
       }),
