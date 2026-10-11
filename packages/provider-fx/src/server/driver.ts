@@ -1,0 +1,189 @@
+import { FxSettings } from "../settings.ts";
+import * as Crypto from "effect/Crypto";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/http/HttpClient";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { makeUnsupportedFxTextGeneration } from "./textGeneration.ts";
+import { type FxAdapterV2, type FxAdapterV2DriverEnv, makeFxAdapterV2 } from "./adapter.ts";
+import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
+import {
+  buildInitialFxProviderSnapshot,
+  checkFxProviderStatus,
+  enrichFxSnapshot,
+} from "./status.ts";
+import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderDriver,
+  type ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
+import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
+import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { discoverFxSkills } from "./skills.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
+import {
+  haveProviderSnapshotSettingsChanged,
+  makeProviderSnapshotSettingsSource,
+  type ProviderSnapshotSettings,
+} from "@t3tools/provider-core/server/snapshotSettings";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
+import { FX_DRIVER_KIND } from "./acpSupport.ts";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+
+const decodeFxSettings = Schema.decodeSync(FxSettings);
+const MAINTENANCE = makeManualOnlyProviderMaintenanceCapabilities({
+  provider: FX_DRIVER_KIND,
+  packageName: null,
+});
+
+export type FxDriverEnv =
+  | FxAdapterV2DriverEnv
+  | ProviderHost.ProviderHost
+  | ChildProcessSpawner.ChildProcessSpawner
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | HttpClient.HttpClient
+  | ProviderLatestVersions.ProviderLatestVersions
+  | Path.Path
+  | ProviderEventLoggers.ProviderEventLoggers;
+
+export const FxDriver: ProviderDriver<FxSettings, FxDriverEnv> = {
+  driverKind: FX_DRIVER_KIND,
+  metadata: {
+    displayName: "fx",
+    supportsMultipleInstances: true,
+  },
+  configSchema: FxSettings,
+  defaultConfig: (): FxSettings => decodeFxSettings({}),
+  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const httpClient = yield* HttpClient.HttpClient;
+      const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const hostEnvironment = yield* HostProcess.Environment;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+      const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment, hostEnvironment);
+      const continuationIdentity = defaultProviderContinuationIdentity({
+        driverKind: FX_DRIVER_KIND,
+        instanceId,
+      });
+      const stampIdentity = (draft: ServerProviderDraft) =>
+        withInstanceIdentity({
+          instanceId,
+          driverKind: FX_DRIVER_KIND,
+          displayName,
+          accentColor,
+          continuationGroupKey: continuationIdentity.continuationKey,
+        })(draft);
+      const effectiveConfig = { ...config, enabled } satisfies FxSettings;
+      const orchestrationAdapter: FxAdapterV2 = yield* makeFxAdapterV2({
+        instanceId,
+        settings: effectiveConfig,
+        environment: processEnv,
+        selfInvocation,
+        continuationRequests,
+        nativeLogging: (threadId) =>
+          makeNativeLogger({
+            nativeEventLogger: providerEventLoggers.native,
+            provider: FX_DRIVER_KIND,
+            threadId,
+          }),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: FX_DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build the fx orchestration adapter.",
+              cause,
+            }),
+        ),
+      );
+      const textGeneration = makeUnsupportedFxTextGeneration();
+      const provideSkillDiscovery = <A, E, R>(
+        effect: Effect.Effect<A, E, R | FileSystem.FileSystem | Path.Path>,
+      ) =>
+        effect.pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+      const checkProvider = checkFxProviderStatus(effectiveConfig, processEnv).pipe(
+        Effect.tap((probe) => orchestrationAdapter.noteFxDefaultModel(probe.defaultModel)),
+        Effect.bindTo("probe"),
+        Effect.bind("skills", () =>
+          effectiveConfig.enabled
+            ? provideSkillDiscovery(discoverFxSkills({ environment: processEnv }))
+            : Effect.succeed([]),
+        ),
+        Effect.map(({ probe, skills }) => stampIdentity({ ...probe.draft, skills })),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+      const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<FxSettings>>({
+        resolveMaintenance: () => Effect.succeed(MAINTENANCE),
+        getSettings: snapshotSettings.getSettings,
+        streamSettings: snapshotSettings.streamSettings,
+        haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+        initialSnapshot: (settings) =>
+          buildInitialFxProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
+        checkProvider,
+        enrichSnapshot: ({ settings, snapshot: currentSnapshot, publishSnapshot }) =>
+          enrichFxSnapshot({
+            snapshot: currentSnapshot,
+            maintenanceCapabilities: MAINTENANCE,
+            enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
+            publishSnapshot,
+          }).pipe(
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+            Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
+          ),
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: FX_DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build the fx provider snapshot.",
+              cause,
+            }),
+        ),
+      );
+      const snapshotForCwd = (workspaceCwd: string) =>
+        !effectiveConfig.enabled
+          ? snapshot.getSnapshot
+          : Effect.all([
+              snapshot.getSnapshot,
+              provideSkillDiscovery(
+                discoverFxSkills({ cwd: workspaceCwd, environment: processEnv }),
+              ),
+            ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })));
+
+      return {
+        instanceId,
+        driverKind: FX_DRIVER_KIND,
+        continuationIdentity,
+        displayName,
+        accentColor,
+        enabled,
+        snapshot,
+        snapshotForCwd,
+        orchestrationAdapter,
+        textGeneration,
+      } satisfies ProviderInstance;
+    }),
+};
