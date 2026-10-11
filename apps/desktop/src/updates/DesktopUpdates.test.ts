@@ -256,7 +256,10 @@ describe("DesktopUpdates", () => {
       cachedDownloadSha512: "sha-1.2.4",
       // electron-updater reports update-available while the check is running.
       checkForUpdates: Effect.sync(() =>
-        harness.emit("update-available", { version: "1.2.4", files: [{ sha512: "sha-1.2.4" }] }),
+        harness.emit("update-available", {
+          version: "1.2.4",
+          files: [{ url: "T3-Code-1.2.4.zip", sha512: "sha-1.2.4" }],
+        }),
       ).pipe(Effect.andThen(Deferred.await(releaseCheck))),
       downloadUpdate: Effect.sync(() =>
         harness.emit("update-downloaded", { version: "1.2.4" }),
@@ -294,7 +297,10 @@ describe("DesktopUpdates", () => {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
-        harness.emit("update-available", { version: "1.2.5", files: [{ sha512: "sha-1.2.5" }] });
+        harness.emit("update-available", {
+          version: "1.2.5",
+          files: [{ url: "T3-Code-1.2.5.zip", sha512: "sha-1.2.5" }],
+        });
         yield* flushCallbacks;
 
         assert.equal(harness.downloadCount(), 0);
@@ -305,16 +311,23 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("ignores a cached download of another package type", () => {
-    // The harness caches update.zip; a Windows updater would replace it with an .exe.
-    const harness = makeHarness({ cachedDownloadSha512: "sha-1.2.4", platform: "win32" });
+  it.effect("ignores a cached download this platform's updater would not pick", () => {
+    // The x64 Mac updater picks the x64 zip, so a cached arm64 zip would be
+    // discarded and downloaded over the network again.
+    const harness = makeHarness({ cachedDownloadSha512: "sha-arm64" });
 
     return Effect.scoped(
       Effect.gen(function* () {
         const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.configure;
 
-        harness.emit("update-available", { version: "1.2.4", files: [{ sha512: "sha-1.2.4" }] });
+        harness.emit("update-available", {
+          version: "1.2.4",
+          files: [
+            { url: "T3-Code-1.2.4-arm64.zip", sha512: "sha-arm64" },
+            { url: "T3-Code-1.2.4.zip", sha512: "sha-x64" },
+          ],
+        });
         yield* flushCallbacks;
 
         assert.equal(harness.downloadCount(), 0);

@@ -69,8 +69,10 @@ const UpdateInfo = Schema.Struct({
   files: Schema.optional(Schema.Unknown),
 });
 
-// Only the sha512s are read, to recognize a download an earlier launch finished.
-const ReleaseFiles = Schema.Array(Schema.Struct({ sha512: Schema.String }));
+// Read to recognize a download an earlier launch finished.
+const ReleaseFile = Schema.Struct({ url: Schema.String, sha512: Schema.String });
+type ReleaseFile = typeof ReleaseFile.Type;
+const ReleaseFiles = Schema.Array(ReleaseFile);
 
 // electron-updater's pending/update-info.json.
 const CachedDownloadInfo = Schema.fromJsonString(
@@ -282,6 +284,33 @@ function getAutoUpdateDisabledReason(args: {
 
 function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
   return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
+}
+
+/** The release file electron-updater's platform updater will download, mirroring
+    MacUpdater.filterFilesForArch and Provider.findFile. A cached download only
+    counts if it is this file: the updater discards any other and fetches anew. */
+function selectUpdateFile(
+  files: ReadonlyArray<ReleaseFile>,
+  platform: NodeJS.Platform,
+  isDebPackage: boolean,
+  runtimeInfo: DesktopRuntimeInfo,
+): ReleaseFile | undefined {
+  let candidates = files;
+  if (platform === "darwin") {
+    const isArm64File = (file: ReleaseFile) => file.url.includes("arm64");
+    const preferArm64 = runtimeInfo.hostArch === "arm64" && files.some(isArm64File);
+    candidates = files.filter((file) => isArm64File(file) === preferArm64);
+  }
+  const extension =
+    platform === "darwin"
+      ? ".zip"
+      : platform === "win32"
+        ? ".exe"
+        : isDebPackage
+          ? ".deb"
+          : ".appimage";
+  const packageFiles = candidates.filter((file) => file.url.toLowerCase().endsWith(extension));
+  return packageFiles.find((file) => file.url.includes(runtimeInfo.appArch)) ?? packageFiles[0];
 }
 
 /** @public Service construction is part of the canonical Effect module API. */
@@ -754,25 +783,12 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
-  // The package type this install's updater downloads. A cache left by another
-  // install type (an AppImage next to a .deb) would be discarded and replaced
-  // with a fresh network download, so it must not count as a match.
-  const updatePackageExtension =
-    environment.platform === "darwin"
-      ? ".zip"
-      : environment.platform === "win32"
-        ? ".exe"
-        : isDebPackage
-          ? ".deb"
-          : ".AppImage";
-
   const cachedDownloadSha512 = Effect.gen(function* () {
     const pendingDirectory = yield* electronUpdater.pendingDownloadDirectory;
     if (Option.isNone(pendingDirectory)) return Option.none<string>();
     const info = yield* fileSystem
       .readFileString(environment.path.join(pendingDirectory.value, "update-info.json"))
       .pipe(Effect.flatMap(decodeCachedDownloadInfo));
-    if (!info.fileName.endsWith(updatePackageExtension)) return Option.none<string>();
     const fileExists = yield* fileSystem.exists(
       environment.path.join(pendingDirectory.value, info.fileName),
     );
@@ -789,8 +805,13 @@ export const make = Effect.gen(function* () {
   ) {
     const cachedSha512 = yield* cachedDownloadSha512;
     if (Option.isNone(cachedSha512)) return;
-    const releaseFiles = Option.getOrElse(decodeReleaseFiles(files), () => []);
-    if (!releaseFiles.some((file) => file.sha512 === cachedSha512.value)) return;
+    const updateFile = selectUpdateFile(
+      Option.getOrElse(decodeReleaseFiles(files), () => []),
+      environment.platform,
+      isDebPackage,
+      environment.runtimeInfo,
+    );
+    if (updateFile?.sha512 !== cachedSha512.value) return;
 
     // update-available arrives while its check still holds the action reservation.
     yield* awaitIdleUpdateAction;
