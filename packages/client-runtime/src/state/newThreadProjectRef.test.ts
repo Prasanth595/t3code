@@ -132,7 +132,7 @@ describe("new thread project environment", () => {
     ).toEqual(macRef);
   });
 
-  it("resolves disagreeing copies by the first explicit setting in environment/project key order", () => {
+  it("resolves disagreeing connected copies by the first explicit setting in environment/project key order", () => {
     const mixed = settings(
       { defaultEnvironmentId: mac.environmentId },
       { defaultEnvironmentId: pad.environmentId },
@@ -160,6 +160,25 @@ describe("new thread project environment", () => {
       }).projectRef,
     ).toEqual(padRef);
   });
+
+  it.each([mac.environmentId, null])(
+    "ignores a disconnected first copy's stale default %j when a connected copy has a value",
+    (staleDefault) => {
+      expect(
+        resolveNewThreadProjectRef({
+          ...input,
+          connectedEnvironmentIds: new Set([pad.environmentId]),
+          settingsByEnvironment: settings(
+            { defaultEnvironmentId: staleDefault },
+            { defaultEnvironmentId: pad.environmentId },
+          ),
+        }),
+      ).toEqual({
+        projectRef: padRef,
+        environmentSelection: "project-default",
+      });
+    },
+  );
 
   it("retains the context checkout when it already lives on the default environment", () => {
     const checkout = { environmentId: pad.environmentId, id: ProjectId.make("pad-checkout") };

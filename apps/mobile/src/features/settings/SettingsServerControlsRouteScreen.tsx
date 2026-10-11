@@ -299,8 +299,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     <SettingsSection
                       title="Default environment"
                       trailing={
-                        isMixed("defaultEnvironmentId") ? (
-                          <MixedValuesLabel projectSelected />
+                        pendingWrites === 0 && isMixed("defaultEnvironmentId") ? (
+                          <MixedValuesLabel projectSelected={projectSelected} />
                         ) : null
                       }
                     >

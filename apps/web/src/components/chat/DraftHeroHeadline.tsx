@@ -6,6 +6,7 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
@@ -65,16 +66,22 @@ export function DraftHeroHeadline({
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
   const resolveProjectTarget = useNewThreadProjectTarget();
-  const manualEnvironmentId = useComposerDraftStore((store) => {
-    const draft = draftId ? store.getDraftSession(draftId) : null;
-    return draft?.environmentSelection === "manual" ? draft.environmentId : null;
-  });
+  const manualProjectRef = useComposerDraftStore(
+    useShallow((store) => {
+      const draft = draftId ? store.getDraftSession(draftId) : null;
+      return draft?.environmentSelection === "manual"
+        ? scopeProjectRef(draft.environmentId, draft.projectId)
+        : null;
+    }),
+  );
   const resolvePickerTarget = useCallback(
     (projectRef: ScopedProjectRef) =>
       resolveProjectTarget(projectRef, {
-        manual: projectRef.environmentId === manualEnvironmentId,
+        manual:
+          projectRef.environmentId === manualProjectRef?.environmentId &&
+          projectRef.projectId === manualProjectRef.projectId,
       }),
-    [manualEnvironmentId, resolveProjectTarget],
+    [manualProjectRef, resolveProjectTarget],
   );
   const threads = useThreadShells();
   const { environments } = useEnvironments();

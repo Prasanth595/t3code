@@ -342,6 +342,10 @@ export function resolveNewThreadProjectRef(input: {
     return { projectRef: input.manualProjectRef, environmentSelection: "manual" as const };
   }
   const orderedMembers = [...input.members].sort((left, right) => {
+    const connectionOrder =
+      Number(input.connectedEnvironmentIds.has(right.environmentId)) -
+      Number(input.connectedEnvironmentIds.has(left.environmentId));
+    if (connectionOrder !== 0) return connectionOrder;
     const leftKey = scopedProjectKey(scopeProjectRef(left.environmentId, left.id));
     const rightKey = scopedProjectKey(scopeProjectRef(right.environmentId, right.id));
     return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
