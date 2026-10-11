@@ -1,5 +1,5 @@
 /**
- * ProjectSettingsOverrideSweep — remove `projectSettingsOverrides` entries
+ * Removes `projectSettingsOverrides` entries
  * whose project no longer exists.
  *
  * `ProjectService.delete` clears a project's entry as part of deleting the
