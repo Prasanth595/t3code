@@ -38,6 +38,7 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsPreview,
   WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
+  WS_METHODS.pullRequestsReviewGuide,
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsDiffFileContents,
   WS_METHODS.pullRequestsFilesViewed,
@@ -45,6 +46,7 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsLabelCandidates,
 ]);
 const writes = new Set<string>([
+  WS_METHODS.pullRequestsGenerateReviewGuide,
   WS_METHODS.pullRequestsSetFilesViewed,
   WS_METHODS.pullRequestsRunAction,
   WS_METHODS.pullRequestsUpdate,

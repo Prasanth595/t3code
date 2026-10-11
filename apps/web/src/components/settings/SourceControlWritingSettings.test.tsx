@@ -35,6 +35,12 @@ vi.mock("./useScopedModelAvailability", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
+// Review guides are a beta that is off here; these tests cover the writing style.
+vi.mock("../../hooks/useSettings", () => ({
+  useClientSettings: (select: (settings: { reviewGuidesEnabled: boolean }) => unknown) =>
+    select({ reviewGuidesEnabled: false }),
+  useUpdateClientSettings: () => vi.fn(),
+}));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: (id: string) => ({ id, title: id }) }));
 vi.mock("./settingsLayout", () => ({

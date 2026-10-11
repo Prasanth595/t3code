@@ -7,7 +7,10 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
-import { resolveSourceControlWriterModelSelection } from "@t3tools/shared/serverSettings";
+import {
+  resolveReviewGuideModelSelection,
+  resolveSourceControlWriterModelSelection,
+} from "@t3tools/shared/serverSettings";
 
 import {
   useScopedSettings,
@@ -25,6 +28,7 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
+import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -61,6 +65,9 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
 export function SourceControlWritingSettingsSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  // A beta: the Guide tab and its settings stay out of the way until this device opts in.
+  const reviewGuidesEnabled = useClientSettings((client) => client.reviewGuidesEnabled);
+  const updateClientSettings = useUpdateClientSettings();
   const navigate = useNavigate();
   const { environment, connectedEnvironments, targets } = useSettingsScope();
   // The representative supplies the provider list; a model choice is checked
@@ -85,6 +92,10 @@ export function SourceControlWritingSettingsSection() {
   const templatesMixed = styleFieldMixed("followChangeRequestTemplates");
   const writingStyleMixed = modeMixed || instructionsMixed;
   const mixedWriterModel = useScopedSettingsMixed(["sourceControlWriterModelSelection"]);
+  const mixedReviewGuideModel = useScopedSettingsMixed(["reviewGuideModelSelection"]);
+  const mixedReviewGuideInstructions = useScopedSettingsMixed(["reviewGuideInstructions"]);
+  const reviewGuideInstructionsEdited = useRef(false);
+  const scopeKey = targets.map((target) => `${target.environmentId}:${target.projectId}`).join(",");
   const customInstructionsRef = useRef<HTMLTextAreaElement>(null);
   const [editingAllInstructions, setEditingAllInstructions] = useState(false);
   const [allInstructions, setAllInstructions] = useState<string | null>(null);
@@ -124,6 +135,17 @@ export function SourceControlWritingSettingsSection() {
     activeSelection.model,
   );
   const writerModelDisabledReason = useScopedModelDisabledReason(settings, instanceEntries);
+  const usesReviewGuideModel = settings.reviewGuideModelSelection !== null;
+  const reviewGuideSelection = resolveAppModelSelectionState(
+    {
+      ...settings,
+      textGenerationModelSelection: resolveReviewGuideModelSelection(
+        settings,
+        textGenerationProviders,
+      ),
+    },
+    textGenerationProviders,
+  );
 
   return (
     <SettingsSection id="source-control-text-generation" title="Text generation">
@@ -357,6 +379,123 @@ export function SourceControlWritingSettingsSection() {
           )
         }
       />
+
+      <SettingsRow
+        {...searchableSetting("review-guides")}
+        description="Adds a Guide tab to pull requests: an agent writes a tour of the change, stop by stop, with the calls a maintainer should make. Applies to this device."
+        control={
+          <Switch
+            checked={reviewGuidesEnabled}
+            onCheckedChange={(checked) => updateClientSettings({ reviewGuidesEnabled: checked })}
+            aria-label="Review guides"
+          />
+        }
+      />
+
+      {reviewGuidesEnabled ? (
+        <>
+          <SettingsRow
+            serverScoped
+            settingKeys={["reviewGuideModelSelection"]}
+            {...searchableSetting("review-guide-model")}
+            description="Model that reads a pull request to write its review guide. It reads the change itself over many steps, so a stronger model helps. Off uses the source control writer model."
+            control={
+              !hasServerTargets ? (
+                <span className="text-sm text-muted-foreground">
+                  Connect an environment to choose its review guide model.
+                </span>
+              ) : (
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  {usesReviewGuideModel && canEnableDedicatedModel ? (
+                    <ProviderModelPicker
+                      activeInstanceId={reviewGuideSelection.instanceId}
+                      model={reviewGuideSelection.model}
+                      lockedProvider={null}
+                      instanceEntries={instanceEntries}
+                      modelOptionsByInstance={modelOptionsByInstance}
+                      triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      triggerAriaLabel="Review guide model"
+                      {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
+                      getModelDisabledReason={writerModelDisabledReason}
+                      onInstanceModelChange={(instanceId, model) => {
+                        const reason = writerModelDisabledReason(instanceId, model);
+                        if (reason) {
+                          toastManager.add({
+                            type: "error",
+                            title: "Review guide model not saved",
+                            description: reason,
+                          });
+                          return;
+                        }
+                        updateSettings({
+                          reviewGuideModelSelection: createModelSelection(instanceId, model),
+                        });
+                      }}
+                    />
+                  ) : null}
+                  <Switch
+                    checked={usesReviewGuideModel}
+                    disabled={!usesReviewGuideModel && !canEnableDedicatedModel}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        reviewGuideModelSelection: checked
+                          ? createModelSelection(
+                              activeSelection.instanceId,
+                              activeSelection.model,
+                              activeSelection.options,
+                            )
+                          : null,
+                      })
+                    }
+                    aria-label="Use a separate review guide model"
+                  />
+                </div>
+              )
+            }
+          />
+
+          <SettingsRow
+            serverScoped
+            settingKeys={["reviewGuideInstructions"]}
+            {...searchableSetting("review-guide-instructions")}
+            description="Your preferences for review guides: what to show first, dwell on, or skip. The guide's format and coverage stay the same."
+            resetAction={
+              mixedReviewGuideInstructions || settings.reviewGuideInstructions !== "" ? (
+                <SettingResetButton
+                  label="review guide instructions"
+                  onClick={() => updateSettings({ reviewGuideInstructions: "" })}
+                />
+              ) : null
+            }
+          >
+            <div className="mt-3 max-w-2xl pb-3.5">
+              <Textarea
+                key={`${scopeKey}:${mixedReviewGuideInstructions}:${settings.reviewGuideInstructions}`}
+                aria-label="Review guide instructions"
+                onChange={() => {
+                  reviewGuideInstructionsEdited.current = true;
+                }}
+                rows={4}
+                defaultValue={mixedReviewGuideInstructions ? "" : settings.reviewGuideInstructions}
+                placeholder={
+                  mixedReviewGuideInstructions
+                    ? "Mixed. Enter instructions to apply to all selected targets."
+                    : "Show service interfaces before implementations. Skip test files unless they change behavior. Keep summaries to two sentences."
+                }
+                onBlur={(event) => {
+                  const value = event.target.value.trim();
+                  if (
+                    reviewGuideInstructionsEdited.current &&
+                    (mixedReviewGuideInstructions || value !== settings.reviewGuideInstructions)
+                  )
+                    updateSettings({ reviewGuideInstructions: value });
+                  reviewGuideInstructionsEdited.current = false;
+                }}
+              />
+            </div>
+          </SettingsRow>
+        </>
+      ) : null}
     </SettingsSection>
   );
 }
