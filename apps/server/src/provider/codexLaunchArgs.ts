@@ -7,7 +7,16 @@ export const resolveCodexLaunchArgs = (
   environment: NodeJS.ProcessEnv = process.env,
 ) => environment[T3CODE_CODEX_LAUNCH_ARGS_ENV]?.trim() || launchArgs?.trim() || "";
 
-const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => tokenizeCliArgs(launchArgs);
+const codexLaunchArgv = (launchArgs?: string): ReadonlyArray<string> => {
+  const args = tokenizeCliArgs(launchArgs);
+  if (args.some((arg, index) => arg === "cloud" && args[index + 1] === "exec")) {
+    throw new Error(
+      "Codex Cloud task execution is not supported by T3's local Codex runtime. " +
+        "Remove cloud exec from the launch arguments; no cloud fallback will be used.",
+    );
+  }
+  return args;
+};
 
 export const codexAppServerArgs = (launchArgs?: string) => [
   "app-server",

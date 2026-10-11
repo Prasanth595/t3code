@@ -8,6 +8,34 @@ import {
   resolveCodexLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
+describe.each([
+  ["app-server", codexAppServerArgs],
+  ["exec", codexExecLaunchArgs],
+] as const)("local Codex %s launch", (_name, buildArgs) => {
+  it("refuses a cloud task request instead of ignoring it or choosing a fallback", () => {
+    for (const launchArgs of ["cloud exec --env remote", '--strict-config "cloud" "exec"']) {
+      NodeAssert.throws(
+        () => buildArgs(resolveCodexLaunchArgs(launchArgs, {})),
+        /Codex Cloud task execution is not supported by T3's local Codex runtime/,
+      );
+    }
+    NodeAssert.throws(
+      () =>
+        buildArgs(
+          resolveCodexLaunchArgs("--strict-config", { T3CODE_CODEX_LAUNCH_ARGS: "cloud exec" }),
+        ),
+      /Codex Cloud task execution is not supported by T3's local Codex runtime/,
+    );
+  });
+});
+
+it("keeps cloud command text inside a configuration value as data", () => {
+  const launchArgs = '--config developer_instructions="Never run cloud exec"';
+  const flags = ["--config", "developer_instructions=Never run cloud exec"];
+  NodeAssert.deepStrictEqual(codexAppServerArgs(launchArgs), ["app-server", ...flags]);
+  NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), flags);
+});
+
 describe("resolveCodexLaunchArgs", () => {
   it("uses T3CODE_CODEX_LAUNCH_ARGS before configured settings", () => {
     NodeAssert.equal(

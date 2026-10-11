@@ -35,6 +35,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -775,6 +776,50 @@ describe("CodexAdapterV2 process spawning", () => {
         ["app-server", "--enable", "env-feature"],
       ]);
     }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("refuses cloud task launch arguments before spawning any process", () =>
+    Effect.gen(function* () {
+      let spawnCount = 0;
+      const spawner = ChildProcessSpawner.make(() => {
+        spawnCount++;
+        return Effect.fail(
+          PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+        );
+      });
+      const factory = yield* CodexAdapterV2.CodexAppServerClientFactory.pipe(
+        Effect.provide(CodexAdapterV2.layerAppServerClientFactory),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provideService(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      );
+      for (const environment of [{}, { T3CODE_CODEX_LAUNCH_ARGS: "cloud exec --env remote" }]) {
+        const exit = yield* factory
+          .open({
+            instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+            threadId: ThreadId.make("thread-cloud-launch-refusal"),
+            providerSessionId: ProviderSessionId.make("session-cloud-launch-refusal"),
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+            settings: { ...DEFAULT_CODEX_SETTINGS, launchArgs: "cloud exec --env remote" },
+            environment,
+          })
+          .pipe(Effect.scoped, Effect.exit);
+        assert.equal(exit._tag, "Failure");
+        if (exit._tag === "Failure") {
+          assert.include(
+            Cause.pretty(exit.cause),
+            "Codex Cloud task execution is not supported by T3's local Codex runtime",
+          );
+        }
+      }
+      assert.equal(spawnCount, 0);
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
   );
 
   it.effect("expands ~ in the configured binary path before spawning", () =>
