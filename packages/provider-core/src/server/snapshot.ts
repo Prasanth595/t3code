@@ -11,8 +11,16 @@ export interface ManagedServerProvider {
   readonly getSnapshot: Effect.Effect<ServerProvider>;
   readonly refresh: Effect.Effect<ServerProvider>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
-  /** Merge windows by ID; updates with no usable window leave the snapshot untouched. */
+  /**
+   * Fold a runtime rate-limit update into the published snapshot without
+   * waiting for the next status probe. Sparse: windows merge by id and an
+   * update with no usable window leaves the snapshot untouched. With
+   * `replace`, the update's windows are the whole set instead.
+   */
   readonly applyUsageLimits: (
-    update: ProviderUsageLimitsUpdate & { readonly checkedAt: string },
+    update: ProviderUsageLimitsUpdate & {
+      readonly checkedAt: string;
+      readonly replace?: boolean;
+    },
   ) => Effect.Effect<void>;
 }
