@@ -78,20 +78,24 @@ export function useProjectFilterMenuIcons<T extends HomeListFilterMenuProject>(
     const refresh = () => {
       if (active) setDataUris(new Map(faviconDataUris));
     };
-    let missingCached = false;
+    const cached: string[] = [];
     for (const url of faviconUrls) {
       if (!url) continue;
       if (faviconDataUris.has(url)) {
-        missingCached ||= !dataUris.has(url);
+        cached.push(url);
         continue;
       }
       void loadFaviconDataUri(url).then(refresh);
     }
-    if (missingCached) refresh();
+    if (cached.length > 0) {
+      setDataUris((previous) =>
+        cached.every((url) => previous.has(url)) ? previous : new Map(faviconDataUris),
+      );
+    }
     return () => {
       active = false;
     };
-  }, [dataUris, faviconUrls]);
+  }, [faviconUrls]);
 
   return useMemo(
     () =>
