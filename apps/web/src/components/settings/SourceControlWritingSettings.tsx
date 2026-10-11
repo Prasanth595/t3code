@@ -132,10 +132,10 @@ export function SourceControlWritingSettingsSection() {
       ...settings,
       textGenerationModelSelection: resolveSourceControlWriterModelSelection(
         settings,
-        textGenerationProviders,
+        projectEffectiveTextGenerationProviders,
       ),
     },
-    textGenerationProviders,
+    projectEffectiveTextGenerationProviders,
   );
   const canEnableDedicatedModel = instanceEntries.some(
     (entry) =>
@@ -143,7 +143,7 @@ export function SourceControlWritingSettingsSection() {
   );
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
-    textGenerationProviders,
+    projectEffectiveTextGenerationProviders,
     activeSelection.instanceId,
     activeSelection.model,
   );

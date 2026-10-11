@@ -2,6 +2,7 @@ import type { ModelPreferences } from "@t3tools/contracts/settings";
 import {
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
+  resolveProjectProviderInstanceEnabled,
   resolveProviderInstanceEnabled,
   isProviderTextGenerationCapable,
   type ModelSelection,
@@ -69,6 +70,23 @@ export function isModelSelectionProviderEnabled(
   }
 
   return isUnconfiguredDefaultInstanceEnabled(selection.instanceId);
+}
+
+/**
+ * Providers a project can actually use: machine-enabled instances minus
+ * whatever that project's `providerInstanceEnablement` override turned off.
+ * Feed this into provider-list-aware resolvers such as
+ * `resolveSourceControlWriterModelSelection` so a project-disabled instance
+ * falls back the same way a machine-disabled one does.
+ */
+export function filterProvidersForProject(
+  settings: Pick<ServerSettings, "providerInstances" | "projectSettingsOverrides">,
+  providers: ReadonlyArray<ServerProvider>,
+  projectId: ProjectId | null,
+): ServerProvider[] {
+  return providers.filter((provider) =>
+    resolveProjectProviderInstanceEnabled(settings, projectId, provider.instanceId),
+  );
 }
 
 export function resolveSourceControlWriterModelSelection(
