@@ -345,6 +345,7 @@ export const make = Effect.gen(function* () {
         cwd: input.cwd,
         reason: "invalid-response",
         detail: "tea returned an invalid login list.",
+        cause: logins.failure,
       });
     return logins.success;
   });
