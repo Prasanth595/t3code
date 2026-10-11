@@ -1,17 +1,21 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   SourceControlProviderKind,
+  VcsProcessExitError,
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -21,7 +25,11 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
@@ -58,6 +66,24 @@ const processOutput = (
   stdoutTruncated: false,
   stderrTruncated: false,
 });
+
+// What `glab auth status` prints when no host is logged in.
+const noGitLabLogin = processOutput("", {
+  stderr:
+    "no GitLab instances have been authenticated with glab; run `glab auth login` to authenticate\n",
+  exitCode: ChildProcessSpawner.ExitCode(1),
+});
+
+// What GitHubCredentials fails with when `gh auth token` says it holds no login for the host.
+const notSignedIn = (host: string) =>
+  new GitHubCredentials.GitHubNotSignedInError({
+    host,
+    cause: VcsProcessExitError.fromProcessExit(
+      { operation: "GitHubCredentials.get", command: "gh", cwd: "/" },
+      { exitCode: 1, stderr: `no oauth token found for ${host}`, stderrTruncated: false },
+      "authentication",
+    ),
+  });
 
 function makeRegistry(input: {
   readonly remotes: ReadonlyArray<{
@@ -109,7 +135,7 @@ function makeRegistry(input: {
   });
 
   const layerProcess = Layer.mock(VcsProcess.VcsProcess)({
-    run: () => Effect.succeed(processOutput("")),
+    run: ({ command }) => Effect.succeed(command === "glab" ? noGitLabLogin : processOutput("")),
     ...input.process,
   });
 
@@ -139,7 +165,7 @@ function makeRegistry(input: {
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubApi.GitHubApi)({
           // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
-          credential: (host) => Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host })),
+          credential: (host) => Effect.fail(notSignedIn(host)),
           ...input.githubApi,
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -533,7 +559,7 @@ it.effect("asks the hosting CLIs once for every checkout of an unclaimed host", 
           githubApi: {
             credential: (host) => {
               hosts.push(host);
-              return Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }));
+              return Effect.fail(notSignedIn(host));
             },
           },
           forgejo: {
@@ -612,7 +638,7 @@ const makeSignInRegistry = (
       process: {
         run: ({ command }) => {
           commands.push(command);
-          return Effect.succeed(processOutput(""));
+          return Effect.succeed(noGitLabLogin);
         },
       },
       githubApi: {
@@ -620,7 +646,7 @@ const makeSignInRegistry = (
           hosts.push(host);
           return signedIn
             ? Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` })
-            : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }));
+            : Effect.fail(notSignedIn(host));
         },
       },
     });
@@ -684,6 +710,7 @@ it.effect.each([
   { name: "a glab timeout", failure: "timeout" },
   { name: "glab without permission to run", failure: "permission-denied" },
   { name: "a tea failure", failure: "tea" },
+  { name: "a glab config glab could not read", failure: "unreadable-config" },
 ] as const)("does not keep an answer a checkout could not reach: $name", (scenario) =>
   Effect.gen(function* () {
     // The checkouts that reached the failing CLI.
@@ -705,7 +732,17 @@ it.effect.each([
         run: ({ command, cwd }) => {
           if (scenario.failure === "tea") return Effect.fail(missingCli(command, cwd));
           asked.push(cwd);
-          return cwd === "/gone" ? Effect.fail(glabFailure(cwd)) : Effect.succeed(signedInGitLab);
+          if (cwd !== "/gone") return Effect.succeed(signedInGitLab);
+          // glab ran, but its output names no host and is not its never-logged-in answer.
+          return scenario.failure === "unreadable-config"
+            ? Effect.succeed(
+                processOutput("", {
+                  stderr:
+                    "failed to read config: open /home/user/.config/glab-cli/config.yml: permission denied\n",
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                }),
+              )
+            : Effect.fail(glabFailure(cwd));
         },
       },
       forgejo: {
@@ -790,5 +827,231 @@ it.effect("keeps Forgejo mounts on one host apart", () =>
     assert.strictEqual(sibling?.provider.baseUrl, "https://git.example.internal/forge-one");
     assert.strictEqual(sibling?.remoteUrl, "https://git.example.internal/forge-one/team/c.git");
     assert.deepStrictEqual(logins, ["fj", "tea", "fj", "tea"]);
+  }),
+);
+
+it.effect("keeps Forgejo mounts apart when only their case differs", () =>
+  Effect.gen(function* () {
+    const mount = (path: string) => ({
+      name: path,
+      url: `https://git.example.internal/${path}`,
+      user: "forgejo-user",
+      default: "false",
+    });
+    const makeMountRegistry = (paths: ReadonlyArray<string>) =>
+      makeRegistry({
+        remotes: [],
+        forgejo: {
+          listLogins: ({ command }) => Effect.succeed(command === "tea" ? paths.map(mount) : []),
+        },
+      });
+    const resolveProvider = (
+      registry: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"],
+      mountPath: string,
+    ) =>
+      registry
+        .resolveHandle({
+          cwd: `/${mountPath}`,
+          context: unknownRemote(`https://git.example.internal/${mountPath}/team/a.git`),
+        })
+        .pipe(Effect.map((handle) => handle.context?.provider));
+
+    // Forgejo compares mount paths as written, so each checkout keeps its own installation.
+    const both = yield* makeMountRegistry(["Forge-One", "forge-one"]);
+    const upper = yield* resolveProvider(both, "Forge-One");
+    assert.strictEqual(upper?.baseUrl, "https://git.example.internal/Forge-One");
+    const lower = yield* resolveProvider(both, "forge-one");
+    assert.strictEqual(lower?.baseUrl, "https://git.example.internal/forge-one");
+
+    // An unclaimed mount asked first does not hide the login of its differently cased twin.
+    const upperOnly = yield* makeMountRegistry(["Forge-One"]);
+    assert.strictEqual((yield* resolveProvider(upperOnly, "forge-one"))?.kind, "unknown");
+    const claimed = yield* resolveProvider(upperOnly, "Forge-One");
+    assert.strictEqual(claimed?.kind, "forgejo");
+    assert.strictEqual(claimed?.baseUrl, "https://git.example.internal/Forge-One");
+  }),
+);
+
+it.effect("asks gh again once it can read its config", () =>
+  Effect.gen(function* () {
+    // gh cannot load its config file at first, then hands over a token.
+    let configReadable = false;
+    const runs: Array<string> = [];
+    const vcsProcess = yield* VcsProcess.make.pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: (input) => {
+          runs.push(`${input.command} ${input.args.join(" ")}`);
+          return Effect.succeed({
+            stdout: configReadable ? "token\n" : "",
+            stderr: configReadable
+              ? ""
+              : "failed to read configuration: invalid config file /home/user/.config/gh/hosts.yml: invalid yaml\n",
+            code: ChildProcessSpawner.ExitCode(configReadable ? 0 : 1),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          });
+        },
+      }),
+    );
+    const credentials = yield* GitHubCredentials.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestSourceControlHost.layer({ process: { run: vcsProcess.run } }),
+          NodeCrypto.layer,
+        ),
+      ),
+      Effect.provideService(HostProcess.Environment, {}),
+    );
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: { run: ({ command, cwd }) => Effect.fail(missingCli(command, cwd)) },
+      githubApi: {
+        credential: (host) =>
+          credentials
+            .get(host)
+            .pipe(Effect.map(({ token, fingerprint }) => ({ token, fingerprint }))),
+      },
+    });
+    const resolveKind = registry
+      .resolveHandle({
+        cwd: "/repo",
+        context: unknownRemote("https://git.example.internal/team/a.git"),
+      })
+      .pipe(Effect.map((handle) => handle.provider.kind));
+
+    assert.strictEqual(yield* resolveKind, "unknown");
+    configReadable = true;
+    // Past the ten seconds GitHubCredentials keeps a missing credential, well inside the five
+    // minutes a settled verdict lasts.
+    yield* TestClock.adjust(Duration.seconds(11));
+    assert.strictEqual(yield* resolveKind, "github");
+    assert.deepStrictEqual(runs, [
+      "gh auth token --hostname git.example.internal",
+      "gh auth token --hostname git.example.internal",
+    ]);
+  }),
+);
+
+// The real ForgejoCli, reading fj's keys through `fileSystem` and running fj and tea through `run`.
+const makeForgejoCli = (input: {
+  readonly fileSystem: Partial<FileSystem.FileSystem>;
+  readonly run: SourceControlHost.SourceControlHost["Service"]["process"]["run"];
+}) =>
+  ForgejoCli.make.pipe(
+    Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop(input.fileSystem)),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Unexpected Forgejo API request.")),
+    ),
+    Effect.provide(TestSourceControlHost.layer({ process: { run: input.run } })),
+  );
+
+it.effect.each([
+  { name: "an fj that cannot run, with keys it could not read", failure: "fj" },
+  { name: "a tea login list that is not JSON", failure: "tea" },
+] as const)("asks Forgejo again after its logins could not be read: $name", (scenario) =>
+  Effect.gen(function* () {
+    let healthy = false;
+    const cli = yield* makeForgejoCli({
+      fileSystem: {
+        // Only the fj scenario has a keys file.
+        exists: () => Effect.succeed(scenario.failure === "fj"),
+        readFileString: (path) =>
+          healthy
+            ? Effect.succeed(
+                '{"hosts":{"git.example.internal":{"type":"Application","token":"token"}}}',
+              )
+            : Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "readFileString",
+                  pathOrDescriptor: path,
+                }),
+              ),
+      },
+      run: ({ command, cwd }) => {
+        // `fj version` checks whether fj is installed: it is, but it cannot run.
+        if (command === "fj")
+          return Effect.fail(spawnError(command, cwd, "PermissionDenied", "ChildProcess"));
+        if (scenario.failure === "fj") return Effect.fail(missingCli(command, cwd));
+        return Effect.succeed(
+          TestSourceControlHost.processOutput(
+            healthy
+              ? '[{"name":"forge","url":"https://git.example.internal","user":"forgejo-user","default":"true"}]'
+              : "Error: could not read tea config\n",
+          ),
+        );
+      },
+    });
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: { run: ({ command, cwd }) => Effect.fail(missingCli(command, cwd)) },
+      forgejo: cli,
+    });
+    const resolveProvider = registry
+      .resolveHandle({
+        cwd: "/repo",
+        context: unknownRemote("https://git.example.internal/team/a.git"),
+      })
+      .pipe(Effect.map((handle) => handle.context?.provider));
+
+    assert.strictEqual((yield* resolveProvider)?.kind, "unknown");
+    healthy = true;
+    const provider = yield* resolveProvider;
+    assert.strictEqual(provider?.kind, "forgejo");
+    assert.strictEqual(provider?.baseUrl, "https://git.example.internal");
+  }),
+);
+
+it.effect("does not keep a tea claim made while fj could not answer", () =>
+  Effect.gen(function* () {
+    let fjHealthy = false;
+    const registry = yield* makeRegistry({
+      remotes: [],
+      forgejo: {
+        listLogins: ({ command, cwd }) =>
+          command === "tea"
+            ? Effect.succeed([
+                {
+                  name: "forge-one",
+                  url: "https://git.example.internal/forge-one",
+                  user: "forgejo-user",
+                  default: "true",
+                },
+              ])
+            : fjHealthy
+              ? Effect.succeed([
+                  {
+                    name: "git.example.internal",
+                    url: "https://git.example.internal",
+                    user: "",
+                    default: "false",
+                  },
+                ])
+              : Effect.fail(
+                  new ForgejoCli.ForgejoCliError({
+                    command,
+                    cwd,
+                    reason: "authentication",
+                    detail: "Could not read fj authentication storage.",
+                  }),
+                ),
+      },
+    });
+    const resolveBaseUrl = registry
+      .resolveHandle({
+        cwd: "/repo",
+        context: unknownRemote("https://git.example.internal/forge-one/team/a.git"),
+      })
+      .pipe(Effect.map((handle) => handle.context?.provider.baseUrl));
+
+    assert.strictEqual(yield* resolveBaseUrl, "https://git.example.internal/forge-one");
+    // fj is asked first, so once it can read its keys its login for the whole host wins.
+    fjHealthy = true;
+    assert.strictEqual(yield* resolveBaseUrl, "https://git.example.internal");
   }),
 );

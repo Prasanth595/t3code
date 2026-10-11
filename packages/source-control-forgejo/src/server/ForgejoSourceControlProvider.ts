@@ -86,7 +86,14 @@ export const makeDiscovery = Effect.gen(function* () {
           Effect.map((result) => result.stdout.trim()),
           Effect.orElseSucceed(() => ""),
         );
-      const credentials = yield* Effect.result(listLogins({ cwd, command: "fj", remoteUrl }));
+      const credentials = yield* listLogins({ cwd, command: "fj", remoteUrl }).pipe(
+        // An fj that cannot run holds no login, so the probe falls back to tea.
+        Effect.catchIf(
+          (error) => error.reason === "missing-cli",
+          (): Effect.Effect<ReturnType<typeof ForgejoCli.parseForgejoLogins>> => Effect.succeed([]),
+        ),
+        Effect.result,
+      );
       const logins = Result.isSuccess(credentials) ? credentials.success : [];
       const remote = ForgejoCli.parseForgejoRemote(remoteUrl);
       const login =
@@ -150,8 +157,9 @@ export const makeDiscovery = Effect.gen(function* () {
         readonly context: SourceControlProvider.SourceControlProviderContext;
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
-        if (!remote) return null;
-        let unanswered: ForgejoCli.ForgejoCliError | undefined;
+        if (!remote) return { provider: null, settled: true };
+        // fj goes first, so a tea claim after an fj that could not answer is not settled.
+        let settled = true;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
@@ -159,13 +167,9 @@ export const makeDiscovery = Effect.gen(function* () {
             remoteUrl: input.context.remoteUrl,
           }).pipe(Effect.result);
           if (Result.isFailure(logins)) {
-            // Only a CLI that is not installed holds no login. Every spawn failure, a missing
-            // checkout too, is `missing-cli`; tea's cause tells them apart, and fj's never has one.
-            const error = logins.failure;
-            const missing =
-              error.reason === "missing-cli" &&
-              (command === "fj" ? error.cause === undefined : isMissingExecutable(error.cause));
-            if (!missing) unanswered = error;
+            // Only a CLI that is not installed holds no login. A missing checkout or an fj that
+            // cannot run fails as `missing-cli` too; the spawn cause tells them apart.
+            settled &&= isMissingExecutable(logins.failure.cause);
             continue;
           }
           const login = ForgejoCli.matchForgejoLogin(
@@ -175,20 +179,15 @@ export const makeDiscovery = Effect.gen(function* () {
           );
           if (login)
             return {
-              kind: SourceControlProviderKind.make("forgejo"),
-              name: discovery.label,
-              baseUrl: login.url,
+              provider: {
+                kind: SourceControlProviderKind.make("forgejo"),
+                name: discovery.label,
+                baseUrl: login.url,
+              },
+              settled,
             };
         }
-        if (unanswered === undefined) return null;
-        return yield* new SourceControlProviderError({
-          provider: SourceControlProviderKind.make("forgejo"),
-          operation: "refineUnknownRemote",
-          cwd: input.cwd,
-          command: unanswered.command,
-          detail: unanswered.detail,
-          cause: unanswered,
-        });
+        return { provider: null, settled };
       },
     ),
   } satisfies SourceControlManagedCliDiscoverySpec;

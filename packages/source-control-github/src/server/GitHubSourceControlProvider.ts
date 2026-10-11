@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import {
   SourceControlProviderError,
   TrimmedNonEmptyString,
+  VcsProcessExitError,
   type ChangeRequest,
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
@@ -46,6 +47,7 @@ import * as SourceControlProvider from "@t3tools/source-control-core/server/Sour
 import {
   combinedAuthOutput,
   firstSafeAuthLine,
+  isMissingExecutable,
   probeSourceControlProvider,
   providerAuth,
   type SourceControlAuthProbeInput,
@@ -185,6 +187,17 @@ function environmentTokenVariable(environment: NodeJS.ProcessEnv): string | null
   return ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => environment[name]?.trim()) ?? null;
 }
 
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+
+/** gh is not installed, or it said it holds no login for the host ("no oauth token"). */
+function isNoGitHubLogin(error: GitHubApi.GitHubApiError): boolean {
+  return error._tag === "GitHubCliMissingError"
+    ? isMissingExecutable(error.cause)
+    : error._tag === "GitHubNotSignedInError" &&
+        isVcsProcessExitError(error.cause) &&
+        error.cause.failureKind === "authentication";
+}
+
 /**
  * GitHub is usable with a token saved in Settings, one from the environment, or `gh` to hand one
  * over. Reads the
@@ -265,28 +278,14 @@ export const makeDiscovery = Effect.gen(function* () {
      * (Settings, the environment or gh). A host turned off in Settings is claimed too, so its
      * error says so instead of "unsupported host".
      */
-    refineUnknownRemote: ({ cwd, context }) => {
+    refineUnknownRemote: ({ context }) => {
       // Identity resolution also probes providers before a web base URL is known.
       const url = URL.parse(context.provider.baseUrl);
-      if (!url?.host) return Effect.succeed(null);
+      if (!url?.host) return Effect.succeed({ provider: null, settled: true });
       return api.credential(url.host).pipe(
         Effect.as(true),
         Effect.catchTags({ GitHubHostDisabledError: () => Effect.succeed(true) }),
-        // A `gh` that failed this time says nothing about the host; the next lookup asks again.
-        Effect.catchIf(
-          (error) => error._tag !== "GitHubCliFailedError",
-          () => Effect.succeed(false),
-        ),
-        Effect.mapError(
-          (cause) =>
-            new SourceControlProviderError({
-              provider: SourceControlProviderKind.make("github"),
-              operation: "refineUnknownRemote",
-              cwd,
-              detail: cause.message,
-              cause,
-            }),
-        ),
+        Effect.catchIf(isNoGitHubLogin, () => Effect.succeed(false)),
         Effect.map((known) =>
           known
             ? ({
@@ -296,6 +295,10 @@ export const makeDiscovery = Effect.gen(function* () {
               } as const)
             : null,
         ),
+        Effect.map((provider) => ({ provider, settled: true })),
+        // Any other failure (a timeout, a config gh could not read) says nothing about the host;
+        // the next lookup asks again.
+        Effect.orElseSucceed(() => ({ provider: null, settled: false })),
       );
     },
   } satisfies SourceControlManagedCliDiscoverySpec;

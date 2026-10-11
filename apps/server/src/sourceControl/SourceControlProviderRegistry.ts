@@ -161,6 +161,7 @@ function selectProviderContext(
 
 // What the refiners read, minus `owner/repo`: the provider name and base URL (GitHub, GitLab),
 // the remote's scheme, host, port and any installation mount (Forgejo), and a requested host.
+// Scheme and host ignore case; a mount path does not, as Forgejo login matching compares it as is.
 function unknownRemoteKey(context: SourceControlProvider.SourceControlProviderContext): string {
   const remote = context.remoteUrl
     .trim()
@@ -168,12 +169,15 @@ function unknownRemoteKey(context: SourceControlProvider.SourceControlProviderCo
     .replace(/\.git$/iu, "");
   const url = /^[a-z][a-z0-9+.-]*:\/\//iu.test(remote) ? URL.parse(remote) : null;
   const server = url
-    ? `${url.protocol}//${url.host}${url.pathname.split("/").slice(0, -2).join("/")}`
-    : remote.replace(/^[^@/]+@/u, "").replace(/:.*$/u, ""); // SCP form: the host alone
+    ? `${url.protocol}//${url.host.toLowerCase()}${url.pathname.split("/").slice(0, -2).join("/")}`
+    : remote
+        .replace(/^[^@/]+@/u, "")
+        .replace(/:.*$/u, "")
+        .toLowerCase(); // SCP form: the host alone
   return [
     context.provider.name,
     context.provider.baseUrl,
-    server.toLowerCase(),
+    server,
     context.requestedHost?.toLowerCase() ?? "",
   ].join("\u0000");
 }

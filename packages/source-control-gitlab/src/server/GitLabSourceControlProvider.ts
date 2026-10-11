@@ -18,6 +18,9 @@ import {
 } from "@t3tools/source-control-core/server/discovery";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
+/** What `glab auth status` prints when no host is logged in. */
+const NO_GITLAB_LOGIN_PATTERN = /no gitlab instances have been authenticated with glab/iu;
+
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(
     Schema.Struct({ title: Schema.String, description: Schema.NullOr(Schema.String) }),
@@ -82,9 +85,14 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
 
 function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
   const host = input.context.provider.name.toLowerCase();
-  const authenticated = parseGitLabAuthStatusHosts(combinedAuthOutput(input.auth)).some(
-    (entry) => entry.account !== null && entry.host === host,
-  );
+  const output = combinedAuthOutput(input.auth);
+  const hosts = parseGitLabAuthStatusHosts(output);
+  // Output that names no host and is not glab's never-logged-in answer (a config glab could not
+  // read) says nothing about this one.
+  if (hosts.length === 0) {
+    return NO_GITLAB_LOGIN_PATTERN.test(output) ? null : undefined;
+  }
+  const authenticated = hosts.some((entry) => entry.account !== null && entry.host === host);
 
   if (!authenticated) {
     return null;

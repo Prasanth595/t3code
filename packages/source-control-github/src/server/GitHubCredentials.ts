@@ -38,7 +38,7 @@ export interface GitHubCredential {
 /** Nothing in the environment, and no `gh` on PATH to ask. */
 export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingError>()(
   "GitHubCliMissingError",
-  { host: Schema.String },
+  { host: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return `No GitHub credential for ${this.host}: set GH_TOKEN, or install the GitHub CLI and run \`gh auth login\`.`;
@@ -48,7 +48,12 @@ export class GitHubCliMissingError extends Schema.TaggedError<GitHubCliMissingEr
 /** `gh` is installed but holds no login for the host, or not the account chosen in Settings. */
 export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedInError>()(
   "GitHubNotSignedInError",
-  { host: Schema.String, account: Schema.optional(Schema.String) },
+  {
+    host: Schema.String,
+    account: Schema.optional(Schema.String),
+    /** The `gh auth token` exit, when gh exited non-zero. */
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {
   override get message(): string {
     return this.account === undefined
@@ -167,10 +172,14 @@ export const make = Effect.gen(function* () {
           error._tag === "VcsProcessSpawnError" &&
           error.cause instanceof PlatformError.PlatformError &&
           error.cause.reason._tag === "NotFound"
-            ? new GitHubCliMissingError({ host })
+            ? new GitHubCliMissingError({ host, cause: error })
             : // gh exits non-zero with "no oauth token" when it has no login for the host.
               error._tag === "VcsProcessExitError"
-              ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
+              ? new GitHubNotSignedInError({
+                  host,
+                  ...(account === undefined ? {} : { account }),
+                  cause: error,
+                })
               : new GitHubCliFailedError({ host, cause: error }),
         ),
         Effect.map((output) => output.stdout.trim()),

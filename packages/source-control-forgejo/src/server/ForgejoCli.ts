@@ -13,6 +13,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
+import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
@@ -45,8 +46,10 @@ export const ForgejoLoginSchema = Schema.Struct({
   default: Schema.String,
 });
 
+const decodeForgejoLogins = decodeJsonResult(Schema.Array(ForgejoLoginSchema));
+
 export function parseForgejoLogins(raw: string) {
-  const decoded = decodeJsonResult(Schema.Array(ForgejoLoginSchema))(raw);
+  const decoded = decodeForgejoLogins(raw);
   return Result.isSuccess(decoded) ? decoded.success : [];
 }
 
@@ -230,7 +233,8 @@ export const make = Effect.gen(function* () {
             new ForgejoCliError({
               command: input.command ?? "tea",
               cwd: input.cwd,
-              ...(input.command === "fj" ? {} : { cause }),
+              // fj keeps a spawn failure's cause, which tells a missing fj from one that cannot run.
+              ...(input.command === "fj" && cause._tag !== "VcsProcessSpawnError" ? {} : { cause }),
               ...(cause._tag === "VcsProcessSpawnError"
                 ? { reason: "missing-cli" as const }
                 : cause._tag === "VcsProcessExitError" && cause.failureKind === "authentication"
@@ -324,15 +328,35 @@ export const make = Effect.gen(function* () {
         const available = yield* execute({ command: "fj", cwd: input.cwd, args: ["version"] }).pipe(
           Effect.result,
         );
-        if (Result.isFailure(available) && available.failure.reason === "missing-cli") return [];
-        return yield* keys.failure;
+        if (Result.isFailure(available) && isMissingExecutable(available.failure.cause)) return [];
+        // An fj that is installed but cannot run here fails as `missing-cli`, like its commands.
+        return yield* Result.isFailure(available) && available.failure.reason === "missing-cli"
+          ? available.failure
+          : keys.failure;
       }
       return publicLogins(keys.success, input.remoteUrl);
     }
-    return parseForgejoLogins(
+    const logins = decodeForgejoLogins(
       (yield* execute({ cwd: input.cwd, args: ["login", "list", "--output", "json"] })).stdout,
     );
+    if (Result.isFailure(logins))
+      return yield* new ForgejoCliError({
+        command: "tea",
+        cwd: input.cwd,
+        reason: "invalid-response",
+        detail: "tea returned an invalid login list.",
+      });
+    return logins.success;
   });
+
+  /** The tea fallback reads an fj that cannot run, or an invalid tea list, as holding no login. */
+  const loginsOrNone = (input: Parameters<typeof listLogins>[0]) =>
+    listLogins(input).pipe(
+      Effect.catchIf(
+        (error) => error.reason === (input.command === "fj" ? "missing-cli" : "invalid-response"),
+        (): Effect.Effect<ReturnType<typeof parseForgejoLogins>> => Effect.succeed([]),
+      ),
+    );
 
   const requestFj = Effect.fn("ForgejoCli.requestFj")(
     function* (input: {
@@ -451,7 +475,7 @@ export const make = Effect.gen(function* () {
   const getAccount: NonNullable<ForgejoCli["Service"]["getAccount"]> = Effect.fn(
     "ForgejoCli.getAccount",
   )(function* (input) {
-    const logins = yield* listLogins({ cwd: input.cwd, command: "fj", remoteUrl: input.baseUrl });
+    const logins = yield* loginsOrNone({ cwd: input.cwd, command: "fj", remoteUrl: input.baseUrl });
     const login = logins.find(
       (item) => item.url.replace(/\/+$/, "") === input.baseUrl.replace(/\/+$/, ""),
     );
@@ -548,7 +572,7 @@ export const make = Effect.gen(function* () {
         path: remote?.path ?? "",
       };
     const schemeRemoteUrl = remote?.ssh ? input.context?.provider.baseUrl : remoteUrl;
-    const fjLogins = yield* listLogins({
+    const fjLogins = yield* loginsOrNone({
       cwd: input.cwd,
       command: "fj",
       ...(schemeRemoteUrl ? { remoteUrl: schemeRemoteUrl } : {}),
@@ -591,7 +615,7 @@ export const make = Effect.gen(function* () {
     }
     if (!login) {
       command = "tea";
-      login = selectLogin(yield* listLogins({ cwd: input.cwd, command: "tea" }));
+      login = selectLogin(yield* loginsOrNone({ cwd: input.cwd, command: "tea" }));
     }
     if (!login)
       return yield* new ForgejoCliError({

@@ -8,15 +8,12 @@ import {
   VcsProcessSpawnError,
   type SourceControlProviderAuth,
   type SourceControlProviderDiscoveryItem,
-  type SourceControlProviderError,
   type SourceControlProviderInfo,
   type SourceControlProviderKind,
-  type VcsError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
@@ -48,9 +45,10 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly remoteRefinementArgs?: ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
+  /** Null when the CLI's output answers no for the remote, undefined when it does not answer. */
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
-  ) => SourceControlProviderInfo | null;
+  ) => SourceControlProviderInfo | null | undefined;
 };
 
 export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
@@ -61,11 +59,11 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
   readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
-  /** Fails when the integration could not answer for this checkout, as opposed to answering no. */
+  /** Unsettled when a command could not answer for this checkout, as opposed to answering no. */
   readonly refineUnknownRemote: (input: {
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext;
-  }) => Effect.Effect<SourceControlProviderInfo | null, SourceControlProviderError>;
+  }) => Effect.Effect<UnknownRemoteVerdict>;
 };
 
 export type SourceControlProviderDiscoverySpec =
@@ -336,13 +334,12 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
   }): Effect.fn.Return<UnknownRemoteVerdict> {
     const context = input.context;
 
-    const ask = (
-      spec: SourceControlProviderDiscoverySpec,
-    ): Effect.Effect<SourceControlProviderInfo | null, SourceControlProviderError | VcsError> => {
+    const ask = (spec: SourceControlProviderDiscoverySpec): Effect.Effect<UnknownRemoteVerdict> => {
       if (spec.type === "managed-cli") {
         return spec.refineUnknownRemote({ cwd: input.cwd, context });
       }
-      if (!isCliRemoteRefinementSpec(spec)) return Effect.succeed(null);
+      if (!isCliRemoteRefinementSpec(spec))
+        return Effect.succeed({ provider: null, settled: true });
       return input.process
         .run({
           operation: "source-control.discovery.refine-unknown-remote",
@@ -355,24 +352,28 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
           appendTruncationMarker: true,
         })
         .pipe(
-          Effect.map((auth) =>
-            spec.refineUnknownRemote({
+          Effect.map((auth) => {
+            const provider = spec.refineUnknownRemote({
               cwd: input.cwd,
               context,
               auth,
-            }),
-          ),
+            });
+            return { provider: provider ?? null, settled: provider !== undefined };
+          }),
           // A CLI that is not installed answers no for every checkout.
-          Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)),
+          Effect.catchIf(isMissingExecutable, () =>
+            Effect.succeed({ provider: null, settled: true }),
+          ),
+          Effect.orElseSucceed(() => ({ provider: null, settled: false })),
         );
     };
-    const answers = yield* Effect.forEach(input.specs, (spec) => Effect.result(ask(spec)));
+    const verdicts = yield* Effect.forEach(input.specs, ask);
     // The first claim wins. It is settled only if every integration before it answered, since one
     // that could not ask might have claimed first.
     let settled = true;
-    for (const answer of answers) {
-      if (Result.isFailure(answer)) settled = false;
-      else if (answer.success !== null) return { provider: answer.success, settled };
+    for (const verdict of verdicts) {
+      settled &&= verdict.settled;
+      if (verdict.provider !== null) return { provider: verdict.provider, settled };
     }
     return { provider: null, settled };
   },
