@@ -84,6 +84,9 @@ export function FloatingWorkingControl(props: {
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
   const [agentsWidth, setAgentsWidth] = useState(0);
+  const [stopWidth, setStopWidth] = useState(0);
+  const backgroundStop =
+    props.status?.kind === "background" && props.status.onStop !== null ? props.status : null;
   const hasQueue = props.queuedCount > 0;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
@@ -98,6 +101,7 @@ export function FloatingWorkingControl(props: {
       32 -
       (hasQueue ? queueWidth : 0) -
       (hasAgents ? agentsWidth : 0) -
+      (backgroundStop !== null ? stopWidth : 0) -
       (hasPreview ? previewWidth : 0),
   );
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
@@ -164,7 +168,8 @@ export function FloatingWorkingControl(props: {
   // The queue, agents, questions, and reconnect labels have separate tap targets.
   const statusInteractive =
     props.status?.kind === "connection" || props.status?.kind === "child-input";
-  const capsuleInteractive = statusInteractive || hasQueue || hasAgents || hasPreview;
+  const capsuleInteractive =
+    statusInteractive || backgroundStop !== null || hasQueue || hasAgents || hasPreview;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
@@ -195,6 +200,27 @@ export function FloatingWorkingControl(props: {
   const capsuleContent = (
     <View className="flex-row items-center">
       {statusContent}
+      {backgroundStop !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Stop background work"
+          accessibilityState={{ disabled: backgroundStop.stopping }}
+          disabled={backgroundStop.stopping}
+          onPress={backgroundStop.onStop ?? undefined}
+          onLayout={(event) => setStopWidth(event.nativeEvent.layout.width)}
+          className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
+        >
+          <View className="mr-1 h-4 w-px bg-border" />
+          {backgroundStop.stopping ? (
+            <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+          ) : (
+            <SymbolView name="stop.fill" size={12} tintColorClassName="accent-foreground-muted" />
+          )}
+          <Text className="font-t3-medium text-xs" numberOfLines={1}>
+            {backgroundStop.stopping ? "Stopping" : "Stop"}
+          </Text>
+        </Pressable>
+      ) : null}
       {hasPreview ? (
         <View
           className="h-11 flex-row items-center"

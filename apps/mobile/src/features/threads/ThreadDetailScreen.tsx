@@ -225,6 +225,8 @@ export interface ThreadDetailScreenProps {
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
+  /** Stops background work left running after the turn settled. Null without operate access. */
+  readonly onStopBackgroundWork: (() => Promise<void>) | null;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
   readonly onReconnectEnvironment: () => void;
   /** Whether the model picker may offer providers other than this thread's. */
@@ -490,6 +492,25 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const pendingBackgroundWork = presentPendingBackgroundWork(
     props.selectedThread.pendingBackgroundTasks,
   );
+  const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
+  const stopBackgroundWork = props.onStopBackgroundWork;
+  const handleStopBackgroundWork = useMemo(
+    () =>
+      stopBackgroundWork === null
+        ? null
+        : () => {
+            void Haptics.selectionAsync();
+            setStoppingBackgroundWorkKey(selectedThreadKey);
+            // Acceptance does not confirm termination, so allow a retry once
+            // the request settles; the pill disappears when the work does.
+            void stopBackgroundWork().finally(() =>
+              setStoppingBackgroundWorkKey((current) =>
+                current === selectedThreadKey ? null : current,
+              ),
+            );
+          },
+    [selectedThreadKey, stopBackgroundWork],
+  );
   const floatingStatus = ((): FloatingWorkingStatus | null => {
     const connectionStatus = connectionFloatingStatus({
       connectionError: props.connectionError,
@@ -549,6 +570,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           .map((item) => item.label)
           .join(", ")}`,
         waiting: pendingBackgroundWork.waiting,
+        onStop: handleStopBackgroundWork,
+        stopping: stoppingBackgroundWorkKey === selectedThreadKey,
       };
     }
     if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {

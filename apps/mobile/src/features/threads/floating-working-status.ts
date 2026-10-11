@@ -22,6 +22,9 @@ export type FloatingWorkingStatus =
       readonly label: string;
       readonly accessibilityLabel: string;
       readonly waiting: boolean;
+      // Null when the viewer cannot operate the thread.
+      readonly onStop: (() => void) | null;
+      readonly stopping: boolean;
     }
   // A native /goal on an idle thread: paused, blocked, complete, or set.
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
