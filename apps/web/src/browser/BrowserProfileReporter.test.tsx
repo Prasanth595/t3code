@@ -86,6 +86,31 @@ it("keeps an exhausted environment capped when another environment triggers retr
   expect(callsFor("two")).toHaveLength(4);
 });
 
+it("waits out each failed report's retry delay through unrelated effect reruns", async () => {
+  const callsFor = (id: string) =>
+    state.report.mock.calls.filter(([input]) => input.environmentId === id);
+  await mount();
+  expect(callsFor("one")).toHaveLength(1);
+
+  // Churn before the first retry is due must not resend.
+  await act(async () => vi.advanceTimersByTimeAsync(4_000));
+  state.connected = ["one", "two"];
+  await refresh();
+  expect(callsFor("one")).toHaveLength(1);
+  expect(callsFor("two")).toHaveLength(1);
+
+  // Environment one's timer sweeps, but two's retry is not due until 9s.
+  await act(async () => vi.advanceTimersByTimeAsync(1_000));
+  expect(callsFor("one")).toHaveLength(2);
+  expect(callsFor("two")).toHaveLength(1);
+  state.connected = ["one", "two"];
+  await refresh();
+  expect(callsFor("two")).toHaveLength(1);
+
+  await act(async () => vi.advanceTimersByTimeAsync(4_000));
+  expect(callsFor("two")).toHaveLength(2);
+});
+
 it("gives changed profile settings a fresh retry budget", async () => {
   await mount();
   await exhaustRetries();
