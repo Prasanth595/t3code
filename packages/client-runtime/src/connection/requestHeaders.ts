@@ -23,8 +23,8 @@ export const CLOUDFLARE_ACCESS_MESSAGE =
   "This server is behind Cloudflare Access. Add a service token under Request headers.";
 
 export const MAX_REQUEST_HEADERS = 16;
-export const MAX_REQUEST_HEADER_NAME_LENGTH = 128;
-export const MAX_REQUEST_HEADER_VALUE_LENGTH = 4096;
+const MAX_REQUEST_HEADER_NAME_LENGTH = 128;
+const MAX_REQUEST_HEADER_VALUE_LENGTH = 4096;
 
 // The browser or the transport owns these, or they carry the app's own credentials.
 const FORBIDDEN_REQUEST_HEADERS: ReadonlySet<string> = new Set([

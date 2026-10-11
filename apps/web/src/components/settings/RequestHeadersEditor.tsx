@@ -91,7 +91,7 @@ function isHeaderName(header: RequestHeader, name: string): boolean {
   return header.name.toLowerCase() === name.toLowerCase();
 }
 
-export function requestHeadersToForm(headers: ReadonlyArray<RequestHeader>): RequestHeadersForm {
+function requestHeadersToForm(headers: ReadonlyArray<RequestHeader>): RequestHeadersForm {
   const isPreset = (header: RequestHeader) =>
     isHeaderName(header, CLOUDFLARE_ACCESS_CLIENT_ID_HEADER) ||
     isHeaderName(header, CLOUDFLARE_ACCESS_CLIENT_SECRET_HEADER);
