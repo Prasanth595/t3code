@@ -2,6 +2,7 @@ import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
 import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { setCredentialedSiblingOrigins } from "@t3tools/client-runtime/rpc/siblingCredentials";
+import { useSiblingEnvironmentAutoPair } from "../connection/siblingEnvironments";
 import {
   Outlet,
   Link,
@@ -509,6 +510,8 @@ function EventRouter({
   useEffect(() => {
     setCredentialedSiblingOrigins(trustedBrowserOrigins ?? []);
   }, [trustedBrowserOrigins]);
+  // Runs after the effect above, so pairing requests already send sibling cookies.
+  useSiblingEnvironmentAutoPair();
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const skipInitialBootstrapNavigationRef = useRef(skipInitialBootstrapNavigation);

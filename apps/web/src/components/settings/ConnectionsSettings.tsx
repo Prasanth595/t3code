@@ -184,6 +184,7 @@ import {
   saveRequestHeaders as saveRequestHeadersAtom,
 } from "~/connection/onboarding";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
+import { useSiblingSignInNeeded } from "~/connection/siblingEnvironments";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -2060,6 +2061,29 @@ function CloudLinkRow({
     );
   }
   return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
+}
+
+// Fork: trusted siblings that could not pair yet, most often because the
+// browser has no Cloudflare Access cookie for them. Opening one signs in;
+// the page retries when it gets focus again.
+function SiblingSignInRows() {
+  const origins = useSiblingSignInNeeded();
+  return origins.map((origin) => (
+    <SettingsRow
+      key={origin}
+      title={`Sign in at ${origin}`}
+      description="Open it once to sign in with Cloudflare Access, then come back to this tab."
+      control={
+        <Button
+          size="xs"
+          variant="outline"
+          render={<a href={origin} target="_blank" rel="noreferrer" />}
+        >
+          Open
+        </Button>
+      }
+    />
+  ));
 }
 
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
@@ -4489,6 +4513,7 @@ export function ConnectionsSettings() {
             }}
           />
         ))}
+        <SiblingSignInRows />
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}
