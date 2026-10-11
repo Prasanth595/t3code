@@ -381,6 +381,29 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("never sends the HTTP credential while an operator stdio wrapper is set", () =>
+    Effect.gen(function* () {
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        browserToolsAvailable: true,
+        stdioWrapper: { command: "/opt/mcp-wrapper", args: [] },
+      });
+      for (const nativeId of [undefined, "saved-native-session"]) {
+        // Without sessionMcp the host would be refused if MCP were still wanted.
+        const fake = yield* makeFakeMuse();
+        yield* makeHarness(fake, INSTANCE_ID, nativeId);
+        const call = yield* fake.takeCall(nativeId ? "session/resume" : "session/start");
+        assert.isUndefined(call.params.config);
+        assert.notInclude(JSON.stringify(fake.calls), "thread-scoped-test-token");
+      }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("rejects a host without session MCP support before opening a native session", () =>
     Effect.gen(function* () {
       yield* (yield* McpProviderSessions.McpProviderSessions).set({

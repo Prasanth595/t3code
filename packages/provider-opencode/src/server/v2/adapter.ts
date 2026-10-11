@@ -75,6 +75,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as OpenCode2Client from "./OpenCode2Client.ts";
 import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
@@ -3390,16 +3391,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // T3's tools are an addition: a server that cannot add them still runs the turn.
       if (wanted !== undefined && state.mcp === undefined) {
+        const stdio = McpProviderSession.t3McpStdioLaunch(mcpSession!);
         const added = yield* client.mcp
           .add({
             server: name,
             location: { directory },
-            config: new Mcp.RemoteConfig({
-              type: "remote",
-              url: mcpSession!.endpoint,
-              headers: { Authorization: wanted.credential },
-              oauth: false,
-            }),
+            config:
+              stdio === undefined
+                ? new Mcp.RemoteConfig({
+                    type: "remote",
+                    url: mcpSession!.endpoint,
+                    headers: { Authorization: wanted.credential },
+                    oauth: false,
+                  })
+                : new Mcp.LocalConfig({
+                    type: "local",
+                    command: [stdio.command, ...stdio.args],
+                    environment: { ...stdio.env },
+                  }),
           })
           .pipe(
             Effect.timeout(INVENTORY_TIMEOUT),

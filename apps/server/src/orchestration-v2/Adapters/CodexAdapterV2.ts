@@ -1317,16 +1317,20 @@ export function codexThreadRuntimeParams(input: {
       ...CODEX_THREAD_CONFIG,
       ...(mcpSession === undefined
         ? {}
-        : {
-            mcp_servers: {
-              "t3-code": {
-                url: mcpSession.endpoint,
-                http_headers: {
-                  Authorization: mcpSession.authorizationHeader,
-                },
-              },
-            },
-          }),
+        : { mcp_servers: { "t3-code": codexT3McpServer(mcpSession) } }),
+    },
+  };
+}
+
+function codexT3McpServer(session: McpProviderSession.McpProviderSessionConfig): Schema.Json {
+  const stdio = McpProviderSession.t3McpStdioLaunch(session);
+  if (stdio !== undefined) {
+    return { command: stdio.command, args: [...stdio.args], env: { ...stdio.env } };
+  }
+  return {
+    url: session.endpoint,
+    http_headers: {
+      Authorization: session.authorizationHeader,
     },
   };
 }

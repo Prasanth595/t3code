@@ -21,6 +21,7 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
+import { McpStdioWrapperConfigError } from "../mcp/McpStdioWrapper.ts";
 import { resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
@@ -226,6 +227,53 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       expect(serialized).not.toContain(secret);
       expect(desktop.devAuthToken).toBeUndefined();
       expect(staticWeb.devAuthToken).toBeUndefined();
+    }),
+  );
+
+  it.effect("reads and validates the MCP stdio wrapper from effect/config", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-cli-mcp-wrapper-" });
+      const wrapper = join(baseDir, "mcp-wrapper");
+      yield* fs.writeFileString(wrapper, "#!/bin/sh\n");
+      yield* fs.chmod(wrapper, 0o700);
+      const flags = {
+        mode: Option.some("web" as const),
+        port: Option.some(8788),
+        host: Option.none<string>(),
+        baseDir: Option.some(baseDir),
+        cwd: Option.none<string>(),
+        devUrl: Option.some(new URL("http://127.0.0.1:5173")),
+        noBrowser: Option.none<boolean>(),
+        bootstrapFd: Option.none<number>(),
+        autoBootstrapProjectFromCwd: Option.none<boolean>(),
+        logWebSocketEvents: Option.none<boolean>(),
+        tailscaleServeEnabled: Option.none<boolean>(),
+        tailscaleServePort: Option.none<number>(),
+      };
+      const resolveWith = (value: string) =>
+        resolveServerConfig(flags, Option.none()).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              ConfigProvider.layer(
+                ConfigProvider.fromEnv({ env: { T3CODE_MCP_STDIO_WRAPPER: value } }),
+              ),
+              NetService.layer,
+            ),
+          ),
+        );
+
+      const resolved = yield* resolveWith(`${wrapper} --audit "two words"`);
+      expect(resolved.mcpStdioWrapper).toEqual({
+        command: wrapper,
+        args: ["--audit", "two words"],
+      });
+      expect((yield* resolveWith("")).mcpStdioWrapper).toBeUndefined();
+
+      const error = yield* resolveWith("mcp-wrapper --audit").pipe(Effect.flip);
+      expect(error).toBeInstanceOf(McpStdioWrapperConfigError);
+      expect(error).toMatchObject({ reason: "relative" });
     }),
   );
 

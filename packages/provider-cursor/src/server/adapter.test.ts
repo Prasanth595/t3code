@@ -911,6 +911,35 @@ describe("CursorAdapterV2", () => {
     const logged = JSON.stringify(CursorAgentSdk.loggedCursorAgentOptions(options));
     assert.notInclude(logged, "secret-cursor-api-key");
     assert.notInclude(logged, "secret-cursor-mcp-token");
+
+    const wrapped = { ...mcpSession, stdioWrapper: { command: "/opt/mcp-wrapper", args: [] } };
+    assert.deepEqual(cursorMcpServers(wrapped), {
+      "t3-code": {
+        type: "stdio",
+        command: "/opt/mcp-wrapper",
+        args: [],
+        env: {
+          T3_MCP_URL: "http://127.0.0.1:43123/mcp",
+          T3_MCP_AUTHORIZATION: "Bearer secret-cursor-mcp-token",
+        },
+      },
+    });
+    const wrappedLog = JSON.stringify(
+      CursorAgentSdk.loggedCursorAgentOptions(
+        makeCursorAgentOptions({
+          apiKey: "secret-cursor-api-key",
+          modelSelection: { instanceId: ProviderInstanceId.make("cursor"), model: "composer-2.5" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: "/workspace",
+          },
+          threadId,
+          mcpSession: wrapped,
+        }),
+      ),
+    );
+    assert.notInclude(wrappedLog, "secret-cursor-mcp-token");
   });
 
   it("recognizes direct and SDK-wrapped abort failures as cancellation", () => {

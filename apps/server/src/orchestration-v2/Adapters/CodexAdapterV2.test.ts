@@ -675,6 +675,26 @@ describe("CodexAdapterV2 process spawning", () => {
         },
       },
     );
+
+    // An operator wrapper replaces the HTTP entry; the credential stays out of argv.
+    assert.deepEqual(
+      CodexAdapterV2.codexThreadRuntimeParams({
+        mcpSession: {
+          ...mcpSession,
+          stdioWrapper: { command: "/opt/mcp-wrapper", args: ["--audit"] },
+        },
+      }).config.mcp_servers,
+      {
+        "t3-code": {
+          command: "/opt/mcp-wrapper",
+          args: ["--audit"],
+          env: {
+            T3_MCP_URL: "http://127.0.0.1:43123/mcp",
+            T3_MCP_AUTHORIZATION: "Bearer secret-codex-token",
+          },
+        },
+      },
+    );
   });
 
   it.effect("resolves Windows command shims through the shared spawn policy", () =>

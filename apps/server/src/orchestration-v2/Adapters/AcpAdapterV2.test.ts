@@ -764,6 +764,69 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect("launches the operator's stdio wrapper in place of every direct MCP route", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const instanceId = ProviderInstanceId.make("acp-test-mcp-stdio-wrapper");
+      const threadId = ThreadId.make("thread-acp-mcp-stdio-wrapper");
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-acp-mcp-stdio-wrapper"),
+        threadId,
+        providerSessionId: "mcp-session-acp-mcp-stdio-wrapper",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer acp-wrapper-token",
+        browserToolsAvailable: false,
+        stdioWrapper: { command: "/opt/mcp-wrapper", args: ["--audit"] },
+      });
+
+      let runtimeInput: AcpAdapterV2RuntimeInput | undefined;
+      const makeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (input) =>
+            Effect.sync(() => {
+              runtimeInput = input;
+            }).pipe(Effect.andThen(makeRuntime(input))),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-mcp-stdio-wrapper"),
+        modelSelection: { instanceId, model: "default" },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+
+      assert.deepEqual(runtimeInput?.mcpServers, [
+        {
+          name: "t3-code",
+          command: "/opt/mcp-wrapper",
+          args: ["--audit"],
+          env: [
+            { name: "T3_MCP_URL", value: "http://127.0.0.1:43123/mcp" },
+            { name: "T3_MCP_AUTHORIZATION", value: "Bearer acp-wrapper-token" },
+          ],
+        },
+      ]);
+      // Neither the MCP-over-ACP bridge nor the terminal fallback may reach the
+      // endpoint around the wrapper.
+      assert.deepEqual(runtimeInput?.acpMcpServers, []);
+      assert.isUndefined(runtimeInput?.processEnvironment);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.live("refreshes ACP prompt instructions when the interaction mode changes", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;

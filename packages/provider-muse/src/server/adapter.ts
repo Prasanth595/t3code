@@ -1493,7 +1493,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         let missingNativeSession = false;
         return yield* Effect.gen(function* () {
           nativeSessionId = requestedId ?? host.connection.mintCommandId();
-          const mcpSession = yield* mcpSessions.read(args.threadId);
+          // Muse only reaches T3's tools over HTTP.
+          const mcpSession = McpProviderSession.httpOnlyMcpSession(
+            yield* mcpSessions.read(args.threadId),
+          );
           if (mcpSession && !host.initializeResult.grantedCapabilities.includes("sessionMcp"))
             return yield* protocolError(
               "Update Muse Code to a version that supports session MCP servers",

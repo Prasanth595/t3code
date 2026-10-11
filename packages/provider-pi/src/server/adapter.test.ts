@@ -1333,6 +1333,30 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("keeps the HTTP credential from Pi while an operator stdio wrapper is set", () =>
+    Effect.gen(function* () {
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-pi-mcp"),
+        threadId: THREAD_ID,
+        providerSessionId: "mcp-session-pi",
+        providerInstanceId: PI_INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43123/mcp",
+        authorizationHeader: "Bearer secret-pi-token",
+        browserToolsAvailable: true,
+        stdioWrapper: { command: "/opt/mcp-wrapper", args: [] },
+      });
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake);
+      const spawn = fake.lastSpawn();
+      // The extension still carries Pi's permission hook.
+      assert.isTrue(spawn.args.includes("--extension"));
+      assert.equal(spawn.env.T3_PI_RUNTIME_MODE, "full-access");
+      assert.isUndefined(spawn.env.T3_MCP_URL);
+      assert.isUndefined(spawn.env.T3_MCP_BEARER_TOKEN);
+      assert.notInclude(JSON.stringify(spawn), "secret-pi-token");
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("rejects a resume while a turn is active", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakePi;

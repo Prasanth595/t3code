@@ -54,6 +54,27 @@ The MCP HTTP server resolves the bearer token and supplies the resulting
 `McpInvocationScope` to tool handlers. Orchestration handlers additionally
 check the `orchestration` capability before reading or mutating state.
 
+### Operator stdio wrapper
+
+`T3CODE_MCP_STDIO_WRAPPER` names an absolute executable path plus fixed
+arguments, split like provider launch arguments and never run through a shell.
+When it is set, every provider that can launch a stdio MCP server (Codex,
+Claude, Cursor, OpenCode, OpenCode 2, and the ACP adapters) runs that program
+as `t3-code` instead of connecting to the endpoint. The program receives the
+endpoint in `T3_MCP_URL` and the full `Authorization` value in
+`T3_MCP_AUTHORIZATION`; neither goes on its command line. The ACP
+MCP-over-ACP bridge and terminal fallback are not offered, since both talk to
+the endpoint directly. Pi and Muse only reach `t3-code` over HTTP, so they run
+without T3's tools while the wrapper is set, as an external OpenCode server
+already does.
+
+The value is checked once at startup. An empty value counts as unset; a value
+that names no command, a relative path, or a path that is not an executable
+file stops the server. The wrapper routes
+traffic; it is not an isolation boundary. An agent running as the same OS user
+can still reach the endpoint directly, so enforcing the wrapper needs process or
+network separation outside T3.
+
 ## Provider Injection
 
 ### Codex V2

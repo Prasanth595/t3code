@@ -693,6 +693,24 @@ function acpMcpContext(
   // every ACP session gets the `t3 acp-mcp-bridge` stdio server, which
   // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
   // travels via environment variables, never the command line.
+  //
+  // An operator's stdio wrapper takes the bridge's place. The MCP-over-ACP
+  // bridge and the terminal fallback both reach the endpoint directly, so
+  // neither is offered while it is configured.
+  const stdio = McpProviderSession.t3McpStdioLaunch(session);
+  if (stdio !== undefined) {
+    return {
+      servers: [
+        {
+          name: "t3-code",
+          command: stdio.command,
+          args: [...stdio.args],
+          env: Object.entries(stdio.env).map(([name, value]) => ({ name, value })),
+        },
+      ],
+      acpServers: [],
+    };
+  }
   return {
     servers: [
       {

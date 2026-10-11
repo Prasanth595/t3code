@@ -683,6 +683,50 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.notEqual(rotatedKey, initialKey);
   });
 
+  it("launches the operator's stdio wrapper with the credential in its environment", () => {
+    const threadId = ThreadId.make("thread-claude-mcp-stdio-wrapper");
+    const withWrapper = (authorizationHeader?: string) => ({
+      ...mcpSessionFor(threadId, authorizationHeader),
+      stdioWrapper: { command: "/opt/mcp-wrapper", args: ["--audit", "two words"] },
+    });
+    const overrides = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: withWrapper(),
+      readOnlySandbox: false,
+    });
+
+    assert.deepEqual(overrides, {
+      allowedTools: [ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD],
+      mcpServers: {
+        "t3-code": {
+          type: "stdio",
+          command: "/opt/mcp-wrapper",
+          args: ["--audit", "two words"],
+          env: {
+            T3_MCP_URL: "http://127.0.0.1:43123/mcp",
+            T3_MCP_AUTHORIZATION: "Bearer secret-claude-token",
+          },
+          timeout: ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+        },
+      },
+    });
+
+    const queryPolicy = ClaudeAdapterV2.claudeRuntimeQueryPolicyForRuntimePolicy(
+      ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: "/workspace",
+      }),
+    );
+    const rotated = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: withWrapper("Bearer rotated-claude-token"),
+      readOnlySandbox: false,
+    });
+    assert.notEqual(
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, rotated),
+      ClaudeAdapterV2.claudeEffectiveQueryPolicyKey(queryPolicy, overrides),
+    );
+  });
+
   it("matches the read-only allowlist to the orchestrator toolkit annotations", () => {
     const readOnlyToolNames = [
       ...Object.values(OrchestratorToolkit.tools),

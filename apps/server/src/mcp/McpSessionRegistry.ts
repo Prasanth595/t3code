@@ -8,6 +8,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
@@ -63,6 +64,8 @@ interface RegistryState {
 export interface McpSessionRegistryOptions {
   readonly livenessWindowMs?: number;
   readonly now?: () => number;
+  /** Handed to every issued session so providers launch it as `t3-code`. */
+  readonly stdioWrapper?: McpProviderSession.McpStdioWrapper | undefined;
 }
 
 /**
@@ -160,6 +163,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           authorizationHeader: `Bearer ${rawToken}`,
           browserToolsAvailable: scope.capabilities.has("preview"),
           capabilities: scope.capabilities,
+          ...(options.stdioWrapper === undefined ? {} : { stdioWrapper: options.stdioWrapper }),
         },
       };
     },
@@ -221,7 +225,8 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 let activeMcpSessionRegistry: McpSessionRegistryShape | undefined;
 
 const make = Effect.acquireRelease(
-  makeWithOptions().pipe(
+  ServerConfig.ServerConfig.pipe(
+    Effect.flatMap((config) => makeWithOptions({ stdioWrapper: config.mcpStdioWrapper })),
     Effect.tap((registry) =>
       Effect.sync(() => {
         activeMcpSessionRegistry = registry;

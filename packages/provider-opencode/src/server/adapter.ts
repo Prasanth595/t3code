@@ -56,6 +56,7 @@ import * as Stream from "effect/Stream";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
+import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
@@ -972,15 +973,23 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
         const hasT3Mcp = mcpSession !== undefined && !connection.external;
         const orchestrationSystemPrompt = t3OrchestrationSystemPrompt(hasT3Mcp);
         if (hasT3Mcp) {
+          const stdio = McpProviderSession.t3McpStdioLaunch(mcpSession);
           yield* OpenCodeRuntime.runOpenCodeSdk("mcp.add", () =>
             client.mcp.add({
               name: "t3-code",
-              config: {
-                type: "remote",
-                url: mcpSession.endpoint,
-                headers: { Authorization: mcpSession.authorizationHeader },
-                oauth: false,
-              },
+              config:
+                stdio === undefined
+                  ? {
+                      type: "remote",
+                      url: mcpSession.endpoint,
+                      headers: { Authorization: mcpSession.authorizationHeader },
+                      oauth: false,
+                    }
+                  : {
+                      type: "local",
+                      command: [stdio.command, ...stdio.args],
+                      environment: { ...stdio.env },
+                    },
             }),
           );
         }

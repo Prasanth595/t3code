@@ -23,6 +23,7 @@ import * as CliError from "effect/cli/CliError";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
 import * as ServerConfig from "../config.ts";
+import { MCP_STDIO_WRAPPER_ENV, resolveMcpStdioWrapper } from "../mcp/McpStdioWrapper.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 
@@ -161,6 +162,10 @@ const EnvServerConfig = Config.all({
     Config.map(Option.getOrUndefined),
   ),
   tailscaleServePort: Config.Port("T3CODE_TAILSCALE_SERVE_PORT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  mcpStdioWrapper: Config.String(MCP_STDIO_WRAPPER_ENV).pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
@@ -439,6 +444,10 @@ export const resolveServerConfig = (
       bootstrap?.otlpLogsUrl,
       persistedObservabilitySettings.otlpLogsUrl,
     );
+    const mcpStdioWrapper =
+      env.mcpStdioWrapper === undefined
+        ? undefined
+        : yield* resolveMcpStdioWrapper(env.mcpStdioWrapper);
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
@@ -479,6 +488,7 @@ export const resolveServerConfig = (
       logWebSocketEvents,
       tailscaleServeEnabled,
       tailscaleServePort,
+      ...(mcpStdioWrapper === undefined ? {} : { mcpStdioWrapper }),
     };
 
     return config;

@@ -207,6 +207,17 @@ export function cursorMcpServers(
   if (session === undefined) {
     return undefined;
   }
+  const stdio = McpProviderSession.t3McpStdioLaunch(session);
+  if (stdio !== undefined) {
+    return {
+      "t3-code": {
+        type: "stdio",
+        command: stdio.command,
+        args: [...stdio.args],
+        env: { ...stdio.env },
+      },
+    };
+  }
   return {
     "t3-code": {
       type: "http",

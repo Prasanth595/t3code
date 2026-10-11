@@ -3442,6 +3442,48 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("registers the operator's stdio wrapper as a local MCP server", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
+        threadId,
+        providerSessionId: "mcp:opencode2-adapter",
+        providerInstanceId: instanceId,
+        endpoint: "http://127.0.0.1:3773/mcp",
+        authorizationHeader: "Bearer thread-credential",
+        browserToolsAvailable: false,
+        stdioWrapper: { command: "/opt/mcp-wrapper", args: ["--audit"] },
+      });
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
+      const server = "t3-code-thread_opencode2-adapter";
+      const { runtime, thread } = yield* resumed([
+        out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "local",
+            command: ["/opt/mcp-wrapper", "--audit"],
+            environment: {
+              T3_MCP_URL: "http://127.0.0.1:3773/mcp",
+              T3_MCP_AUTHORIZATION: "Bearer thread-credential",
+            },
+          },
+        }),
+        reply("mcp.add", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
+      ]);
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      yield* runtime.unloadThread!({ providerThread: thread });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
     Effect.gen(function* () {
       // Spelled out, this delegated thread's server name would be 120 characters.

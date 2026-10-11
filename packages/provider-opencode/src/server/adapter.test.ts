@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { OpencodeClient, ToolPart } from "@opencode-ai/sdk/v2";
 import {
   CheckpointId,
+  EnvironmentId,
   NodeId,
   ProjectId,
   ProviderInstanceId,
@@ -925,6 +926,91 @@ describe("OpenCodeAdapterV2", () => {
       Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
       Effect.scoped,
     ),
+  );
+
+  it.effect.each([
+    ["managed", false],
+    ["external", true],
+  ] as const)(
+    "registers T3's MCP server through the operator wrapper on a %s server",
+    ([_label, external]) =>
+      Effect.gen(function* () {
+        const nativeEvents = asyncEventStream();
+        const added: Array<unknown> = [];
+        const threadId = ThreadId.make(`thread-opencode-mcp-wrapper-${external}`);
+        const instanceId = ProviderInstanceId.make("opencode-mcp-wrapper");
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        yield* mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-opencode-mcp-wrapper"),
+          threadId,
+          providerSessionId: "mcp-session-opencode-wrapper",
+          providerInstanceId: instanceId,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer opencode-wrapper-token",
+          browserToolsAvailable: false,
+          stdioWrapper: { command: "/opt/mcp-wrapper", args: ["--audit"] },
+        });
+        const adapter = yield* makeOpenCodeAdapterV2({
+          instanceId,
+          settings: OPEN_CODE_TEST_SETTINGS,
+          environment: {},
+        }).pipe(
+          Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
+            connectToOpenCodeServer: () =>
+              Effect.succeed({ url: "http://test.invalid", external, exitCode: null }),
+            createOpenCodeSdkClient: () => ({
+              event: {
+                subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+                  options.signal?.addEventListener("abort", () => nativeEvents.close(), {
+                    once: true,
+                  });
+                  return { stream: nativeEvents.stream };
+                },
+              },
+              mcp: {
+                add: async (input: unknown) => {
+                  added.push(input);
+                  return { data: true };
+                },
+              },
+            }),
+          } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
+          Effect.provideService(ProviderHost.ProviderHost, {
+            paths: { cwd: "/workspace" },
+            resolveAttachmentPath: () => null,
+          } as unknown as ProviderHost.ProviderHost["Service"]),
+        );
+        yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-opencode-mcp-wrapper"),
+          modelSelection: { instanceId, model: "anthropic/claude-sonnet", options: [] },
+          runtimePolicy: runtimePolicy("full-access", { cwd: "/workspace" }),
+        });
+
+        // An external server cannot launch a local program, and never received
+        // T3's endpoint either, so it still gets nothing.
+        assert.deepEqual(
+          added,
+          external
+            ? []
+            : [
+                {
+                  name: "t3-code",
+                  config: {
+                    type: "local",
+                    command: ["/opt/mcp-wrapper", "--audit"],
+                    environment: {
+                      T3_MCP_URL: "http://127.0.0.1:43123/mcp",
+                      T3_MCP_AUTHORIZATION: "Bearer opencode-wrapper-token",
+                    },
+                  },
+                },
+              ],
+        );
+      }).pipe(
+        Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer)),
+        Effect.scoped,
+      ),
   );
 
   it.effect("presents OpenCode MCP calls without treating remote tools as local edits", () =>

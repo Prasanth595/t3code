@@ -1,10 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type { McpStdioWrapper } from "@t3tools/provider-core/server/mcpSession";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
+import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
@@ -178,5 +181,40 @@ it.effect("does not keep credentials of other threads alive", () =>
     timestamp += 2;
 
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+it.effect("hands the startup stdio wrapper to every issued session config", () =>
+  Effect.gen(function* () {
+    const issueWith = (mcpStdioWrapper?: McpStdioWrapper) =>
+      McpSessionRegistry.McpSessionRegistry.pipe(
+        Effect.flatMap((registry) =>
+          registry.issue({
+            threadId: ThreadId.make("thread-wrapper"),
+            providerInstanceId: ProviderInstanceId.make("codex"),
+          }),
+        ),
+        Effect.map(({ config }) => config),
+        Effect.provide(McpSessionRegistry.layer),
+        Effect.provide(
+          Layer.effect(
+            ServerConfig.ServerConfig,
+            ServerConfig.ServerConfig.pipe(
+              Effect.map((config) =>
+                ServerConfig.make(
+                  mcpStdioWrapper === undefined ? config : { ...config, mcpStdioWrapper },
+                ),
+              ),
+            ),
+          ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-reg-" }))),
+        ),
+        Effect.provideService(HttpServer.HttpServer, fakeHttpServer),
+        Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
+        Effect.provide(NodeServices.layer),
+      );
+
+    const wrapper = { command: "/opt/mcp-wrapper", args: ["--audit"] };
+    expect((yield* issueWith(wrapper)).stdioWrapper).toEqual(wrapper);
+    expect("stdioWrapper" in (yield* issueWith())).toBe(false);
   }),
 );

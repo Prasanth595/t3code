@@ -1107,8 +1107,9 @@ export const CLAUDE_T3_MCP_TOOL_TIMEOUT_MS = 65 * 60 * 1_000;
 // read-only orchestrator tools so a read-only session cannot silently spawn
 // threads or scheduled tasks.
 //
-// The header carries the credential itself: the query runner sends
-// `mcpServers` over the CLI's stdin, never its argv or environment.
+// The header, or a stdio wrapper's env, carries the credential itself: the
+// query runner sends `mcpServers` over the CLI's stdin, never its argv or
+// environment.
 
 export function claudeMcpQueryOverrides(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
@@ -1125,17 +1126,27 @@ export function claudeMcpQueryOverrides(input: {
   const mcpAllowedTools = input.readOnlySandbox
     ? CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS
     : [CLAUDE_T3_MCP_TOOL_WILDCARD];
+  const stdio = McpProviderSession.t3McpStdioLaunch(session);
   return {
     allowedTools: Array.from(new Set([...(input.allowedTools ?? []), ...mcpAllowedTools])),
     mcpServers: {
-      "t3-code": {
-        type: "http",
-        url: session.endpoint,
-        headers: {
-          Authorization: session.authorizationHeader,
-        },
-        timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
-      },
+      "t3-code":
+        stdio === undefined
+          ? {
+              type: "http",
+              url: session.endpoint,
+              headers: {
+                Authorization: session.authorizationHeader,
+              },
+              timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+            }
+          : {
+              type: "stdio",
+              command: stdio.command,
+              args: [...stdio.args],
+              env: { ...stdio.env },
+              timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
+            },
     },
   };
 }
