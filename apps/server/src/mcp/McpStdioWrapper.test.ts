@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { CommandResolutionError } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -49,6 +50,25 @@ it.layer(NodeServices.layer)("resolveMcpStdioWrapper", (it) => {
       assert.equal(yield* failureOf(`${directory}/private-missing`), "notExecutable");
       assert.equal(yield* failureOf(directory), "notExecutable");
       assert.equal(yield* failureOf(file), "notExecutable");
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("retains resolution failures without exposing command arguments in the message", () =>
+    Effect.gen(function* () {
+      const { directory } = yield* makeFile("wrapper", 0o700);
+      const command = `${directory}/private-missing`;
+      const error = yield* resolveMcpStdioWrapper(`${command} --private-argument`).pipe(
+        Effect.flip,
+      );
+      assert.instanceOf(error.cause, CommandResolutionError);
+      const cause = error.cause as CommandResolutionError;
+      assert.equal(cause.command, command);
+      assert.equal(cause.reason, "not-found");
+      assert.equal(error.message, "T3CODE_MCP_STDIO_WRAPPER does not name an executable file.");
+      for (const value of ["   ", "private-relative --private-argument"]) {
+        const validation = yield* resolveMcpStdioWrapper(value).pipe(Effect.flip);
+        assert.isUndefined(validation.cause);
+      }
     }).pipe(Effect.scoped),
   );
 

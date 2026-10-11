@@ -10,7 +10,10 @@ export const MCP_STDIO_WRAPPER_ENV = "T3CODE_MCP_STDIO_WRAPPER";
 
 export class McpStdioWrapperConfigError extends Schema.TaggedError<McpStdioWrapperConfigError>()(
   "McpStdioWrapperConfigError",
-  { reason: Schema.Literals(["empty", "relative", "notExecutable"]) },
+  {
+    reason: Schema.Literals(["empty", "relative", "notExecutable"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
 ) {
   override get message(): string {
     switch (this.reason) {
@@ -42,8 +45,8 @@ export const resolveMcpStdioWrapper = Effect.fn("resolveMcpStdioWrapper")(functi
   }
   const executable = yield* resolveCommandPath(command).pipe(
     Effect.catchTags({
-      CommandResolutionError: () =>
-        Effect.fail(new McpStdioWrapperConfigError({ reason: "notExecutable" })),
+      CommandResolutionError: (cause) =>
+        Effect.fail(new McpStdioWrapperConfigError({ reason: "notExecutable", cause })),
     }),
   );
   return { command: executable, args } satisfies McpStdioWrapper;
