@@ -762,7 +762,14 @@ export const make = Effect.gen(function* () {
         ? undefined
         : renderHistory(selected.messages, selected.context);
     },
-    Effect.orElseSucceed(() => undefined),
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("GitManager.readThreadContext failed", { threadId, cause: error }).pipe(
+            Effect.as(undefined),
+          ),
+        ),
+      ),
   );
   // Best effort: a settings read failure falls back to the default location.
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
