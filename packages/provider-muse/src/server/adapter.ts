@@ -279,7 +279,11 @@ interface ChildContext {
   nextOrdinal: number;
   flushScheduled: boolean;
   status: OrchestrationV2TurnItemStatus;
+  /** True until the first transcript read settles; the result waits for it. */
+  transcriptLoading: boolean;
   lastAssistantText?: string;
+  /** The subagent's final result, once it settled. */
+  result?: string;
 }
 
 const nativeRef = (nativeId: string) => ({
@@ -693,29 +697,56 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem });
       });
       /**
+       * Shows a settled subagent's result in its child thread, unless the child's
+       * transcript already ends with it. Waits for the first transcript read so a
+       * slow read cannot show the final answer twice.
+       */
+      const publishChildResult = Effect.fnUntraced(function* (context: ChildContext) {
+        const result = context.result;
+        if (context.transcriptLoading || !result?.trim()) return;
+        if (context.lastAssistantText?.trim() === result.trim()) return;
+        yield* publishChildMessage(context, "assistant", result, "result", yield* DateTime.now);
+      });
+      /** A child session's items; fails when the host cannot address it. */
+      const readChildItems = (context: ChildContext) =>
+        request(
+          "session/read",
+          { sessionId: context.childSessionId, excludeItems: false },
+          false,
+        ).pipe(
+          Effect.flatMap((value) => decode(MuseSessionResult, value)),
+          Effect.map((result) =>
+            result.session.sessionId === context.childSessionId
+              ? (result.history?.items ?? result.history?.snapshot?.state.items ?? [])
+              : [],
+          ),
+        );
+      /** Publishes read-back child items newer than what the thread shows, then the result. */
+      const applyChildItems = (context: ChildContext, items: ReadonlyArray<MuseItem>) =>
+        Effect.gen(function* () {
+          for (const item of items) {
+            const previous = context.items.get(item.itemId);
+            if (previous && previous.revision >= item.revision) continue;
+            context.items.set(item.itemId, item);
+            yield* publishChildItem(context, item);
+          }
+          context.transcriptLoading = false;
+          yield* publishChildResult(context);
+        }).pipe(eventPermit.withPermits(1));
+      /**
        * Follows a child's own session: subscribe first so nothing is missed, then
        * read its history back. Hosts that cannot address an inline child session
        * yet (sessionNotFound) leave the prompt/result-only thread in place.
        */
       const attachChildTranscript = (context: ChildContext): Effect.Effect<void> =>
-        Effect.gen(function* () {
-          yield* request("view/subscribe", { sessionId: context.childSessionId }, false);
-          const result = yield* request(
-            "session/read",
-            { sessionId: context.childSessionId, excludeItems: false },
-            false,
-          ).pipe(Effect.flatMap((value) => decode(MuseSessionResult, value)));
-          if (result.session.sessionId !== context.childSessionId) return;
-          const items = result.history?.items ?? result.history?.snapshot?.state.items ?? [];
-          yield* Effect.gen(function* () {
-            for (const item of items) {
-              const previous = context.items.get(item.itemId);
-              if (previous && previous.revision >= item.revision) continue;
-              context.items.set(item.itemId, item);
-              yield* publishChildItem(context, item);
-            }
-          }).pipe(eventPermit.withPermits(1));
-        }).pipe(Effect.ignore, Effect.forkIn(scope), Effect.asVoid);
+        request("view/subscribe", { sessionId: context.childSessionId }, false).pipe(
+          Effect.andThen(readChildItems(context)),
+          Effect.orElseSucceed((): ReadonlyArray<MuseItem> => []),
+          Effect.flatMap((items) => applyChildItems(context, items)),
+          Effect.ignore,
+          Effect.forkIn(scope),
+          Effect.asVoid,
+        );
       /** Creates the child thread for a native subagent the first time its session id is known. */
       const ensureChildContext = Effect.fnUntraced(function* (
         scope: SubagentParentScope,
@@ -768,6 +799,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           nextOrdinal: 1,
           flushScheduled: false,
           status,
+          transcriptLoading: true,
         };
         childrenBySessionId.set(childSessionId, context);
         childrenByItemId.set(item.itemId, context);
@@ -883,14 +915,10 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         if (context) {
           if (context.status !== status) yield* publishChildRoot(context, status, time);
-          // The result is already the child's last assistant message when its
-          // transcript attached; only synthesize it when it did not.
-          const resultShown =
-            result !== null &&
-            context.lastAssistantText !== undefined &&
-            context.lastAssistantText.trim() === result.trim();
-          if (settled && result !== null && result.trim() && !resultShown)
-            yield* publishChildMessage(context, "assistant", result, "result", time);
+          if (settled && result !== null) {
+            context.result = result;
+            yield* publishChildResult(context);
+          }
         }
       });
       /** Lists running workflows and subagents on the thread, so it shows it still waits on them. */
@@ -1520,6 +1548,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         method: string,
         params: Record<string, unknown>,
       ) {
+        if (method === "view/gap") {
+          // Some child notifications were lost; read the child session back to catch up.
+          yield* readChildItems(context).pipe(
+            Effect.flatMap((items) => applyChildItems(context, items)),
+            Effect.ignore,
+            Effect.forkIn(scope),
+          );
+          return;
+        }
         if (["item/started", "item/updated", "item/completed"].includes(method)) {
           const item = (yield* decode(MuseItemEvent, params)).item;
           const previous = context.items.get(item.itemId);

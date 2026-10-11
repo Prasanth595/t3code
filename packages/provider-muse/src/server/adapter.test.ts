@@ -1270,6 +1270,105 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("shows a child's answer once when its transcript loads late, and recovers a gap", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const rootSessionId = String(
+        fake.calls.find((call) => call.method === "session/start")!.params.sessionId,
+      );
+      const childSession = { sessionId: "child-session-1", modelId: MODEL, activeTurnId: null };
+      const answer: MuseItem = {
+        itemId: "child-message",
+        kind: "agentMessage",
+        revision: 1,
+        status: "completed",
+        turnId: "child-turn",
+        text: "PROBEOK done",
+      };
+      const slowRead = pendingPromise<Record<string, unknown>>();
+      fake.queueResponse("session/read", slowRead.promise);
+      const subagentItem = (revision: number, extra: Record<string, unknown> = {}) => ({
+        itemId: "sub-1",
+        kind: "subagent",
+        revision,
+        status: "inProgress",
+        turnId: nativeId,
+        subagentId: "subagent-1",
+        childSessionId: "child-session-1",
+        objective: "Reply PROBEOK",
+        ...extra,
+      });
+      yield* fake.emit("item/started", {
+        sessionId: rootSessionId,
+        turnId: nativeId,
+        item: subagentItem(1, { controlStatus: "running" }),
+      });
+      const childThreadId = (yield* harness.takeEvent("app_thread.created")).appThread.id;
+      yield* fake.takeCall("session/read");
+      // The subagent settles while its transcript is still loading.
+      yield* fake.emit("item/updated", {
+        sessionId: rootSessionId,
+        turnId: nativeId,
+        item: subagentItem(2, {
+          controlStatus: "resultReady",
+          result: { summary: "PROBEOK done", text: "PROBEOK done" },
+        }),
+      });
+      yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.status === "completed",
+      );
+      slowRead.resolve({ session: childSession, history: { items: [answer] } });
+      yield* harness.takeEvent(
+        "message.updated",
+        (event) => event.message.threadId === childThreadId && event.message.role === "assistant",
+      );
+      // A gap on the child session reads it back and shows what was missed.
+      fake.queueResponse("session/read", {
+        session: childSession,
+        history: {
+          items: [
+            {
+              itemId: "child-tool",
+              kind: "toolCall",
+              revision: 1,
+              status: "completed",
+              turnId: "child-turn",
+              tool: "bash",
+              args: JSON.stringify({ command: "echo PROBEOK" }),
+              visibleOutput: "PROBEOK",
+            },
+            answer,
+          ] satisfies MuseItem[],
+        },
+      });
+      yield* fake.emit("view/gap", { sessionId: "child-session-1" });
+      yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) =>
+          event.turnItem.threadId === childThreadId && event.turnItem.type === "command_execution",
+      );
+      yield* fake.emit("turn/completed", {
+        sessionId: rootSessionId,
+        turnId: nativeId,
+        terminal: "completed",
+      });
+      yield* harness.takeEvent("turn.terminal");
+      const answerIds = new Set(
+        harness.allEvents.flatMap((event) =>
+          event.type === "message.updated" &&
+          event.message.threadId === childThreadId &&
+          event.message.text === "PROBEOK done"
+            ? [event.message.id]
+            : [],
+        ),
+      );
+      assert.strictEqual(answerIds.size, 1);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("keeps a prompt-and-result child thread when the child session cannot be read", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
