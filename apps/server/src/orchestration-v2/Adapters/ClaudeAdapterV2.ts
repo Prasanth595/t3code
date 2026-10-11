@@ -2437,12 +2437,10 @@ function toSessionPermissionUpdates(
   toolName: string,
   suggestions: ReadonlyArray<PermissionUpdate> | undefined,
 ): Array<PermissionUpdate> {
-  const updates = (suggestions ?? []).map(
-    (suggestion): PermissionUpdate => ({
-      ...suggestion,
-      destination: "session",
-    }),
-  );
+  const updates = (suggestions ?? []).map((suggestion): PermissionUpdate => ({
+    ...suggestion,
+    destination: "session",
+  }));
   if (updates.length > 0) {
     return updates;
   }
@@ -8151,18 +8149,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           return false;
         });
 
-        // Subagents an earlier, now closed process was running never report
-        // their end, so a new process interrupts them. One whose completion is
-        // already buffered finishes when the buffer drains.
-        const interruptSubagentsFromEarlierProcesses = Effect.fnUntraced(function* (
-          live: ClaudeLiveQueryContext,
+        // Subagents of a closed process never report their end, so they are
+        // interrupted. One whose completion is already buffered finishes when
+        // the buffer drains.
+        const interruptSubagentsOfClosedProcesses = Effect.fnUntraced(function* (
+          nativeThreadId: string,
           context: ActiveClaudeTurnContext,
+          ranInClosedProcess: (subagent: ActiveClaudeSubagent) => boolean,
         ) {
-          const buffered = (yield* Ref.get(wakeBuffers)).get(live.nativeThreadId)?.messages ?? [];
+          const buffered = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
           for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
             if (
               subagent.task.status === "running" &&
-              live.subagentsFromEarlierProcesses.has(subagent) &&
+              ranInClosedProcess(subagent) &&
               !buffered.some(
                 (message) =>
                   message.type === "system" &&
@@ -8306,20 +8305,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     })
                   : Effect.void,
               ),
-              // No process of this session is left to report a subagent's
-              // end, and every earlier process's wake buffer is already gone.
+              // No process of this session is left to run any subagent.
               Effect.tapError(() =>
-                Effect.gen(function* () {
-                  for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
-                    if (subagent.task.status === "running") {
-                      yield* updateClaudeSubagentNode({
-                        context: turnContext,
-                        taskId,
-                        status: "interrupted",
-                      });
-                    }
-                  }
-                }),
+                interruptSubagentsOfClosedProcesses(nativeThreadId, turnContext, () => true),
               ),
             );
           // Marked only after a successful open: a failed create must not
@@ -8528,7 +8516,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               });
             });
-            yield* interruptSubagentsFromEarlierProcesses(querySession, context);
+            yield* interruptSubagentsOfClosedProcesses(nativeThreadId, context, (subagent) =>
+              querySession.subagentsFromEarlierProcesses.has(subagent),
+            );
             if (userMessage !== null) {
               yield* attachTurn;
               // A user turn that races a wake leaves the buffer alone: the
