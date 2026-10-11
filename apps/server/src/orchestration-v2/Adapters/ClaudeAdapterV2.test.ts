@@ -929,11 +929,14 @@ describe("ClaudeAdapterV2 context usage", () => {
     );
   });
 
-  it("reports the configured auto-compact window when it is below the context window", () => {
-    const thresholdFor = (autoCompactWindow: string) =>
+  it("reports the configured auto-compact window unless it exceeds a known context window", () => {
+    const thresholdFor = (
+      autoCompactWindow: string,
+      modelSelection: ModelSelection = CLAUDE_TEST_MODEL_SELECTION,
+    ) =>
       ClaudeAdapterV2.claudeProviderTurnTokenUsage(
         { input_tokens: 1, output_tokens: 1 },
-        CLAUDE_TEST_MODEL_SELECTION,
+        modelSelection,
         "2026-08-29T00:00:00.000Z",
         autoCompactWindow,
       ).autoCompactThreshold;
@@ -941,6 +944,10 @@ describe("ClaudeAdapterV2 context usage", () => {
     assert.strictEqual(thresholdFor("150000"), 150_000);
     assert.strictEqual(thresholdFor("650000"), undefined);
     assert.strictEqual(thresholdFor(""), undefined);
+    assert.strictEqual(
+      thresholdFor("650000", { ...CLAUDE_TEST_MODEL_SELECTION, model: "uncatalogued-model" }),
+      650_000,
+    );
   });
 });
 
