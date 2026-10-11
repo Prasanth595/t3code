@@ -593,9 +593,7 @@ export function ProviderInstanceCard({
   acpProjects = EMPTY_ACP_PROJECTS,
   projectOverride,
 }: ProviderInstanceCardProps) {
-  const enabled = projectOverride
-    ? projectOverride.effectiveEnabled
-    : resolveProviderInstanceEnabled(instance);
+  const enabled = projectOverride?.effectiveEnabled ?? resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
   // last server status is stale. Enabled providers use the server status.
