@@ -75,6 +75,11 @@ import {
   CLAUDE_BACKGROUND_TASK_WAKE_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/claude_background_task_wake/input.ts";
 import {
+  CLAUDE_TODO_LIST_FIRST_PROMPT,
+  CLAUDE_TODO_LIST_MODEL_SELECTION,
+  CLAUDE_TODO_LIST_SECOND_PROMPT,
+} from "../src/orchestration-v2/testkit/fixtures/claude_todo_list/input.ts";
+import {
   DENIED_WRITE_POLICY,
   TOOL_CALL_DENIED_WRITE_PROMPT,
   TOOL_CALL_DENIED_WRITE_TARGET,
@@ -244,6 +249,16 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
     backgroundWakeCounts: [1],
+  },
+  // T3 leaves Claude 5 task tools off; users opt in through the environment,
+  // so this recording opts in the same way.
+  claude_todo_list: {
+    prompts: [CLAUDE_TODO_LIST_FIRST_PROMPT, CLAUDE_TODO_LIST_SECOND_PROMPT],
+    defaultTranscriptFile: "fixtures/claude_todo_list/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    model: CLAUDE_TODO_LIST_MODEL_SELECTION.model,
+    environment: { CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
   },
   claude_nested_subagent_model: {
     prompts: [CLAUDE_NESTED_SUBAGENT_MODEL_PROMPT],
@@ -503,7 +518,16 @@ async function assertWorkspacePathsAbsent(phase: "before" | "after"): Promise<vo
   }
 }
 
-if (shouldRemoveCwd && (scenario === "tool_call_read_only" || scenario === "subagent")) {
+// The Claude Code CLI inherits this process's environment when the query sets
+// no `env`, which is how the adapter runs without a configured environment.
+if ("environment" in recording) {
+  Object.assign(process.env, recording.environment);
+}
+
+if (
+  shouldRemoveCwd &&
+  (scenario === "tool_call_read_only" || scenario === "subagent" || scenario === "claude_todo_list")
+) {
   await runFileSystem(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -542,7 +566,9 @@ try {
     prompts,
     modelSelection: {
       ...CLAUDE_MODEL_SELECTION,
-      model: process.env.T3_CLAUDE_REPLAY_MODEL ?? CLAUDE_MODEL_SELECTION.model,
+      model:
+        process.env.T3_CLAUDE_REPLAY_MODEL ??
+        ("model" in recording ? recording.model : CLAUDE_MODEL_SELECTION.model),
     },
     cwd,
     ...(process.env.T3_CLAUDE_REPLAY_SESSION_ID === undefined
