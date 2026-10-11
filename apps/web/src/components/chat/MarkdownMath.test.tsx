@@ -76,6 +76,15 @@ describe("MarkdownMath", () => {
       await gate;
       return katex;
     });
+    // jsdom has no styles for the MathML elements KaTeX emits.
+    const computeStyle = window.getComputedStyle.bind(window);
+    const styles = vi
+      .spyOn(window, "getComputedStyle")
+      .mockImplementation((element, pseudo) =>
+        element.namespaceURI === "http://www.w3.org/1998/Math/MathML"
+          ? ({ userSelect: "" } as CSSStyleDeclaration)
+          : computeStyle(element, pseudo),
+      );
     const container = document.createElement("div");
     container.dataset.assistantCitationSource = "assistant";
     const root = createRoot(container);
@@ -161,6 +170,7 @@ describe("MarkdownMath", () => {
       expect(formula?.compareBoundaryPoints(Range.END_TO_END, whole)).toBe(0);
     } finally {
       await act(async () => root.unmount());
+      styles.mockRestore();
     }
   });
 });
