@@ -375,6 +375,14 @@ export interface ThreadManagementServiceShape {
     readonly projectId: ProjectId;
     readonly instanceId: ProviderInstanceId;
   }) => Effect.Effect<boolean>;
+  /**
+   * Whether `commandId` already has a receipt. A caller resolving a target
+   * ahead of a dispatch under this same command id can use it to skip
+   * project-enablement filtering: the dispatch will only replay the recorded
+   * result, never start anything new, so the filter would just refuse a
+   * retry the project's settings no longer allow fresh.
+   */
+  readonly hasReceipt: (commandId: CommandId) => Effect.Effect<boolean>;
   readonly waitForThread: (
     input: ThreadManagementWaitInput,
   ) => Effect.Effect<ThreadManagementWaitResult, ThreadManagementError>;
@@ -525,6 +533,12 @@ const make = Effect.gen(function* () {
           resolveProjectProviderInstanceEnabled(current, input.projectId, input.instanceId),
         ),
       );
+
+  const hasReceipt: ThreadManagementServiceShape["hasReceipt"] = (commandId) =>
+    receipts.getByCommandId(commandId).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+      Effect.map(Option.isSome),
+    );
 
   const ensureLegacyTranscript = Effect.fn(
     "orchestrationV2.threadManagement.ensureLegacyTranscript",
@@ -1087,6 +1101,7 @@ const make = Effect.gen(function* () {
     sendToThread,
     assertProviderInstanceEnabled,
     isProviderInstanceEnabledForProject,
+    hasReceipt,
     waitForThread,
     settleAfterRun,
     settleThread,
