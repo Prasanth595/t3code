@@ -2447,49 +2447,56 @@ code {
 :root[data-theme-border-width] [data-composer-banner-surface] {
   --composer-banner-border-width: var(--theme-border-width);
 }
-/* The host also wraps the banner dock, so its shadow sticks out beside the
-   narrower banner. With an attached banner, the main surface and the banner
-   cast the shadow instead. */
-:root[data-theme-shadow]
-  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
-  [data-slot="composer-host"] {
-  box-shadow: none;
-}
-:root[data-theme-shadow]
-  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
-  [data-chat-composer-main-surface],
-:root[data-theme-shadow] [data-composer-banner-surface]::before {
-  box-shadow: var(--theme-shadow);
-}
-
-/* Raised surfaces and solid buttons take the theme shadow. */
-:root[data-theme-shadow]
-  :is(
-    [data-slot="composer-host"],
-    [data-slot$="-popup"],
-    [data-slot="dialog-panel"],
-    [data-thread-details-card],
-    [data-slot="button"]:is(
-        [data-button-variant="default"],
-        [data-button-variant="outline"],
-        [data-button-variant="destructive"],
-        [data-button-variant="destructive-outline"]
-      ):not(:disabled, :active, [data-pressed])
-  ) {
-  box-shadow: var(--theme-shadow);
-}
-
-/* One shadow per stack: a themed surface that wraps another themed surface
-   (a popup around the details card, for example) drops its own shadow, so
-   only the inner surface with the visible border casts one. */
+/* Raised surfaces take the theme shadow. Keep the button selector in its own
+   rule: :is() takes the specificity of its most specific argument, so the
+   button selector inside it lets this rule beat the reset rules below. */
 :root[data-theme-shadow]
   :is(
     [data-slot="composer-host"],
     [data-slot$="-popup"],
     [data-slot="dialog-panel"],
     [data-thread-details-card]
-  ):has(:is([data-slot$="-popup"], [data-slot="dialog-panel"], [data-thread-details-card])) {
+  ) {
+  box-shadow: var(--theme-shadow);
+}
+:root[data-theme-shadow] [data-composer-banner-surface]::before {
+  box-shadow: var(--theme-shadow);
+}
+:root[data-theme-shadow]
+  [data-slot="button"]:is(
+    [data-button-variant="default"],
+    [data-button-variant="outline"],
+    [data-button-variant="destructive"],
+    [data-button-variant="destructive-outline"]
+  ):not(:disabled, :active, [data-pressed]) {
+  box-shadow: var(--theme-shadow);
+}
+
+/* One shadow per stack: a themed surface that wraps another themed surface
+   (a popup around the details card, for example) drops its own shadow, so
+   only the inner surface with the visible border casts one. The composer host
+   also wraps attached banners, which are narrower, so the main surface below
+   them casts the shadow instead. */
+:root[data-theme-shadow]
+  :is(
+    [data-slot="composer-host"],
+    [data-slot$="-popup"],
+    [data-slot="dialog-panel"],
+    [data-thread-details-card]
+  ):has(
+    :is(
+      [data-slot$="-popup"],
+      [data-slot="dialog-panel"],
+      [data-thread-details-card],
+      [data-composer-banner-surface="attached"]
+    )
+  ) {
   box-shadow: none;
+}
+:root[data-theme-shadow]
+  [data-slot="composer-host"]:has([data-composer-banner-surface="attached"])
+  [data-chat-composer-main-surface] {
+  box-shadow: var(--theme-shadow);
 }
 
 /* Background texture behind the main area. Several opaque bg-background
