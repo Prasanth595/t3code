@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
   ClaudeAgentSdkQueryRunner,
@@ -72,6 +73,42 @@ it.effect("logs successful task stops for replay and omits failed stops", () =>
               },
               canonical: undefined,
             }),
+          ),
+        ),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("reads session storage only when the instance shares the server's Claude home", () =>
+  Effect.gen(function* () {
+    const getSessionMessages = vi.spyOn(ClaudeSdk, "getSessionMessages").mockResolvedValue([]);
+    yield* Effect.addFinalizer(() => Effect.sync(() => getSessionMessages.mockRestore()));
+    const lookup = (configDir: string | undefined) =>
+      Effect.gen(function* () {
+        const runner = yield* ClaudeAgentSdkQueryRunner;
+        return yield* runner.sessionHasMessages({
+          sessionId: "native-session-lookup",
+          configDir,
+          threadId: ThreadId.make("thread-lookup"),
+          providerSessionId: ProviderSessionId.make("session-lookup"),
+        });
+      });
+    yield* Effect.gen(function* () {
+      // The SDK only reads the server's own home, so another home's
+      // conversation cannot be ruled out and the resume goes ahead.
+      assert.isTrue(yield* lookup("/instance-home"));
+      assert.equal(getSessionMessages.mock.calls.length, 0);
+      assert.isFalse(yield* lookup("/server-home"));
+      assert.deepEqual(getSessionMessages.mock.calls, [["native-session-lookup", { limit: 1 }]]);
+    }).pipe(
+      Effect.provide(
+        layerQueryRunner.pipe(
+          Layer.provide(
+            Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
+          ),
+          Layer.provide(
+            Layer.succeed(HostProcess.Environment, { CLAUDE_CONFIG_DIR: "/server-home" }),
           ),
         ),
       ),

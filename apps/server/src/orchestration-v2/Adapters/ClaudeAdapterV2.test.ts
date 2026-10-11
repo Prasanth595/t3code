@@ -2157,7 +2157,7 @@ describe("ClaudeAdapterV2 resume", () => {
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CLAUDE_SETTINGS,
-        environment: {},
+        environment: { CLAUDE_CONFIG_DIR: "/claude-home" },
         attachmentsDir,
         fileSystem,
         path: yield* Path.Path,
@@ -2224,7 +2224,12 @@ describe("ClaudeAdapterV2 resume", () => {
           /no conversation for session native-session-resume/,
         );
         assert.deepEqual(lookups, [
-          { sessionId: "native-session-resume", threadId, providerSessionId },
+          {
+            sessionId: "native-session-resume",
+            configDir: "/claude-home",
+            threadId,
+            providerSessionId,
+          },
         ]);
       }).pipe(Effect.provide(testLayer)),
     ),

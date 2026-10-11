@@ -425,7 +425,8 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   /**
    * Whether the CLI's session storage holds a conversation for a session id,
    * so `resume` would find it. A transcript with no user or assistant message
-   * counts as absent, which is also what the CLI's resume reports.
+   * counts as absent, which is also what the CLI's resume reports. A store
+   * other than the server's own cannot be read, so it reports present.
    */
   readonly sessionHasMessages: (
     input: ClaudeAgentSdkSessionLookupInput,
@@ -455,6 +456,8 @@ export interface ClaudeAgentSdkSubagentLookupInput {
 
 export interface ClaudeAgentSdkSessionLookupInput {
   readonly sessionId: string;
+  /** The instance's `CLAUDE_CONFIG_DIR`, where the CLI keeps its transcripts. */
+  readonly configDir: string | undefined;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
@@ -693,6 +696,7 @@ export const layerQueryRunner: Layer.Layer<
     const crypto = yield* Crypto.Crypto;
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
+    const hostEnvironment = yield* HostProcess.Environment;
 
     return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: crypto.randomUUIDv4.pipe(
@@ -975,6 +979,9 @@ export const layerQueryRunner: Layer.Layer<
       sessionHasMessages: Effect.fn("ClaudeAgentSdkQueryRunner.sessionHasMessages")(function* (
         input: ClaudeAgentSdkSessionLookupInput,
       ) {
+        // The SDK reads transcripts from the server's own CLAUDE_CONFIG_DIR and
+        // takes no other. An instance with its own home keeps resuming as before.
+        if (input.configDir !== hostEnvironment.CLAUDE_CONFIG_DIR) return true;
         const protocolLogger = makeClaudeAgentSdkProtocolLogger({
           nativeEventLogger,
           threadId: input.threadId,
@@ -8942,6 +8949,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (live?.nativeThreadId !== nativeThreadId) {
                 const hasMessages = yield* queryRunner.sessionHasMessages({
                   sessionId: nativeThreadId,
+                  configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
                   threadId: input.threadId,
                   providerSessionId: input.providerSessionId,
                 });
