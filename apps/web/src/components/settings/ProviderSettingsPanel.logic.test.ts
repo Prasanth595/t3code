@@ -323,6 +323,27 @@ describe("buildProviderInstanceOverridePatch", () => {
       },
     });
   });
+
+  it("sends providerInstances: {} explicitly when clearing the last instance override leaves other keys", () => {
+    // The server keeps a stored providerInstances map when an incoming entry
+    // omits the key (so older clients cannot wipe it by editing another
+    // setting). This clear must say so explicitly, or the server would put
+    // the just-cleared override right back.
+    const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstances: { [instanceId]: { enabled: true } },
+        },
+      },
+    };
+
+    expect(
+      buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
+    ).toEqual({
+      [projectId]: { newWorktreesStartFromOrigin: true, providerInstances: {} },
+    });
+  });
 });
 
 describe("remote operate access", () => {

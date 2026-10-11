@@ -115,6 +115,12 @@ export function resolveRemoteOperateAccess(input: {
  * replaces the project's whole override set, and `null` removes it.
  * `value: undefined` resets that single instance back to inheriting the
  * environment's enablement, leaving any other overridden keys untouched.
+ *
+ * `providerInstances` is always sent explicitly, even as `{}`, because the
+ * server keeps a stored `providerInstances` map when an incoming entry omits
+ * the key (so older clients that don't know the field cannot wipe it by
+ * editing another setting). Omitting it here would undo the very clear this
+ * function means to make.
  */
 /** Every checkout of a project on one environment shares the same choice. */
 export function buildProviderInstanceOverridePatch(
@@ -134,9 +140,9 @@ export function buildProviderInstanceOverridePatch(
     else delete instances[instanceId];
 
     const { providerInstances: _omit, ...rest } = current ?? {};
-    const nextEntry: ProjectSettingsOverrides =
-      Object.keys(instances).length > 0 ? { ...rest, providerInstances: instances } : rest;
-    patch[projectId] = Object.keys(nextEntry).length === 0 ? null : nextEntry;
+    const nextEntry: ProjectSettingsOverrides = { ...rest, providerInstances: instances };
+    patch[projectId] =
+      Object.keys(rest).length === 0 && Object.keys(instances).length === 0 ? null : nextEntry;
   }
   return patch;
 }

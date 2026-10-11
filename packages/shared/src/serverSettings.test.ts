@@ -653,6 +653,62 @@ describe("serverSettings helpers", () => {
     });
   });
 
+  it("keeps a project's providerInstances override when a patch entry omits the key", () => {
+    // An older client that predates per-project provider overrides reads and
+    // resends a project's whole entry without knowing about the field. A
+    // naive whole-entry replace would silently wipe it.
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstances: { [instanceId]: { enabled: false } },
+        },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: { newWorktreesStartFromOrigin: false },
+      },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({
+      newWorktreesStartFromOrigin: false,
+      providerInstances: { [instanceId]: { enabled: false } },
+    });
+  });
+
+  it("clears a project's providerInstances override when a patch entry sends an empty map", () => {
+    // A client that knows the field expresses "clear every provider override
+    // for this project" by sending providerInstances explicitly, not by
+    // omitting it.
+    const instanceId = ProviderInstanceId.make("codex_work");
+    const projectId = ProjectId.make("project-a");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstances: { [instanceId]: { enabled: false } },
+        },
+      },
+    };
+
+    const patched = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: { newWorktreesStartFromOrigin: true, providerInstances: {} },
+      },
+    });
+
+    expect(patched.projectSettingsOverrides[projectId]).toEqual({
+      newWorktreesStartFromOrigin: true,
+      providerInstances: {},
+    });
+  });
+
   it("upserts and removes usageLimitSources per entry so concurrent edits cannot clobber", () => {
     const hubA = UsageLimitSourceId.make("cliproxy-a");
     const hubB = UsageLimitSourceId.make("cliproxy-b");

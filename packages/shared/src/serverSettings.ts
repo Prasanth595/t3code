@@ -255,6 +255,36 @@ function mergeSettingsEntries<Value>(
 }
 
 /**
+ * `projectSettingsOverrides` entries otherwise replace whole (see the field's
+ * doc comment in contracts), but `providerInstances` was added after clients
+ * already round-trip a project's entry on every edit. A client built before
+ * that addition sends an entry that never mentions the key, and a whole
+ * replace would silently wipe it. When an incoming entry omits the key, keep
+ * what is stored; a client that means to clear every provider override for
+ * the project says so explicitly with `providerInstances: {}`.
+ */
+function mergeProjectSettingsOverridesPatch(
+  current: Readonly<Record<string, ProjectSettingsOverrides>>,
+  patch: Readonly<Record<string, ProjectSettingsOverrides | null>>,
+): Record<string, ProjectSettingsOverrides> {
+  const next = new Map(Object.entries(current));
+  for (const [projectId, entry] of Object.entries(patch)) {
+    if (entry === null) {
+      next.delete(projectId);
+      continue;
+    }
+    const storedProviderInstances = current[projectId]?.providerInstances;
+    next.set(projectId, {
+      ...entry,
+      ...(Object.hasOwn(entry, "providerInstances") || storedProviderInstances === undefined
+        ? {}
+        : { providerInstances: storedProviderInstances }),
+    });
+  }
+  return Object.fromEntries(next);
+}
+
+/**
  * Derived views of `projectSettingsOverrides` for clients that still read
  * the legacy per-key maps. Recomputed on every patch and load so they
  * cannot drift from the generic record.
@@ -526,7 +556,10 @@ export function applyServerSettingsPatch(
       ? {
           projectSettingsOverrides: Object.fromEntries(
             Object.entries(
-              mergeSettingsEntries(current.projectSettingsOverrides, projectSettingsOverridesPatch),
+              mergeProjectSettingsOverridesPatch(
+                current.projectSettingsOverrides,
+                projectSettingsOverridesPatch,
+              ),
             ).filter(([, entry]) => Object.keys(entry).length > 0),
           ),
         }
