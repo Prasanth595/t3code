@@ -3,6 +3,7 @@ import { repositoryPathFromRemoteUrl } from "@t3tools/source-control-core/server
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
+  parseGitRemoteVerbose,
 } from "@t3tools/shared/git";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
@@ -54,24 +55,11 @@ function isLocalRemoteUrl(url: string): boolean {
 }
 
 function parseRemoteFetchUrls(stdout: string): Map<string, string> {
-  const remotes = new Map<string, string>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
-    if (!match) continue;
-    const [, remoteName = "", remoteUrl = "", direction = ""] = match;
-    if (
-      direction !== "fetch" ||
-      remoteName.length === 0 ||
-      remoteUrl.length === 0 ||
-      isLocalRemoteUrl(remoteUrl)
-    ) {
-      continue;
-    }
-    remotes.set(remoteName, remoteUrl);
-  }
-  return remotes;
+  return new Map(
+    parseGitRemoteVerbose(stdout)
+      .filter((remote) => remote.direction === "fetch" && !isLocalRemoteUrl(remote.url))
+      .map((remote) => [remote.name, remote.url]),
+  );
 }
 
 function pickPrimaryRemote(
