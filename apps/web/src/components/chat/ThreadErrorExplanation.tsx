@@ -44,7 +44,10 @@ export function ThreadErrorExplanation({
     });
     if (result._tag === "Success") {
       setState(explanationStateFromResult(error, result.value));
-    } else if (!isAtomCommandInterrupted(result)) {
+    } else if (isAtomCommandInterrupted(result)) {
+      // Nothing was answered, so offer Explain again rather than a stuck pending line.
+      setState({ kind: "idle" });
+    } else {
       setState(explanationStateFromFailure(squashAtomCommandFailure(result)));
     }
   };
