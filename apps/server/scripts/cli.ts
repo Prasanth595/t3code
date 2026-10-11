@@ -6,7 +6,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/cli";
+import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
@@ -19,7 +21,7 @@ import {
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
 } from "./cliErrors.ts";
-import { publishPlatformsThenLauncher } from "./publishOrder.ts";
+import { checkNpmVersionInstallable, publishPlatformsThenLauncher } from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
   Effect.flatMap((path) => path.fromFileUrl(new URL("../../..", import.meta.url))),
@@ -166,10 +168,16 @@ const buildExeCmd = Command.make(
 // publish subcommand
 // ---------------------------------------------------------------------------
 
+const decodePlatformManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String })),
+);
+
 /**
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
  * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
  * the launcher is never installable before the executables it depends on.
+ * Before the launcher, it waits up to 10 minutes for npm to serve each
+ * platform version, since an upload can 404 for minutes after it succeeds.
  * Tarballs rather than directories because `npm publish <dir>` strips the
  * `node_modules/` the executable loads its native addons from.
  */
@@ -208,6 +216,18 @@ const publishCmd = Command.make(
       if (!(yield* fs.exists(launcherTarball))) {
         return yield* new ServerCliBuildAssetMissingError({ assetPath: launcherTarball });
       }
+      // The tarball names carry no version, so each package's name and version
+      // come from the package.json unpacked beside its tarball.
+      const platformSpecs = new Map(
+        yield* Effect.forEach(platformTarballs, (tarball) => {
+          const manifestPath = path.join(scopeDir, path.basename(tarball, ".tgz"), "package.json");
+          return fs.readFileString(manifestPath).pipe(
+            Effect.flatMap(decodePlatformManifest),
+            Effect.map((spec) => [tarball, spec] as const),
+            Effect.mapError(() => new ServerCliBuildAssetMissingError({ assetPath: manifestPath })),
+          );
+        }),
+      );
 
       const args = ["publish", "--access", config.access, "--tag", config.tag];
       if (config.provenance) args.push("--provenance");
@@ -227,7 +247,13 @@ const publishCmd = Command.make(
       });
 
       // Each publish takes about 17s, so the platform packages go at once.
-      yield* publishPlatformsThenLauncher({ platformTarballs, launcherTarball, publish });
+      yield* publishPlatformsThenLauncher({
+        platformTarballs,
+        launcherTarball,
+        publish,
+        dryRun: config.dryRun,
+        checkInstallable: (tarball) => checkNpmVersionInstallable(platformSpecs.get(tarball)!),
+      }).pipe(Effect.provide(FetchHttpClient.layer));
     }),
 ).pipe(
   Command.withDescription(

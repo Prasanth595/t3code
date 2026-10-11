@@ -47,6 +47,31 @@ export class ServerCliBuildAssetMissingError extends Schema.TaggedError<ServerCl
   }
 }
 
+export class ServerCliNpmPackageNotReadyError extends Schema.TaggedError<ServerCliNpmPackageNotReadyError>()(
+  "ServerCliNpmPackageNotReadyError",
+  {
+    packageSpec: Schema.String,
+    reason: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `${this.packageSpec} is not installable yet: ${this.reason}`;
+  }
+}
+
+export class ServerCliNpmPackagesNotInstallableError extends Schema.TaggedError<ServerCliNpmPackagesNotInstallableError>()(
+  "ServerCliNpmPackagesNotInstallableError",
+  {
+    pending: Schema.Array(Schema.String),
+    launcherTarball: Schema.String,
+  },
+) {
+  override get message(): string {
+    const launcher = this.launcherTarball.split(/[\\/]/).at(-1);
+    return `npm did not serve these platform packages within 10 minutes: ${this.pending.join("; ")}. ${launcher} was not published. The platform versions are already live and cannot be republished, so once each listed tarball downloads, publish ${launcher} by hand with the same --access and --tag.`;
+  }
+}
+
 export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCliExecutableImportError>()(
   "ServerCliExecutableImportError",
   {
