@@ -10502,6 +10502,165 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("interrupts a stopped subagent when the replacement process fails to open", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SUBAGENT_TASK_ID = "task-replace-open-fail-subagent";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-replace-open-fail-subagent-",
+        });
+        let openCount = 0;
+        const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+        const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          continuationRequests: { offer: () => Effect.void },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: () => {
+              openCount += 1;
+              if (openCount === 2) {
+                return Effect.fail(
+                  new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                    method: "open",
+                    cause: "forced replacement open failure",
+                  }),
+                );
+              }
+              return Effect.gen(function* () {
+                const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                processQueues.push(sdkMessages);
+                return {
+                  messages: Stream.fromQueue(sdkMessages),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(sdkMessages),
+                };
+              });
+            },
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-replace-open-fail-subagent");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-replace-open-fail-subagent",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const terminals = () => events.filter((event) => event.type === "turn.terminal");
+        const now = yield* DateTime.now;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-replace-open-fail-subagent-a"),
+            text: "Spawn a background subagent and stop.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          processQueues[0]!,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: "toolu-replace-open-fail-subagent",
+            description: "Background research",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Research, then report.",
+            uuid: "00000000-0000-4000-8000-000000000911",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          processQueues[0]!,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000912",
+            result: "Spawned the subagent in the background.",
+          }),
+        );
+        yield* awaitUntil(() => terminals().length === 1, "first turn terminal");
+
+        yield* runtime.interruptTurn({
+          providerThread,
+          providerTurnId: terminals()[0]!.providerTurnId,
+          requestRuntimeRestart: true,
+        });
+        const failedStart = yield* runtime
+          .startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: { ...providerThread, status: "active" },
+              now,
+              attemptId: RunAttemptId.make("attempt-claude-replace-open-fail-subagent-b"),
+              text: "Switch model after Stop.",
+              attachments: [],
+              providerTurnOrdinal: 2,
+              modelSelection: {
+                ...CLAUDE_TEST_MODEL_SELECTION,
+                model: "claude-haiku-4-5-20251001",
+              },
+            }),
+          )
+          .pipe(Effect.exit);
+        assert.isTrue(Exit.isFailure(failedStart));
+        assert.equal(openCount, 2);
+
+        // The first process is closed and no replacement started, so nothing
+        // will ever report the subagent's end.
+        const subagentUpdates = () =>
+          events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === SUBAGENT_TASK_ID
+              ? [event.subagent]
+              : [],
+          );
+        yield* awaitUntil(
+          () => subagentUpdates().at(-1)?.status === "interrupted",
+          "orphaned subagent interrupted",
+        );
+        assert.equal(subagentUpdates().at(-1)?.runId, subagentUpdates()[0]?.runId);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect(
     "keeps the process and its roster when a model change meets a running background shell",
     () =>

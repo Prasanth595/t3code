@@ -2437,10 +2437,12 @@ function toSessionPermissionUpdates(
   toolName: string,
   suggestions: ReadonlyArray<PermissionUpdate> | undefined,
 ): Array<PermissionUpdate> {
-  const updates = (suggestions ?? []).map((suggestion): PermissionUpdate => ({
-    ...suggestion,
-    destination: "session",
-  }));
+  const updates = (suggestions ?? []).map(
+    (suggestion): PermissionUpdate => ({
+      ...suggestion,
+      destination: "session",
+    }),
+  );
   if (updates.length > 0) {
     return updates;
   }
@@ -8176,6 +8178,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          turnContext: ActiveClaudeTurnContext,
         ) {
           const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
           const mcpOverrides = claudeMcpQueryOverrides({
@@ -8302,6 +8305,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       });
                     })
                   : Effect.void,
+              ),
+              // No process of this session is left to report a subagent's
+              // end, and every earlier process's wake buffer is already gone.
+              Effect.tapError(() =>
+                Effect.gen(function* () {
+                  for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+                    if (subagent.task.status === "running") {
+                      yield* updateClaudeSubagentNode({
+                        context: turnContext,
+                        taskId,
+                        status: "interrupted",
+                      });
+                    }
+                  }
+                }),
               ),
             );
           // Marked only after a successful open: a failed create must not
@@ -8496,7 +8514,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
                     uuid: promptUuid,
                   });
-            const querySession = yield* openQuery(turnInput, nativeThreadId);
+            const querySession = yield* openQuery(turnInput, nativeThreadId, context);
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
