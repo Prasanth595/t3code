@@ -8,7 +8,7 @@ import { PullRequestSectionHeading } from "./PullRequestSectionHeading";
 import { useContext, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, View } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { pullRequestImageSource } from "./pullRequestMediaSource";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 import { nativeMarkdownWithHtml } from "@t3tools/mobile-markdown-text/markdown";
 import { SymbolView } from "../../components/AppSymbol";
@@ -42,16 +42,10 @@ export function PullRequestDescription(props: {
       content.attachments
         .filter((attachment) => attachment.kind === "image")
         .map((attachment) => {
-          const fetchUrl = githubMediaFetchUrl(attachment.uri);
-          const name = new URL(attachment.uri).pathname.split("/").pop() || "Image";
-          return mediaContext && fetchUrl
-            ? {
-                kind: "image",
-                name,
-                environmentId: mediaContext.environmentId,
-                resource: { _tag: "github-media", cwd: mediaContext.cwd, url: fetchUrl },
-              }
-            : { kind: "image", name, uri: attachment.uri };
+          return {
+            ...pullRequestImageSource(attachment.uri, mediaContext),
+            name: new URL(attachment.uri).pathname.split("/").pop() || "Image",
+          };
         }),
     [content, mediaContext],
   );

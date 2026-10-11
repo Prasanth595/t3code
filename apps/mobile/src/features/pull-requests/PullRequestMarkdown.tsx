@@ -26,7 +26,8 @@ import {
 } from "../../native/SelectableMarkdownText";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { markdownImageSources } from "../../lib/markdownImageSources";
-import { FilePreviewGallery } from "../../components/FilePreviewGallery";
+import { FilePreviewGallery, useFilePreviewGallery } from "../../components/FilePreviewGallery";
+import { pullRequestImageSource } from "./pullRequestMediaSource";
 import {
   FilePreviewModal,
   type FilePreviewSource,
@@ -65,13 +66,23 @@ function MarkdownImage(props: {
   readonly onPreview: (source: FilePreviewSource) => void;
 }) {
   const media = usePullRequestMediaUrl(props.href);
+  const context = useContext(PullRequestMediaContext);
+  const withGallery = useFilePreviewGallery();
   return (
     <ThreadMarkdownImageView
       uri={media.uri}
       sourceKey={props.href}
       unavailable={!/^https?:\/\//i.test(props.href)}
       alt={props.alt}
-      onPressPreview={props.onPreview}
+      onPressPreview={(source) =>
+        props.onPreview(
+          withGallery({
+            ...pullRequestImageSource(props.href, context),
+            name: source.name,
+            sourceIdentifier: source.sourceIdentifier,
+          }),
+        )
+      }
     />
   );
 }
@@ -137,6 +148,7 @@ function PullRequestMarkdownContent(props: {
   readonly imageGroupMarkdown?: string;
 }) {
   const repositoryUrl = useContext(RepositoryContext);
+  const mediaContext = useContext(PullRequestMediaContext);
   const markdown = useMemo(
     () => githubMarkdownLinks(props.markdown, repositoryUrl),
     [props.markdown, repositoryUrl],
@@ -156,8 +168,8 @@ function PullRequestMarkdownContent(props: {
             /^https?:\/\//i.test(uri) &&
             videoMimeType({ name: uri.split(/[?#]/)[0] ?? uri, mimeType: "" }) === null,
         )
-        .map((uri) => ({ kind: "image", uri })),
-    [props.markdown, props.imageGroupMarkdown],
+        .map((uri) => pullRequestImageSource(uri, mediaContext)),
+    [props.markdown, props.imageGroupMarkdown, mediaContext],
   );
   const [preview, setPreview] = useState<FilePreviewSource | null>(null);
   const renderImage = useCallback<MarkdownImageRenderer>(

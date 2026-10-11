@@ -1,4 +1,6 @@
 import { createContext, useContext, useMemo, useState } from "react";
+import { pullRequestMediaSource, pullRequestImageSource } from "./pullRequestMediaSource";
+import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
 import { videoMimeType } from "@t3tools/shared/video";
@@ -32,8 +34,9 @@ export function usePullRequestMediaUrl(url: string) {
   const asset = useAssetUrlState(context?.environmentId ?? null, resource);
   const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource);
   return {
-    uri: asset._tag === "Success" ? asset.url : url,
-    resolvePlaybackUri: resource ? async () => (await refresh()) ?? url : undefined,
+    uri: asset._tag === "Success" ? asset.url : resource ? null : url,
+    source: pullRequestMediaSource(url, context),
+    resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
 }
 
@@ -44,6 +47,8 @@ export function PullRequestMedia(props: {
   readonly compact?: boolean;
 }) {
   const media = usePullRequestMediaUrl(props.url);
+  const context = useContext(PullRequestMediaContext);
+  const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
   const [video, setVideo] = useState<VideoPreviewSource | null>(null);
   const name = props.caption || new URL(props.url).pathname.split("/").pop() || "Attachment";
@@ -55,7 +60,15 @@ export function PullRequestMedia(props: {
           sourceKey={props.url}
           unavailable={false}
           alt={name}
-          onPressPreview={setImage}
+          onPressPreview={(source) =>
+            setImage(
+              withGallery({
+                ...pullRequestImageSource(props.url, context),
+                name,
+                sourceIdentifier: source.sourceIdentifier,
+              }),
+            )
+          }
         />
         <FilePreviewModal source={image} onRequestClose={() => setImage(null)} />
       </>
@@ -71,7 +84,7 @@ export function PullRequestMedia(props: {
           onPress={() =>
             setVideo({
               type: "media",
-              uri: media.uri,
+              ...media.source,
               name,
               mimeType:
                 videoMimeType({ name: props.url.split(/[?#]/)[0] ?? props.url, mimeType: "" }) ??
@@ -111,7 +124,7 @@ export function PullRequestImageAttachment(props: {
       >
         <View className="overflow-hidden rounded-2xl border border-border-subtle bg-grouped-card">
           <Image
-            source={{ uri: media.uri }}
+            source={media.uri ? { uri: media.uri } : null}
             style={{ width: 174, height: 112 }}
             contentFit="contain"
             cachePolicy="memory-disk"
