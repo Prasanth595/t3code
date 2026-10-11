@@ -86,6 +86,25 @@ scripts/fork-desktop-mac.sh --publish
 
 The script creates a prerelease on the fork. Installed fork apps offer it as an update.
 
+## Deploy to the VPS
+
+The VPS server runs the newest CI release. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` every hour.
+
+- The script deploys at most once per UTC day.
+- It deploys only when no agent turn runs. A server restart cancels running turns, and T3 does not resume them.
+- `/opt/t3code` is a link to `/opt/t3code-a` or `/opt/t3code-b`. The script builds in the other folder, moves the link and restarts `t3-server`.
+- If the new server does not answer, the script moves the link back.
+
+One-time setup, as root on the VPS:
+
+```sh
+systemctl stop t3-server && mv /opt/t3code /opt/t3code-a && ln -s /opt/t3code-a /opt/t3code && systemctl start t3-server
+git -C /opt/t3code-a worktree add --detach /opt/t3code-b HEAD
+cp /opt/t3code/scripts/fork-vps/t3-deploy.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now t3-deploy.timer
+```
+
+To deploy now, run `systemctl start t3-deploy.service`. To read the result, run `journalctl -u t3-deploy.service -n 50`.
+
 ## Secrets and variables
 
 | Name                                                                                    | Kind               | Use                                                                                                                                                                                       |

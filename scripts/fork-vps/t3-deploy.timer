@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for a new T3 Code fork release every hour
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

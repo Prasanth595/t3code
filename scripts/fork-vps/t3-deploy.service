@@ -1,0 +1,8 @@
+[Unit]
+Description=Deploy the newest T3 Code fork release
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+ExecStart=/opt/t3code/scripts/fork-vps/deploy.sh
