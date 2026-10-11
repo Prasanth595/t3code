@@ -537,6 +537,10 @@ if [ -n "\${T3_LOCK:-}" ]; then
   rm -rf "$T3_LOCK"
   trap - EXIT
 fi
+# Install without starting t3, which costs seconds of CPU on a small host.
+if [ "\${T3_RUNNER_INSTALL_ONLY:-}" = "1" ]; then
+  exit 0
+fi
 exec "$T3_RUNTIME_DIR/t3" "$@"
 `;
 
@@ -569,9 +573,9 @@ chmod 700 "$RUNNER_FILE"
 T3_ARCHIVE_MODE=@@T3_ARCHIVE_MODE@@
 if [ "$T3_ARCHIVE_MODE" = "1" ]; then
   # The archive ships the helpers below inside the executable; the remote
-  # needs no Node at all. Resolving the runner once here also downloads the
-  # archive before the port and readiness probes rely on it.
-  "$RUNNER_FILE" --version >/dev/null
+  # needs no Node at all. Install it before the port and readiness probes
+  # rely on it.
+  T3_RUNNER_INSTALL_ONLY=1 "$RUNNER_FILE" >/dev/null
 elif ! ensure_remote_node_path; then
   printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
   exit 1

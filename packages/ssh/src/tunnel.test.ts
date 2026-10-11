@@ -702,12 +702,12 @@ describe("archive runner script", () => {
   const windowsHost = hostPlatform === "win32";
   const archiveVersion = "1.2.3-preview.20260911.4";
 
-  const runRunner = (home: string, runner: string) =>
+  const runRunner = (home: string, runner: string, env: Record<string, string> = {}) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const child = yield* spawner.spawn(
         ChildProcess.make("sh", [runner, "--version"], {
-          env: { PATH: process.env.PATH ?? "", HOME: home },
+          env: { PATH: process.env.PATH ?? "", HOME: home, ...env },
           extendEnv: false,
         }),
       );
@@ -803,5 +803,35 @@ describe("archive runner script", () => {
         assert.isFalse(yield* fs.exists(lock));
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
+  );
+
+  it.effect.skipIf(windowsHost)("installs without starting t3 in install-only mode", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-archive-runner-" });
+      const releaseBaseUrl = yield* makeMirror(root);
+      const runner = `${root}/run-t3.sh`;
+      yield* fs.writeFileString(
+        runner,
+        SshTunnel.buildRemoteT3RunnerScript({ archiveVersion, releaseBaseUrl }),
+      );
+      const home = `${root}/home`;
+      yield* fs.makeDirectory(home, { recursive: true });
+      const installOnly = { T3_RUNNER_INSTALL_ONLY: "1" };
+
+      const cold = yield* runRunner(home, runner, installOnly);
+      assert.equal(cold.exitCode, 0, cold.stderr);
+      assert.equal(cold.stdout, "");
+      const runtime = `${home}/.t3/runtime/versions/${archiveVersion}`;
+      assert.equal(
+        (yield* fs.readFileString(`${runtime}/.install-complete`)).trim(),
+        archiveVersion,
+      );
+
+      const warm = yield* runRunner(home, runner, installOnly);
+      assert.equal(warm.exitCode, 0, warm.stderr);
+      assert.equal(warm.stdout, "");
+      assert.include((yield* runRunner(home, runner)).stdout, `t3 v${archiveVersion}`);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
