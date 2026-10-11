@@ -19,10 +19,18 @@ export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowser
     cause: Schema.optional(Schema.Defect()),
     /** The end of the browser's stderr when it exited, for diagnosing host setup. */
     output: Schema.optional(Schema.String),
+    exitCode: Schema.optional(Schema.Number),
+    signal: Schema.optional(Schema.String),
   },
 ) {
   override get message(): string {
-    return `Headless Chrome could not render the page: ${this.reason}.`;
+    const exit =
+      this.exitCode !== undefined
+        ? ` (exit code ${this.exitCode})`
+        : this.signal !== undefined
+          ? ` (signal ${this.signal})`
+          : "";
+    return `Headless Chrome could not render the page: ${this.reason}${exit}.`;
   }
 }
 
@@ -35,7 +43,6 @@ export interface ConsoleMessage {
 
 const MAX_CONSOLE_MESSAGES = 20;
 const MAX_CONSOLE_TEXT_CHARS = 500;
-const MAX_EXIT_OUTPUT_CHARS = 300;
 const VIEWPORT_HEIGHT = 800;
 const MAX_CAPTURE_HEIGHT = 4_000;
 const CAPTURE_TIMEOUT = "20 seconds";
@@ -163,17 +170,7 @@ const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
 const Measured = Schema.Struct({ result: Schema.Struct({ value: Schema.Finite }) });
 
 // Effect's spawner names the signal that ended a child only in its error message.
-const EXIT_SIGNAL = /signal: '(\w+)'/;
-
-/** Why the browser went away: its exit code or signal, and the last line it printed. */
-const exitReason = (status: string | undefined, output: string) => {
-  const lastLine = output.trimEnd().split("\n").at(-1)?.trim() ?? "";
-  const said =
-    lastLine.length > MAX_EXIT_OUTPUT_CHARS
-      ? `${lastLine.slice(0, MAX_EXIT_OUTPUT_CHARS)}…`
-      : lastLine;
-  return `the browser exited unexpectedly${status ? ` (${status})` : ""}${said ? `: ${said}` : ""}`;
-};
+const EXIT_SIGNAL = /signal: '(SIG[A-Z0-9]+)'/;
 
 interface PageEvents {
   /** The page's main frame, which only ever shows `PAGE_URL`. */
@@ -348,16 +345,17 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   // sandbox, says why on stderr, which may still be draining, so give it a moment.
   const disconnect = Effect.gen(function* () {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
-    const status = yield* child.exitCode.pipe(
-      Effect.map((code) => `exit code ${code}`),
+    const exit = yield* child.exitCode.pipe(
+      Effect.map((code): { exitCode?: number; signal?: string } => ({ exitCode: code })),
       Effect.catch((error) =>
-        Effect.succeed(`signal ${EXIT_SIGNAL.exec(String(error.cause))?.[1] ?? "unknown"}`),
+        Effect.succeed({ signal: EXIT_SIGNAL.exec(String(error.cause))?.[1] ?? "unknown" }),
       ),
       Effect.timeoutOption("1 second"),
     );
     const error = new HtmlRenderBrowserError({
-      reason: exitReason(Option.getOrUndefined(status), stderrTail),
+      reason: "the browser exited unexpectedly",
       output: stderrTail,
+      ...Option.getOrElse(exit, () => ({})),
     });
     disconnected = error;
     const waiters = [...pending.values()];

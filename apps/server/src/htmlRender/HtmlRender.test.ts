@@ -264,7 +264,7 @@ describe("HtmlRender", () => {
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
     "when the browser exits before rendering",
     () => {
-      it.live("reports its exit code and the last line it printed", () =>
+      it.live("reports its exit code and keeps what it printed out of the message", () =>
         Effect.gen(function* () {
           const executable = yield* exitingBrowser(
             `process.stderr.write("[WARNING:bus.cc] Failed to connect to the bus\\n[FATAL:shared_memory.cc] Check failed: /dev/shm is not writable\\n"); process.exit(3);`,
@@ -273,7 +273,7 @@ describe("HtmlRender", () => {
           const error = yield* previewError(executable);
 
           expect(error.message).toBe(
-            "Headless Chrome could not render the page: the browser exited unexpectedly (exit code 3): [FATAL:shared_memory.cc] Check failed: /dev/shm is not writable.",
+            "Headless Chrome could not render the page: the browser exited unexpectedly (exit code 3).",
           );
         }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
       );
