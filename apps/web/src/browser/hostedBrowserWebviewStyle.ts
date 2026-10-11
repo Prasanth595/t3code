@@ -1,4 +1,5 @@
 import type { BrowserSurfaceRect } from "./browserSurfaceStore";
+import type { BrowserViewportLayout } from "./browserViewportLayout";
 
 export interface HostedBrowserWebviewSize {
   readonly width: number;
@@ -72,4 +73,43 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
     pointerEvents: "none",
     visibility: keepPaintableWhenInactive ? "visible" : "hidden",
   };
+}
+
+/**
+ * The radius to put on the `<webview>` itself. Electron composites the guest
+ * (and, on Windows, its scrollbars) apart from the DOM, so the wrapper's
+ * `overflow: hidden` does not reliably round it. Only a guest with a corner
+ * inside the wrapper's curve needs it; a letterboxed one sits clear of it. The
+ * radius is divided by the scale so it still reads as `cornerRadius` once the
+ * guest is scaled down to fit.
+ */
+export function resolveHostedBrowserWebviewRadius(input: {
+  readonly cornerRadius: number;
+  readonly layout: Pick<
+    BrowserViewportLayout,
+    | "canvasWidth"
+    | "canvasHeight"
+    | "viewportX"
+    | "viewportY"
+    | "viewportWidth"
+    | "viewportHeight"
+    | "viewportScale"
+  >;
+}): number | undefined {
+  const { cornerRadius: radius, layout } = input;
+  if (radius <= 0) return undefined;
+  const left = layout.viewportX;
+  const top = layout.viewportY;
+  const right = layout.canvasWidth - (layout.viewportX + layout.viewportWidth);
+  const bottom = layout.canvasHeight - (layout.viewportY + layout.viewportHeight);
+  // A square corner inset (a, b) from a rounded corner pokes out of its arc
+  // when it lies farther than `radius` from the arc's centre.
+  const pokesOut = (a: number, b: number) =>
+    a < radius && b < radius && (radius - a) ** 2 + (radius - b) ** 2 > radius ** 2;
+  return pokesOut(left, top) ||
+    pokesOut(right, top) ||
+    pokesOut(left, bottom) ||
+    pokesOut(right, bottom)
+    ? radius / layout.viewportScale
+    : undefined;
 }

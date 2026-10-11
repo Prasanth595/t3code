@@ -23,7 +23,10 @@ import {
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
 import { acquireDesktopTab, type AcquiredDesktopTab, withDesktopTab } from "./desktopTabLifetime";
-import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
+import {
+  resolveHostedBrowserWebviewRadius,
+  resolveHostedBrowserWebviewWrapperStyle,
+} from "./hostedBrowserWebviewStyle";
 import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
 import {
@@ -374,6 +377,10 @@ export function HostedBrowserWebview(props: {
             height: layout.viewportHeight / layout.viewportScale,
             transform: layout.viewportScale < 1 ? `scale(${layout.viewportScale})` : undefined,
             transformOrigin: "top left",
+            borderRadius: resolveHostedBrowserWebviewRadius({
+              cornerRadius: active ? presentation.cornerRadius : 0,
+              layout,
+            }),
           }}
         />
         {active && effectiveViewport._tag !== "fill" && !fittedSourceViewport ? (

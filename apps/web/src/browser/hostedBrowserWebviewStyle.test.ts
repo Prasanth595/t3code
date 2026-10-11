@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   HIDDEN_BROWSER_WEBVIEW_OFFSET,
+  resolveHostedBrowserWebviewRadius,
   resolveHostedBrowserWebviewWrapperStyle,
 } from "./hostedBrowserWebviewStyle";
 
@@ -100,5 +101,89 @@ describe("resolveHostedBrowserWebviewWrapperStyle", () => {
       pointerEvents: "none",
       visibility: "visible",
     });
+  });
+});
+
+describe("resolveHostedBrowserWebviewRadius", () => {
+  const canvas = { canvasWidth: 360, canvasHeight: 203 };
+
+  it("rounds a guest that fills the wrapper", () => {
+    expect(
+      resolveHostedBrowserWebviewRadius({
+        cornerRadius: 12,
+        layout: {
+          ...canvas,
+          viewportX: 0,
+          viewportY: 0,
+          viewportWidth: 360,
+          viewportHeight: 203,
+          viewportScale: 1,
+        },
+      }),
+    ).toBe(12);
+  });
+
+  it("keeps the on-screen radius when the guest is scaled down to fit", () => {
+    expect(
+      resolveHostedBrowserWebviewRadius({
+        cornerRadius: 12,
+        layout: {
+          ...canvas,
+          viewportX: 0,
+          viewportY: 0,
+          viewportWidth: 360,
+          viewportHeight: 203,
+          viewportScale: 0.5,
+        },
+      }),
+    ).toBe(24);
+  });
+
+  it("rounds a guest that is letterboxed on one axis but still reaches the curve", () => {
+    expect(
+      resolveHostedBrowserWebviewRadius({
+        cornerRadius: 12,
+        layout: {
+          ...canvas,
+          viewportX: 0,
+          viewportY: 6,
+          viewportWidth: 360,
+          viewportHeight: 191,
+          viewportScale: 1,
+        },
+      }),
+    ).toBe(12);
+  });
+
+  it("leaves a guest square once it is inset clear of the curve", () => {
+    expect(
+      resolveHostedBrowserWebviewRadius({
+        cornerRadius: 12,
+        layout: {
+          ...canvas,
+          viewportX: 6,
+          viewportY: 8,
+          viewportWidth: 348,
+          viewportHeight: 187,
+          viewportScale: 1,
+        },
+      }),
+    ).toBeUndefined();
+  });
+
+  it("leaves a panel browser square", () => {
+    expect(
+      resolveHostedBrowserWebviewRadius({
+        cornerRadius: 0,
+        layout: {
+          ...canvas,
+          viewportX: 0,
+          viewportY: 0,
+          viewportWidth: 360,
+          viewportHeight: 203,
+          viewportScale: 1,
+        },
+      }),
+    ).toBeUndefined();
   });
 });
