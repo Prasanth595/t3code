@@ -402,31 +402,43 @@ export function planProjectOverridesClear(
   };
 }
 
-/** Whether writing `value` leaves `current` as it is. Partial objects compare only the fields they set. */
-function patchLeavesUnchanged(value: unknown, current: unknown): boolean {
-  if (typeof value === "string" && typeof current === "string") return value.trim() === current;
-  if (isPlainObject(value) && isPlainObject(current)) {
-    return Object.entries(value).every(([field, next]) =>
-      next === null ? current[field] == null : patchLeavesUnchanged(next, current[field]),
+/**
+ * Whether a server kept `before` where `value` asked for a change. Objects are
+ * compared field by field, so a nested key an older server dropped is caught
+ * even when a sibling field saved. A null clears the field; strings may come
+ * back trimmed.
+ */
+function writeWasDropped(value: unknown, before: unknown, saved: unknown): boolean {
+  if (value === null) return before != null && Equal.equals(saved, before);
+  if (isPlainObject(value) && !Array.isArray(before) && !Array.isArray(saved)) {
+    const field = (source: unknown, key: string) =>
+      isPlainObject(source) ? source[key] : undefined;
+    return Object.entries(value).some(([key, next]) =>
+      writeWasDropped(next, field(before, key), field(saved, key)),
     );
   }
-  return Equal.equals(value, current);
+  const unchanged =
+    typeof value === "string" && typeof before === "string"
+      ? value.trim() === before
+      : Equal.equals(value, before);
+  return !unchanged && Equal.equals(saved, before);
 }
 
 /**
  * An older server drops keys it does not know, top-level or nested, and still
- * succeeds. A key that should have changed but reads back as it was before
- * the write was dropped; left unreported, the row stays mixed forever.
+ * succeeds. Left unreported, the row stays mixed forever.
  */
 function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | undefined) {
   if (saved === undefined) return [];
-  return Object.entries(write.patch).flatMap(([key, value]) => {
-    const before = write.previous[key as keyof ServerSettings];
-    return Equal.equals(saved[key as keyof ServerSettings], before) &&
-      !patchLeavesUnchanged(value, before)
+  return Object.entries(write.patch).flatMap(([key, value]) =>
+    writeWasDropped(
+      value,
+      write.previous[key as keyof ServerSettings],
+      saved[key as keyof ServerSettings],
+    )
       ? [key]
-      : [];
-  });
+      : [],
+  );
 }
 
 /** Wait for every target so a failed environment does not hide successful or later writes. */

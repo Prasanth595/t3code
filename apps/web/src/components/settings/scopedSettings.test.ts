@@ -280,9 +280,26 @@ describe("scoped settings writes", () => {
         await outcome(
           planScopedSettingsPatch(project, environments, { defaultAutoPull: true }),
           upgradedLaptop({
-            projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+            projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
           }),
         ),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("reports a nested key dropped beside one that saved", async () => {
+      const patch = { defaultAutoPull: true, enableAgentBrowserAccess: false };
+      const persistServer = vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
+        _tag: "Success" as const,
+        value: {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides:
+            environmentId === laptop.environmentId
+              ? { [laptopProjectId]: patch }
+              : { [projectId]: { defaultAutoPull: true } },
+        },
+      }));
+      expect(
+        await outcome(planScopedSettingsPatch(project, environments, patch), persistServer),
       ).toEqual({ saved: [laptop.label], failed: unsupported });
     });
 
