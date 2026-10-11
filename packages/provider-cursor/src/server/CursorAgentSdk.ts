@@ -32,11 +32,16 @@ export class CursorAgentSdkRunnerError extends Schema.TaggedError<CursorAgentSdk
   },
 ) {
   override get message(): string {
-    const reason = sdkErrorReason(this.cause);
-    return reason === undefined
-      ? `Cursor Agent SDK ${this.method} failed.`
-      : `Cursor Agent SDK ${this.method} failed: ${reason}`;
+    return `Cursor Agent SDK ${this.method} failed.`;
   }
+}
+
+/** The failure text a user sees: the SDK's own reason, which the error's message leaves out. */
+export function cursorSdkFailureMessage(error: CursorAgentSdkRunnerError): string {
+  const reason = sdkErrorReason(error.cause);
+  return reason === undefined
+    ? error.message
+    : `Cursor Agent SDK ${error.method} failed: ${reason}`;
 }
 
 /** Codes Cursor sends when it has no specific one. */

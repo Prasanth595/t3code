@@ -305,9 +305,18 @@ describe("CursorAgentSdkRunner", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it("names the SDK's reason, code and HTTP status in a runner error", () => {
+  it("names the SDK's reason, code and HTTP status in a runner failure's text", () => {
     const failed = (cause: unknown) =>
-      new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "agent.create", cause }).message;
+      CursorAgentSdk.cursorSdkFailureMessage(
+        new CursorAgentSdk.CursorAgentSdkRunnerError({ method: "agent.create", cause }),
+      );
+    assert.equal(
+      new CursorAgentSdk.CursorAgentSdkRunnerError({
+        method: "agent.create",
+        cause: new Error("Too many requests"),
+      }).message,
+      "Cursor Agent SDK agent.create failed.",
+    );
     assert.equal(
       failed(Object.assign(new Error("Too many requests"), { code: "rate_limited", status: 429 })),
       "Cursor Agent SDK agent.create failed: Too many requests (rate_limited, HTTP 429)",

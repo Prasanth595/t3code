@@ -2329,7 +2329,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
                             failure: makeProviderFailure({
                               cause,
                               message: CursorAgentSdk.isCursorAgentSdkRunnerError(cause)
-                                ? cause.message
+                                ? CursorAgentSdk.cursorSdkFailureMessage(cause)
                                 : undefined,
                               class: "transport_error",
                             }),
