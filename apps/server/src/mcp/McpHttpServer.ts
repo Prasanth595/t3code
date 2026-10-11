@@ -636,7 +636,9 @@ const imageToolFailure =
  */
 const registerImageTool = <T extends Tool.Any, E, R>(
   tool: T,
-  handle: (payload: Tool.Parameters<T>) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
+  handle: (
+    payload: Tool.ParametersEncoded<T>,
+  ) => Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   provide: (
     effect: Effect.Effect<{ readonly encodedResult: unknown }, E, R>,
   ) => Effect.Effect<
@@ -672,7 +674,7 @@ const registerImageTool = <T extends Tool.Any, E, R>(
             fiber.context,
             McpInvocationContext.McpInvocationContext,
           );
-          return provide(handle(payload as Tool.Parameters<T>)).pipe(
+          return provide(handle(payload as Tool.ParametersEncoded<T>)).pipe(
             Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
             Effect.matchCauseEffect({
               onFailure: imageToolFailure(tool.name, operation, failureText),

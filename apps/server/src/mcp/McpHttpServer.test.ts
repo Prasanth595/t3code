@@ -392,7 +392,7 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
 it.effect("rejects non-boolean snapshot image options before selecting a browser host", () =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    for (const includeImage of ["false", 0, null]) {
+    for (const includeImage of ["false", 0, {}, []]) {
       const result = yield* server
         .callTool({
           name: "preview_snapshot",
@@ -409,6 +409,20 @@ it.effect("rejects non-boolean snapshot image options before selecting a browser
       });
     }
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("treats null snapshot options as omitted through the registered MCP server", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const inputs = yield* serveSnapshots("mcp-null-options", snapshotResult);
+      const omitted = yield* callSnapshot({});
+      const nullable = yield* callSnapshot({ includeImage: null, save: null, tabId: null });
+      expect(nullable.isError).not.toBe(true);
+      expect(nullable.content).toEqual(omitted.content);
+      expect(nullable.structuredContent).toEqual(omitted.structuredContent);
+      expect(inputs).toEqual([{}, {}]);
+    }),
+  ).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("saves the snapshot PNG on request and reports its path", () =>
