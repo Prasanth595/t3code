@@ -9,7 +9,11 @@ import {
   type DesktopServerExposureMode,
   type DesktopServerExposureState,
 } from "@t3tools/contracts";
-import { isTailscaleIpv4Address, readTailscaleStatus } from "@t3tools/tailscale";
+import {
+  checkTailscaleServe,
+  isTailscaleIpv4Address,
+  readTailscaleStatus,
+} from "@t3tools/tailscale";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -242,6 +246,21 @@ export class DesktopTailscaleServePersistenceError extends Schema.TaggedError<De
   }
 }
 
+export class DesktopTailscaleServeCheckError extends Schema.TaggedError<DesktopTailscaleServeCheckError>()(
+  "DesktopTailscaleServeCheckError",
+  {
+    servePort: Schema.Number,
+    reason: Schema.Literals(["occupied", "status-unavailable"]),
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return this.reason === "occupied"
+      ? `Tailscale Serve HTTPS port ${this.servePort} already has a different or customized handler. Choose another HTTPS port or inspect \`tailscale serve status --json\`. Settings were not changed.`
+      : "Could not read the Tailscale Serve configuration. Check that Tailscale is running and inspect `tailscale serve status --json`. Settings were not changed.";
+  }
+}
+
 export const DesktopServerExposureSetModeError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
@@ -252,6 +271,7 @@ export const DesktopServerExposureError = Schema.Union([
   DesktopServerExposureNoNetworkAddressError,
   DesktopServerExposureModePersistenceError,
   DesktopTailscaleServePersistenceError,
+  DesktopTailscaleServeCheckError,
 ]);
 export type DesktopServerExposureError = typeof DesktopServerExposureError.Type;
 
@@ -282,7 +302,10 @@ export class DesktopServerExposure extends Context.Service<
     readonly setTailscaleServeEnabled: (input: {
       readonly enabled: boolean;
       readonly port?: number;
-    }) => Effect.Effect<DesktopServerExposureChange, DesktopTailscaleServePersistenceError>;
+    }) => Effect.Effect<
+      DesktopServerExposureChange,
+      DesktopTailscaleServePersistenceError | DesktopTailscaleServeCheckError
+    >;
     readonly getAdvertisedEndpoints: Effect.Effect<readonly AdvertisedEndpoint[]>;
   }
 >()("@t3tools/desktop/backend/DesktopServerExposure") {}
@@ -505,10 +528,40 @@ export const make = Effect.gen(function* () {
         enabled: input.enabled,
         ...(input.port === undefined ? {} : { port: input.port }),
       });
+      let servePort = input.port;
+      if (input.enabled) {
+        const settings = yield* desktopSettings.get;
+        const current = yield* Ref.get(stateRef);
+        // Match the settings writer's normalization before checking the port
+        // that will be saved. An omitted port retains the saved preference.
+        const checkedServePort =
+          input.port === undefined
+            ? settings.tailscaleServePort
+            : DesktopAppSettings.normalizeTailscaleServePort(input.port);
+        servePort = checkedServePort;
+        yield* checkTailscaleServe({
+          localPort: current.port,
+          servePort: checkedServePort,
+          localHost: DESKTOP_LOOPBACK_HOST,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.mapError(
+            (cause) =>
+              new DesktopTailscaleServeCheckError({
+                servePort: checkedServePort,
+                reason:
+                  cause._tag === "TailscaleServePortOccupiedError"
+                    ? "occupied"
+                    : "status-unavailable",
+                cause,
+              }),
+          ),
+        );
+      }
       const result = yield* desktopSettings
         .setTailscaleServe({
           enabled: input.enabled,
-          port: Option.fromNullishOr(input.port),
+          port: Option.fromNullishOr(servePort),
         })
         .pipe(
           Effect.mapError(

@@ -198,7 +198,7 @@ export function resolveDefaultDesktopSettings(appVersion: string): DesktopSettin
   };
 }
 
-function normalizeTailscaleServePort(value: unknown): number {
+export function normalizeTailscaleServePort(value: unknown): number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65_535
     ? value
     : DEFAULT_TAILSCALE_SERVE_PORT;

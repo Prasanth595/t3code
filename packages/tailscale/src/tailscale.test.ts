@@ -12,6 +12,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   buildTailscaleHttpsBaseUrl,
+  checkTailscaleServe,
   disableTailscaleServe,
   ensureTailscaleServe,
   isTailscaleIpv4Address,
@@ -140,6 +141,17 @@ function serveLayer(config: unknown, calls: Array<ReadonlyArray<string>>) {
 }
 
 describe("Serve handler ownership", () => {
+  it.effect.each([
+    { config: {}, expected: "empty" },
+    { config: serveConfig(), expected: "matching" },
+  ])("checks an $expected port without creating a handler", ({ config, expected }) => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    return Effect.gen(function* () {
+      assert.equal(yield* checkTailscaleServe({ localPort: 13773, servePort: 8443 }), expected);
+      assert.deepEqual(calls, [["serve", "status", "--json"]]);
+    }).pipe(Effect.provide(serveLayer(config, calls)));
+  });
+
   it.effect.each([null, {}, serveConfig("http://127.0.0.1:9000", 9443)])(
     "configures an unused port with status %j",
     (config) => {

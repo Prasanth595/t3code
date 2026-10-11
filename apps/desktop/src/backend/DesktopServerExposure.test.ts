@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -40,14 +41,15 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson = "{}") {
+function layerMockSpawner(statusJson = "{}", calls?: Array<ReadonlyArray<string>>, exitCode = 0) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() =>
-      Effect.succeed(
+    ChildProcessSpawner.make((command) => {
+      calls?.push("args" in command ? command.args : []);
+      return Effect.succeed(
         ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
@@ -58,8 +60,8 @@ function layerMockSpawner(statusJson = "{}") {
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         }),
-      ),
-    ),
+      );
+    }),
   );
 }
 
@@ -239,6 +241,133 @@ describe("DesktopServerExposure", () => {
         assert.equal(persisted.tailscaleServeEnabled, true);
         assert.equal(persisted.tailscaleServePort, 8443);
       }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "occupied",
+      config: JSON.stringify({
+        TCP: { "8443": { HTTPS: true } },
+        Web: { "desktop.example:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9000" } } } },
+      }),
+      exitCode: 0,
+    },
+    { name: "unknown", config: JSON.stringify({ unexpected: true }), exitCode: 0 },
+    { name: "unreadable", config: "invalid JSON", exitCode: 0 },
+    { name: "command failure", config: "", exitCode: 1 },
+  ])(
+    "refuses $name Serve configuration without saving or changing runtime",
+    ({ name, config, exitCode }) => {
+      const calls: Array<ReadonlyArray<string>> = [];
+      return withHarness(
+        emptyNetworkInterfaces,
+        Effect.gen(function* () {
+          const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* settings.load;
+          yield* exposure.configureFromSettings({ port: 4173 });
+          const previousSettings = yield* settings.get;
+          const previousConfig = yield* exposure.backendConfig;
+          const error = yield* exposure
+            .setTailscaleServeEnabled({ enabled: true, port: 8443 })
+            .pipe(Effect.flip);
+          assert.instanceOf(error, DesktopServerExposure.DesktopTailscaleServeCheckError);
+          assert.equal(error.reason, name === "occupied" ? "occupied" : "status-unavailable");
+          assert.include(error.message, "tailscale serve status --json");
+          if (name === "occupied") {
+            assert.include(error.message, "8443");
+            assert.include(error.message, "Choose another HTTPS port");
+          }
+          assert.deepEqual(yield* settings.get, previousSettings);
+          assert.deepEqual(yield* exposure.backendConfig, previousConfig);
+          assert.deepEqual(calls, [["serve", "status", "--json"]]);
+        }),
+        {},
+        layerMockSpawner(config, calls, exitCode),
+      );
+    },
+  );
+
+  it.effect("allows a matching proxy for the actual runtime port without mutating Serve", () => {
+    const calls: Array<ReadonlyArray<string>> = [];
+    const config = JSON.stringify({
+      TCP: { "8443": { HTTPS: true } },
+      Web: { "desktop.example:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:4173" } } } },
+    });
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* exposure.configureFromSettings({ port: 4173 });
+        const change = yield* exposure.setTailscaleServeEnabled({ enabled: true, port: 8443 });
+        assert.isTrue(change.requiresRelaunch);
+        assert.isTrue(change.state.tailscaleServeEnabled);
+        assert.deepEqual(calls, [["serve", "status", "--json"]]);
+      }),
+      {},
+      layerMockSpawner(config, calls),
+    );
+  });
+
+  it.effect("checks the saved Serve port when a new port is omitted", () => {
+    const config = JSON.stringify({
+      TCP: { "8443": { HTTPS: true } },
+      Web: { "desktop.example:8443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9000" } } } },
+    });
+    return withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setTailscaleServe({ enabled: false, port: Option.some(8443) });
+        yield* exposure.configureFromSettings({ port: 4173 });
+        yield* exposure.setTailscaleServeEnabled({ enabled: true }).pipe(Effect.flip);
+        assert.isFalse((yield* settings.get).tailscaleServeEnabled);
+        assert.equal((yield* settings.get).tailscaleServePort, 8443);
+      }),
+      {},
+      layerMockSpawner(config),
+    );
+  });
+
+  it.effect.each([0, -1, 65_536, 443.5])(
+    "checks the normalized port for invalid input %s",
+    (port) => {
+      const config = JSON.stringify({
+        TCP: { "443": { HTTPS: true } },
+        Web: { "desktop.example:443": { Handlers: { "/": { Proxy: "http://127.0.0.1:9000" } } } },
+      });
+      return withHarness(
+        emptyNetworkInterfaces,
+        Effect.gen(function* () {
+          const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          yield* exposure.configureFromSettings({ port: 4173 });
+          yield* exposure.setTailscaleServeEnabled({ enabled: true, port }).pipe(Effect.flip);
+          assert.isFalse((yield* settings.get).tailscaleServeEnabled);
+        }),
+        {},
+        layerMockSpawner(config),
+      );
+    },
+  );
+
+  it.effect("disables Serve without invoking the CLI", () =>
+    withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const exposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+        yield* settings.setTailscaleServe({ enabled: true, port: Option.some(8443) });
+        yield* exposure.configureFromSettings({ port: 4173 });
+        const change = yield* exposure.setTailscaleServeEnabled({ enabled: false });
+        assert.isTrue(change.requiresRelaunch);
+        assert.isFalse(change.state.tailscaleServeEnabled);
+        assert.isFalse((yield* settings.get).tailscaleServeEnabled);
+      }),
+      {},
+      layerDieOnSpawn(),
     ),
   );
 

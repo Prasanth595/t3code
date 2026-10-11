@@ -460,22 +460,32 @@ const readServeStatus = runTailscaleCommand(
   }),
 );
 
-export const ensureTailscaleServe = Effect.fnUntraced(function* (input: {
+interface TailscaleServeTarget {
   readonly localPort: number;
   readonly servePort?: number;
   readonly localHost?: string;
   // Only pairing may set this, after the old handler answers with the same
   // environment id. It never permits replacing complex or public handlers.
   readonly replaceVerifiedHandler?: boolean;
-}) {
+}
+
+/** Checks whether setup is allowed without creating or replacing a handler. */
+export const checkTailscaleServe = Effect.fnUntraced(function* (input: TailscaleServeTarget) {
   const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
   const localHost = input.localHost ?? "127.0.0.1";
   const target = `http://${localHost}:${input.localPort}`;
   const state = servePortState(yield* readServeStatus, servePort, target);
-  if (state === "matching") return;
   if (state === "occupied" || (state === "replaceable" && !input.replaceVerifiedHandler)) {
     return yield* new TailscaleServePortOccupiedError({ servePort });
   }
+  return state;
+});
+
+export const ensureTailscaleServe = Effect.fnUntraced(function* (input: TailscaleServeTarget) {
+  const state = yield* checkTailscaleServe(input);
+  if (state === "matching") return;
+  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+  const target = `http://${input.localHost ?? "127.0.0.1"}:${input.localPort}`;
   yield* runTailscaleCommand(
     ["serve", "--bg", `--https=${servePort}`, target],
     TAILSCALE_SERVE_TIMEOUT,
