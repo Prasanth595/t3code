@@ -84,6 +84,17 @@ layer("legacy GitLab diff requests through GitLabCli", (it) => {
       });
     }),
   );
+  it.effect.each([false, true])("accepts an unavailable legacy count (overflow: %s)", (overflow) =>
+    Effect.gen(function* () {
+      run.mockReturnValueOnce(failure("not-found"));
+      run.mockReturnValueOnce(output({ changes: [file], changes_count: null, overflow }));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+      const result = yield* cli.getMergeRequestDiff(input);
+      expect(result.truncated).toBe(overflow);
+      expect(result.nextCursor).toBeNull();
+      expect(result.patch).toContain("@@ -1 +1 @@\n-before\n+after\n");
+    }),
+  );
   it.effect.each([{ overflow: true }, { changes_count: "247+" }])(
     "marks legacy limits %j truncated",
     (metadata) =>

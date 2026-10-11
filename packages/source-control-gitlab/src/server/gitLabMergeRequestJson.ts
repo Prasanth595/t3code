@@ -404,7 +404,7 @@ const decodeMergeRequestChanges = decodeJsonResult(
   Schema.Struct({
     changes: Schema.Array(Schema.Unknown),
     overflow: Schema.optional(Schema.Boolean),
-    changes_count: Schema.optional(Schema.String),
+    changes_count: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
 const decodeDiffEntry = Schema.decodeUnknownExit(RawDiffSchema);
