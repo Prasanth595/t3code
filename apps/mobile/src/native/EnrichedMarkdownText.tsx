@@ -161,7 +161,13 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     );
   }, []);
   const { linkVariants, linkPillContent } = useEnrichedLinkVariants(documentAssets, props);
-  const skillLinkRegex = useMemo(() => enrichedSkillLinkRegex(props.skills), [props.skills]);
+  const linkRecognition = useMemo(
+    () => ({
+      text: enrichedSkillLinkRegex(props.skills) ?? undefined,
+      inlineCode: ENRICHED_INLINE_FILE_LINK_REGEX,
+    }),
+    [props.skills],
+  );
   const [activeMenu, setActiveMenu] = useState<{
     url: string;
     menu: NonNullable<ReturnType<NonNullable<typeof props.fileContextMenu>>>;
@@ -306,8 +312,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
               ? ({ url }) => (props.onImagePress ?? props.onLinkPress)?.(url)
               : undefined
           }
-          linkRegex={skillLinkRegex}
-          inlineCodeLinkRegex={ENRICHED_INLINE_FILE_LINK_REGEX}
+          linkRecognition={linkRecognition}
           containerStyle={{ flexShrink: 1, minWidth: 0 }}
           flavor="github"
           selectable
