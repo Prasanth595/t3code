@@ -44,7 +44,7 @@ export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdown
   names.sort((a, b) => b.length - a.length);
   const alternatives = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   return new RegExp(
-    `(?<![A-Za-z0-9_\\p{Sc}-])\\p{Sc}(?:${alternatives.join("|")})(?![A-Za-z0-9_-])`,
+    `(?<![A-Za-z0-9_-])(?<!\\p{Sc})\\p{Sc}(?:${alternatives.join("|")})(?![A-Za-z0-9_-])`,
     "u",
   );
 }
