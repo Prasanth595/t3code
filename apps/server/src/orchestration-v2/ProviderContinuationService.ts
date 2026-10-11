@@ -232,8 +232,11 @@ export const layer = Layer.effectDiscard(
         // The adapter's buffered wake has nowhere else to go once the
         // instance is off: drop it rather than warn, since nothing here
         // retries it either way. This catch sits outside dispatchIfCurrent so
-        // the adapter still observes the raw failure first and clears its
-        // own sticky offer flag before we swallow it here.
+        // an adapter that clears its own sticky offer flag on dispatch
+        // failure (inside dispatchIfCurrent) observes the raw failure first.
+        // Not every adapter self-clears that way, so the explicit callback is
+        // called here too; clearIfCurrent implementations are idempotent, so
+        // a source that already cleared is unaffected.
         const logInstanceDisabled = (
           error: ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
         ) =>
@@ -242,7 +245,11 @@ export const layer = Layer.effectDiscard(
             providerThreadId: request.providerThreadId,
             projectId: error.projectId,
             instanceId: error.instanceId,
-          });
+          }).pipe(
+            Effect.andThen(
+              request.clearIfCurrent !== undefined ? request.clearIfCurrent() : Effect.void,
+            ),
+          );
         if (request.dispatchIfCurrent === undefined) {
           yield* dispatch.pipe(
             Effect.catchTags({
@@ -251,13 +258,11 @@ export const layer = Layer.effectDiscard(
           );
           return;
         }
-        yield* request
-          .dispatchIfCurrent(dispatch)
-          .pipe(
-            Effect.catchTags({
-              ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
-            }),
-          );
+        yield* request.dispatchIfCurrent(dispatch).pipe(
+          Effect.catchTags({
+            ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
+          }),
+        );
       },
     );
 

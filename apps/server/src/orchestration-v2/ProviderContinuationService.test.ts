@@ -667,6 +667,56 @@ describe("ProviderContinuationService", () => {
     },
   );
 
+  it.effect(
+    "clears a sticky continuation offer for an adapter whose dispatchIfCurrent does not self-clear on failure",
+    () => {
+      return Effect.gen(function* () {
+        const wakeHeld = yield* Ref.make(true);
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: () =>
+            Effect.fail(
+              new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                projectId: ProjectId.make("project-provider-continuation-disabled"),
+                instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
+              }) as never,
+            ),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        // Mirrors the Muse adapter: dispatchIfCurrent forwards the dispatch
+        // effect without any failure handling of its own (unlike ACP or Pi),
+        // so only the explicit clearIfCurrent callback can clear the sticky
+        // "wake held" flag. Without it, a disabled instance leaves the flag
+        // set forever and no later background turn is ever offered.
+        const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.asSome(effect);
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...request(dispatchIfCurrent),
+            clearIfCurrent: () => Ref.set(wakeHeld, false),
+          });
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          assert.isFalse(
+            yield* Ref.get(wakeHeld),
+            "a disabled instance must clear the offer via the explicit callback " +
+              "when the adapter itself does not clear on dispatch failure",
+          );
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      });
+    },
+  );
+
   it.effect("keeps a Grok delegated completion queued instead of restarting active work", () => {
     return Effect.gen(function* () {
       const dispatched = yield* Queue.unbounded<unknown>();
