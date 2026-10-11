@@ -2607,7 +2607,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.deepEqual(harness.permissionModeChanges, [initialMode]);
           assert.equal((yield* finish(3)).status, "completed");
           assert.lengthOf(harness.offeredMessages, 3);
-        }).pipe(Effect.provide(Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
       ),
   );
 
