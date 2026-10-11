@@ -2801,10 +2801,22 @@ export default function Sidebar() {
   // The empty state reads deferred rows, so its readiness must defer with them.
   const projectSnapshotsReadyForRows = useDeferredValue(allProjectSnapshotsReady);
   useEffect(() => {
-    if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
+    if (
+      projectScopeKey !== null &&
+      projects === liveProjects &&
+      allProjectSnapshotsReady &&
+      scopedProjectGroup === null
+    ) {
       setProjectScopeKey(null);
     }
-  }, [allProjectSnapshotsReady, projectScopeKey, scopedProjectGroup, setProjectScopeKey]);
+  }, [
+    allProjectSnapshotsReady,
+    liveProjects,
+    projects,
+    projectScopeKey,
+    scopedProjectGroup,
+    setProjectScopeKey,
+  ]);
   // Count-only subscription: the parent needs "are there draft rows" for the
   // empty state, while SidebarDraftBlock owns the per-keystroke content
   // subscription. Selecting a number keeps typing in a draft composer from
