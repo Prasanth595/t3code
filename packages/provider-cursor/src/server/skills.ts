@@ -8,7 +8,6 @@
  *
  * @module provider/Drivers/CursorSkills
  */
-import * as NodeOS from "node:os";
 
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
@@ -22,6 +21,7 @@ import {
   collectComposerSkillTokens,
   replaceComposerSkillTokens,
 } from "@t3tools/shared/composerInlineTokens";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const MAX_SKILL_DEPTH = 10;
@@ -205,10 +205,9 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       const child = path.join(directory, entry);
       const info = yield* orUndefined(fileSystem.stat(child), input.budget);
       if (info?.type !== "Directory") continue;
-      if (depth >= MAX_SKILL_DEPTH) {
-        input.budget.exhausted = true;
-        return;
-      }
+      // A tree deeper than the limit is skipped rather than fatal: the same tree would fail
+      // every refresh and hide every other skill with it.
+      if (depth >= MAX_SKILL_DEPTH) continue;
       yield* visit(child, depth + 1);
     }
   });
@@ -222,7 +221,10 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   environment: NodeJS.ProcessEnv = process.env,
 ) {
   const path = yield* Path.Path;
-  const userHome = environment.HOME?.trim() || environment.USERPROFILE?.trim() || NodeOS.homedir();
+  const userHome =
+    environment.HOME?.trim() ||
+    environment.USERPROFILE?.trim() ||
+    (yield* HostProcess.HomeDirectory);
   const rootsBelow = (base: string, scope: "user" | "project") => [
     { directory: path.join(base, ".cursor", "skills"), scope },
     { directory: path.join(base, ".agents", "skills"), scope },
