@@ -514,7 +514,11 @@ export function NewTaskDraftScreen(props: {
     readDraftMessage: () => (flow.draftKey ? getComposerDraftSnapshot(flow.draftKey).text : null),
     subscribeToDraftChanges: (onChange) => appAtomRegistry.subscribe(composerDraftsAtom, onChange),
     selection: composerMenu.selection,
-    disabled: isIncomingShareTransferPending || isImportingShare || flow.submitting,
+    disabled:
+      isIncomingShareTransferPending ||
+      isImportingShare ||
+      flow.submitting ||
+      submitNavigationAction !== null,
     onChangeDraftMessage: flow.setPrompt,
     onChangeSelection: composerMenu.onSelectionChange,
   });
@@ -1822,7 +1826,12 @@ export function NewTaskDraftScreen(props: {
                 state={voiceInput.state}
                 presentation={voicePresentation}
                 isAvailable={voiceInput.isAvailable}
-                disabled={isIncomingShareTransferPending || isImportingShare || flow.submitting}
+                disabled={
+                  isIncomingShareTransferPending ||
+                  isImportingShare ||
+                  flow.submitting ||
+                  submitNavigationAction !== null
+                }
                 onStart={voiceInput.start}
                 onConfirm={voiceInput.stop}
                 onCancel={voiceInput.cancel}
