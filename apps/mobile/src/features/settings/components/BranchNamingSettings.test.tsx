@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type { BranchNamingMode } from "@t3tools/contracts";
 import type { ReactNode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -6,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 type InputProps = {
   accessibilityLabel: string;
+  defaultValue: string;
   onChangeText: (text: string) => void;
   onEndEditing: (event: { nativeEvent: { text: string } }) => void;
 };
@@ -29,21 +31,31 @@ vi.mock("./SettingsSection", () => ({
 
 import { BranchNamingSettings } from "./BranchNamingSettings";
 
+const PREFIX = "Branch prefix";
+const INSTRUCTIONS = "Branch naming instructions";
+
 let root: Root;
 const onChange = vi.fn();
 
-function render(mode: "static" | "custom") {
+function render(mode: BranchNamingMode, saved: { prefix?: string; instructions?: string } = {}) {
   act(() =>
     root.render(
       <BranchNamingSettings
         mode={mode}
-        prefix="t3"
-        instructions="Use issue IDs."
+        prefix={saved.prefix ?? "t3"}
+        instructions={saved.instructions ?? "Use issue IDs."}
         disabled={false}
         onChange={onChange}
       />,
     ),
   );
+}
+
+// Android Back hides the keyboard but never ends editing, so leaving the
+// screen is just an unmount with the text still in the field.
+function leaveScreen() {
+  act(() => root.unmount());
+  root = createRoot(document.createElement("div"));
 }
 
 const typed = (text: string) => ({ nativeEvent: { text } });
@@ -68,38 +80,74 @@ afterEach(() => {
 describe("BranchNamingSettings", () => {
   it("saves typed instructions when the screen closes before editing ends", () => {
     render("custom");
-    act(() => input("Branch naming instructions").onChangeText("  Use julius/ prefixes.  "));
-    act(() => root.unmount());
+    act(() => input(INSTRUCTIONS).onChangeText("  Use julius/ prefixes.  "));
+    leaveScreen();
 
     expect(onChange).toHaveBeenCalledExactlyOnceWith({
       branchNameInstructions: "Use julius/ prefixes.",
     });
-    root = createRoot(document.createElement("div"));
   });
 
   it("saves typed prefix when the screen closes before editing ends", () => {
     render("static");
-    act(() => input("Branch prefix").onChangeText("feat/"));
-    act(() => root.unmount());
+    act(() => input(PREFIX).onChangeText("feat/"));
+    leaveScreen();
 
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ branchNamePrefix: "feat/" });
-    root = createRoot(document.createElement("div"));
+  });
+
+  it.each([
+    { mode: "static", label: PREFIX, key: "prefix", text: "feat/" },
+    { mode: "custom", label: INSTRUCTIONS, key: "instructions", text: "Use julius/ prefixes." },
+  ] as const)("shows the $key typed before Back when the screen reopens", (field) => {
+    render(field.mode);
+    act(() => input(field.label).onChangeText(field.text));
+    leaveScreen();
+
+    const [patch] = onChange.mock.lastCall ?? [];
+    inputs.clear();
+    render(field.mode, {
+      prefix: patch?.branchNamePrefix,
+      instructions: patch?.branchNameInstructions,
+    });
+    expect(input(field.label).defaultValue).toBe(field.text);
+  });
+
+  it("saves both drafts in one patch when the screen closes", () => {
+    render("static");
+    act(() => input(PREFIX).onChangeText("feat/"));
+    render("custom");
+    act(() => input(INSTRUCTIONS).onChangeText("New rules."));
+    leaveScreen();
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      branchNamePrefix: "feat/",
+      branchNameInstructions: "New rules.",
+    });
+  });
+
+  it("drops a draft once a newer saved value replaces the field", () => {
+    render("custom");
+    act(() => input(INSTRUCTIONS).onChangeText("Old draft."));
+    render("custom", { instructions: "Saved elsewhere." });
+    leaveScreen();
+
+    expect(onChange).not.toHaveBeenCalled();
   });
 
   it("does not save again on close after editing ended", () => {
     render("custom");
-    act(() => input("Branch naming instructions").onChangeText("New rules."));
-    act(() => input("Branch naming instructions").onEndEditing(typed("New rules.")));
-    act(() => root.unmount());
+    act(() => input(INSTRUCTIONS).onChangeText("New rules."));
+    act(() => input(INSTRUCTIONS).onEndEditing(typed("New rules.")));
+    leaveScreen();
 
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ branchNameInstructions: "New rules." });
-    root = createRoot(document.createElement("div"));
   });
 
   it("does not save unchanged text", () => {
     render("custom");
-    act(() => input("Branch naming instructions").onChangeText("Use issue IDs."));
-    act(() => input("Branch naming instructions").onEndEditing(typed("Use issue IDs.")));
+    act(() => input(INSTRUCTIONS).onChangeText("Use issue IDs."));
+    act(() => input(INSTRUCTIONS).onEndEditing(typed("Use issue IDs.")));
 
     expect(onChange).not.toHaveBeenCalled();
   });
