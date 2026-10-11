@@ -247,6 +247,7 @@ function makeLocalCommandHarness(input: {
               id: RunId.make("previous-native-run"),
               ordinal: 1,
               status: "completed" as const,
+              startedAt: now,
               providerInstanceId: oldInstanceId,
               providerThreadId: oldProviderThreadId,
             },

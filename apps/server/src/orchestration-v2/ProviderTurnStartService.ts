@@ -382,6 +382,7 @@ export const layer: Layer.Layer<
         const previousNativeRun = projection.runs.reduce<OrchestrationV2Run | undefined>(
           (previous, candidate) =>
             candidate.ordinal < run.ordinal &&
+            candidate.startedAt !== null &&
             candidate.providerThreadId !== null &&
             nativeThreads.has(candidate.providerThreadId) &&
             (previous === undefined || candidate.ordinal > previous.ordinal)
