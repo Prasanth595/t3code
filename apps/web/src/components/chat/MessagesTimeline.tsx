@@ -165,8 +165,8 @@ import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
   buildAttachmentVideoAsset,
-  buildAttachmentVideoPreview,
   buildExpandedImagePreview,
+  buildMessageMediaPreview,
   ExpandedImagePreview,
 } from "./ExpandedImagePreview";
 import {
@@ -2174,7 +2174,13 @@ function ContextCompactionTimelineRow({
   );
 }
 
-function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
+function UserVideoAttachment({
+  file,
+  onOpen,
+}: {
+  readonly file: ChatFileAttachment;
+  readonly onOpen: () => void;
+}) {
   const ctx = use(TimelineRowCtx);
   const asset = useMemo(
     () =>
@@ -2204,10 +2210,7 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
       }
       label={file.name}
       preload="visible"
-      onOpen={() => {
-        const preview = buildAttachmentVideoPreview(ctx.activeThreadEnvironmentId, file);
-        if (preview) ctx.onImageExpand(preview);
-      }}
+      onOpen={onOpen}
       className="block aspect-[4/3] w-full"
       videoClassName="aspect-auto size-full rounded-lg border border-border/80"
       stateClassName="aspect-auto min-h-full rounded-lg border border-border/80 bg-black text-white"
@@ -2258,6 +2261,16 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   );
   const userVideos = userFiles.filter(isVideoAttachment);
   const otherUserFiles = userFiles.filter((file) => !isVideoAttachment(file));
+  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
+  const expandMessageMedia = (attachmentId: string) => {
+    const preview = buildMessageMediaPreview(
+      ctx.activeThreadEnvironmentId,
+      regularImages,
+      userVideos,
+      attachmentId,
+    );
+    if (preview) onImageExpand(preview);
+  };
   const unknownAttachments = (row.message.attachments ?? []).filter(
     (attachment) => !isImageAttachment(attachment) && !isFileAttachment(attachment),
   );
@@ -2276,7 +2289,6 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       return record?.kind === "file" || record?.kind === "image" ? [record.attachmentId] : [];
     }),
   );
-  const regularImages = userImages.filter((image) => !image.name.startsWith("preview-annotation-"));
   const unchippedFiles = otherUserFiles.filter((file) => !chippedAttachmentIds.has(file.id));
   const annotationRecordIds = useMemo(
     () =>
@@ -2367,10 +2379,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               if (preview) onImageExpand(preview);
             }}
             onOpenFile={onFileOpen}
-            onExpandVideo={(file) => {
-              const preview = buildAttachmentVideoPreview(ctx.activeThreadEnvironmentId, file);
-              if (preview) onImageExpand(preview);
-            }}
+            onExpandVideo={(file) => expandMessageMedia(file.id)}
           />
         </span>
       );
@@ -2383,7 +2392,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       annotationRecordIds,
       onImageExpand,
       onFileOpen,
-      ctx.activeThreadEnvironmentId,
+      expandMessageMedia,
     ],
   );
 
@@ -2453,11 +2462,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                     type="button"
                     className="block h-full w-full cursor-zoom-in"
                     aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
+                    onClick={() => expandMessageMedia(image.id)}
                   >
                     <img
                       src={image.previewUrl}
@@ -2476,7 +2481,11 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               </div>
             ))}
             {userVideos.map((file) => (
-              <UserVideoAttachment key={file.id} file={file} />
+              <UserVideoAttachment
+                key={file.id}
+                file={file}
+                onOpen={() => expandMessageMedia(file.id)}
+              />
             ))}
           </div>
         )}

@@ -13,6 +13,7 @@ import { Button } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 import type { ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
+import type { VideoHandoff } from "../media/videoHandoff";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "../../assets/assetUrls";
 import { OpenMediaLink } from "../media/OpenMediaLink";
@@ -44,7 +45,13 @@ function ExpandedMediaFailure({ children }: { children: ReactNode }) {
   );
 }
 
-function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
+function ExpandedVideo({
+  item,
+  handoff,
+}: {
+  readonly item: ExpandedImageItem;
+  readonly handoff: VideoHandoff | null;
+}) {
   const asset = item.actionsSource?.asset;
   const assetUrl = useAssetUrlState(asset?.environmentId ?? null, asset?.resource ?? null);
   const refreshAssetUrl = useAssetUrlRefresh(asset?.environmentId ?? null, asset?.resource ?? null);
@@ -60,7 +67,8 @@ function ExpandedVideo({ item }: { readonly item: ExpandedImageItem }) {
       sourceFailed={assetUrl._tag === "Failure"}
       originalUrl={item.originalUrl}
       preload="metadata"
-      autoPlay={item.autoPlay ?? true}
+      autoPlay={handoff ? handoff.playing : (item.autoPlay ?? true)}
+      resumeFrom={handoff ?? undefined}
       className="block max-h-[var(--media-height)] max-w-[var(--media-width)] text-center"
       videoClassName="aspect-auto max-h-[var(--media-height)] w-auto max-w-[var(--media-width)] rounded-lg border border-border/70 shadow-2xl"
       stateClassName={EXPANDED_MEDIA_STATE_CLASS_NAME}
@@ -77,6 +85,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   const [failedImageSrc, setFailedImageSrc] = useState<string | null>(null);
   const [accessibilityDetailsSrc, setAccessibilityDetailsSrc] = useState<string | null>(null);
   const zoomableImageRef = useRef<ZoomableImageHandle>(null);
+  const [videoHandoff, setVideoHandoff] = useState<VideoHandoff | null>(preview.handoff ?? null);
   const [returnFocusTarget] = useState(() =>
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
@@ -104,6 +113,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     : source;
 
   const navigateImage = useCallback((direction: -1 | 1) => {
+    setVideoHandoff(null);
     setImageOffset((current) => current + direction);
   }, []);
 
@@ -216,7 +226,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         <MediaActions source={actionsSource}>
           <div className="relative isolate z-10 flex max-h-full max-w-[var(--media-width)] flex-col items-center">
             {item.type === "video" ? (
-              <ExpandedVideo key={index} item={item} />
+              <ExpandedVideo key={index} item={item} handoff={videoHandoff} />
             ) : showingAccessibilityDetails ? (
               accessibilityDetails ? (
                 <SnapShotAccessibilityData

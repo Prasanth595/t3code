@@ -1,4 +1,4 @@
-import { PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
+import { Maximize2Icon, PlayIcon, RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 
 import { cn } from "../../lib/utils";
@@ -6,6 +6,7 @@ import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { Button } from "../ui/button";
 import { OpenMediaLink } from "./OpenMediaLink";
 import { MediaActions, type MediaActionSource } from "./MediaActions";
+import type { VideoHandoff } from "./videoHandoff";
 
 interface MediaVideoPlayerProps {
   readonly src: string | null;
@@ -15,8 +16,14 @@ interface MediaVideoPlayerProps {
   readonly revision?: string | null | undefined;
   readonly preload?: "visible" | "metadata" | undefined;
   readonly autoPlay?: boolean | undefined;
+  /** Playback another player handed over, so moving a video between surfaces keeps its place. */
+  readonly resumeFrom?: VideoHandoff | undefined;
   /** Presents a still thumbnail whose full surface opens the video in a viewer. */
   readonly onOpen?: (() => void) | undefined;
+  /** Offers moving an inline video into the viewer; the inline copy pauses. */
+  readonly onPopOut?: ((video: HTMLVideoElement) => void) | undefined;
+  /** Receives the playing element, e.g. so a gallery can find this video among a message's media. */
+  readonly onVideoElement?: ((video: HTMLVideoElement | null) => void) | undefined;
   readonly className?: string | undefined;
   readonly videoClassName?: string | undefined;
   /** Styles the loading and failure panels, which otherwise assume an inline light surface. */
@@ -36,7 +43,10 @@ export function MediaVideoPlayer({
   revision = null,
   preload = "visible",
   autoPlay = false,
+  resumeFrom,
   onOpen,
+  onPopOut,
+  onVideoElement,
   className,
   videoClassName,
   stateClassName,
@@ -46,6 +56,8 @@ export function MediaVideoPlayer({
   actionsSource,
 }: MediaVideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Follows a handed-over video as it plays, so a re-signed URL or retry resumes here, not at the handoff.
+  const resumeRef = useRef(resumeFrom);
   const [playbackSource, setPlaybackSource] = useState<{
     src: string;
     revision: string | null;
@@ -130,7 +142,7 @@ export function MediaVideoPlayer({
 
   const player = (
     <span
-      className={cn("relative inline-block align-middle", className)}
+      className={cn("group/video relative inline-block align-middle", className)}
       style={style}
       data-markdown-copy={copyMarkdown}
     >
@@ -166,7 +178,10 @@ export function MediaVideoPlayer({
       ) : src !== null && !failed ? (
         <video
           key={loadAttempt}
-          ref={videoRef}
+          ref={(video) => {
+            videoRef.current = video;
+            onVideoElement?.(video);
+          }}
           src={src}
           aria-label={label || "Video preview"}
           aria-hidden={onOpen ? true : undefined}
@@ -181,7 +196,29 @@ export function MediaVideoPlayer({
             videoClassName,
           )}
           style={style}
-          onLoadedMetadata={(event) => prepareVideoFirstFrame(event.currentTarget)}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            const resume = resumeRef.current;
+            if (!resume) {
+              prepareVideoFirstFrame(video);
+              return;
+            }
+            video.volume = resume.volume;
+            video.muted = resume.muted;
+            if (resume.startAt > 0) video.currentTime = resume.startAt;
+            // An early pause() (such as an effect replay) cancels the autoplay attribute.
+            if (autoPlay) void video.play().catch(() => {});
+          }}
+          onTimeUpdate={(event) => {
+            const video = event.currentTarget;
+            if (resumeRef.current && video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+              resumeRef.current = { ...resumeRef.current, startAt: video.currentTime };
+            }
+          }}
+          onVolumeChange={(event) => {
+            const { volume, muted } = event.currentTarget;
+            if (resumeRef.current) resumeRef.current = { ...resumeRef.current, volume, muted };
+          }}
           onPlay={() => setPlaybackSource({ src, revision: sourceRevision })}
           onPause={refreshPausedRevision}
           onEnded={refreshPausedRevision}
@@ -209,6 +246,23 @@ export function MediaVideoPlayer({
             <PlayIcon aria-hidden className="size-4 fill-current" />
           </span>
         </button>
+      ) : null}
+      {onPopOut && !onOpen && src !== null && !failed ? (
+        <span className="absolute top-2 right-2 opacity-0 transition-opacity group-hover/video:opacity-100 group-focus-within/video:opacity-100 pointer-coarse:opacity-100">
+          <Button
+            size="icon-xs"
+            variant="media-close"
+            aria-label="Open in viewer"
+            onClick={() => {
+              const video = videoRef.current;
+              if (!video) return;
+              onPopOut(video);
+              video.pause();
+            }}
+          >
+            <Maximize2Icon />
+          </Button>
+        </span>
       ) : null}
     </span>
   );

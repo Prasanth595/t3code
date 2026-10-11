@@ -17,6 +17,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { resolveExternalWebLinkHost } from "./externalLinkContextMenu";
 import type { MediaActionSource } from "../media/MediaActions";
+import type { VideoHandoff } from "../media/videoHandoff";
 import { resolveProtocolRelativeMediaUrl } from "../media/mediaContent";
 
 export interface ExpandedImageItem {
@@ -35,6 +36,8 @@ export interface ExpandedImageItem {
 export interface ExpandedImagePreview {
   images: ExpandedImageItem[];
   index: number;
+  /** Continues the selected video from where another player left it. */
+  handoff?: VideoHandoff;
 }
 
 /** Wraps navigation in either direction, including offsets beyond a complete cycle. */
@@ -151,6 +154,37 @@ export function buildAttachmentVideoPreview(
     ],
     index: 0,
   };
+}
+
+/** One gallery over a message's image and video thumbnails, in the order they are shown. */
+export function buildMessageMediaPreview(
+  environmentId: EnvironmentId,
+  images: ReadonlyArray<ChatImageAttachment>,
+  videos: ReadonlyArray<ChatFileAttachment>,
+  selectedId: string,
+): ExpandedImagePreview | null {
+  const entries = [
+    ...images.flatMap((image) =>
+      image.previewUrl
+        ? [
+            {
+              id: image.id,
+              item: {
+                src: image.previewUrl,
+                name: image.name,
+                ...(image.source?.kind === "snap-shot" ? { source: image.source } : {}),
+              } satisfies ExpandedImageItem,
+            },
+          ]
+        : [],
+    ),
+    ...videos.flatMap((video) => {
+      const item = buildAttachmentVideoPreview(environmentId, video)?.images[0];
+      return item ? [{ id: video.id, item }] : [];
+    }),
+  ];
+  const index = entries.findIndex((entry) => entry.id === selectedId);
+  return index < 0 ? null : { images: entries.map((entry) => entry.item), index };
 }
 
 export function expandedImageKey(preview: ExpandedImagePreview): string {

@@ -112,8 +112,10 @@ import {
   renderCodexFileCitationsAsMarkdown,
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { readVideoHandoff } from "./media/videoHandoff";
 import {
   resolveMarkdownMediaPreview,
+  type ExpandedImageItem,
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -1528,6 +1530,8 @@ function ChatMarkdownImage(props: {
 
 function ChatMarkdownVideo(props: {
   readonly src: string | null;
+  readonly srcFragment?: string | undefined;
+  readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   readonly alt: string;
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
@@ -1537,9 +1541,32 @@ function ChatMarkdownVideo(props: {
   readonly actionsSource?: MediaActionSource | undefined;
   readonly onRetry?: (() => Promise<unknown>) | undefined;
 }) {
+  const { onImageExpand } = props;
+  const item: ExpandedImageItem = {
+    src: props.src,
+    name: props.alt.trim() || "video",
+    type: "video",
+    ...(props.actionsSource ? { actionsSource: props.actionsSource } : {}),
+    ...(props.originalUrl ? { originalUrl: props.originalUrl } : {}),
+    ...(props.srcFragment ? { srcFragment: props.srcFragment } : {}),
+  };
   return (
     <MediaVideoPlayer
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
+      onVideoElement={(video) => {
+        if (video) markdownImageItems.set(video, item);
+      }}
+      onPopOut={
+        onImageExpand
+          ? (video) => {
+              const handoff = readVideoHandoff(video);
+              onImageExpand({
+                ...markdownImageGallery(video, item),
+                ...(handoff ? { handoff } : {}),
+              });
+            }
+          : undefined
+      }
       src={props.src}
       sourceFailed={props.sourceFailed}
       label={props.alt}
@@ -1664,6 +1691,8 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
+        srcFragment={props.srcFragment}
+        onImageExpand={props.onImageExpand}
         onRetry={refreshAssetUrl}
         actionsSource={actionsSource}
       />
@@ -3278,6 +3307,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         return (
           <ChatMarkdownVideo
             src={mediaSrc}
+            onImageExpand={imageExpand}
             alt={altText}
             copyMarkdown={copyMarkdown}
             originalUrl={originalUrl}
