@@ -222,6 +222,43 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.include(options.settings, { showThinkingSummaries: true });
   });
 
+  it("sends the selected effort for a custom model that declares effort options", () => {
+    const customModel = "gpt-6-astra";
+    const options = ClaudeAdapterV2.makeClaudeQueryOptions({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make(ClaudeAdapterV2.CLAUDE_PROVIDER),
+        model: customModel,
+        options: [{ id: "effort", value: "xhigh" }],
+      },
+      nativeThreadId: "custom-effort-thread",
+      resume: false,
+      cwd: "/workspace",
+      settings: {
+        ...DEFAULT_CLAUDE_SETTINGS,
+        customModels: [
+          {
+            slug: customModel,
+            name: "GPT-6 Astra",
+            capabilities: {
+              optionDescriptors: [
+                {
+                  id: "effort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "medium", label: "Medium", isDefault: true },
+                    { id: "xhigh", label: "Extra high" },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    assert.equal(options.effort, "xhigh");
+  });
+
   it("preserves an explicit omitted thinking display", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
