@@ -6,6 +6,7 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
+import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -58,7 +59,9 @@ function providerDisplayLabel(provider: {
 /**
  * `provider.enabled` reflects the machine plus any project's keep-alive
  * override, so it alone can't tell this project apart from one that merely
- * shares the instance. Settings carry the real per-project view.
+ * shares the instance. Settings carry the real per-project view the server
+ * itself enforces, so a project with no override of its own must resolve
+ * from there, not from a snapshot another project may be keeping alive.
  */
 function isProviderEnabledForProject(
   config: T3ServerConfig | null | undefined,
@@ -70,13 +73,9 @@ function isProviderEnabledForProject(
   if (!provider) {
     return false;
   }
-  const projectOverride =
-    projectId && config?.settings
-      ? config.settings.projectSettingsOverrides[projectId]?.providerInstances?.[
-          provider.instanceId
-        ]?.enabled
-      : undefined;
-  return projectOverride ?? provider.enabled;
+  return config?.settings
+    ? resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
+    : provider.enabled;
 }
 
 /**

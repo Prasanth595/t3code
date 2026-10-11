@@ -629,6 +629,23 @@ describe("mobile model options", () => {
       expect(buildModelOptions(configWith(settings), null, undefined, null)).toHaveLength(1);
     });
 
+    it("hides a machine-disabled instance for a project with no override, even though another project's keep-alive left it running", () => {
+      const otherProjectId = ProjectId.make("project-b");
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+        },
+        projectSettingsOverrides: {
+          [otherProjectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+        },
+      };
+
+      // configWith's snapshot always reports enabled: true, standing in for
+      // the server keeping the instance alive to serve project-b's override.
+      expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
+    });
+
     it("marks a project-disabled instance's fallback selection unavailable instead of reviving it", () => {
       const settings: ServerSettings = {
         ...DEFAULT_SERVER_SETTINGS,
@@ -718,6 +735,13 @@ describe("synchronized mobile model visibility", () => {
   const config = {
     settings: {
       ...DEFAULT_SERVER_SETTINGS,
+      // A live snapshot entry always has a matching configured instance (or
+      // is a driver's own default id); these are stand-ins for neither, so
+      // the enablement fixture needs its own entry to read as enabled.
+      providerInstances: {
+        [provider]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        [other]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+      },
       providerModelPreferences: {
         [provider]: {
           hiddenModels: ["hidden", "custom", "missing"],
