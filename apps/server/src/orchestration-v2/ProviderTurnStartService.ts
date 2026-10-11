@@ -280,6 +280,31 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
+      const deliveredAttemptIds = new Set(
+        projection.providerTurns.map((turn) => turn.runAttemptId),
+      );
+      const readHandoffHistory = Effect.fn(function* (runIds?: ReadonlyArray<RunId>) {
+        const items = yield* projectionStore.getTurnStartHistory(input.threadId, runIds);
+        const maintenanceMessageIds = new Set(
+          items.flatMap((item) =>
+            item.type === "user_message" &&
+            item.attachments.length === 0 &&
+            ["/compact", "/logout"].includes(item.text.trim().toLowerCase())
+              ? [item.messageId]
+              : [],
+          ),
+        );
+        const excludedRunIds = new Set(
+          projection.runs
+            .filter(
+              (source) =>
+                maintenanceMessageIds.has(source.userMessageId) &&
+                !deliveredAttemptIds.has(source.activeAttemptId),
+            )
+            .map((source) => source.id),
+        );
+        return items.filter((item) => item.runId === null || !excludedRunIds.has(item.runId));
+      });
       // Settles a run that never reached the provider: one signal turn item plus
       // terminal run, attempt and root node, written only while the run is still
       // the current starting attempt.
@@ -722,7 +747,7 @@ export const layer: Layer.Layer<
           coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
           strategy: "full_thread_summary",
           runs: projection.runs,
-          items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
+          items: (yield* readHandoffHistory()).filter(
             (item) =>
               item.runId === null ||
               projection.runs.some(
@@ -1021,9 +1046,6 @@ export const layer: Layer.Layer<
         ...deliveredItemIds,
         ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
       ]);
-      const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
-      );
       const acceptedAttempts = projection.attempts.filter(
         (source) =>
           source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
@@ -1105,33 +1127,14 @@ export const layer: Layer.Layer<
           (source.status === "failed" || source.status === "interrupted") &&
           !deliveredAttemptIds.has(source.activeAttemptId),
       );
-      const undeliveredItems =
+      const missedItems =
         undeliveredRuns.length === 0
           ? []
-          : yield* projectionStore.getTurnStartHistory(
-              input.threadId,
-              undeliveredRuns.map((source) => source.id),
+          : (yield* readHandoffHistory(undeliveredRuns.map((source) => source.id))).filter(
+              (item) => !coveredItemIds.has(item.id) && historicalMessage(item) !== null,
             );
-      const maintenanceMessageIds = new Set(
-        undeliveredItems.flatMap((item) =>
-          item.type === "user_message" &&
-          item.attachments.length === 0 &&
-          ["/compact", "/logout"].includes(item.text.trim().toLowerCase())
-            ? [item.messageId]
-            : [],
-        ),
-      );
-      const missedRuns = undeliveredRuns.filter(
-        (source) => !maintenanceMessageIds.has(source.userMessageId),
-      );
-      const missedRunIds = new Set(missedRuns.map((source) => source.id));
-      const missedItems = undeliveredItems.filter(
-        (item) =>
-          item.runId !== null &&
-          missedRunIds.has(item.runId) &&
-          !coveredItemIds.has(item.id) &&
-          historicalMessage(item) !== null,
-      );
+      const missedRunIds = new Set(missedItems.map((item) => item.runId));
+      const missedRuns = undeliveredRuns.filter((source) => missedRunIds.has(source.id));
       const startWithHandoffs = (
         turnInput: Parameters<typeof session.startTurn>[0],
         compact = false,

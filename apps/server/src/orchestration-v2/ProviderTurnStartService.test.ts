@@ -76,6 +76,7 @@ it("does not commit running state when inherited background routing cannot be re
     nodes: [{ id: rootNodeId, checkpointScopeId }],
     attempts: [{ id: attemptId }],
     providerThreads: [{ id: providerThreadId, providerSessionId }],
+    providerTurns: [],
     messages: [{ id: messageId, text: "Continue", attachments: [] }],
     checkpointScopes: [{ id: checkpointScopeId }],
     contextHandoffs: [],
@@ -843,7 +844,10 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
         expect(harness.open).not.toHaveBeenCalled();
         expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
         expect(harness.startRootRun).not.toHaveBeenCalled();
-        expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+        expect(harness.projection().runs.at(-1)).toMatchObject({
+          status: "failed",
+          startedAt: null,
+        });
         expect(harness.projection().turnItems).toMatchObject([
           {
             type: "error",

@@ -471,7 +471,9 @@ describe("orchestration v2 provider switching", () => {
             responseByRunOrdinal: {},
             capturedTurns,
             ...(scenario.includes("retry") || scenario.includes("unsent") ? { failStartOnce } : {}),
-            ...(replaceNative ? { failResumeOnce, nativeThreadGeneration: generation } : {}),
+            ...(replaceNative || scenario === "compact-fallback"
+              ? { failResumeOnce, nativeThreadGeneration: generation }
+              : {}),
             ...(scenario.includes("reported-capacity")
               ? { initialContextUsage: { usedTokens: 999_999, maxTokens: 1_000_000 } }
               : {}),
@@ -739,6 +741,19 @@ describe("orchestration v2 provider switching", () => {
                   },
                 ],
               });
+            }
+            if (scenario === "compact-fallback") {
+              const target = rejected.providerThreads.find(
+                (thread) => thread.id === compactRun.providerThreadId,
+              )!;
+              yield* orchestrator.dispatch({
+                type: "provider-session.detach",
+                commandId: CommandId.make("detach-after-rejected-compact"),
+                threadId,
+                providerSessionId: target.providerSessionId!,
+              });
+              yield* worker.drain();
+              yield* Ref.set(failResumeOnce, true);
             }
             current = "Continue after compact";
             yield* dispatch(targetOrdinal + 1, current, targetSelection);
