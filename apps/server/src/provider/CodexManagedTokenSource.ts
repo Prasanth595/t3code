@@ -67,6 +67,7 @@ export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSourc
           detail: "Could not start the managed Codex credential bridge.",
           cause,
         }),
+    }),
     (server) =>
       Effect.promise(
         () =>
