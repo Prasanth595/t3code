@@ -1,3 +1,4 @@
+import { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { readUsagePagePreferences, saveUsagePagePreferences } from "./usagePagePreferences";
@@ -43,10 +44,27 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 30 });
   });
 
+  it("round-trips the selected environments, including none and all", () => {
+    const base = { metric: "cost", windowDays: 7 } as const;
+    const selectedEnvironmentIds = [EnvironmentId.make("laptop"), EnvironmentId.make("server")];
+
+    saveUsagePagePreferences({ ...base, selectedEnvironmentIds });
+    expect(readUsagePagePreferences().selectedEnvironmentIds).toEqual(selectedEnvironmentIds);
+
+    saveUsagePagePreferences({ ...base, selectedEnvironmentIds: [] });
+    expect(readUsagePagePreferences().selectedEnvironmentIds).toEqual([]);
+
+    // Going back to all environments drops the list instead of saving the current ones.
+    saveUsagePagePreferences({ ...base, selectedEnvironmentIds: undefined });
+    expect(readUsagePagePreferences()).toEqual(base);
+    expect(values.get(key)).not.toContain("selectedEnvironmentIds");
+  });
+
   it.each([
     "not-json",
     '{"metric":"unknown","windowDays":7}',
     '{"metric":"cost","windowDays":365}',
+    '{"metric":"cost","windowDays":7,"selectedEnvironmentIds":[""]}',
   ])("replaces invalid preferences on the next save: %s", (value) => {
     values.set(key, value);
     expect(readUsagePagePreferences()).toEqual({ metric: "limits", windowDays: 30 });

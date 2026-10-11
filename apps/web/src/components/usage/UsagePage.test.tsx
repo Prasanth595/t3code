@@ -153,4 +153,58 @@ describe("UsagePage Escape navigation", () => {
   });
 });
 
+describe("UsagePage environment selection", () => {
+  const other = { ...environments[0]!, environmentId: EnvironmentId.make("other"), label: "Other" };
+  let renderer: Root;
+  let container: HTMLDivElement;
+
+  async function mount() {
+    container = document.createElement("div");
+    document.body.append(container);
+    renderer = createRoot(container);
+    await act(() => {
+      renderer.render(<UsagePage />);
+    });
+  }
+
+  async function unmount() {
+    await act(() => renderer.unmount());
+    container.remove();
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    testState.useUsage.mockReturnValue({
+      ...testState.useUsage(),
+      environments: [...environments, other],
+      selectedEnvironments: [...environments, other],
+    });
+    testState.useUsage.mockClear();
+  });
+
+  afterEach(async () => {
+    await unmount();
+    window.localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps a deselected environment deselected on the next visit", async () => {
+    await mount();
+    expect(testState.useUsage.mock.lastCall![1]).toBeNull();
+
+    await act(() =>
+      container.querySelector<HTMLButtonElement>('[data-slot="menu-trigger"]')!.click(),
+    );
+    const item = [...document.querySelectorAll<HTMLElement>('[role="menuitemcheckbox"]')].find(
+      (element) => element.textContent?.includes("Other"),
+    )!;
+    await act(() => item.click());
+
+    await unmount();
+    testState.useUsage.mockClear();
+    await mount();
+    expect(testState.useUsage.mock.lastCall![1]).toEqual(new Set(["test-environment"]));
+  });
+});
+
 // @vitest-environment jsdom

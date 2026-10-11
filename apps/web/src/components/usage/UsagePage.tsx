@@ -139,8 +139,10 @@ export function UsagePage() {
   const [breakdown, setBreakdown] = useState<"model" | "time">("model");
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
-  const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
-    useState<ReadonlySet<EnvironmentId> | null>(null);
+  const selectedEnvironmentIds = useMemo<ReadonlySet<EnvironmentId> | null>(
+    () => (preferences.selectedEnvironmentIds ? new Set(preferences.selectedEnvironmentIds) : null),
+    [preferences.selectedEnvironmentIds],
+  );
   const hiddenProviders = useMemo(
     () => new Set(preferences.hiddenProviders),
     [preferences.hiddenProviders],
@@ -393,7 +395,9 @@ export function UsagePage() {
             environments={environments}
             selectedEnvironments={selectedEnvironments}
             selectedEnvironmentIds={selectedEnvironmentIds}
-            onSelectionChange={setSelectedEnvironmentIds}
+            onSelectionChange={(ids) =>
+              updatePreferences({ selectedEnvironmentIds: ids === null ? undefined : [...ids] })
+            }
             showUsageStatus={!showingLimits}
             refreshing={refreshingUsage}
             isPartial={isPartial}
