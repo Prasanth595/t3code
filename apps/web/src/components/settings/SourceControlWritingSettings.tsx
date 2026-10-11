@@ -410,6 +410,7 @@ export function SourceControlWritingSettingsSection() {
                 <div className="flex flex-wrap items-center justify-end gap-2">
                   {usesReviewGuideModel && canEnableDedicatedModel ? (
                     <ProviderModelPicker
+                      environmentId={environmentId}
                       activeInstanceId={reviewGuideSelection.instanceId}
                       model={reviewGuideSelection.model}
                       lockedProvider={null}
