@@ -16,7 +16,15 @@
  */
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { applyEdits, modify, parse, type FormattingOptions, type ParseError } from "jsonc-parser";
+// The ESM build: the package's `main` is UMD, whose `require("./impl/format")` calls the server
+// bundler can't follow, so the bundled server fails to start.
+import {
+  applyEdits,
+  modify,
+  parse,
+  type FormattingOptions,
+  type ParseError,
+} from "jsonc-parser/lib/esm/main.js";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 
 /** Keys of objects, and positions in arrays. */
