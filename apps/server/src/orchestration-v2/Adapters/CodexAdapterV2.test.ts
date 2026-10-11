@@ -2983,6 +2983,125 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  const autoModeTurnTranscript = (input: {
+    readonly scenario: string;
+    readonly configReadReply: Record<string, unknown>;
+    readonly sandboxPolicy: Record<string, unknown>;
+  }) => {
+    const nativeThreadId = `${input.scenario}-thread`;
+    const nativeTurnId = `${input.scenario}-turn`;
+    const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "fetch" });
+    return makeCodexReplayTranscript({
+      scenario: input.scenario,
+      entries: [
+        ...preamble.slice(0, 5),
+        {
+          type: "expect_outbound",
+          label: "config/read",
+          frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
+        },
+        { type: "emit_inbound", label: "config/read", frame: { id: 3, ...input.configReadReply } },
+        {
+          type: "expect_outbound",
+          label: "turn/start",
+          frame: {
+            id: 4,
+            method: "turn/start",
+            params: {
+              threadId: nativeThreadId,
+              input: [{ type: "text", text: "fetch" }],
+              cwd: "/workspace",
+              model: "gpt-5.4",
+              approvalPolicy: "on-request",
+              approvalsReviewer: "auto_review",
+              sandboxPolicy: input.sandboxPolicy,
+              summary: "detailed",
+            },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "turn/start",
+          frame: {
+            id: 4,
+            result: { turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }) },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "turn/completed",
+          frame: {
+            method: "turn/completed",
+            params: {
+              threadId: nativeThreadId,
+              turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+            },
+          },
+        },
+      ],
+    });
+  };
+
+  const runAutoModeTurn = (transcript: CodexReplay.CodexAppServerReplayTranscript) =>
+    Effect.gen(function* () {
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn({
+        ...makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`${transcript.scenario}-attempt`),
+          text: "fetch",
+        }),
+        runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, runtimeMode: "auto" },
+      });
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    );
+
+  it.effect("keeps configured workspace-write sandbox fields on Auto turns", () =>
+    runAutoModeTurn(
+      autoModeTurnTranscript({
+        scenario: "workspace-write-config",
+        configReadReply: {
+          result: {
+            config: {
+              sandbox_workspace_write: {
+                writable_roots: ["/cache"],
+                network_access: true,
+                exclude_tmpdir_env_var: true,
+                exclude_slash_tmp: false,
+              },
+            },
+            origins: {},
+          },
+        },
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: ["/cache"],
+          networkAccess: true,
+          excludeTmpdirEnvVar: true,
+          excludeSlashTmp: false,
+        },
+      }),
+    ),
+  );
+
+  it.effect("sends the bare workspace-write policy when Codex rejects config/read", () =>
+    runAutoModeTurn(
+      autoModeTurnTranscript({
+        scenario: "workspace-write-config-unsupported",
+        configReadReply: { error: { code: -32601, message: "Method not found" } },
+        sandboxPolicy: { type: "workspaceWrite" },
+      }),
+    ),
+  );
+
   it.effect("preserves T3 context on the wire and restores it after compaction", () =>
     Effect.scoped(
       Effect.gen(function* () {
