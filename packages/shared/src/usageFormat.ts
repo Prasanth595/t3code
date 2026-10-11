@@ -201,15 +201,8 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
-/**
- * The window the page requests, expressed in the viewer's own time zone so days
- * line up with what they actually experienced.
- */
-export function makeWindow(
-  days: number,
-  now = new Date(),
-  resolution: UsageResolution = "day",
-): UsageSummaryInput {
+/** The viewer's zone and a `YYYY-MM-DD` formatter for it; unknown zones fall back to UTC. */
+function viewerDayFormat(): { timeZone: string; format: Intl.DateTimeFormat } {
   let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let format: Intl.DateTimeFormat;
   try {
@@ -229,6 +222,34 @@ export function makeWindow(
       day: "2-digit",
     });
   }
+  return { timeZone, format };
+}
+
+/**
+ * A daily window over an inclusive `YYYY-MM-DD` range, from the date pickers or
+ * a chart zoom. Bounds may arrive in either order.
+ */
+export function makeRangeWindow(firstDay: string, secondDay: string): UsageSummaryInput {
+  const [sinceDay, untilDay] =
+    firstDay <= secondDay ? [firstDay, secondDay] : [secondDay, firstDay];
+  return {
+    sinceDay: UsageDay.make(sinceDay),
+    untilDay: UsageDay.make(untilDay),
+    timeZone: viewerDayFormat().timeZone,
+    resolution: "day",
+  };
+}
+
+/**
+ * The window the page requests, expressed in the viewer's own time zone so days
+ * line up with what they actually experienced.
+ */
+export function makeWindow(
+  days: number,
+  now = new Date(),
+  resolution: UsageResolution = "day",
+): UsageSummaryInput {
+  const { timeZone, format } = viewerDayFormat();
   const untilDay = format.format(now);
   if (resolution === "hour") {
     // Minute-aligned bounds keep labels readable while still representing an

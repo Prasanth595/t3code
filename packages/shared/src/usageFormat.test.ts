@@ -7,6 +7,7 @@ import {
   formatHourShort,
   formatPercent,
   formatRelativeHourShort,
+  makeRangeWindow,
   makeWindow,
 } from "./usageFormat.ts";
 
@@ -105,5 +106,15 @@ describe("hourly usage formatting", () => {
     } finally {
       resolvedOptions.mockRestore();
     }
+  });
+});
+
+describe("makeRangeWindow", () => {
+  it("builds a daily window over the inclusive range in either order", () => {
+    expect(makeRangeWindow("2026-08-11", "2026-08-03")).toMatchObject({
+      sinceDay: "2026-08-03",
+      untilDay: "2026-08-11",
+      resolution: "day",
+    });
   });
 });
