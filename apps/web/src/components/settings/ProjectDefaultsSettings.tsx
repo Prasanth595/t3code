@@ -25,8 +25,11 @@ import {
 import { useEnvironments } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { agentRosterQuery } from "../../state/agents";
-import { useEnvironmentQuery } from "../../state/query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { Button } from "../ui/button";
+import { RefreshIcon } from "../ui/refresh-icon";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { AgentPicker } from "../chat/AgentPicker";
@@ -156,9 +159,19 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     updateSettings({ defaultModelSelection: value });
   };
 
+  interface TargetRosterState {
+    readonly candidate: (typeof targets)[number];
+    readonly queryAtom: ReturnType<typeof agentRosterQuery> | null;
+    readonly status: "pending" | "success" | "failure";
+    readonly error: string | null;
+    readonly isPending: boolean;
+    readonly isSuccess: boolean;
+    readonly agents: ReadonlyArray<AgentSummary> | null;
+  }
+
   const targetRostersAtom = useMemo(
     () =>
-      Atom.make((get) =>
+      Atom.make((get): ReadonlyArray<TargetRosterState> =>
         targets.map((candidate) => {
           const candidateProjectId =
             candidate.projectId ??
@@ -167,6 +180,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           if (!candidateProjectId) {
             return {
               candidate,
+              queryAtom: null,
+              status: "success",
+              error: null,
+              isPending: false,
+              isSuccess: true,
               agents: [] as ReadonlyArray<AgentSummary>,
             };
           }
@@ -175,12 +193,18 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             input: { projectId: candidateProjectId },
           });
           const result = get(queryAtom);
-          const agents = Option.getOrElse(
-            AsyncResult.value(result),
-            () => [] as readonly AgentSummary[],
-          );
+          const isPending = result.waiting || result._tag === "Initial";
+          const isSuccess = result._tag === "Success";
+          const error =
+            result._tag === "Failure" ? formatEnvironmentQueryError(result.cause) : null;
+          const agents = Option.getOrNull(AsyncResult.value(result));
           return {
             candidate,
+            queryAtom,
+            status: isPending ? "pending" : result._tag === "Failure" ? "failure" : "success",
+            error,
+            isPending,
+            isSuccess,
             agents,
           };
         }),
@@ -191,7 +215,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
 
   function agentDisabledReason(agentId: AgentId): string | null {
     for (const targetRoster of targetRosters) {
-      if (!targetRoster.agents.some((agent) => agent.id === agentId)) {
+      if (
+        targetRoster.agents !== null &&
+        !targetRoster.agents.some((agent) => agent.id === agentId)
+      ) {
         return `This agent is unavailable on ${targetRoster.candidate.label ?? "a selected target"}. Select that target to choose its agent separately.`;
       }
     }
@@ -199,10 +226,34 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   }
 
   const setAgent = (value: AgentId | null) => {
-    const reason = value ? agentDisabledReason(value) : null;
-    if (reason) {
-      toastManager.add({ type: "error", title: "Default agent not saved", description: reason });
-      return;
+    if (value) {
+      const pendingTarget = targetRosters.find(
+        (target) => target.isPending && target.agents === null,
+      );
+      if (pendingTarget) {
+        toastManager.add({
+          type: "error",
+          title: "Default agent not saved",
+          description: `Loading custom agents for ${pendingTarget.candidate.label ?? "a selected target"}. Please wait before saving.`,
+        });
+        return;
+      }
+      const failedTarget = targetRosters.find(
+        (target) => target.error !== null && target.agents === null,
+      );
+      if (failedTarget) {
+        toastManager.add({
+          type: "error",
+          title: "Default agent not saved",
+          description: `Failed to load custom agents for ${failedTarget.candidate.label ?? "a selected target"}: ${failedTarget.error}`,
+        });
+        return;
+      }
+      const reason = agentDisabledReason(value);
+      if (reason) {
+        toastManager.add({ type: "error", title: "Default agent not saved", description: reason });
+        return;
+      }
     }
     updateSettings({ defaultAgentId: value });
   };
@@ -278,6 +329,37 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
     />
   );
+  const isAgentRosterPending =
+    !unavailable &&
+    (agentRoster.isPending || targetRosters.some((r) => r.isPending && r.agents === null));
+  const agentRosterError = !unavailable
+    ? (agentRoster.error ??
+      targetRosters.find((r) => r.error !== null && r.agents === null)?.error ??
+      null)
+    : null;
+
+  const refreshAgentRosters = () => {
+    agentRoster.refresh();
+    for (const target of targetRosters) {
+      if (target.queryAtom) {
+        appAtomRegistry.refresh(target.queryAtom);
+      }
+    }
+  };
+
+  const agentStatus =
+    unavailable || mixedAgent || agentSource === "project"
+      ? undefined
+      : agentRosterError
+        ? `Failed to load custom agents: ${agentRosterError}`
+        : isAgentRosterPending
+          ? "Loading custom agents…"
+          : settings.defaultAgentId === null
+            ? isProjectScope
+              ? "No custom agent"
+              : "Automatic"
+            : undefined;
+
   const agentRow = (
     <SettingsRow
       serverScoped
@@ -290,37 +372,37 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
           ? "Default custom agent for new threads in this project."
           : "Default custom agent for new threads. Projects can override it."
       }
-      status={
-        unavailable || mixedAgent || agentSource === "project"
-          ? undefined
-          : settings.defaultAgentId === null
-            ? isProjectScope
-              ? "No custom agent"
-              : "Automatic"
-            : undefined
-      }
+      status={agentStatus}
       resetAction={
         settings.defaultAgentId !== null ? (
           <SettingResetButton label="default agent" onClick={() => setAgent(null)} />
         ) : null
       }
       control={
-        <AgentPicker
-          agents={(agentRoster.data ?? []) as ReadonlyArray<AgentSummary>}
-          selectedAgentId={settings.defaultAgentId}
-          onSelectAgent={(agentId) => setAgent(agentId ?? null)}
-          allowNone
-          allowDefault={false}
-          noneLabel={isProjectScope ? "No custom agent" : "Automatic"}
-          noneDescription={
-            isProjectScope
-              ? "New threads in this project do not use a custom agent by default."
-              : "New threads do not use a custom agent by default."
-          }
-          getAgentDisabledReason={agentDisabledReason}
-          disabled={unavailable}
-          triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-        />
+        <div className="flex items-center justify-end gap-1.5">
+          {agentRosterError ? (
+            <Button size="xs" variant="outline" onClick={refreshAgentRosters} className="gap-1">
+              <RefreshIcon size="xs" />
+              Retry
+            </Button>
+          ) : null}
+          <AgentPicker
+            agents={(agentRoster.data ?? []) as ReadonlyArray<AgentSummary>}
+            selectedAgentId={settings.defaultAgentId}
+            onSelectAgent={(agentId) => setAgent(agentId ?? null)}
+            allowNone
+            allowDefault={false}
+            noneLabel={isProjectScope ? "No custom agent" : "Automatic"}
+            noneDescription={
+              isProjectScope
+                ? "New threads in this project do not use a custom agent by default."
+                : "New threads do not use a custom agent by default."
+            }
+            getAgentDisabledReason={agentDisabledReason}
+            disabled={unavailable || (isAgentRosterPending && agentRoster.data === null)}
+            triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+          />
+        </div>
       }
     />
   );
