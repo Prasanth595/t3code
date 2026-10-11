@@ -122,6 +122,67 @@ const BROWSER_MIME_TYPE_BY_EXTENSION = new Map([
   [".pdf", "application/pdf"],
 ]);
 
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  ".txt",
+  ".text",
+  ".md",
+  ".markdown",
+  ".csv",
+  ".tsv",
+  ".json",
+  ".jsonl",
+  ".ndjson",
+  ".log",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".xml",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".rst",
+  ".adoc",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".mjs",
+  ".cjs",
+  ".css",
+  ".scss",
+  ".less",
+  ".py",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".fish",
+  ".ps1",
+  ".rb",
+  ".go",
+  ".rs",
+  ".java",
+  ".kt",
+  ".swift",
+  ".c",
+  ".h",
+  ".cpp",
+  ".hpp",
+  ".sql",
+  ".r",
+  ".tex",
+  ".vue",
+  ".svelte",
+  ".env",
+  ".properties",
+  ".bat",
+  ".cmd",
+]);
+
+/** Text is served literally, never as executable JavaScript or XML. */
+export function textPreviewMimeTypeFromExtension(extension: string): string | null {
+  return TEXT_PREVIEW_EXTENSIONS.has(extension.toLowerCase()) ? "text/plain" : null;
+}
+
 const AUDIO_MIME_TYPE_BY_EXTENSION = new Map([
   [".mp3", "audio/mpeg"],
   [".wav", "audio/wav"],
@@ -156,6 +217,7 @@ export function hostPreviewMimeTypeFromExtension(extension: string): string | nu
     mediaMimeTypeFromExtension(extension) ??
     audioMimeTypeFromExtension(extension) ??
     BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
+    textPreviewMimeTypeFromExtension(extension) ??
     null
   );
 }

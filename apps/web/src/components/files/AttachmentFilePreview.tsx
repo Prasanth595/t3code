@@ -17,6 +17,7 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { cn } from "~/lib/utils";
 
 import { AudioPreview } from "./AudioPreview";
+import { useExternalBrowserMenu } from "~/browser/useExternalBrowserMenu";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
@@ -94,6 +95,7 @@ export function AttachmentFilePreview(props: {
     [resource],
   );
   const prepareDownload = useAssetUrlRefresh(props.asset?.environmentId ?? null, downloadResource);
+  const showExternalMenu = useExternalBrowserMenu(props.asset?.environmentId ?? null, resource);
   const [saving, setSaving] = useState(false);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
   const [remoteUrl, setRemoteUrl] = useState<string | null>(null);
@@ -250,6 +252,7 @@ export function AttachmentFilePreview(props: {
       title={props.name}
       pdf={kind === "pdf"}
       htmlRender={props.htmlRender === true}
+      onContextMenuRequest={showExternalMenu}
     />
   ) : kind === "audio" ? (
     <AudioPreview src={url} name={props.name} onError={() => setError("Unable to load audio.")} />
@@ -285,7 +288,18 @@ export function AttachmentFilePreview(props: {
   );
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      onContextMenu={
+        props.asset
+          ? (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void showExternalMenu({ x: event.clientX, y: event.clientY });
+            }
+          : undefined
+      }
+    >
       <div className={cn(FILE_SURFACE_SUBHEADER_CLASS)} data-surface-subheader>
         <div className="flex min-w-0 flex-1 items-center text-xs">
           <span className="shrink-0 px-0.5 text-muted-foreground">

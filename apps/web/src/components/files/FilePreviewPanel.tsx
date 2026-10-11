@@ -43,6 +43,8 @@ import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
+import { isExternalBrowserFile } from "~/browser/openAssetExternally";
+import { useExternalBrowserMenu } from "~/browser/useExternalBrowserMenu";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
@@ -240,6 +242,7 @@ function WorkspaceBrowserPreview(props: {
     [insideWorkspace, props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
+  const showExternalMenu = useExternalBrowserMenu(props.environmentId, resource);
   const revisionSuffix =
     props.workspaceMutationId === null
       ? ""
@@ -264,6 +267,7 @@ function WorkspaceBrowserPreview(props: {
       src={`${assetUrl.url}${revisionSuffix}`}
       title={props.title}
       pdf={isPdfPreviewFile(props.absolutePath)}
+      onContextMenuRequest={showExternalMenu}
     />
   );
 }
@@ -1155,6 +1159,29 @@ export default function FilePreviewPanel({
     : tableDelimiter
       ? setRenderTablePreferred
       : setRenderBrowserFilePreferred;
+  const absolutePath =
+    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
+  const externalResource = useMemo(() => {
+    if (!absolutePath || !relativePath || !isExternalBrowserFile(relativePath)) return null;
+    const reference = mediaFileReference(absolutePath, cwd);
+    if (draft)
+      return {
+        _tag: "draft-workspace-file" as const,
+        cwd,
+        path: /\.(?:html?|pdf)$/i.test(absolutePath)
+          ? (reference.relativePath ?? absolutePath)
+          : absolutePath,
+      };
+    return {
+      _tag:
+        /\.(?:html?|pdf)$/i.test(absolutePath) && reference.relativePath !== undefined
+          ? ("workspace-file" as const)
+          : ("media-file" as const),
+      threadId: threadRef.threadId,
+      path: absolutePath,
+    };
+  }, [threadRef, absolutePath, relativePath, cwd, draft]);
+  const showExternalMenu = useExternalBrowserMenu(environmentId, externalResource);
   const canOpenInBrowser =
     canOperatePreview &&
     previewPath !== null &&
@@ -1162,8 +1189,6 @@ export default function FilePreviewPanel({
     !isVideo &&
     previewAvailable &&
     isBrowserPreviewFile(previewPath);
-  const absolutePath =
-    relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   useWorkspaceMutationRefresh({
     enabled:
@@ -1249,7 +1274,18 @@ export default function FilePreviewPanel({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background"
+      onContextMenu={
+        externalResource
+          ? (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void showExternalMenu({ x: event.clientX, y: event.clientY });
+            }
+          : undefined
+      }
+    >
       {relativePath && attachment === undefined ? (
         <div className={FILE_SURFACE_SUBHEADER_CLASS} data-surface-subheader>
           <ScrollArea

@@ -28,6 +28,7 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { downloadMedia, readMediaPng } from "./mediaContent";
+import { openExternalBrowserResource } from "../../browser/openAssetExternally";
 
 export interface MediaActionSource {
   readonly kind: "image" | "video";
@@ -109,7 +110,11 @@ export function useMediaActions(source: MediaActionSource) {
       new ClipboardItem({ "image/png": actionUrl().then(readMediaPng) }),
     ]);
   }, [actionUrl, assertCanReadMedia]);
-  return { save, copyImage, canReadMedia, assertCanReadMedia };
+  const openExternal = useCallback(async () => {
+    assertCanReadMedia();
+    await openExternalBrowserResource(actionUrl);
+  }, [actionUrl, assertCanReadMedia]);
+  return { save, copyImage, openExternal, canReadMedia, assertCanReadMedia };
 }
 
 /** Adds source-aware actions and a tooltip to the existing media element without a layout wrapper. */
@@ -120,7 +125,8 @@ export function MediaActions({
   source: MediaActionSource;
   children: ReactElement;
 }) {
-  const { save, copyImage, canReadMedia, assertCanReadMedia } = useMediaActions(source);
+  const { save, copyImage, openExternal, canReadMedia, assertCanReadMedia } =
+    useMediaActions(source);
   const [tooltipOpen, setTooltipOpen] = useState(false);
   const menuOpen = useRef(false);
   const reference = source.reference;
@@ -151,6 +157,7 @@ export function MediaActions({
       if (source.onOpenFile)
         items.push({ id: "open-file", label: "Open in file viewer", disabled: !canReadMedia });
       items.push({ id: "save", label: `Save ${noun}`, disabled: unavailable });
+      items.push({ id: "open-external", label: "Open in external browser", disabled: unavailable });
       if (source.kind === "image") {
         items.push({
           id: "copy-image",
@@ -179,6 +186,8 @@ export function MediaActions({
       } else if (action === "open-file") {
         assertCanReadMedia();
         source.onOpenFile?.();
+      } else if (action === "open-external") {
+        await openExternal();
       } else if (action === "save" || action === "copy-image") {
         progressToast = toastManager.add({
           type: "loading",

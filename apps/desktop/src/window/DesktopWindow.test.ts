@@ -489,11 +489,13 @@ describe("DesktopWindow", () => {
         focusedContents: unknown;
       }>();
       const copiedTexts: string[] = [];
+      const openedExternalUrls: unknown[] = [];
       const layer = layerTest({
         window: host.window,
         createCount: yield* Ref.make(0),
         mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
         copiedTexts,
+        openedExternalUrls,
         onPopupTemplate: (input) =>
           Queue.offer(menus, { input, focusedContents }).pipe(Effect.asVoid),
       });
@@ -567,6 +569,35 @@ describe("DesktopWindow", () => {
           copyLink.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
           assert.deepEqual(contents.copyImageAt.mock.calls, [[12, 34]]);
           assert.equal(copiedTexts.at(-1), "https://example.com/image.png");
+
+          const selectedDocument = Promise.withResolvers<{ script: string; gesture: boolean }>();
+          const documentFrame = {
+            parent: contents.mainFrame,
+            executeJavaScript: (script: string, gesture: boolean) => {
+              selectedDocument.resolve({ script, gesture });
+              return Promise.resolve();
+            },
+          } as unknown as Electron.WebFrameMain;
+          contents.emit(
+            "context-menu",
+            { preventDefault },
+            {
+              ...params,
+              frame: documentFrame,
+              frameURL: "https://source.test/api/assets/expired/report.html",
+            },
+          );
+          const documentMenu = (yield* Queue.take(menus)).input;
+          const openDocument = documentMenu.template.find(
+            (item) => item.label === "Open in external browser",
+          );
+          assert.isDefined(openDocument?.click);
+          openDocument.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);
+          const request = yield* Effect.promise(() => selectedDocument.promise);
+          assert.isTrue(request.gesture);
+          assert.include(request.script, "t3/open-asset-externally");
+          assert.notInclude(request.script, "expired");
+          assert.deepEqual(openedExternalUrls, []);
 
           contents.isDestroyed.mockReturnValue(true);
           correction.click({} as Electron.MenuItem, undefined, {} as Electron.KeyboardEvent);

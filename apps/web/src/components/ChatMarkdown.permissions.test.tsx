@@ -189,17 +189,23 @@ function offeredActions() {
   return state.choose.mock.lastCall![0].map((item: { id: string }) => item.id);
 }
 
-it("removes host actions after revocation while keeping file preview and copying", async () => {
+it("removes host shell actions after task-grant revocation while retaining browser viewing and copying", async () => {
   await renderMarkdown("[Readme](docs/readme.md)");
   await openContextMenu();
-  expect(offeredActions()).toEqual(["open", "reveal", "copy-relative", "copy-full"]);
+  expect(offeredActions()).toEqual([
+    "open",
+    "open-external",
+    "reveal",
+    "copy-relative",
+    "copy-full",
+  ]);
   await act(async () => {
     state.allowed = false;
     for (const listener of state.listeners) listener();
   });
   state.choose.mockResolvedValue("copy-full");
   await openContextMenu();
-  expect(offeredActions()).toEqual(["copy-relative", "copy-full"]);
+  expect(offeredActions()).toEqual(["open-external", "copy-relative", "copy-full"]);
   expect(state.copy).toHaveBeenCalledWith("/work/docs/readme.md");
   await act(async () => anchor().props.onClick(menuEvent()));
   expect(state.openFile).toHaveBeenCalledWith(threadRef, "docs/readme.md", undefined);

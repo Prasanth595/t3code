@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import {
   audioMimeTypeFromExtension,
+  textPreviewMimeTypeFromExtension,
   hostPreviewMimeTypeFromExtension,
   isWorkspaceImagePreviewPath,
   isWorkspacePreviewEntryPath,
@@ -81,7 +82,10 @@ const INLINE_PREVIEW_MIME_TYPES: Record<string, string> = {
   htm: "text/html",
 };
 const inlinePreviewMimeTypeForExtension = (extension: string) =>
-  INLINE_PREVIEW_MIME_TYPES[extension] ?? audioMimeTypeFromExtension(`.${extension}`) ?? undefined;
+  INLINE_PREVIEW_MIME_TYPES[extension] ??
+  audioMimeTypeFromExtension(`.${extension}`) ??
+  textPreviewMimeTypeFromExtension(`.${extension}`) ??
+  undefined;
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,

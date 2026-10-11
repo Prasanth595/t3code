@@ -10,12 +10,29 @@ import {
   htmlRenderThemeMessage,
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
+  readHtmlRenderContextMenu,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
 import { T3_CODE_DARK_THEME_COLORS, T3_CODE_LIGHT_THEME_COLORS } from "./themePalettes.ts";
 import { htmlRenderFromToolItem } from "./toolOutput.ts";
 
 const reference = { attachmentId: "thread-abc-123.html", title: "Chart", height: 420 };
+
+it("accepts only finite, nonnegative coordinates for a render context menu", () => {
+  const message = (x: unknown, y: unknown) => ({
+    jsonrpc: "2.0",
+    method: "t3/context-menu",
+    params: { x, y },
+  });
+  expect(readHtmlRenderContextMenu(message(24, 36))).toEqual({ x: 24, y: 36 });
+  for (const value of [-1, Infinity, NaN, "24", null]) {
+    expect(readHtmlRenderContextMenu(message(value, 0))).toBeUndefined();
+    expect(readHtmlRenderContextMenu(message(0, value))).toBeUndefined();
+  }
+  expect(
+    readHtmlRenderContextMenu({ method: "t3/context-menu", params: { x: 1, y: 1 } }),
+  ).toBeUndefined();
+});
 
 describe("injectHtmlRenderBootstrap", () => {
   it("puts the theme ahead of the page's own head content", () => {

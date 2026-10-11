@@ -4,8 +4,9 @@ import {
   htmlRenderResult,
   readHtmlRenderContentHeight,
   readHtmlRenderLinkRequest,
+  readHtmlRenderContextMenu,
 } from "@t3tools/shared/htmlRender";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { cn } from "~/lib/utils";
@@ -21,6 +22,52 @@ const PDF_VIEWER_FRAGMENT = "#toolbar=0&view=FitH";
 export const isPdfPreviewFile = (path: string): boolean =>
   /\.pdf$/i.test(path.split(/[?#]/, 1)[0] ?? "");
 
+type DocumentContextMenu = (
+  position: { x: number; y: number },
+  selectedAction?: "open-external",
+) => void;
+
+function useDocumentContextMenu(
+  frameRef: RefObject<HTMLIFrameElement | null>,
+  onContextMenuRequest: DocumentContextMenu | undefined,
+) {
+  useEffect(() => {
+    if (!onContextMenuRequest || !frameRef.current) return;
+    const showMenu = (event: MessageEvent) => {
+      const frame = frameRef.current;
+      const selected = event.data?.method === "t3/open-asset-externally";
+      const position = readHtmlRenderContextMenu(
+        selected ? { ...event.data, method: "t3/context-menu" } : event.data,
+      );
+      if (
+        !frame ||
+        event.source !== frame.contentWindow ||
+        document.activeElement !== frame ||
+        !position ||
+        (selected && navigator.userActivation?.isActive === false)
+      )
+        return;
+      const bounds = frame.getBoundingClientRect();
+      if (selected) {
+        // Electron already reports host coordinates; the menu has been selected.
+        if (
+          position.x < bounds.left ||
+          position.x > bounds.right ||
+          position.y < bounds.top ||
+          position.y > bounds.bottom
+        )
+          return;
+        onContextMenuRequest(position, "open-external");
+      } else {
+        if (position.x > frame.clientWidth || position.y > frame.clientHeight) return;
+        onContextMenuRequest({ x: bounds.left + position.x, y: bounds.top + position.y });
+      }
+    };
+    window.addEventListener("message", showMenu);
+    return () => window.removeEventListener("message", showMenu);
+  }, [frameRef, onContextMenuRequest]);
+}
+
 /**
  * Renders an HTML or PDF document from its URL. HTML runs in a sandboxed frame
  * with an opaque origin, so a page cannot reach the app's session or storage.
@@ -32,11 +79,15 @@ export function BrowserDocumentFrame(props: {
   readonly title: string;
   readonly pdf: boolean;
   readonly htmlRender?: boolean;
+  readonly onContextMenuRequest?: DocumentContextMenu;
 }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  useDocumentContextMenu(frameRef, props.onContextMenuRequest);
   const className = "min-h-0 flex-1 border-0 bg-white";
   return props.pdf ? (
     // oxlint-disable-next-line react/iframe-missing-sandbox -- the built-in PDF viewer needs an unsandboxed frame.
     <iframe
+      ref={frameRef}
       key={props.src}
       src={`${props.src}${PDF_VIEWER_FRAGMENT}`}
       title={props.title}
@@ -48,9 +99,11 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       className="min-h-0 flex-1"
+      onContextMenuRequest={props.onContextMenuRequest}
     />
   ) : (
     <iframe
+      ref={frameRef}
       key={props.src}
       src={props.src}
       title={props.title}
@@ -72,9 +125,11 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  readonly onContextMenuRequest?: DocumentContextMenu | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
+  useDocumentContextMenu(frameRef, props.onContextMenuRequest);
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
   const postTheme = () => {

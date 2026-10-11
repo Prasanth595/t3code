@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   png: vi.fn(),
   showMenu: vi.fn(),
   openFile: vi.fn(),
+  openExternal: vi.fn(),
   clipboard: vi.fn(),
   menuFinished: null as (() => void) | null,
 }));
@@ -35,7 +36,10 @@ vi.mock("react", async (importOriginal) => ({
 }));
 vi.mock("../../hooks/useCopyToClipboard", () => ({ writeTextToClipboard: vi.fn() }));
 vi.mock("../../localApi", () => ({
-  readLocalApi: () => ({ contextMenu: { show: state.showMenu } }),
+  readLocalApi: () => ({
+    contextMenu: { show: state.showMenu },
+    shell: { openExternal: state.openExternal },
+  }),
 }));
 vi.mock("../../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
 vi.mock("../../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
@@ -128,6 +132,7 @@ beforeEach(() => {
   state.png.mockReset().mockResolvedValue(new Blob(["png"], { type: "image/png" }));
   state.showMenu.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
+  state.openExternal.mockReset().mockResolvedValue(undefined);
   state.menuFinished = null;
   class TestClipboardItem {
     constructor(readonly items: Record<string, Promise<Blob>>) {}
@@ -305,3 +310,27 @@ it.each(["https://cdn.test/image.png", "blob:local-image"])(
     expect(state.download).toHaveBeenCalledWith(src, "image.png");
   },
 );
+
+it("opens a fresh image URL in the local external browser, not the stale preview URL", async () => {
+  state.sessions.set(environmentId, granted);
+  state.mint.mockResolvedValue(
+    AsyncResult.success({ relativeUrl: "/api/assets/fresh/image.png", expiresAt: 1 }),
+  );
+  await useMediaActions({
+    ...hostSource(),
+    src: "https://host.test/api/assets/expired/image.png",
+  }).openExternal();
+  expect(state.openExternal).toHaveBeenCalledWith("https://host.test/api/assets/fresh/image.png");
+});
+
+it("does not open external media after file access is revoked while minting", async () => {
+  state.sessions.set(environmentId, granted);
+  state.mint.mockImplementation(async () => {
+    state.sessions.set(environmentId, denied);
+    return AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 });
+  });
+  await expect(useMediaActions(hostSource()).openExternal()).rejects.toThrow(
+    "cannot read host files",
+  );
+  expect(state.openExternal).not.toHaveBeenCalled();
+});

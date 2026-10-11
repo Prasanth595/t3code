@@ -15,6 +15,7 @@ import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { observeResize } from "~/lib/observeResize";
+import { useExternalBrowserMenu } from "~/browser/useExternalBrowserMenu";
 
 // A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
@@ -58,6 +59,7 @@ export function HtmlRenderFrame(props: {
     }),
     [attachmentId, fileName],
   );
+  const showExternalMenu = useExternalBrowserMenu(props.environmentId, resource);
   // A cached URL with life left is reused, so the browser's cache serves the
   // page again; one near expiry is minted afresh, since a frame cannot report a
   // failed load. The page keeps its first URL for its lifetime.
@@ -91,7 +93,16 @@ export function HtmlRenderFrame(props: {
   }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
 
   return (
-    <div ref={boxRef} className="group/html-render relative" style={{ height }}>
+    <div
+      ref={boxRef}
+      className="group/html-render relative"
+      style={{ height }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void showExternalMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
       {src !== null ? (
         <>
           <HtmlRenderDocument
@@ -99,6 +110,7 @@ export function HtmlRenderFrame(props: {
             title={title}
             className="block size-full"
             onContentHeight={setContentHeight}
+            onContextMenuRequest={showExternalMenu}
           />
           <div className="absolute end-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>

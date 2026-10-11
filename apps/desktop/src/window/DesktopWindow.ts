@@ -16,6 +16,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import { getDesktopUrl } from "../electron/ElectronProtocol.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
+import { assetFrameBrowserRequest, contextMenuBrowserUrl } from "./ContextMenuBrowser.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import {
@@ -564,6 +565,26 @@ export const make = Effect.gen(function* () {
         contents.focus();
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
+        const assetFrame = params.frame?.parent ? params.frame : undefined;
+        const assetRequest = assetFrame ? assetFrameBrowserRequest(params) : undefined;
+        const browserUrl = contextMenuBrowserUrl(params);
+        if (assetRequest || browserUrl) {
+          menuTemplate.push({
+            label: "Open in external browser",
+            click: () => {
+              if (assetRequest && assetFrame) {
+                void runPromise(
+                  Effect.tryPromise(() => assetFrame.executeJavaScript(assetRequest, true)).pipe(
+                    Effect.catch(() => logWindowWarning("failed to open asset browser menu")),
+                  ),
+                );
+              } else if (browserUrl) {
+                void runPromise(electronShell.openExternal(browserUrl));
+              }
+            },
+          });
+          menuTemplate.push({ type: "separator" });
+        }
 
         if (params.misspelledWord) {
           for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {

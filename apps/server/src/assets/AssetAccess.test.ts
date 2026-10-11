@@ -210,6 +210,10 @@ describe("AssetAccess", () => {
         ["recording.webm", "video/webm"],
         ["report.html", "text/html"],
         ["report.pdf", "application/pdf"],
+        ["notes.txt", "text/plain"],
+        ["notes.md", "text/plain"],
+        ["data.csv", "text/plain"],
+        ["data.json", "text/plain"],
       ] as const) {
         const filePath = path.join(outside, name);
         yield* fs.writeFileString(filePath, "media");
@@ -337,7 +341,12 @@ describe("AssetAccess", () => {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-validation-" });
-        for (const name of ["report.md", "secret.txt", "secret.%70ng", "secret.png#private.txt"]) {
+        for (const name of [
+          "archive.zip",
+          "secret.bin",
+          "secret.%70ng",
+          "secret.png#private.zip",
+        ]) {
           const filePath = path.join(root, name);
           yield* fs.writeFileString(filePath, "not media");
           const error = yield* issueAssetUrl({
@@ -346,7 +355,7 @@ describe("AssetAccess", () => {
           expect(error).toBeInstanceOf(AssetPreviewTypeValidationError);
         }
         const disguisedPath = path.join(root, "disguised.png");
-        yield* fs.symlink(path.join(root, "secret.txt"), disguisedPath);
+        yield* fs.symlink(path.join(root, "secret.bin"), disguisedPath);
         const disguisedError = yield* issueAssetUrl({
           resource: {
             _tag: "media-file",

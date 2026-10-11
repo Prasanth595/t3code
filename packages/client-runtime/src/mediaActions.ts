@@ -4,5 +4,6 @@ export type MediaActionId =
   | "copy-relative-path"
   | "copy-url"
   | "open-file"
+  | "open-external"
   | "save"
   | "copy-image";
