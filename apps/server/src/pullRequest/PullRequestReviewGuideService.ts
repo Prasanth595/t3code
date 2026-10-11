@@ -46,6 +46,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { PATCH_RENDER_PREFIX_ARGS } from "../vcs/GitVcsDriverCore.ts";
 import * as PullRequestService from "./PullRequestService.ts";
 import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 import { reviewGuideInputFromPullRequest } from "./pullRequestReviewGuideInput.ts";
@@ -278,7 +279,16 @@ const make = Effect.gen(function* () {
         .execute({
           operation: "PullRequestReviewGuideService.readChange",
           cwd,
-          args: ["-c", "core.quotePath=false", "diff", ...args, `${baseCommit}...HEAD`],
+          // Fixed prefixes: a user's diff.noPrefix or custom prefixes would hide the headers the
+          // parser reads.
+          args: [
+            "-c",
+            "core.quotePath=false",
+            "diff",
+            ...PATCH_RENDER_PREFIX_ARGS,
+            ...args,
+            `${baseCommit}...HEAD`,
+          ],
           timeoutMs: 60_000,
           // Hunk headers only, but a large change still has many of them.
           maxOutputBytes: 64 * 1024 * 1024,
