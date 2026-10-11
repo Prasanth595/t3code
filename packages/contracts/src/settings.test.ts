@@ -549,6 +549,30 @@ describe("ClientSettings recording input overlays", () => {
   });
 });
 
+describe("ClientSettings conversation font size", () => {
+  it("follows the interface size by default", () => {
+    expect(decodeClientSettings({}).fontSizeConversation).toBeNull();
+  });
+
+  it.each([12, 18, 20])("accepts an explicit conversation size: %s", (value) => {
+    expect(decodeClientSettings({ fontSizeConversation: value }).fontSizeConversation).toBe(value);
+    expect(decodeClientSettingsPatch({ fontSizeConversation: value }).fontSizeConversation).toBe(
+      value,
+    );
+  });
+
+  it("accepts a reset to following the interface size", () => {
+    expect(decodeClientSettingsPatch({ fontSizeConversation: null })).toEqual({
+      fontSizeConversation: null,
+    });
+  });
+
+  it.each([11, 21, 16.5])("rejects an invalid conversation size: %s", (value) => {
+    expect(() => decodeClientSettings({ fontSizeConversation: value })).toThrow();
+    expect(() => decodeClientSettingsPatch({ fontSizeConversation: value })).toThrow();
+  });
+});
+
 describe("ClientSettings glass opacity", () => {
   it("defaults to a readable translucent surface", () => {
     expect(decodeClientSettings({}).glassOpacity).toBe(80);

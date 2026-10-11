@@ -1630,6 +1630,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
           <TooltipScrollDismissArea
             ref={setTimelineViewportElement}
             className="relative h-full min-h-0"
+            data-conversation-font-scope
             data-assistant-citation-viewport="true"
           >
             {onCiteAssistantText && citationThreadRef ? (
@@ -1988,12 +1989,12 @@ function TimelineMinimap({
                 }}
               >
                 <span className="dropdown-glass block rounded-xl p-3 text-left text-popover-foreground shadow-xl shadow-black/25">
-                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium leading-5">
+                  <span className="block max-w-full overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium">
                     {activeItem.userText ?? "User message"}
                   </span>
                   {activeItem.assistantText ? (
                     <span
-                      className="mt-1 max-h-[3.75rem] overflow-hidden text-muted-foreground text-sm leading-5"
+                      className="mt-1 max-h-[3lh] overflow-hidden text-muted-foreground text-sm"
                       style={{
                         display: "-webkit-box",
                         WebkitBoxOrient: "vertical",
@@ -3809,7 +3810,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
   );
   return (
     <div className="border-b border-border/60 pb-2 pt-1">
-      <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+      <div className="flex min-h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"
@@ -4955,7 +4956,7 @@ function UserMessageReviewCommentCard({ comment }: { comment: ReviewCommentConte
         </DiffWorkerPoolProvider>
       )}
       {renderablePatch?.kind === "raw" && (
-        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-xs">
+        <pre className="overflow-x-auto rounded-md bg-muted/40 p-2 text-(length:--font-size-code)">
           {renderablePatch.text}
         </pre>
       )}

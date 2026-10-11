@@ -155,11 +155,11 @@ export function SnapShotAttachmentDetails({
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-3.5 text-white">
+        <div className="flex min-w-0 items-center gap-1.5 text-2xs font-medium leading-tight text-white">
           <span className="truncate">{source.appName}</span>
           <SnapShotContentsButton source={source} className="pointer-events-auto" />
         </div>
-        <div className="truncate text-3xs leading-3.5 text-white/70">
+        <div className="truncate text-3xs text-white/70">
           {source.windowTitle || "Captured window"}
         </div>
       </div>

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  type AppearanceFontPreferences,
+  applyAppearanceFontVariables,
   areFontAdvancesMonospace,
   clampCodeFontSize,
   clampInterfaceFontSize,
@@ -121,5 +123,59 @@ describe("font size clamping", () => {
     expect(clampCodeFontSize(13.4)).toBe(13);
     expect(clampInterfaceFontSize(Number.NaN)).toBe(16);
     expect(clampPromptFontSize(Number.POSITIVE_INFINITY)).toBe(14);
+  });
+});
+
+describe("conversation font size", () => {
+  const preferences: AppearanceFontPreferences = {
+    sans: "",
+    code: "",
+    composer: "",
+    sizeInterface: 16,
+    sizeConversation: null,
+    sizePrompt: 14,
+    sizeCode: 13,
+    smoothing: true,
+  };
+
+  function createRoot() {
+    const properties = new Map<string, string>();
+    const style = {
+      fontSize: "",
+      setProperty: (name: string, value: string) => properties.set(name, value),
+      removeProperty: (name: string) => properties.delete(name),
+    };
+    const root = style as unknown as CSSStyleDeclaration;
+    return {
+      apply(next: AppearanceFontPreferences) {
+        applyAppearanceFontVariables({ style: root } as HTMLElement, next);
+        return {
+          fontSize: style.fontSize,
+          conversation: properties.get("--font-size-conversation"),
+        };
+      },
+    };
+  }
+
+  it("leaves the conversation on the interface size until one is chosen", () => {
+    expect(createRoot().apply({ ...preferences, sizeInterface: 18 })).toEqual({
+      fontSize: "18px",
+      conversation: undefined,
+    });
+  });
+
+  it("keeps an explicit conversation size when the interface size changes", () => {
+    const root = createRoot();
+    expect(root.apply({ ...preferences, sizeConversation: 18 }).conversation).toBe("18px");
+    expect(root.apply({ ...preferences, sizeInterface: 13, sizeConversation: 18 })).toEqual({
+      fontSize: "13px",
+      conversation: "18px",
+    });
+  });
+
+  it("clears an explicit size on reset and clamps out-of-range values", () => {
+    const root = createRoot();
+    expect(root.apply({ ...preferences, sizeConversation: 40 }).conversation).toBe("20px");
+    expect(root.apply(preferences).conversation).toBeUndefined();
   });
 });

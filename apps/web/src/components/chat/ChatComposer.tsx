@@ -6869,6 +6869,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             <ComposerBanner.Attachment>
               <ComposerBanner.Root
                 data-chat-composer-top-drawer="true"
+                data-conversation-font-scope
+                // The banner's fixed rem leading would clip a larger conversation size.
+                className="text-xs"
                 variant={activePendingApproval ? "warning" : "info"}
                 density={activePendingApproval ? "spacious" : "default"}
               >

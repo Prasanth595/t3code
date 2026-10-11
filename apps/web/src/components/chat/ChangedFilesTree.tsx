@@ -60,7 +60,7 @@ export const ChangedFilesCard = memo(function ChangedFilesCard(props: {
               additions={summaryStat.additions}
               deletions={summaryStat.deletions}
               layout="inline"
-              className="text-xs leading-4"
+              className="text-xs"
             />
           )}
         </div>
