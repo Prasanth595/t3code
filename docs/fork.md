@@ -5,15 +5,16 @@ The installed app updates itself from the fork releases through the built-in upd
 
 ## How it works
 
-- `.github/workflows/fork-release.yml` runs on each push to main, every day for upstream changes, and on manual dispatch. One run runs at a time.
-- The workflow rebases the branch onto `pingdotgg/t3code` main and keeps the fork commits on top.
-- If the rebase or the typecheck fails, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
-- If any job fails, the `notify_agent` job posts the run to `T3_AGENT_WEBHOOK_URL`. That URL is a webhook scheduled task on a T3 server, which starts a repair agent. A manual run with `notify_agent=false` does not post. A failed run right after a failed run does not post either, because the agent that the first failure started watches the next run. Thus an agent push to main that fails again does not start a loop.
-- Otherwise it pushes the branch. If main moved during the run, it rebases the new main and pushes again.
-- If the commit already has a release, the run stops there. The sync push itself starts such a run.
-- It builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done. The Mac release does not wait for Windows, and a Windows failure does not block it.
+Fork main only moves forward. Nothing rebases or force-pushes it.
+
+- `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge and pushes it as a fast-forward. If main moved during the run, it merges the new main and pushes again.
+- If the merge conflicts or the typecheck fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
+- `.github/workflows/fork-release.yml` builds the desktop apps. It runs when a push to main changes the app shell (`apps/desktop`, icons, build config, dependencies), once a day, and on manual dispatch. If the commit already has a release, it stops early. Server and web changes reach the machines without a release, see "Live server updates" and "Deploy to the VPS".
+- The release builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
 - The release carries `nightly-mac.yml` and `nightly.yml` for electron-updater. Until the Windows build adds `nightly.yml`, Windows apps find no update in the new release.
+- If a sync or a release fails, its `notify_agent` job runs `scripts/fork-notify-agent.sh`. The script posts the run to `T3_AGENT_WEBHOOK_URL`, a webhook scheduled task on a T3 server that starts a repair agent. A manual run with `notify_agent=false` does not post. A failure right after a failure of the same workflow does not post either, because the agent that the first failure started watches the next run.
 - `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
+- To see all fork changes, run `git diff upstream/main...main`.
 
 The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and the data directory `~/.t3`.
 They replace the upstream Nightly app and keep its data.

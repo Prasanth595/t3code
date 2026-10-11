@@ -1,15 +1,27 @@
 name: Fork Release
 
-# Rebases this fork onto upstream main, then publishes a nightly-channel
-# release on the fork that the in-app updater (electron-updater) follows.
-# A push to main releases it. The daily cron picks up upstream changes.
-# See docs/fork.md.
+# Builds the desktop apps from fork main and publishes a nightly-channel release
+# that the in-app updater (electron-updater) follows. It does not touch main:
+# .github/workflows/fork-sync.yml merges upstream. Server and web changes reach
+# the machines through the live server path, so a release is only needed when
+# the app shell changes. See docs/fork.md.
 
 on:
   push:
     branches: [main]
+    # The app shell: Electron code, build config, icons and native dependencies.
+    paths:
+      - apps/desktop/**
+      - assets/**
+      - package.json
+      - pnpm-lock.yaml
+      - scripts/build-desktop-artifact.ts
+      - scripts/lib/**
+      - .github/workflows/fork-release.yml
+  # A daily release keeps new installs and Windows current. It stops early
+  # when main has no new commit.
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "47 3 * * *"
   workflow_dispatch:
     inputs:
       notify_agent:
@@ -17,8 +29,7 @@ on:
         type: boolean
         default: true
 
-# One run at a time. A newer push replaces a waiting run, and a running
-# run finishes, so its force-push never races another sync.
+# One run at a time. A newer push replaces a waiting run.
 concurrency:
   group: fork-release
   cancel-in-progress: false
@@ -28,106 +39,37 @@ permissions:
 
 env:
   UPSTREAM_REPOSITORY: pingdotgg/t3code
-  ISSUE_TITLE: "Fork release: upstream sync failed"
 
 jobs:
-  sync:
-    name: Rebase onto upstream
+  prepare:
+    name: Prepare release
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: write
-      issues: write
+    timeout-minutes: 10
     outputs:
-      sha: ${{ steps.push.outputs.sha }}
+      sha: ${{ steps.commit.outputs.sha }}
       released: ${{ steps.released.outputs.released }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       name: ${{ steps.version.outputs.name }}
     steps:
-      # A scheduled run rebases main. A manual run rebases the branch it runs
-      # from, so a branch can test this workflow without a change to main.
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ github.ref_name }}
-          fetch-depth: 0
-          # GITHUB_TOKEN cannot push commits that change .github/workflows, and
-          # upstream changes them often. FORK_SYNC_TOKEN is a token with the
-          # workflow scope. Without it, a rebase over workflow changes fails at push.
-          token: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
-          # No sparse checkout here: it makes a partial clone, and the rebase
-          # then fails to fetch upstream blobs under .repos/ from origin.
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
 
-      - id: rebase
-        name: Rebase onto upstream main
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
-          git fetch --no-tags upstream main
-          echo "before=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-          if ! git rebase upstream/main > "$RUNNER_TEMP/rebase.log" 2>&1; then
-            cat "$RUNNER_TEMP/rebase.log"
-            git status --short | head -50 >> "$RUNNER_TEMP/rebase.log"
-            git rebase --abort
-            echo "reason=rebase conflict" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          echo "Fork commits on top of upstream:"
-          git log --oneline upstream/main..HEAD
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
-        with:
-          node-version-file: package.json
-          cache: true
-          run-install: true
-
-      - id: checks
-        name: Typecheck
-        run: |
-          set -euo pipefail
-          vp run typecheck
-          # The fork only carries small patches, so a typecheck is the release
-          # gate. The CI workflow runs the full tests on pushes to main.
-
-      # A merge to main during this run makes the lease fail. Then rebase the
-      # new main, typecheck it and push again, instead of failing the run.
-      - id: push
-        name: Push rebased branch
-        run: |
-          set -euo pipefail
-          before="${{ steps.rebase.outputs.before }}"
-          for attempt in 1 2 3; do
-            if git push --force-with-lease="${GITHUB_REF_NAME}:${before}" origin "HEAD:${GITHUB_REF_NAME}"; then
-              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "${GITHUB_REF_NAME} moved during the run (attempt ${attempt}). Rebasing the new ${GITHUB_REF_NAME}."
-            git fetch origin "${GITHUB_REF_NAME}"
-            before="$(git rev-parse FETCH_HEAD)"
-            git reset --hard "$before"
-            if ! git rebase upstream/main > "$RUNNER_TEMP/rebase.log" 2>&1; then
-              cat "$RUNNER_TEMP/rebase.log"
-              git rebase --abort
-              exit 1
-            fi
-            vp run typecheck
-          done
-          echo "${GITHUB_REF_NAME} kept moving; giving up after 3 attempts." >&2
-          exit 1
-
-      # The sync push itself starts a push run for the same commit. That run,
-      # and a cron run with no new commits, find the release and stop here.
       - id: released
         name: Check for an existing release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sha="${{ steps.push.outputs.sha }}"
+          sha="${{ steps.commit.outputs.sha }}"
           existing="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 30 --json tagName,name \
             --jq "[.[] | select(.name | contains(\"(${sha:0:12})\"))][0].tagName // empty")"
           if [[ -n "$existing" ]]; then
@@ -137,48 +79,29 @@ jobs:
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
       # <base>-nightly.<UTC date>.<run number x 10000>. The date and the run number
       # only grow. The gap of 10000 leaves room for local builds between two CI
       # releases (scripts/fork-desktop-mac.sh). The app needs one integer here.
       - id: version
         name: Resolve release version
         run: |
+          vp install --filter=@t3tools/scripts...
           node scripts/resolve-nightly-release.ts \
             --date "$(date -u +%Y%m%d)" \
             --run-number "$(( ${{ github.run_number }} * 10000 ))" \
-            --sha "${{ steps.push.outputs.sha }}" \
+            --sha "${{ steps.commit.outputs.sha }}" \
             --github-output
-
-      - name: Report failure in an issue
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REASON: ${{ steps.rebase.outputs.reason || (steps.checks.outcome == 'failure' && 'typecheck or tests failed') || 'workflow step failed' }}
-        run: |
-          set -euo pipefail
-          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          {
-            echo "Sync of \`${GITHUB_REF_NAME}\` onto ${UPSTREAM_REPOSITORY} main stopped: **${REASON}**."
-            echo
-            echo "Run: ${run_url}"
-            if [[ -f "$RUNNER_TEMP/rebase.log" ]]; then
-              echo
-              echo '```'
-              tail -60 "$RUNNER_TEMP/rebase.log"
-              echo '```'
-            fi
-          } > "$RUNNER_TEMP/issue.md"
-          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "in:title \"${ISSUE_TITLE}\"" --json number --jq '.[0].number // empty')"
-          if [[ -n "$number" ]]; then
-            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/issue.md"
-          else
-            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file "$RUNNER_TEMP/issue.md"
-          fi
 
   build_bundle:
     name: Build JS bundle
-    needs: [sync]
-    if: needs.sync.outputs.released != 'true'
+    needs: [prepare]
+    if: needs.prepare.outputs.released != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -190,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.sync.outputs.sha }}
+          ref: ${{ needs.prepare.outputs.sha }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -201,7 +124,7 @@ jobs:
           cache: true
           run-install: false
       - run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/desktop... --filter=@t3tools/scripts...
-      - run: node scripts/update-release-package-versions.ts "${{ needs.sync.outputs.version }}"
+      - run: node scripts/update-release-package-versions.ts "${{ needs.prepare.outputs.version }}"
       - run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config
       - run: vp run build:desktop
       - uses: actions/upload-artifact@v7
@@ -215,7 +138,7 @@ jobs:
 
   desktop:
     name: Desktop ${{ matrix.label }}
-    needs: [sync, build_bundle]
+    needs: [prepare, build_bundle]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -239,7 +162,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.sync.outputs.sha }}
+          ref: ${{ needs.prepare.outputs.sha }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -250,7 +173,7 @@ jobs:
           cache: ${{ matrix.platform != 'win' }}
           run-install: false
       - run: vp install --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
-      - run: node scripts/update-release-package-versions.ts "${{ needs.sync.outputs.version }}"
+      - run: node scripts/update-release-package-versions.ts "${{ needs.prepare.outputs.version }}"
       - uses: actions/download-artifact@v8
         with:
           name: js-bundle
@@ -326,7 +249,7 @@ jobs:
         run: |
           set -euo pipefail
           args=(--platform "${{ matrix.platform }}" --target "${{ matrix.target }}" --arch "${{ matrix.arch }}"
-            --build-version "${{ needs.sync.outputs.version }}" --skip-build --verbose)
+            --build-version "${{ needs.prepare.outputs.version }}" --skip-build --verbose)
           # Windows stays unsigned. No Apple API key is set, so macOS is not notarized.
           if [[ "${{ matrix.platform }}" == "mac" ]]; then
             args+=(--signed)
@@ -369,70 +292,38 @@ jobs:
         run: |
           set -euo pipefail
           test -s "release-publish/$MANIFEST"
-          tag="${{ needs.sync.outputs.tag }}"
+          tag="${{ needs.prepare.outputs.tag }}"
           if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 &&
             gh release create "$tag" release-publish/* \
               --repo "$GITHUB_REPOSITORY" \
-              --target "${{ needs.sync.outputs.sha }}" \
-              --title "${{ needs.sync.outputs.name }}" \
-              --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.sync.outputs.sha }}." \
+              --target "${{ needs.prepare.outputs.sha }}" \
+              --title "${{ needs.prepare.outputs.name }}" \
+              --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.prepare.outputs.sha }}." \
               --prerelease; then
             exit 0
           fi
           gh release upload "$tag" release-publish/* --repo "$GITHUB_REPOSITORY" --clobber
 
   # Starts a repair agent on a T3 server through a scheduled-task webhook.
-  # Off until the T3_AGENT_WEBHOOK_URL secret is set. The URL is behind
-  # Cloudflare Access, so the call sends the CF_ACCESS_CLIENT_* service token.
+  # Off until the T3_AGENT_WEBHOOK_URL secret is set.
   notify_agent:
     name: Notify repair agent
-    needs: [sync, build_bundle, desktop]
+    needs: [prepare, build_bundle, desktop]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       actions: read
     steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/fork-notify-agent.sh
+          sparse-checkout-cone-mode: false
       - name: Call agent webhook
         env:
           GH_TOKEN: ${{ github.token }}
           WEBHOOK_URL: ${{ secrets.T3_AGENT_WEBHOOK_URL }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-          SYNC_RESULT: ${{ needs.sync.result }}
-          BUNDLE_RESULT: ${{ needs.build_bundle.result }}
-          DESKTOP_RESULT: ${{ needs.desktop.result }}
-        run: |
-          set -euo pipefail
-          if [[ -z "$WEBHOOK_URL" ]]; then
-            echo "T3_AGENT_WEBHOOK_URL is not set. No agent is notified."
-            exit 0
-          fi
-          # A repair agent's push to main starts a run that cannot pass notify_agent=false.
-          # So a failure right after a failure does not start another agent: the agent
-          # that the first failure started watches this run and reports it.
-          previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fork-release.yml --status completed --limit 5 \
-            --json databaseId,conclusion --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID}) | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\")][0].conclusion // empty")"
-          if [[ "$previous" == "failure" ]]; then
-            echo "The previous run failed too. No new agent is notified."
-            exit 0
-          fi
-          jq -n \
-            --arg repository "$GITHUB_REPOSITORY" \
-            --arg branch "$GITHUB_REF_NAME" \
-            --arg event "$GITHUB_EVENT_NAME" \
-            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            --arg sync "$SYNC_RESULT" \
-            --arg build_bundle "$BUNDLE_RESULT" \
-            --arg desktop "$DESKTOP_RESULT" \
-            '{repository: $repository, branch: $branch, event: $event, run_url: $run_url, run_id: $run_id,
-              jobs: {sync: $sync, build_bundle: $build_bundle, desktop: $desktop}}' \
-            > "$RUNNER_TEMP/payload.json"
-          cat "$RUNNER_TEMP/payload.json"
-          curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
-            -X POST "$WEBHOOK_URL" \
-            -H "content-type: application/json" \
-            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-            --data-binary "@$RUNNER_TEMP/payload.json"
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: scripts/fork-notify-agent.sh
