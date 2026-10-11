@@ -35,6 +35,7 @@ export function usePullRequestMediaUrl(url: string) {
   const refresh = useRefreshAssetUrl(context?.environmentId ?? null, resource);
   return {
     uri: asset._tag === "Success" ? asset.url : resource ? null : url,
+    unavailable: resource !== null && asset._tag === "Failure",
     source: pullRequestMediaSource(url, context),
     resolvePlaybackUri: resource ? async () => (await refresh()) ?? null : undefined,
   };
@@ -58,7 +59,7 @@ export function PullRequestMedia(props: {
         <ThreadMarkdownImageView
           uri={media.uri}
           sourceKey={props.url}
-          unavailable={false}
+          unavailable={media.unavailable}
           alt={name}
           onPressPreview={(source) =>
             setImage(
@@ -95,6 +96,7 @@ export function PullRequestMedia(props: {
       ) : (
         <MediaVideoPlayer
           uri={media.uri}
+          unavailable={media.unavailable}
           name={name}
           thumbnailKey={props.url}
           resolvePlaybackUri={media.resolvePlaybackUri}
