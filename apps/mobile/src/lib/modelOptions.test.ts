@@ -785,7 +785,7 @@ describe("synchronized mobile model visibility", () => {
   } as unknown as ServerConfig;
 
   it("applies server visibility and ordering independently to each provider instance", () => {
-    const options = buildModelOptions(config, null);
+    const options = buildModelOptions(config, null, undefined, null);
     expect(
       options
         .filter((option) => option.providerKey === provider)
@@ -803,6 +803,7 @@ describe("synchronized mobile model visibility", () => {
       config,
       { instanceId: provider, model: "hidden" },
       provider,
+      null,
       true,
     );
     expect(options.map((option) => option.selection.model)).toEqual([
@@ -823,7 +824,7 @@ describe("synchronized mobile model visibility", () => {
 
   it.each(["hidden", "missing"])("does not resurrect the hidden fallback %s", (model) => {
     expect(
-      buildModelOptions(config, { instanceId: provider, model }, provider).map(
+      buildModelOptions(config, { instanceId: provider, model }, provider, null).map(
         (option) => option.selection.model,
       ),
     ).toEqual(["second", "first", "custom"]);
@@ -831,13 +832,13 @@ describe("synchronized mobile model visibility", () => {
 
   it("keeps custom models visible and restores built-in models when the server clears hidden models", () => {
     expect(
-      buildModelOptions(config, { instanceId: provider, model: "custom" }, provider).map(
+      buildModelOptions(config, { instanceId: provider, model: "custom" }, provider, null).map(
         (option) => option.selection.model,
       ),
     ).toContain("custom");
     const cleared = { ...config, settings: { ...config.settings, providerModelPreferences: {} } };
     expect(
-      buildModelOptions(cleared, null, provider).map((option) => option.selection.model),
+      buildModelOptions(cleared, null, provider, null).map((option) => option.selection.model),
     ).toEqual(["hidden", "first", "second", "custom"]);
   });
 });

@@ -830,6 +830,8 @@ it.effect.each([
           }),
         ),
       ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
     );
     yield* Effect.gen(function* () {
       const service = yield* ThreadManagementService.ThreadManagementService;

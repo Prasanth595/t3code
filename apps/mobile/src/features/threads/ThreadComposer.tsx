@@ -689,6 +689,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     () => ({
       ownerId: settingsOwnerId,
       environmentId: props.environmentId,
+      projectId: props.selectedThread.projectId,
       providerInstanceId: currentModelSelection.instanceId,
       ...(lockedProviderInstanceId ? { lockedProviderInstanceId } : {}),
       providerGroups: threadProviderGroups,
@@ -718,6 +719,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       settingsOwnerId,
       lockedProviderInstanceId,
       threadProviderGroups,
+      props.selectedThread.projectId,
     ],
   );
   const openSettings = useCallback(() => {
