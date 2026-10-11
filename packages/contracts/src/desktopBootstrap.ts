@@ -28,6 +28,10 @@ export const DesktopBackendBootstrap = Schema.Struct({
   tunnelPairingUrl: Schema.optionalKey(TrimmedNonEmptyString),
   // Fork: comma-separated https origins that may call this server with cookies.
   trustedBrowserOrigins: Schema.optionalKey(TrimmedNonEmptyString),
+  // Fork: Cloudflare Access login. Present only when tunnel pairing is on.
+  cloudflareAccessTeamDomain: Schema.optionalKey(TrimmedNonEmptyString),
+  cloudflareAccessAud: Schema.optionalKey(TrimmedNonEmptyString),
+  cloudflareAccessSubjects: Schema.optionalKey(TrimmedNonEmptyString),
   otlpTracesUrl: Schema.optional(Schema.String),
   otlpMetricsUrl: Schema.optional(Schema.String),
   otlpLogsUrl: Schema.optional(Schema.String),

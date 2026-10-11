@@ -18,7 +18,11 @@ import {
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
-import type { AuthEnvironmentScope, DpopFailureReason } from "@t3tools/contracts";
+import type {
+  AuthEnvironmentScope,
+  AuthSessionState,
+  DpopFailureReason,
+} from "@t3tools/contracts";
 import { parseOAuthScope } from "@t3tools/shared/oauthScope";
 import { causeErrorTag } from "@t3tools/shared/observability";
 import * as Clock from "effect/Clock";
@@ -259,6 +263,41 @@ export const layerAuthenticatedAuth = Layer.effect(
   }),
 );
 
+/**
+ * Fork: Cloudflare Access login. A request without a T3 session but with a
+ * valid Access JWT gets a browser session cookie, the same session a pairing
+ * link gives. The state stays unauthenticated when the login is off.
+ */
+const createCloudflareAccessBrowserSession = Effect.fn(
+  "environment.auth.createCloudflareAccessBrowserSession",
+)(function* (request: HttpServerRequest.HttpServerRequest, unauthenticated: AuthSessionState) {
+  const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const sessions = yield* SessionStore.SessionStore;
+  const issued = yield* serverAuth.issueCloudflareAccessPairingCredential(request);
+  if (issued === undefined) {
+    return unauthenticated;
+  }
+  const created = yield* serverAuth
+    .createBrowserSession(
+      issued.credential,
+      deriveAuthClientMetadata({ request }),
+      undefined,
+      isForwardedRequest(request),
+    )
+    .pipe(
+      Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+        failEnvironmentInternal("browser_session_issuance_failed", error),
+      ),
+    );
+  yield* appendSessionCookie(
+    created.cookieName ?? sessions.cookieName,
+    created.sessionToken,
+    created.response.expiresAt,
+  );
+  yield* appendCredentialResponseHeaders;
+  return { ...created.response, auth: unauthenticated.auth } satisfies AuthSessionState;
+});
+
 export const layer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "auth",
@@ -273,7 +312,10 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const result = yield* serverAuth.getSessionState(request);
+            const sessionState = yield* serverAuth.getSessionState(request);
+            const result = sessionState.authenticated
+              ? sessionState
+              : yield* createCloudflareAccessBrowserSession(request, sessionState);
             const credential = EnvironmentAuth.selectRequestCredential(
               request,
               sessions.cookieName,
@@ -449,6 +491,24 @@ export const layer = HttpApiBuilder.group(
               }
             }
             return yield* serverAuth.issuePairingCredential(args.payload);
+          },
+          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
+            failEnvironmentInternal("pairing_credential_issuance_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "cloudflareAccessPairingCredential",
+        Effect.fn("environment.auth.cloudflareAccessPairingCredential")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const issued = yield* serverAuth.issueCloudflareAccessPairingCredential(request);
+            if (issued === undefined) {
+              return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+            yield* appendCredentialResponseHeaders;
+            return issued;
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),

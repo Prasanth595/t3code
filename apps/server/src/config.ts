@@ -31,6 +31,14 @@ export type StartupPresentation = typeof StartupPresentation.Type;
 /**
  * ServerDerivedPaths - Derived paths from the base directory.
  */
+// Fork: Cloudflare Access login. `subjects` lists the emails and service token
+// common names that count as the owner.
+export interface CloudflareAccessConfig {
+  readonly teamDomain: string;
+  readonly aud: string;
+  readonly subjects: ReadonlyArray<string>;
+}
+
 export interface ServerDerivedPaths {
   readonly stateDir: string;
   readonly dbPath: string;
@@ -111,6 +119,8 @@ export class ServerConfig extends Context.Service<
     // Fork: https origins of sibling web pages (for example other tunnels behind
     // the same Cloudflare Access) that may call this server with cookies.
     readonly trustedBrowserOrigins?: ReadonlyArray<string> | undefined;
+    // Fork: trust a verified Cloudflare Access JWT as the owner login.
+    readonly cloudflareAccess?: CloudflareAccessConfig | undefined;
   }
 >()("t3/config/ServerConfig") {
   /** @deprecated Import and use `layerTest` from this module. */

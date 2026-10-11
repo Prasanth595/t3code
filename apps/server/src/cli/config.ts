@@ -172,6 +172,18 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  cloudflareAccessTeamDomain: Config.String("T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  cloudflareAccessAud: Config.String("T3CODE_CLOUDFLARE_ACCESS_AUD").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  cloudflareAccessSubjects: Config.String("T3CODE_CLOUDFLARE_ACCESS_SUBJECTS").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 const DevAuthTokenConfig = Config.Redacted("T3CODE_DEV_AUTH_TOKEN").pipe(
@@ -285,6 +297,38 @@ export const resolveTrustedBrowserOrigins = (raw: string | undefined) =>
           );
     },
   );
+
+// Fork: Cloudflare Access login. All three values turn it on, none turn it off,
+// and a partial set fails startup so a missing value never weakens the check.
+export const resolveCloudflareAccess = (raw: {
+  readonly teamDomain: string | undefined;
+  readonly aud: string | undefined;
+  readonly subjects: string | undefined;
+}) => {
+  const teamDomain = raw.teamDomain?.trim() ?? "";
+  const aud = raw.aud?.trim() ?? "";
+  const subjects = (raw.subjects ?? "")
+    .replaceAll("\n", ",")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (teamDomain === "" && aud === "" && subjects.length === 0) {
+    return Effect.succeed(undefined);
+  }
+  const fail = (cause: string) => Effect.fail(new CliError.UserError({ cause }));
+  if (teamDomain === "" || aud === "" || subjects.length === 0) {
+    return fail(
+      "T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN, T3CODE_CLOUDFLARE_ACCESS_AUD and T3CODE_CLOUDFLARE_ACCESS_SUBJECTS must be set together.",
+    );
+  }
+  const teamUrl = URL.parse(`https://${teamDomain}`);
+  if (teamUrl === null || teamUrl.host !== teamDomain || teamUrl.username !== "") {
+    return fail(
+      `T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN must be a host such as team.cloudflareaccess.com, got ${teamDomain}.`,
+    );
+  }
+  return Effect.succeed({ teamDomain, aud, subjects } satisfies ServerConfig.CloudflareAccessConfig);
+};
 
 const resolveOptionPrecedence = <Value>(
   ...values: ReadonlyArray<Option.Option<Value>>
@@ -455,6 +499,11 @@ export const resolveServerConfig = (
     const trustedBrowserOrigins = yield* resolveTrustedBrowserOrigins(
       env.trustedBrowserOrigins ?? bootstrap?.trustedBrowserOrigins,
     );
+    const cloudflareAccess = yield* resolveCloudflareAccess({
+      teamDomain: env.cloudflareAccessTeamDomain ?? bootstrap?.cloudflareAccessTeamDomain,
+      aud: env.cloudflareAccessAud ?? bootstrap?.cloudflareAccessAud,
+      subjects: env.cloudflareAccessSubjects ?? bootstrap?.cloudflareAccessSubjects,
+    });
     const staticDir = devUrl ? undefined : yield* ServerConfig.resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -538,6 +587,7 @@ export const resolveServerConfig = (
       tailscaleServePort,
       ...(tunnelPairingUrl === undefined ? {} : { tunnelPairingUrl }),
       ...(trustedBrowserOrigins.length === 0 ? {} : { trustedBrowserOrigins }),
+      ...(cloudflareAccess === undefined ? {} : { cloudflareAccess }),
     };
 
     return config;

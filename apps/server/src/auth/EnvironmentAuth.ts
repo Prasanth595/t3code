@@ -44,6 +44,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -515,6 +516,11 @@ export class EnvironmentAuth extends Context.Service<
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
+    // Fork: a one-use pairing credential for a request that carries a valid
+    // Cloudflare Access JWT, or undefined when the login is off or the JWT fails.
+    readonly issueCloudflareAccessPairingCredential: (
+      request: HttpServerRequest.HttpServerRequest,
+    ) => Effect.Effect<AuthPairingCredentialResult | undefined, ServerAuthInternalError>;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -994,11 +1000,13 @@ export const make = Effect.gen(function* () {
     readonly subject: string;
     readonly label?: string;
     readonly purpose?: "startup";
+    readonly ttl?: Duration.Duration;
   }) =>
     createPairingLink({
       scopes: input.scopes,
       subject: input.subject,
       ...(input.label ? { label: input.label } : {}),
+      ...(input.ttl ? { ttl: input.ttl } : {}),
       ...(input.purpose ? { purpose: input.purpose } : {}),
     }).pipe(
       Effect.map(
@@ -1117,6 +1125,29 @@ export const make = Effect.gen(function* () {
       subject: "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
+
+  const verifyCloudflareAccess =
+    config.cloudflareAccess === undefined
+      ? undefined
+      : makeCloudflareAccessVerifier(config.cloudflareAccess);
+
+  const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
+    (request) =>
+      verifyCloudflareAccess === undefined
+        ? Effect.succeed(undefined)
+        : verifyCloudflareAccess(request).pipe(
+            Effect.flatMap((subject) =>
+              subject === undefined
+                ? Effect.succeed(undefined)
+                : issuePairingCredentialForSubject({
+                    scopes: AuthStandardClientScopes,
+                    subject: "one-time-token",
+                    label: `cloudflare-access ${subject}`,
+                    ttl: Duration.minutes(2),
+                  }),
+            ),
+            Effect.withSpan("EnvironmentAuth.issueCloudflareAccessPairingCredential"),
+          );
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
     () => {
@@ -1319,6 +1350,7 @@ export const make = Effect.gen(function* () {
     exchangeBootstrapCredentialForAccessToken,
     createPairingLink,
     issuePairingCredential,
+    issueCloudflareAccessPairingCredential,
     issueStartupPairingCredential,
     listPairingLinks,
     revokePairingLink,

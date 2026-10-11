@@ -21,7 +21,11 @@ import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
-import { resolveServerConfig, resolveTrustedBrowserOrigins } from "./config.ts";
+import {
+  resolveCloudflareAccess,
+  resolveServerConfig,
+  resolveTrustedBrowserOrigins,
+} from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
   deriveServerPaths(baseDir, devUrl, { baseDirIsExplicit: true });
@@ -1250,6 +1254,34 @@ it.effect("rejects a trusted browser origin that is not a bare https origin", ()
     ]) {
       const error = yield* Effect.flip(resolveTrustedBrowserOrigins(raw));
       assert.include(String(error.cause), "T3CODE_TRUSTED_BROWSER_ORIGINS");
+    }
+  }),
+);
+
+it.effect("turns Cloudflare Access login on only when all three values are set", () =>
+  Effect.gen(function* () {
+    const none = { teamDomain: undefined, aud: undefined, subjects: undefined };
+    assert.strictEqual(yield* resolveCloudflareAccess(none), undefined);
+    assert.deepEqual(
+      yield* resolveCloudflareAccess({
+        teamDomain: "team.cloudflareaccess.com",
+        aud: "aud-tag",
+        subjects: "dev@example.com,\n abc.access ",
+      }),
+      {
+        teamDomain: "team.cloudflareaccess.com",
+        aud: "aud-tag",
+        subjects: ["dev@example.com", "abc.access"],
+      },
+    );
+    for (const partial of [
+      { ...none, teamDomain: "team.cloudflareaccess.com" },
+      { ...none, teamDomain: "team.cloudflareaccess.com", aud: "aud-tag" },
+      { ...none, aud: "aud-tag", subjects: "dev@example.com" },
+      { teamDomain: "https://team.cloudflareaccess.com", aud: "aud-tag", subjects: "a@b.c" },
+    ]) {
+      const error = yield* Effect.flip(resolveCloudflareAccess(partial));
+      assert.include(String(error.cause), "T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN");
     }
   }),
 );

@@ -491,6 +491,18 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    // Fork: a one-use pairing credential for a caller that passed Cloudflare
+    // Access. The request needs no T3 credential, only the Access JWT.
+    HttpApiEndpoint.post(
+      "cloudflareAccessPairingCredential",
+      "/api/auth/cloudflare-access/pairing-credential",
+      {
+        success: AuthPairingCredentialResult,
+        error: [EnvironmentAuthInvalidError, EnvironmentInternalError],
+      },
+    ),
+  )
+  .add(
     HttpApiEndpoint.get("pairingLinks", "/api/auth/pairing-links", {
       headers: OptionalBearerHeaders,
       success: Schema.Array(AuthPairingLink),
