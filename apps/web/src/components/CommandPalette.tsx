@@ -1396,6 +1396,7 @@ function OpenCommandPaletteDialog(props: {
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,
       threadSearch.query,
+      threadSearchQuery,
       threads,
     ],
   );
