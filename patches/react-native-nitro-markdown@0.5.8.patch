@@ -1,7 +1,34 @@
 diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
 --- a/cpp/md4c/md4c.c
 +++ b/cpp/md4c/md4c.c
-@@ -3908,10 +3908,10 @@
+@@ -3308,10 +3308,22 @@ md_collect_marks(MD_CTX* ctx, const MD_LINE* lines, MD_SIZE n_lines, int table_m
+                 if(tmp - off <= 2) {
+                     unsigned flags = MD_MARK_POTENTIAL_OPENER | MD_MARK_POTENTIAL_CLOSER;
+ 
+-                    if(off > line->beg  &&  !ISUNICODEWHITESPACEBEFORE(off)  &&  !ISUNICODEPUNCTBEFORE(off))
+-                        flags &= ~MD_MARK_POTENTIAL_OPENER;
+-                    if(tmp < line->end  &&  !ISUNICODEWHITESPACE(tmp)  &&  !ISUNICODEPUNCT(tmp))
+-                        flags &= ~MD_MARK_POTENTIAL_CLOSER;
++                    if(ch == _T('~')) {
++                        /* Flank tildes like emphasis delimiters, as micromark
++                         * (remark-gfm) does, so mobile strikes what web strikes. */
++                        int left_level = (off == line->beg || ISUNICODEWHITESPACEBEFORE(off)) ? 0 : (ISUNICODEPUNCTBEFORE(off) ? 1 : 2);
++                        int right_level = (tmp == line->end || ISUNICODEWHITESPACE(tmp)) ? 0 : (ISUNICODEPUNCT(tmp) ? 1 : 2);
++
++                        if(left_level == 0  ||  left_level < right_level)
++                            flags &= ~MD_MARK_POTENTIAL_CLOSER;
++                        if(right_level == 0  ||  right_level < left_level)
++                            flags &= ~MD_MARK_POTENTIAL_OPENER;
++                    } else {
++                        if(off > line->beg  &&  !ISUNICODEWHITESPACEBEFORE(off)  &&  !ISUNICODEPUNCTBEFORE(off))
++                            flags &= ~MD_MARK_POTENTIAL_OPENER;
++                        if(tmp < line->end  &&  !ISUNICODEWHITESPACE(tmp)  &&  !ISUNICODEPUNCT(tmp))
++                            flags &= ~MD_MARK_POTENTIAL_CLOSER;
++                    }
+                     if(flags != 0)
+                         ADD_MARK(ch, off, tmp, flags);
+                 }
+@@ -3908,10 +3920,10 @@
          int min_components;
          const MD_CHAR optional_end_char;
      } URL_MAP[] = {
@@ -16,7 +43,7 @@ diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
      };
  
      MD_MARK* opener = &ctx->marks[mark_index];
-@@ -3981,8 +3981,11 @@
+@@ -3981,8 +3993,11 @@
              } else if(end < line_end  &&
                          ISANYOF(end, URL_MAP[i].allowed_nonalnum_chars)  &&
                          md_scan_right_for_resolved_mark(ctx, right_cursor, end, &right_cursor) == NULL  &&
@@ -30,7 +57,7 @@ diff --git a/cpp/md4c/md4c.c b/cpp/md4c/md4c.c
              {
                  if(CH(end) == URL_MAP[i].delim_char)
                      n_components++;
-@@ -4006,16 +4009,35 @@
+@@ -4006,16 +4021,35 @@
                  CH(end) == URL_MAP[i].optional_end_char)
              end++;
  
