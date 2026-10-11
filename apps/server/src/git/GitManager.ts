@@ -67,6 +67,11 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 
 import { GitManagerError, GitPullRequestMaterializationError } from "@t3tools/contracts";
+import {
+  historicalMessage,
+  renderHistory,
+  selectHistory,
+} from "@t3tools/provider-core/server/handoffBudget";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import {
   conventionalCommitsTextGenerationPolicy,
@@ -183,6 +188,7 @@ const PR_LOOKUP_NO_OPEN_PR_CACHE_TTL = Duration.minutes(5);
 const PR_LOOKUP_FAILURE_BASE_TTL = Duration.seconds(20);
 const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
+const PR_THREAD_CONTEXT_BYTES = 16_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -743,6 +749,21 @@ export const make = Effect.gen(function* () {
         );
     return resolveProjectSettings(settings, projectId).settings;
   });
+  const readThreadContext = Effect.fnUntraced(
+    function* (threadId: ThreadId | undefined) {
+      if (threadId === undefined) return undefined;
+      const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
+      const selected = selectHistory({
+        messages: visibleTurnItems.flatMap(({ item }) => historicalMessage(item) ?? []),
+        coverage: "Digest of the thread that made this change, oldest first.",
+        budget: PR_THREAD_CONTEXT_BYTES,
+      });
+      return selected.messages.length === 0
+        ? undefined
+        : renderHistory(selected.messages, selected.context);
+    },
+    Effect.orElseSucceed(() => undefined),
+  );
   // Best effort: a settings read failure falls back to the default location.
   const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
     Effect.map((settings) => settings.worktreesDirectory),
@@ -2215,6 +2236,7 @@ export const make = Effect.gen(function* () {
     settings: SourceControlTextGenerationSettings,
     cwd: string,
     fallbackBranch: string | null,
+    threadId: ThreadId | undefined,
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
@@ -2268,6 +2290,7 @@ export const make = Effect.gen(function* () {
             yield* provider.readChangeRequestTemplate({ cwd, treeish: baseRangeRef }),
           )
         : undefined;
+    const threadContext = yield* readThreadContext(threadId);
 
     const generated = yield* textGeneration.generatePrContent({
       cwd,
@@ -2277,6 +2300,7 @@ export const make = Effect.gen(function* () {
       diffSummary: limitContext(rangeContext.diffSummary, 20_000),
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
+      ...(threadContext ? { threadContext } : {}),
       ...(policy ? { policy } : {}),
       modelSelection: settings.modelSelection,
     });
@@ -3010,7 +3034,13 @@ export const make = Effect.gen(function* () {
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("pr"))),
                 Effect.flatMap(() =>
-                  runPrStep(textGenerationSettings, input.cwd, currentBranch, progress.emit),
+                  runPrStep(
+                    textGenerationSettings,
+                    input.cwd,
+                    currentBranch,
+                    input.threadId,
+                    progress.emit,
+                  ),
                 ),
               )
           : { status: "skipped_not_requested" as const };

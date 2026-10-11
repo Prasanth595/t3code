@@ -35,6 +35,7 @@ export interface PrContentGenerationInput {
   diffSummary: string;
   diffPatch: string;
   changeRequestTemplate?: string | undefined;
+  threadContext?: string | undefined;
   policy?: TextGenerationPolicy | undefined;
   /** What model and provider to use for generation. */
   modelSelection: ModelSelection;
