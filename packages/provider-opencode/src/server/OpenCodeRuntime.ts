@@ -86,6 +86,7 @@ export function resolveOpenCodeServerPassword(
 const DEFAULT_OPENCODE_SERVER_TIMEOUT_MS = 30_000;
 const DEFAULT_HOSTNAME = "127.0.0.1";
 const OPENCODE_SERVER_STARTUP_MAX_OUTPUT_CHARS = 64 * 1024;
+const OPENCODE_SERVER_EXIT_DRAIN_TIMEOUT = "500 millis";
 const OPENCODE_SKILL_DISCOVERY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 export interface OpenCodeServerProcess {
   readonly url: string;
@@ -817,9 +818,13 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
       const exitFiber = yield* child.exitCode.pipe(
         Effect.flatMap((code) =>
           Effect.gen(function* () {
-            // Exit may arrive before the final stderr chunk containing SQLITE_BUSY.
-            yield* Fiber.join(stdoutFiber);
-            yield* Fiber.join(stderrFiber);
+            // Allow trailing diagnostics to drain, but descendants can keep pipes open.
+            const drained = yield* Fiber.joinAll([stdoutFiber, stderrFiber]).pipe(
+              Effect.timeoutOption(OPENCODE_SERVER_EXIT_DRAIN_TIMEOUT),
+            );
+            if (Option.isNone(drained)) {
+              yield* Fiber.interruptAll([stdoutFiber, stderrFiber]);
+            }
             const stdout = (yield* Ref.get(stdoutRef)) ?? "";
             const stderr = (yield* Ref.get(stderrRef)) ?? "";
             const exitCode = Number(code);

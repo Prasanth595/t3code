@@ -236,9 +236,18 @@ server.listen(0, "127.0.0.1", () => {
 });
 
 describe("OpenCode database lock startup", () => {
-  effectIt.live.each(["transient", "permanent", "configuration", "unrelated"] as const)(
-    "handles %s startup failures with bounded process ownership",
-    (mode) =>
+  effectIt.live.each([
+    { mode: "transient", keepPipesOpen: false },
+    { mode: "permanent", keepPipesOpen: false },
+    { mode: "configuration", keepPipesOpen: false },
+    { mode: "unrelated", keepPipesOpen: false },
+    { mode: "transient", keepPipesOpen: true },
+    { mode: "permanent", keepPipesOpen: true },
+    { mode: "configuration", keepPipesOpen: true },
+    { mode: "unrelated", keepPipesOpen: true },
+  ] as const)(
+    "handles $mode startup failures with bounded process ownership (open pipes: $keepPipesOpen)",
+    ({ mode, keepPipesOpen }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-lock-" });
@@ -247,16 +256,42 @@ describe("OpenCode database lock startup", () => {
         const environment = yield* HostProcess.Environment;
         const scriptPath = `${root}/fake.mjs`;
         const attemptsPath = `${root}/attempts`;
+        yield* Effect.addFinalizer(() =>
+          fs.readFileString(`${attemptsPath}.descendants`).pipe(
+            Effect.orElseSucceed(() => ""),
+            Effect.flatMap((pids) =>
+              Effect.sync(() => {
+                for (const pid of pids.trim().split("\n").filter(Boolean)) {
+                  try {
+                    process.kill(Number(pid), "SIGKILL");
+                  } catch {
+                    // The fixture descendant may already have exited.
+                  }
+                }
+              }),
+            ),
+          ),
+        );
         yield* fs.writeFileString(
           scriptPath,
           `
 import { readFileSync, writeFileSync, writeSync } from "node:fs";
 import { createServer } from "node:http";
+import { spawn } from "node:child_process";
 const path = process.env.T3_TEST_ATTEMPTS;
 let attempt = 0;
 try { attempt = Number(readFileSync(path, "utf8")); } catch {}
 writeFileSync(path, String(++attempt));
 if (${JSON.stringify(mode)} !== "transient" || attempt < 3) {
+  // Inherited pipes remain open after the direct child exits.
+  if (${keepPipesOpen}) {
+    const descendant = spawn(process.execPath, ["-e", "setTimeout(() => {}, 10000)"], {
+      detached: true,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    writeFileSync(path + ".descendants", descendant.pid + "\\n", { flag: "a" });
+    descendant.unref();
+  }
   // A lock mentioned outside the startup diagnostic is not a lock failure.
   if (${JSON.stringify(mode)} === "unrelated") writeSync(1, "note: database is locked was seen earlier\\n");
   writeSync(2, ${JSON.stringify(mode === "configuration" || mode === "unrelated" ? "Invalid configuration" : "SQLiteError: database is locked (SQLITE_BUSY)")} + "\\n");
@@ -280,6 +315,7 @@ server.listen(0, "127.0.0.1", () => console.log("opencode server listening on ht
             binaryPath,
             directory: root,
             port: 0,
+            timeoutMs: 2_000,
             environment: {
               ...environment,
               T3_TEST_NODE_BINARY: executablePath,
@@ -295,6 +331,12 @@ server.listen(0, "127.0.0.1", () => console.log("opencode server listening on ht
         );
         if (result._tag === "Failure") {
           expect(result.failure.reason).toBe(mode === "permanent" ? "databaseLocked" : undefined);
+          const stderr =
+            mode === "permanent"
+              ? "SQLiteError: database is locked (SQLITE_BUSY)"
+              : "Invalid configuration";
+          expect(result.failure.detail).toContain(`stderr:\n${stderr}`);
+          expect(result.failure.cause).toMatchObject({ exitCode: 1, stderr: `${stderr}\n` });
         }
       }).pipe(
         Effect.scoped,
