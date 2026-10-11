@@ -88,7 +88,8 @@ import * as Stream from "effect/Stream";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
-  delegatedTaskProgress,
+  delegatedTaskProgressForTask,
+  delegatedTaskRuns,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -380,24 +381,10 @@ function taskStatusForRun(
 }
 
 export function delegatedTaskRun(
-  childProjection: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  childProjection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
   task: OrchestrationV2Subagent,
 ): OrchestrationV2Run | undefined {
-  const taskRun = childProjection.runs.find((run) => run.delegatedTaskId === task.id);
-  if (taskRun !== undefined) return taskRun;
-  const spawnTransfer = childProjection.contextTransfers.find(
-    (transfer) =>
-      transfer.type === "subagent_spawn" &&
-      transfer.sourceThreadId === task.threadId &&
-      transfer.targetThreadId === task.childThreadId,
-  );
-  if (spawnTransfer === undefined) {
-    // Legacy delegated-task projections predate the durable spawn transfer.
-    return childProjection.runs[0];
-  }
-  return spawnTransfer.targetRunId === null
-    ? undefined
-    : childProjection.runs.find((run) => run.id === spawnTransfer.targetRunId);
+  return delegatedTaskRuns(childProjection, task.id).toSorted((a, b) => a.ordinal - b.ordinal)[0];
 }
 
 export function hasPendingChildRuns(
@@ -458,19 +445,11 @@ function directAppOwnedChildTasks(
 
 function taskResultTransfer(
   parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
-  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "contextTransfers">,
   task: OrchestrationV2Subagent,
 ) {
   const originalRun = delegatedTaskRun(child, task);
-  const resultRunIds = new Set(
-    child.runs
-      .filter(
-        (run) =>
-          run.delegatedTaskId === task.id ||
-          (originalRun?.delegatedTaskId === undefined && run.delegatedTaskId === undefined),
-      )
-      .map((run) => run.id),
-  );
+  const resultRunIds = new Set(delegatedTaskRuns(child, task.id).map((run) => run.id));
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
   return parent.contextTransfers.find(
     (transfer) =>
@@ -1340,19 +1319,9 @@ const make = Effect.gen(function* () {
         .pipe(Effect.mapError(threadManagementFailure));
       const childRun = delegatedTaskRun(childControls, task);
       const terminalRun = latestTerminalResultRun(childControls, childRun);
-      const progress = delegatedTaskProgress(childControls);
-      const taskResultRun =
-        childRun?.delegatedTaskId === task.id
-          ? childControls.runs
-              .filter((run) => run.delegatedTaskId === task.id)
-              .toSorted((a, b) => b.ordinal - a.ordinal)[0]
-          : progress.resultRun;
-      const taskWorkState =
-        childRun?.delegatedTaskId === task.id
-          ? isTerminalTaskStatus(taskStatusForRun(taskResultRun))
-            ? "result_available"
-            : "working"
-          : progress.state;
+      const progress = delegatedTaskProgressForTask(childControls, task.id);
+      const taskResultRun = progress.resultRun;
+      const taskWorkState = progress.state;
       const resultRunIds = [
         ...new Set(
           [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -1377,7 +1346,7 @@ const make = Effect.gen(function* () {
         task.result === null &&
         taskWorkState === "result_available" &&
         (yield* threadManagement
-          .delegatedTaskResultPending(task.childThreadId, childRun?.delegatedTaskId)
+          .delegatedTaskResultPending(task.childThreadId, task.id)
           .pipe(Effect.mapError(threadManagementFailure)));
       const workState =
         task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;

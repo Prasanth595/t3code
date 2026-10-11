@@ -240,6 +240,10 @@ the other members continue.
 Later human follow-ups do not reopen the group. Swarm members share the delegated
 workspace, so coordinate file changes as you would with ordinary subagents.
 
+Some providers track background work across a member's conversation. Executed
+follow-up tasks can share the wait for that work before reporting their result to
+the parent. A follow-up cancelled before it starts does not share that wait.
+
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.

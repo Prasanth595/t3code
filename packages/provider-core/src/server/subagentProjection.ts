@@ -209,6 +209,33 @@ export function subagentResultForRun(
   };
 }
 
+export function delegatedTaskRuns(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  taskId: NodeId,
+): ReadonlyArray<OrchestrationV2Run> {
+  const originalTaskId =
+    projection.thread.forkedFrom?.type === "node" ? projection.thread.forkedFrom.nodeId : taskId;
+  return projection.runs.filter(
+    (run) =>
+      run.delegatedTaskId === taskId ||
+      (run.delegatedTaskId === undefined && taskId === originalTaskId),
+  );
+}
+
+function delegatedWorkRuns(projection: {
+  readonly runs: OrchestrationV2ThreadProjection["runs"];
+  readonly messages: ReadonlyArray<
+    Pick<OrchestrationV2ConversationMessage, "runId" | "notification">
+  >;
+}) {
+  const monitorRuns = new Set(
+    projection.messages
+      .filter((message) => message.notification?.source.kind === "monitor")
+      .map((message) => message.runId),
+  );
+  return projection.runs.filter((run) => !monitorRuns.has(run.id) && run.status !== "rolled_back");
+}
+
 /** A finished turn can still own live children or queued completion follow-ups. */
 export function delegatedTaskProgress(projection: {
   readonly runs: OrchestrationV2ThreadProjection["runs"];
@@ -224,14 +251,7 @@ export function delegatedTaskProgress(projection: {
 }) {
   const terminal = (status: string) =>
     ["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(status);
-  const monitorRuns = new Set(
-    projection.messages
-      .filter((message) => message.notification?.source.kind === "monitor")
-      .map((message) => message.runId),
-  );
-  const workRuns = projection.runs.filter(
-    (run) => !monitorRuns.has(run.id) && run.status !== "rolled_back",
-  );
+  const workRuns = delegatedWorkRuns(projection);
   // A held queue waits for the user to resume it (after Stop, a restart, or a
   // provider failure), so its runs are not work the task still owes.
   const active = workRuns.some(
@@ -247,8 +267,9 @@ export function delegatedTaskProgress(projection: {
         task.completionDelivery?.state === "claimed",
     ) ||
     projection.providerThreads.some((thread) => (thread.pendingBackgroundTasks?.length ?? 0) > 0);
+  const firstRun = projection.runs.toSorted((a, b) => a.ordinal - b.ordinal)[0];
   const resultRun = workRuns
-    .filter((run) => terminal(run.status) && (run.startedAt !== null || run.ordinal === 1))
+    .filter((run) => terminal(run.status) && (run.startedAt !== null || run.id === firstRun?.id))
     .toSorted((a, b) => (runRanAfter(a, b) ? -1 : runRanAfter(b, a) ? 1 : 0))[0];
   return {
     state:
@@ -258,6 +279,46 @@ export function delegatedTaskProgress(projection: {
           ? ("waiting_for_children" as const)
           : ("result_available" as const),
     resultRun,
+  };
+}
+
+export function delegatedTaskProgressForTask(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "thread" | "runs" | "messages" | "subagents" | "providerThreads"
+  >,
+  taskId: NodeId,
+) {
+  const runs = delegatedTaskRuns(projection, taskId);
+  const runIds = new Set(runs.map((run) => run.id));
+  const executedProviderThreadIds = new Set(
+    delegatedWorkRuns({ ...projection, runs })
+      .filter((run) => run.startedAt !== null)
+      .flatMap((run) => (run.providerThreadId === null ? [] : [run.providerThreadId])),
+  );
+  const providerThreads = projection.providerThreads.filter((thread) =>
+    executedProviderThreadIds.has(thread.id),
+  );
+  const backgroundScope =
+    providerThreads.length === 0
+      ? { kind: "none" as const }
+      : {
+          kind: "shared_provider_thread" as const,
+          providerThreadIds: providerThreads.map((thread) => thread.id),
+        };
+  return {
+    ...delegatedTaskProgress({
+      ...projection,
+      runs,
+      subagents: projection.subagents.filter((child) =>
+        child.runId === null
+          ? child.providerThreadId !== null && executedProviderThreadIds.has(child.providerThreadId)
+          : runIds.has(child.runId),
+      ),
+      providerThreads,
+    }),
+    runs,
+    backgroundScope,
   };
 }
 

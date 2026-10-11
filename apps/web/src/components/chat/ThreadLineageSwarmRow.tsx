@@ -212,6 +212,11 @@ export function ThreadLineageSwarmRow(props: {
                     </span>
                   </ThreadDetailsControl>
                 ))}
+                {member.backgroundWork ? (
+                  <p className="m-0 px-2.5 pb-1 text-2xs text-muted-foreground">
+                    {member.backgroundWork.title}
+                  </p>
+                ) : null}
                 {member.queuedCount > 0 ? (
                   <p className="m-0 px-2.5 pb-1 text-2xs text-muted-foreground">
                     {member.queuedCount} queued

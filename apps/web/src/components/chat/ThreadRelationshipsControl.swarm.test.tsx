@@ -9,11 +9,13 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   SwarmId,
   ThreadId,
   type AuthSessionState,
   type OrchestrationV2StopSwarmInput,
+  type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2Swarm,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ThreadProjection,
@@ -47,6 +49,7 @@ const state = vi.hoisted(() => {
 
 const environmentId = EnvironmentId.make("remote");
 const v2Now = DateTime.makeUnsafe("2026-06-20T00:00:00Z");
+const backgroundAt = DateTime.makeUnsafe("2026-06-20T00:01:00Z");
 const v2ThreadShell: OrchestrationV2ThreadShell = {
   id: ThreadId.make("thread-v2"),
   projectId: ProjectId.make("project"),
@@ -305,6 +308,122 @@ const memberStop = () => {
   if (!button) throw new Error("Member Stop missing");
   return button;
 };
+
+const backgroundCases = [
+  { kind: "command", working: false, title: "Running a command" },
+  { kind: "subagent", working: true, title: "Waiting on a subagent" },
+  { kind: "background_task", working: true, title: "Waiting on a background task" },
+  { kind: "monitor", working: true, title: "Waiting on a monitor" },
+] satisfies ReadonlyArray<{
+  kind: OrchestrationV2PendingBackgroundTask["kind"];
+  working: boolean;
+  title: string;
+}>;
+
+it.each(
+  backgroundCases.flatMap((work) =>
+    [false, true].flatMap((closed) =>
+      [false, true].map((descendant) => ({ ...work, closed, descendant })),
+    ),
+  ),
+)(
+  "stops background $kind through the guarded member selector, closed=$closed descendant=$descendant",
+  async ({ kind, working, title, closed, descendant }) => {
+    state.projection = {
+      ...v2Projection,
+      swarms: [
+        closed
+          ? {
+              ...group,
+              lifecycle: { state: "closed", closedAt: v2Now },
+              members: group.members.map((member) => ({
+                ...member,
+                admission: { state: "revoked", revokedAt: v2Now },
+              })),
+            }
+          : group,
+      ],
+    };
+    const backgroundThreadId = descendant ? ThreadId.make("background-descendant") : a;
+    state.shells = [shell(a, { status: "completed" }), shell(b)];
+    const backgroundThread = shell(backgroundThreadId, {
+      status: "completed",
+      activeRunId: null,
+      activityRunStatus: null,
+      activeProviderThreadId: ProviderThreadId.make("background-provider-thread"),
+      latestRunId: RunId.make("completed-background-run"),
+      latestRunRequestedAt: backgroundAt,
+      latestRunStartedAt: backgroundAt,
+      latestRunCompletedAt: backgroundAt,
+      pendingBackgroundTasks: [{ taskId: "native-background-work", kind }],
+      lineage: {
+        rootThreadId: owner,
+        parentThreadId: descendant ? a : owner,
+        relationshipToParent: "subagent",
+      },
+    });
+    if (descendant) state.shells.push(backgroundThread);
+    else state.shells[0] = backgroundThread;
+    await mount();
+    await act(async () => {
+      await memberStop().props.onClick();
+    });
+    expect(state.writes).toEqual([
+      { threadId: "thread-v2", swarmId: "swarm", memberThreadId: "member-a", commandId: "stop-1" },
+    ]);
+    expect(state.ordinaryCommand.mock.calls).toEqual([]);
+    const summary = `${closed ? "Closed" : working ? "1 working" : "Idle"}${closed && working ? " · 1 working" : ""} · 1 background`;
+    expect(
+      renderer?.root
+        .findAll(
+          (node) => node.type === "button" && String(node.props["aria-label"]).includes("Swarm ·"),
+        )
+        .map((node) => node.props["aria-label"]),
+    ).toEqual([`Collapse Swarm · Review, 2 members, ${summary}`]);
+    expect(
+      renderer?.root.findAll((node) => node.type === "p").flatMap((node) => node.children),
+    ).toContain(title);
+    expect(state.projection.swarms?.[0]?.lifecycle.state).toBe(closed ? "closed" : "open");
+    expect(state.projection.swarms?.[0]?.members[0]?.admission.state).toBe(
+      closed ? "revoked" : "admitted",
+    );
+    if (closed) {
+      expect(
+        renderer?.root.findAll(
+          (node) => node.type === "button" && node.props["aria-label"] === "Stop swarm Review",
+        ),
+      ).toHaveLength(0);
+    }
+  },
+);
+
+it("rechecks operate permission for later background work on a closed member", async () => {
+  state.projection = {
+    ...v2Projection,
+    swarms: [{ ...group, lifecycle: { state: "closed", closedAt: v2Now } }],
+  };
+  state.shells = [
+    shell(a, {
+      status: "completed",
+      pendingBackgroundTasks: [{ taskId: "server", kind: "command" }],
+    }),
+    shell(b),
+  ];
+  await mount();
+  const click = memberStop().props.onClick;
+  await act(() => {
+    registry.set(sessions(environmentId), AsyncResult.success(grant(false)));
+  });
+  await act(async () => {
+    await click();
+  });
+  expect(state.writes).toEqual([]);
+  expect(
+    renderer?.root.findAll(
+      (node) => node.type === "button" && node.props["aria-label"] === "Stop subagent member-a",
+    ),
+  ).toHaveLength(0);
+});
 
 it.each(["held queue", "descendant"])(
   "dispatches guarded member Stop for %s without its own active run",

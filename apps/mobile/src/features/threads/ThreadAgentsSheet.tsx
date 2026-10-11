@@ -294,6 +294,9 @@ function SwarmGroup(props: {
               {member.member.admission.state === "revoked" ? (
                 <Text className="text-xs text-foreground-muted">Peer access revoked</Text>
               ) : null}
+              {member.backgroundWork ? (
+                <Text className="text-xs text-foreground-muted">{member.backgroundWork.title}</Text>
+              ) : null}
               {member.queuedCount > 0 ? (
                 <Text className="text-xs text-foreground-muted">
                   {member.queuedCount} queued

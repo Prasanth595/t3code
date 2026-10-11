@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import {
   makeSubagentChildThread,
   delegatedTaskProgress,
+  delegatedTaskRuns,
   subagentResultForRun,
   makeSubagentConversationArtifacts,
   endOrphanedNativeSubagent,
@@ -189,6 +190,43 @@ it("reports the run that ended last, not the highest ordinal", () => {
   });
   assert.equal(progress.state, "result_available");
   assert.equal(progress.resultRun?.ordinal, 3);
+});
+
+it("selects a never-started cancellation only for the owned task's first run", () => {
+  const { projection, run } = taskFixture();
+  const taskId = NodeId.make("task:original");
+  const followupId = NodeId.make("task:followup");
+  const initial = { ...run, delegatedTaskId: taskId };
+  const removed = {
+    ...run,
+    id: RunId.make("removed"),
+    ordinal: 2,
+    delegatedTaskId: taskId,
+    status: "cancelled" as const,
+    startedAt: null,
+  };
+  const followup = {
+    ...removed,
+    id: RunId.make("followup"),
+    ordinal: 3,
+    delegatedTaskId: followupId,
+  };
+  const owned = {
+    ...projection,
+    thread: { ...projection.thread, forkedFrom: { type: "node" as const, nodeId: taskId } },
+    runs: [initial, removed, followup],
+  };
+  const original = delegatedTaskProgress({ ...owned, runs: delegatedTaskRuns(owned, taskId) });
+  assert.equal(original.resultRun?.id, initial.id);
+  const cancelled = delegatedTaskProgress({ ...owned, runs: delegatedTaskRuns(owned, followupId) });
+  assert.equal(cancelled.state, "result_available");
+  assert.equal(cancelled.resultRun?.id, followup.id);
+  const neverStarted = delegatedTaskProgress({
+    ...projection,
+    runs: [{ ...initial, status: "cancelled", startedAt: null }],
+  });
+  assert.equal(neverStarted.state, "result_available");
+  assert.equal(neverStarted.resultRun?.id, initial.id);
 });
 
 it("waits for nested work and retains the report across monitor acknowledgements", () => {

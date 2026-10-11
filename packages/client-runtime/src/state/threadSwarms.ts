@@ -5,9 +5,14 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { isProviderNativeSubagentThread } from "@t3tools/contracts";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
 import { isActiveSubagentStatus, type RuntimeSubagentStatus } from "./subagentRuntime.ts";
+import {
+  presentPendingBackgroundWork,
+  type PendingBackgroundWorkPresentation,
+} from "./threadExecution.ts";
 import {
   resolveSubagentPillSegment,
   type SubagentPillSegment,
@@ -24,6 +29,7 @@ export interface ThreadSwarmMember {
   readonly title: string;
   readonly status: RuntimeSubagentStatus;
   readonly working: boolean;
+  readonly backgroundWork: PendingBackgroundWorkPresentation | null;
   readonly queuedCount: number;
   readonly heldCount: number;
   readonly inputThreads: ReadonlyArray<ThreadSummary>;
@@ -36,6 +42,7 @@ export interface ThreadSwarmGroup {
   readonly swarm: OrchestrationV2Swarm;
   readonly members: ReadonlyArray<ThreadSwarmMember>;
   readonly workingCount: number;
+  readonly backgroundCount: number;
   readonly queuedCount: number;
   readonly heldCount: number;
   readonly inputCount: number;
@@ -155,6 +162,8 @@ export function deriveThreadSwarmGroups(input: {
         (count, row) => count + (row.heldQueuedMessageCount ?? 0),
         0,
       );
+      const backgroundTasks = subtree.flatMap((row) => row.pendingBackgroundTasks ?? []);
+      const backgroundWork = presentPendingBackgroundWork(backgroundTasks);
       const taskIsNewer =
         task !== null &&
         thread?.latestRunRequestedAt != null &&
@@ -165,6 +174,7 @@ export function deriveThreadSwarmGroups(input: {
           ? (task?.status ?? "pending")
           : runtimeStatus(thread.activityRunStatus ?? thread.status);
       const working =
+        backgroundWorkHoldsCompletion(backgroundTasks) ||
         subtree.some(
           (row) =>
             row.activityRunStatus != null ||
@@ -183,15 +193,20 @@ export function deriveThreadSwarmGroups(input: {
         title: member.title || thread?.title || task?.title || member.threadId,
         status,
         working,
+        backgroundWork,
         queuedCount,
         heldCount,
         inputThreads,
         canOpen,
         canMessage,
-        canStop: canMessage && (working || queuedCount > 0),
+        canStop: canMessage && (working || queuedCount > 0 || backgroundWork !== null),
       };
     });
     const workingCount = members.filter((member) => member.working).length;
+    const backgroundCount = members.reduce(
+      (count, member) => count + (member.backgroundWork?.items.length ?? 0),
+      0,
+    );
     const queuedCount = members.reduce((count, member) => count + member.queuedCount, 0);
     const heldCount = members.reduce((count, member) => count + member.heldCount, 0);
     const inputCount = new Set(
@@ -206,6 +221,7 @@ export function deriveThreadSwarmGroups(input: {
           : null,
       inputCount > 0 ? `${inputCount} ${inputCount === 1 ? "question" : "questions"}` : null,
       workingCount > 0 ? `${workingCount} working` : null,
+      backgroundCount > 0 ? `${backgroundCount} background` : null,
       queuedCount > 0 ? `${queuedCount} queued${heldCount > 0 ? `, ${heldCount} held` : ""}` : null,
       failedCount > 0 ? `${failedCount} failed` : null,
     ]
@@ -215,6 +231,7 @@ export function deriveThreadSwarmGroups(input: {
       swarm,
       members,
       workingCount,
+      backgroundCount,
       queuedCount,
       heldCount,
       inputCount,

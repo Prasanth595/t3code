@@ -5,6 +5,7 @@ import {
   NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   RuntimeRequestId,
   SwarmId,
@@ -14,6 +15,7 @@ import {
   OrchestrationV2ThreadStreamItem,
   type OrchestrationV2Subagent,
   type OrchestrationV2Swarm,
+  type OrchestrationV2PendingBackgroundTask,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -30,6 +32,7 @@ const owner = v2Projection.thread.id;
 const a = ThreadId.make("member-a");
 const b = ThreadId.make("member-b");
 const later = DateTime.makeUnsafe("2026-06-20T00:01:00.000Z");
+const backgroundAt = DateTime.makeUnsafe("2026-06-20T00:02:00.000Z");
 const decodeProjection = Schema.decodeSync(OrchestrationV2ThreadProjection);
 const decodeShell = Schema.decodeSync(OrchestrationV2ThreadShell);
 const decodeStreamItems = Schema.decodeUnknownSync(
@@ -98,6 +101,229 @@ function task(
 }
 
 describe("thread swarm groups", () => {
+  const backgroundCases = [
+    { kind: "command", working: false, title: "Running a command" },
+    { kind: "subagent", working: true, title: "Waiting on a subagent" },
+    { kind: "background_task", working: true, title: "Waiting on a background task" },
+    { kind: "monitor", working: true, title: "Waiting on a monitor" },
+  ] satisfies ReadonlyArray<{
+    kind: OrchestrationV2PendingBackgroundTask["kind"];
+    working: boolean;
+    title: string;
+  }>;
+
+  it.each(
+    backgroundCases.flatMap((work) =>
+      [false, true].flatMap((closed) =>
+        [false, true].map((descendant) => ({ ...work, closed, descendant })),
+      ),
+    ),
+  )(
+    "keeps background $kind actionable, closed=$closed descendant=$descendant",
+    ({ kind, working, title, closed, descendant }) => {
+      const group = closed
+        ? swarm({
+            lifecycle: { state: "closed", closedAt: later },
+            members: swarm().members.map((member) => ({
+              ...member,
+              admission: { state: "revoked", revokedAt: later },
+            })),
+          })
+        : swarm();
+      const backgroundThreadId = descendant ? ThreadId.make("background-descendant") : a;
+      const backgroundThread = shell(backgroundThreadId, {
+        status: "completed",
+        activeRunId: null,
+        activityRunStatus: null,
+        activeProviderThreadId: ProviderThreadId.make("background-provider-thread"),
+        latestRunId: RunId.make("later-human-run"),
+        latestRunRequestedAt: backgroundAt,
+        latestRunStartedAt: backgroundAt,
+        latestRunCompletedAt: backgroundAt,
+        pendingBackgroundTasks: [{ taskId: "native-work", kind }],
+        lineage: {
+          rootThreadId: owner,
+          parentThreadId: descendant ? a : owner,
+          relationshipToParent: "subagent",
+        },
+      });
+      const groups = deriveThreadSwarmGroups({
+        ownerThreadId: owner,
+        swarms: [group],
+        tasks: [task(a), task(b)],
+        threads: [
+          ...(descendant ? [shell(a, { status: "completed" })] : []),
+          backgroundThread,
+          shell(b),
+        ],
+      });
+      const member = groups[0]?.members[0];
+      expect({
+        canStop: member?.canStop,
+        working: member?.working,
+        status: member?.status,
+        background: member?.backgroundWork?.title,
+        waiting: member?.backgroundWork?.waiting,
+        count: groups[0]?.backgroundCount,
+        summary: groups[0]?.summary,
+        admission: member?.member.admission.state,
+      }).toEqual({
+        canStop: true,
+        working,
+        status: "completed",
+        background: title,
+        waiting: working,
+        count: 1,
+        summary: `${closed ? "Closed" : working ? "1 working" : "Idle"}${closed && working ? " · 1 working" : ""} · 1 background`,
+        admission: closed ? "revoked" : "admitted",
+      });
+      expect(resolveThreadAgentsPillSegment({ turn: null, groups })).toEqual(
+        working
+          ? { label: "1/2", accessibilityLabel: "1 of 2 agents working" }
+          : { label: "Agents", accessibilityLabel: "Inspect 2 agents, including previous swarms" },
+      );
+      expect(group.lifecycle.state).toBe(closed ? "closed" : "open");
+      const settled = deriveThreadSwarmGroups({
+        ownerThreadId: owner,
+        swarms: [group],
+        tasks: [task(a), task(b)],
+        threads: [shell(a, { status: "completed", pendingBackgroundTasks: [] }), shell(b)],
+      });
+      expect({
+        stop: settled[0]?.members[0]?.canStop,
+        background: settled[0]?.members[0]?.backgroundWork,
+        working: settled[0]?.workingCount,
+        summary: settled[0]?.summary,
+      }).toEqual({
+        stop: false,
+        background: null,
+        working: 0,
+        summary: closed ? "Closed" : "Idle",
+      });
+    },
+  );
+
+  it("keeps completion-holding background attention ahead of held queues and idle commands", () => {
+    const definitions = [
+      { id: "command", kind: "command", closed: false },
+      { id: "closed-command", kind: "command", closed: true },
+      { id: "monitor", kind: "monitor", closed: true },
+      { id: "subagent", kind: "subagent", closed: false },
+      { id: "background-task", kind: "background_task", closed: false },
+    ] satisfies ReadonlyArray<{
+      id: string;
+      kind: OrchestrationV2PendingBackgroundTask["kind"];
+      closed: boolean;
+    }>;
+    const groups = definitions.map(({ id, closed }) =>
+      swarm({
+        id: SwarmId.make(id),
+        lifecycle: closed ? { state: "closed", closedAt: later } : { state: "open" },
+        members: swarm().members.map((member, index) => ({
+          ...member,
+          threadId: ThreadId.make(`${id}-${index}`),
+        })),
+      }),
+    );
+    const held = swarm({ id: SwarmId.make("held"), createdAt: later });
+    const question = swarm({
+      id: SwarmId.make("question"),
+      members: swarm().members.map((member, index) => ({
+        ...member,
+        threadId: ThreadId.make(`question-${index}`),
+      })),
+    });
+    const threads = definitions.map(({ id, kind }) =>
+      shell(ThreadId.make(`${id}-0`), {
+        status: "completed",
+        pendingBackgroundTasks: [{ taskId: "work", kind }],
+      }),
+    );
+    const derived = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [...groups, held, question],
+      tasks: [],
+      threads: [
+        ...threads,
+        shell(a, { status: "queued", queuedMessageCount: 1, heldQueuedMessageCount: 1 }),
+        shell(b),
+        shell(ThreadId.make("question-0"), {
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("question"),
+            kind: "user_input",
+            createdAt: later,
+          },
+        }),
+      ],
+    });
+    expect(derived.map((row) => row.swarm.id)).toEqual([
+      "question",
+      "background-task",
+      "monitor",
+      "subagent",
+      "held",
+      "command",
+      "closed-command",
+    ]);
+  });
+
+  it("counts each background subtree once and keeps commands separate from completion-holding attention", () => {
+    const descendant = shell(ThreadId.make("background-descendant"), {
+      status: "completed",
+      pendingBackgroundTasks: [{ taskId: "same-local-id", kind: "monitor" }],
+      lineage: { rootThreadId: owner, parentThreadId: a, relationshipToParent: "subagent" },
+    });
+    const groups = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm()],
+      tasks: [],
+      threads: [
+        shell(a, {
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: "same-local-id", kind: "command" }],
+        }),
+        shell(b),
+        descendant,
+        descendant,
+      ],
+    });
+    expect({
+      working: groups[0]?.workingCount,
+      background: groups[0]?.backgroundCount,
+      summary: groups[0]?.summary,
+    }).toEqual({
+      working: 1,
+      background: 2,
+      summary: "1 working · 2 background",
+    });
+    expect(groups[0]?.members[0]?.backgroundWork?.title).toBe("Waiting on 1 command and 1 monitor");
+  });
+
+  it.each([
+    { name: "archived", overrides: { archivedAt: later } },
+    { name: "deleted", overrides: { deletedAt: later } },
+    { name: "provider-owned", overrides: { creationSource: "provider" as const } },
+  ])("keeps background work from enabling member controls for $name threads", ({ overrides }) => {
+    const groups = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm()],
+      tasks: [],
+      threads: [
+        shell(a, {
+          status: "completed",
+          pendingBackgroundTasks: [{ taskId: "work", kind: "monitor" }],
+          ...overrides,
+        }),
+        shell(b),
+      ],
+    });
+    expect({
+      stop: groups[0]?.members[0]?.canStop,
+      message: groups[0]?.members[0]?.canMessage,
+      background: groups[0]?.backgroundCount,
+    }).toEqual({ stop: false, message: false, background: 1 });
+  });
+
   it("counts member threads once, follows current work and removes every followup task from ordinary rows", () => {
     const tasks = [
       task(a),
