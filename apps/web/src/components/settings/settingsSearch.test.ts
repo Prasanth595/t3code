@@ -446,7 +446,7 @@ describe("settings search targets", () => {
     for (const [id, title] of [
       ["time-format", "Time format"],
       ["file-chip-paths", "File chip paths"],
-    ]) {
+    ] as const) {
       const setting = getSettingsSearchTargetScope(id)!;
       expect(setting).toEqual({ title, scope: null });
       for (const scope of ["all", "environment", "project", "checkout"] as const) {
