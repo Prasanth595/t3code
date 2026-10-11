@@ -1,7 +1,9 @@
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import * as Schema from "effect/Schema";
 
 import {
   PullRequestDetail,
+  PullRequestOperationError,
   pullRequestHostOf,
   type PullRequestAction,
   type PullRequestActor,
@@ -20,12 +22,14 @@ import {
   type PullRequestReviewThread,
   type PullRequestState,
   type PullRequestUpdateMethod,
-  type SourceControlProviderKind,
+  SourceControlProviderKind,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
   type VcsRef,
 } from "@t3tools/contracts";
 import {
+  legacyThreadPullRequestKey,
+  resolveThreadCurrentPullRequestLink,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
@@ -64,9 +68,6 @@ export function resolvePullRequestMergeMethod(
   }
   return allowed[0] ?? "merge";
 }
-
-const safeShellArgument = /^[A-Za-z0-9._/@+=,-]+$/;
-const bitbucketRepositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 export type PullRequestPrimaryControl =
   | "resolve"
@@ -114,30 +115,9 @@ export function pullRequestCheckoutCommand(
   headRepositoryNameWithOwner?: string | null,
   repositoryUrl?: string | null,
 ): string | null {
-  switch (provider) {
-    case "github":
-      return `gh pr checkout ${number}`;
-    case "gitlab":
-      return `glab mr checkout ${number}`;
-    case "forgejo":
-      return repositoryUrl
-        ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' refs/pull/${number}/head && git checkout -B pulls/${number} FETCH_HEAD`
-        : null;
-    case "azure-devops":
-      return `az repos pr checkout --id ${number}`;
-    case "bitbucket": {
-      if (
-        !headRepositoryNameWithOwner ||
-        !bitbucketRepositoryName.test(headRepositoryNameWithOwner) ||
-        !safeShellArgument.test(headBranch)
-      ) {
-        return null;
-      }
-      return `git clone --single-branch --branch ${headBranch} https://bitbucket.org/${headRepositoryNameWithOwner}.git t3code-pr-${number}`;
-    }
-    case "unknown":
-      return null;
-  }
+  return sourceControlClients
+    .get(provider)
+    .checkoutCommand({ number, headBranch, headRepositoryNameWithOwner, repositoryUrl });
 }
 
 /** Build a checkout command from identity metadata while the detail request is still pending. */
@@ -146,14 +126,23 @@ export function loadingPullRequestCheckoutCommand(
   identity: RepositoryIdentity | null | undefined,
 ): string | null {
   const host = reference.host?.trim().toLowerCase();
-  const provider =
-    identity?.provider ??
-    (host === "github.com" ? "github" : host === "gitlab.com" ? "gitlab" : null);
-  if (provider !== "github" && provider !== "gitlab" && provider !== "azure-devops") return null;
-  if (identity?.provider !== undefined && host && pullRequestHostOf(identity, provider) !== host) {
+  // Before the detail loads, only the number is known, so only hosts whose command needs nothing
+  // else qualify. Without an identity, only a public hostname names the host.
+  const definition = identity?.provider
+    ? sourceControlClients.find(identity.provider)
+    : host
+      ? sourceControlClients.findByPublicHost(host)
+      : undefined;
+  const command = definition?.checkoutCommand({ number: reference.number, headBranch: "" });
+  if (!definition || !command) return null;
+  if (
+    identity?.provider !== undefined &&
+    host &&
+    pullRequestHostOf(identity, definition.kind) !== host
+  ) {
     return null;
   }
-  return pullRequestCheckoutCommand(provider, reference.number, "");
+  return command;
 }
 
 /** Activity changes only when the same host resource reports a newer revision. */
@@ -234,6 +223,33 @@ export function pullRequestPanelContext(
     legacy.number === surface.number
     ? "thread"
     : "page";
+}
+
+export function threadPullRequestPanelTarget(thread: {
+  readonly projectId: string;
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink> | undefined;
+  readonly linkedPullRequest?: ThreadLinkedPullRequest | null | undefined;
+  readonly branchPullRequest?: ThreadLinkedPullRequest | null | undefined;
+}) {
+  const current = resolveThreadCurrentPullRequestLink(thread.pullRequests ?? []);
+  const legacy = thread.linkedPullRequest;
+  if (
+    current !== null &&
+    legacy != null &&
+    threadPullRequestKeysEqual(current, legacyThreadPullRequestKey(legacy))
+  ) {
+    return legacy;
+  }
+  if (current !== null) {
+    return {
+      projectId: thread.projectId,
+      host: current.host,
+      repository: current.repository,
+      number: current.number,
+      url: current.url,
+    };
+  }
+  return legacy ?? thread.branchPullRequest ?? null;
 }
 
 /** Names where a pull-request task will land, without letting each surface guess independently. */
@@ -934,7 +950,9 @@ export function buildFixFindingsHandoff(input: {
         ? ["Failing checks:", ...includedChecks.map((check) => `> ${check}`)]
         : []),
       ...(input.commentsTruncated
-        ? ["The conversation was truncated; more review comments may exist on GitHub."]
+        ? [
+            `The conversation was truncated; more review comments may exist on ${sourceControlClients.hostLabelForChangeRequestUrl(input.url)}.`,
+          ]
         : []),
       ...(omitted > 0 ? [`${omitted} further findings were omitted.`] : []),
       ...(includedThreads.length === 0 &&
@@ -1161,6 +1179,12 @@ export function buildAddSelectionToAgentHandoff(input: {
   };
 }
 
+const isPullRequestOperationError = Schema.is(PullRequestOperationError);
+
+export function isPullRequestNotFound(failure: unknown): boolean {
+  return isPullRequestOperationError(failure) && failure.reason === "not-found";
+}
+
 /**
  * The internal wrapper every failed operation arrives in: which operation ran, and which tool
  * said no. A reader has no use for either.
@@ -1264,9 +1288,9 @@ export function resolvePullRequestReferenceHost(
   reference: PullRequestRef,
   identity: RepositoryIdentity | null | undefined,
 ): PullRequestRef {
-  // Other providers may resolve an SSH remote to a different web authority on the server.
-  if (reference.host !== undefined || identity?.provider !== "github") return reference;
-  return { ...reference, host: pullRequestHostOf(identity, "github") };
+  if (reference.host !== undefined || !identity?.provider) return reference;
+  const host = sourceControlClients.get(identity.provider).checkoutChangeRequestHost(identity);
+  return host === null ? reference : { ...reference, host };
 }
 
 export interface PullRequestDetailSnapshotRef {
@@ -1350,7 +1374,7 @@ export function resolveDisplayedPullRequestDetail(input: {
   if (input.reference.host === undefined) return input.cached;
   try {
     const url = new URL(input.cached.url);
-    const host = input.cached.provider === "forgejo" ? url.host : url.hostname;
+    const host = sourceControlClients.get(input.cached.provider).changeRequestUrlHost(url);
     return (url.protocol === "https:" || url.protocol === "http:") &&
       host.toLowerCase() === input.reference.host.toLowerCase()
       ? input.cached
