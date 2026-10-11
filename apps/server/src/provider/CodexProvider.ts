@@ -381,7 +381,8 @@ const readCodexModelsCacheFetchedAt = Effect.fn("readCodexModelsCacheFetchedAt")
  * not get Sol Ultrafast. So the first answer can be another client's catalog.
  * App-server refreshes the catalog online at startup, so wait until a write
  * newer than this process's spawn lands, then list again. If no refresh
- * lands in time, keep the first answer.
+ * lands in time, keep the first answer. Another client writing in the same
+ * few hundred milliseconds can still win; the next probe corrects it.
  */
 const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
