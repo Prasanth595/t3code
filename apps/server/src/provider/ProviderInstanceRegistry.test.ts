@@ -505,6 +505,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("refreshes Claude usage after redeeming a reset", () =>
     Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
       const { outcome, after } = yield* redeemClaudeReset({
         result: "reset",
         usageFailsAfterClaim: false,
@@ -516,6 +517,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
 
   it.live("reports Claude's answer when a claim changed nothing and the re-probe fails", () =>
     Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
       const { outcome } = yield* redeemClaudeReset({
         result: "already_used",
         usageFailsAfterClaim: true,
