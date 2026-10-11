@@ -17,8 +17,10 @@ const makeKeys = Effect.promise(async () => {
   return { privateKey, getKey: createLocalJWKSet({ keys: [jwk] }) };
 });
 
+type PrivateKey = Awaited<ReturnType<typeof generateKeyPair>>["privateKey"];
+
 const sign = (
-  privateKey: CryptoKey,
+  privateKey: PrivateKey,
   claims: Record<string, unknown>,
   overrides?: { readonly issuer?: string; readonly audience?: string; readonly exp?: string },
 ) =>

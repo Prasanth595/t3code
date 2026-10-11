@@ -75,15 +75,23 @@ const request = (path: string, init?: { method?: string; headers?: Record<string
     ...(init?.method === "POST" ? { body: encodeJson({}) } : {}),
   });
 
+const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+  get: () => Effect.succeedNone,
+  set: () => Effect.void,
+  create: () => Effect.void,
+  getOrCreateRandom: () => Effect.die("Not used by these routes."),
+  remove: () => Effect.void,
+});
+
 // The Access keys come from the team certs URL, so the test serves them from a fetch stub.
 const withCertsFetch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.acquireUseRelease(
     Effect.sync(() => {
       const realFetch = globalThis.fetch;
-      globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) =>
+      globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) =>
         (input instanceof Request ? input.url : String(input)) === CERTS_URL
           ? Response.json({ keys: [accessJwk] })
-          : realFetch(input, init)) as typeof fetch;
+          : new Response(null, { status: 404 })) as typeof fetch;
       return realFetch;
     }),
     () => effect,
@@ -93,7 +101,9 @@ const withCertsFetch = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 it.effect("logs a Cloudflare Access caller in without a pairing link", () =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    const requestContext = Context.make(Crypto.Crypto, crypto);
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (environment) =>
@@ -129,7 +139,9 @@ it.effect("logs a Cloudflare Access caller in without a pairing link", () =>
 it.effect("gives a pairing credential only to a Cloudflare Access caller", () =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
-    const requestContext = Context.make(Crypto.Crypto, crypto);
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       (environment) =>

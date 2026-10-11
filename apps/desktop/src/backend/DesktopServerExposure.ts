@@ -156,7 +156,7 @@ const createManualEndpoint = (
     source: "user",
   });
 
-export const TUNNEL_ENDPOINT_ID_PREFIX = "tunnel:";
+const TUNNEL_ENDPOINT_ID_PREFIX = "tunnel:";
 
 const resolveDesktopCoreAdvertisedEndpoints = (
   input: DesktopAdvertisedEndpointInput,
