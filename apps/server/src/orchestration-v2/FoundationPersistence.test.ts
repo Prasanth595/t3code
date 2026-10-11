@@ -50,7 +50,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
-import * as IdAllocator from "./IdAllocator.ts";
+import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -1525,6 +1525,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     Effect.gen(function* () {
       const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
       const now = yield* DateTime.now;
       const threadId = ThreadId.make("thread:foundation-stale-provider-start");
       const runId = RunId.make("run:foundation-stale-provider-start");
@@ -1567,6 +1568,30 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         ],
       });
 
+      const captureEffect = {
+        id: "effect:foundation-current-capture",
+        commandId: CommandId.make("command:foundation-current-capture"),
+        threadId,
+        request: {
+          type: "checkpoint.capture" as const,
+          runId,
+          scopeId: CheckpointScopeId.make("scope:foundation-current-capture"),
+        },
+      };
+      assert.isTrue(
+        (yield* eventSink.writeIfRunCurrent({
+          threadId,
+          runId,
+          activeAttemptId: attemptId,
+          expectedStatus: "starting",
+          events: [],
+          effects: [captureEffect],
+        })).committed,
+      );
+      assert.isTrue(Option.isSome(yield* outbox.get(captureEffect.id)));
+      yield* outbox.awaitAvailable;
+      const staleCaptureEffect = { ...captureEffect, id: "effect:foundation-stale-capture" };
+
       const reachedPrecommitGap = yield* Deferred.make<void>();
       const releaseStaleStart = yield* Deferred.make<void>();
       const providerStartCount = yield* Ref.make(0);
@@ -1578,6 +1603,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
           runId,
           activeAttemptId: attemptId,
           expectedStatus: "starting",
+          effects: [staleCaptureEffect],
           events: [
             {
               id: EventId.make("event:foundation-stale-provider-start:running"),
@@ -1619,11 +1645,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       const staleResult = yield* Fiber.join(staleStartFiber);
       assert.isFalse(staleResult.committed);
+      assert.isTrue(Option.isNone(yield* outbox.get(staleCaptureEffect.id)));
       assert.deepEqual(staleResult.storedEvents, []);
       assert.equal(yield* Ref.get(providerStartCount), 0);
       const projection = yield* projectionStore.getThreadProjection(threadId);
       assert.equal(projection.runs[0]?.status, "cancelled");
-    }),
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("guards post-terminal provider-thread writes by attempt and run ordinal", () =>
@@ -2327,14 +2354,15 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
   it.effect("does not emit a SQL span for an empty safety claim", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const spans: Array<string> = [];
+      const statements: Array<unknown> = [];
       const tracer = Tracer.make({
         span: (options) => {
           const span = new Tracer.NativeSpan(options);
           const end = span.end.bind(span);
           span.end = (endTime, exit) => {
             end(endTime, exit);
-            spans.push(span.name);
+            const query = span.attributes.get("db.query.text");
+            if (query !== undefined) statements.push(query);
           };
           return span;
         },
@@ -2345,7 +2373,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         .pipe(Effect.withTracer(tracer));
 
       assert.isTrue(Option.isNone(claim));
-      assert.notInclude(spans, "sql.execute");
+      assert.deepEqual(statements, []);
     }).pipe(Effect.provide(Layer.fresh(layerEffectOutboxProvided))),
   );
 
@@ -3024,9 +3052,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         completedAt: null,
       });
       // The parent run settled while its background subagent kept working,
-      // then the server died. Recovery already cancels the parent's subagent
-      // item, entity, and node; the child's runless root turn lives on another
-      // thread and must be settled too.
+      // Stop ended the subagent's item, then the server died. Recovery cancels
+      // the parent's subagent entity and node; the child's runless root turn
+      // lives on another thread and must be settled too.
       yield* eventSink.commitCommand({
         commandId: CommandId.make("command:foundation-native-subagent"),
         threadId: parentId,
@@ -3158,7 +3186,7 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
               parentItemId: null,
               ordinal: 1,
               type: "subagent",
-              status: "running",
+              status: "interrupted",
               title: null,
               startedAt: now,
               completedAt: null,
@@ -3194,6 +3222,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
 
       const parentProjection = yield* projectionStore.getThreadProjection(parentId);
       assert.equal(parentProjection.subagents[0]?.status, "cancelled");
+      assert.equal(
+        parentProjection.nodes.find((node) => node.id === subagentId)?.status,
+        "cancelled",
+      );
       const childProjection = yield* projectionStore.getThreadProjection(childId);
       const childRoot = childProjection.nodes.find((candidate) => candidate.id === childRootId);
       assert.equal(childRoot?.status, "cancelled");
