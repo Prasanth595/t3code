@@ -33,6 +33,7 @@ export function platformSetupStatus(state: DeviceServiceState, platform: DeviceP
       message: availability?.reason ?? `${platformName(platform)} support was not detected.`,
     };
   }
+  if (availability.warning) return { ready: false, message: availability.warning };
   if (
     state.hostStatus === "ready" &&
     !state.devices.some((device) => device.platform === platform)

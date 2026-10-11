@@ -251,6 +251,17 @@ function DeviceHostList({
                   ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              {platforms.map((platform) =>
+                platform.available && platform.warning ? (
+                  <p
+                    key={platform.platform}
+                    role="status"
+                    className="mt-1 text-xs text-warning-foreground"
+                  >
+                    {platform.warning}
+                  </p>
+                ) : null,
+              )}
               <DeviceToolVersions
                 owner={environmentLabel}
                 error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}

@@ -5,7 +5,7 @@ import type {
   DeviceSummary,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { Smartphone, X } from "lucide-react";
+import { CircleAlert, Smartphone, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -150,6 +150,20 @@ export function DevicePanel(props: {
       .map((platform) => ({ ...platform, hostId: host.id, hostLabel: host.label })),
   );
 
+  const platformWarnings = state.hosts.flatMap((host) =>
+    host.platforms.flatMap((platform) =>
+      platform.available && platform.warning
+        ? [
+            {
+              key: `${host.id}:${platform.platform}`,
+              hostLabel: host.label,
+              warning: platform.warning,
+            },
+          ]
+        : [],
+    ),
+  );
+
   if (loaded && (!state.onboardingCompleted || hostDisabled)) {
     return (
       <Dialog
@@ -176,6 +190,18 @@ export function DevicePanel(props: {
         </div>
       ) : null}
       <DeviceHostUpdates state={state} environmentId={environmentId} />
+      {platformWarnings.map((item) => (
+        <div
+          key={item.key}
+          role="status"
+          className="flex items-start gap-2 border-b bg-warning-surface px-3 py-2 text-xs text-warning-foreground"
+        >
+          <CircleAlert className="mt-px size-3.5 shrink-0" />
+          <p className="min-w-0 flex-1">
+            <span className="font-medium">{item.hostLabel}:</span> {item.warning}
+          </p>
+        </div>
+      ))}
       {bootingDevices.length > 0 ? (
         <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
           Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a minute.

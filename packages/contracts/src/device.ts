@@ -65,12 +65,15 @@ export type DeviceSummary = typeof DeviceSummary.Type;
 /**
  * What the host can do right now. Platforms missing their toolchain are
  * reported rather than hidden so the picker and the agent can explain why a
- * platform is absent instead of showing an empty list.
+ * platform is absent instead of showing an empty list. `warning` marks an
+ * available platform that agents cannot fully drive, such as an Xcode too old
+ * for the host's macOS.
  */
 export const DevicePlatformAvailability = Schema.Struct({
   platform: DevicePlatform,
   available: Schema.Boolean,
   reason: Schema.optional(Schema.String),
+  warning: Schema.optional(Schema.String),
 });
 export type DevicePlatformAvailability = typeof DevicePlatformAvailability.Type;
 

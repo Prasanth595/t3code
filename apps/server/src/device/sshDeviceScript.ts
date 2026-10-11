@@ -1,5 +1,6 @@
 import { deviceToolMaintenanceScript } from "./deviceToolMaintenance.ts";
 import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
+import { xcodeAutomationWarningScript } from "./xcodeAutomation.ts";
 
 export const quoteRemoteArg = (value: string) => `'${value.replaceAll("'", "'\"'\"'")}'`;
 
@@ -30,6 +31,7 @@ const hubVersion = ${JSON.stringify(DEVICE_HUB_VERSION)};
 const agentVersion = ${JSON.stringify(AGENT_DEVICE_VERSION)};
 ` +
   deviceToolMaintenanceScript +
+  xcodeAutomationWarningScript +
   String.raw`
 const fs = require('node:fs');
 const path = require('node:path');
@@ -135,8 +137,9 @@ async function install(name, version, entry) {
 (async () => {
   const ios = process.platform === 'darwin' && run('xcrun', ['simctl', 'help']).status === 0;
   const android = run('adb', ['version']).status === 0;
+  const iosWarning = ios ? xcodeAutomationWarning() : null;
   const platforms = [
-    { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}) },
+    { platform: 'ios', available: ios, ...(!ios ? { reason: 'iOS needs macOS with Xcode and working xcrun simctl.' } : {}), ...(iosWarning ? { warning: iosWarning } : {}) },
     { platform: 'android', available: android, ...(!android ? { reason: 'Android SDK missing. Set ANDROID_HOME or put adb on the SSH PATH.' } : {}) },
   ];
   if (mode === 'probe') {

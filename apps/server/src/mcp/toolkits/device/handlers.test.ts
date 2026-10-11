@@ -30,6 +30,14 @@ describe("device tool helpers", () => {
     expect(text).toContain("XCTest runner");
   });
 
+  it("leads with the host warning so agents report it instead of retrying", () => {
+    const text = agentDeviceQuickStart(device, undefined, undefined, "Update Xcode.");
+    expect(text.split("\n")[0]).toBe(
+      "Warning: Update Xcode. Tell the user before relying on agent-device; device_screenshot still works.",
+    );
+    expect(agentDeviceQuickStart(device)).not.toContain("Warning:");
+  });
+
   it("uses the absolute launcher in every quick-start command", () => {
     const text = agentDeviceQuickStart(
       device,

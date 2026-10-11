@@ -36,6 +36,7 @@ export function agentDeviceQuickStart(
   device: DeviceSummary,
   targetArgs = agentDeviceTargetArgs(device),
   command = "agent-device",
+  warning?: string,
 ): string {
   const executable = /^[a-zA-Z0-9_./:-]+$/.test(command)
     ? command
@@ -50,6 +51,11 @@ export function agentDeviceQuickStart(
       ? "First use builds an XCTest runner and can take a couple of minutes; later commands are fast."
       : "The Android snapshot helper installs itself on first use.";
   return [
+    ...(warning
+      ? [
+          `Warning: ${warning} Tell the user before relying on agent-device; device_screenshot still works.`,
+        ]
+      : []),
     `The user is watching ${device.name} (${device.version}) in the Device panel.`,
     `Drive it with ${executable}. Use this exact executable path; login shells may reset PATH. Always pass ${target}.`,
     "Typical loop:",
@@ -199,10 +205,13 @@ const handlers = {
         shimDir,
         platform === "win32" ? "agent-device.cmd" : "agent-device",
       );
+      const warning = after.hosts
+        .find((host) => host.id === device.hostId)
+        ?.platforms.find((availability) => availability.platform === device.platform)?.warning;
       return {
         device,
         agentDevice: { command, targetArgs },
-        quickStart: agentDeviceQuickStart(device, targetArgs, command),
+        quickStart: agentDeviceQuickStart(device, targetArgs, command, warning),
       };
     }).pipe(Effect.mapError(toolError)),
   ),

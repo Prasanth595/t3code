@@ -47,6 +47,7 @@ import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { localXcodeAutomationWarning } from "./xcodeAutomation.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -246,7 +247,19 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
     );
-    return reason === null ? { platform, available: true } : { platform, available: false, reason };
+    if (reason !== null) return { platform, available: false, reason };
+    if (platform !== "ios") return { platform, available: true };
+    const warning = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcess.Platform, hostPlatform),
+      Effect.flatMap(localXcodeAutomationWarning),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.orElseSucceed(() => null),
+    );
+    return warning === null
+      ? { platform, available: true }
+      : { platform, available: true, warning };
   });
 
   const summary: Effect.Effect<DeviceHostSummary> = Effect.gen(function* () {

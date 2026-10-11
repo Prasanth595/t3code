@@ -18,6 +18,7 @@ export function DeviceHostAvailability({
           </TooltipTrigger>
           <TooltipPopup>
             {platform.reason ??
+              platform.warning ??
               (platform.platform === "ios" ? "iOS available" : "Android available")}
           </TooltipPopup>
         </Tooltip>
