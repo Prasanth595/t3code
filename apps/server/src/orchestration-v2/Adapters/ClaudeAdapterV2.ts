@@ -3317,8 +3317,9 @@ const decodeClaudeTaskFile = Schema.decodeUnknownOption(Schema.fromJsonString(Sc
  * keeps it at `<config dir>/tasks/<list id>/<task id>.json`, where the list id
  * is `CLAUDE_CODE_TASK_LIST_ID` or else the session id, so a list started
  * before a server restart is still the one later task tools edit. The format
- * is Claude's and undocumented: anything missing or unreadable reads as an
- * empty list rather than failing the turn.
+ * is Claude's and undocumented: an unreadable task file is skipped, and a
+ * missing or unreadable directory reads as no stored list rather than failing
+ * the turn.
  */
 const readClaudeTaskList = Effect.fnUntraced(
   function* (input: {
@@ -3363,7 +3364,7 @@ const readClaudeTaskList = Effect.fnUntraced(
     );
     return list;
   },
-  Effect.orElseSucceed((): ClaudeTaskList => new Map()),
+  Effect.orElseSucceed((): ClaudeTaskList | undefined => undefined),
 );
 
 function claudeTaskSteps(tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2PlanStep> {
@@ -7470,7 +7471,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   toolCall.toolName,
                   claudeNativeToolInputValue(toolCall.input),
                   claudeNativeToolOutputValue(output),
-                ) ?? (storedTaskList?.size ? storedTaskList : undefined);
+                ) ?? storedTaskList;
               if (taskList !== undefined) {
                 yield* Ref.set(
                   taskListsByNativeThread,

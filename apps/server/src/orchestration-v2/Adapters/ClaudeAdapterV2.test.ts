@@ -4272,6 +4272,31 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("clears the list when a restart's first task tool deletes the last stored task", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const harness = yield* makeTaskToolHarness;
+      const tasksDir = `${harness.configDir}/tasks/${WAKE_NATIVE_SESSION}`;
+      // Claude already removed the task file before T3 sees the result.
+      yield* fileSystem.makeDirectory(tasksDir, { recursive: true });
+      yield* fileSystem.writeFileString(`${tasksDir}/.highwatermark`, "1");
+
+      yield* harness.startTurn();
+      yield* harness.call(updateTask({ taskId: "1", status: "deleted" }));
+      yield* harness.finishTurn();
+
+      assert.deepEqual(
+        harness.plans().map((plan) => plan.steps),
+        [[]],
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["success false", "error result", "unknown id"] as const)(
     "does not emit a plan update for TaskUpdate with %s",
     (reason) =>
