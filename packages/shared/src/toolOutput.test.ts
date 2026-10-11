@@ -192,6 +192,10 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ threadId: "thread-1", text: '{"a":1}' })).toEqual({
       threadId: "thread-1",
     });
+    // An empty JSON text block carries no result: outer metadata wins.
+    expect(compactDynamicToolOutput({ type: "text", threadId: "thread-1", text: "{}" })).toEqual({
+      threadId: "thread-1",
+    });
   });
 });
 

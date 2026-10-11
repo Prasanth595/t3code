@@ -110,7 +110,10 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
       exceeded: false,
     };
     const nested = readResult(value.text, textBudget, depth + 1);
-    if (!textBudget.exceeded && (nested.data !== undefined || nested.failed)) {
+    // An empty parse (e.g. text "{}") carries no result: fall through so
+    // outer metadata such as threadId is preserved.
+    const nestedHasData = nested.data !== undefined && Object.keys(nested.data).length > 0;
+    if (!textBudget.exceeded && (nestedHasData || nested.failed)) {
       return { ...nested, failed: failed || nested.failed };
     }
   }
