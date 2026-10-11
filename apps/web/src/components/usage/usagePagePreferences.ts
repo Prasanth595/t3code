@@ -1,4 +1,4 @@
-import { UsageProviderKind } from "@t3tools/contracts";
+import { EnvironmentId, UsageProviderKind } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalStorage";
@@ -9,6 +9,8 @@ const UsagePagePreferencesSchema = Schema.Struct({
   windowDays: Schema.Literals([1, 7, 30, 90]),
   /** Providers filtered out of the page. Stored as hidden so new providers show by default. */
   hiddenProviders: Schema.optional(Schema.Array(UsageProviderKind)),
+  /** The environments picked in the filter. Absent means all, so ones connected later show by default. */
+  selectedEnvironmentIds: Schema.optional(Schema.Array(EnvironmentId)),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 
