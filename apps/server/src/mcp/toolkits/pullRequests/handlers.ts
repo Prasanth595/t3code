@@ -470,21 +470,10 @@ const make = Effect.gen(function* () {
                   }).message,
                 };
               }
-              const reference = guideReference(entry.project, entry.target);
-              // Generate returns the run it started, or the one for this head it joined. The same
-              // run before and after means it joined; a run for a new head is a new start.
-              const before = yield* reviewGuides.get(reference).pipe(Effect.option);
-              const previous = Option.isSome(before) ? before.value.run : null;
-              return yield* reviewGuides.generate(reference).pipe(
+              return yield* reviewGuides.generate(guideReference(entry.project, entry.target)).pipe(
                 Effect.map((result) => ({
                   ...identity,
-                  outcome:
-                    previous?._tag === "Running" &&
-                    result.run?._tag === "Running" &&
-                    previous.headSha === result.run.headSha &&
-                    previous.startedAt === result.run.startedAt
-                      ? ("running" as const)
-                      : ("started" as const),
+                  outcome: result.started ? ("started" as const) : ("running" as const),
                   detail: null,
                 })),
                 Effect.catch((error) =>
@@ -512,13 +501,15 @@ const make = Effect.gen(function* () {
             repository: entry?.target.repository ?? input.repository ?? "",
           });
         }
-        const result = yield* reviewGuides
-          .get(guideReference(entry.project, entry.target))
-          .pipe(
-            Effect.mapError(
-              (error) => new PullRequestGuideFailedError({ detail: guideFailureDetail(error) }),
-            ),
-          );
+        const result = yield* reviewGuides.get(guideReference(entry.project, entry.target)).pipe(
+          Effect.mapError(
+            (error) =>
+              new PullRequestGuideFailedError({
+                detail: guideFailureDetail(error),
+                cause: error,
+              }),
+          ),
+        );
         return {
           host: entry.target.host,
           repository: entry.target.repository,

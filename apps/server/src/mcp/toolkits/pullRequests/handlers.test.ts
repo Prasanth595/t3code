@@ -144,9 +144,10 @@ interface HarnessOptions {
   /** What the guide service answers for a pull request it is asked to write. */
   readonly generate?: (
     input: PullRequestRef,
-  ) => Effect.Effect<PullRequestReviewGuideResult, PullRequestOperationError>;
-  /** A run already going when the tool asks, which a write joins. */
-  readonly running?: PullRequestReviewGuideResult["run"];
+  ) => Effect.Effect<
+    PullRequestReviewGuideResult & { started: boolean },
+    PullRequestOperationError
+  >;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -176,7 +177,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
       listShells: () => Effect.succeed(options.projects ?? (project ? [project] : [])),
     }),
     Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({
-      get: () => Effect.succeed({ ...NO_GUIDE, run: options.running ?? null }),
+      get: () => Effect.succeed(NO_GUIDE),
       generate: (input) =>
         Ref.update(guideRequests, (recorded) => [...recorded, input]).pipe(
           Effect.andThen(
@@ -188,6 +189,7 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
                   headSha: "head-1",
                   startedAt: "2026-10-11T00:00:00.000Z",
                 },
+                started: true,
               }),
           ),
         ),
@@ -642,6 +644,7 @@ describe("pull request guide tools", () => {
                   headSha: "head-1",
                   startedAt: "2026-10-11T00:00:00.000Z",
                 },
+                started: true,
               }),
       });
       const result = yield* harness.call("write_pull_request_guides", {
@@ -674,27 +677,20 @@ describe("pull request guide tools", () => {
     }),
   );
 
-  it.effect("joins a run already going rather than reporting a new one", () =>
+  it.effect("reports a run the service joined as running, not as a new one", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
-        running: { _tag: "Running", headSha: "head-1", startedAt: "2026-10-11T00:00:00.000Z" },
+        generate: () =>
+          Effect.succeed({
+            ...NO_GUIDE,
+            run: { _tag: "Running", headSha: "head-1", startedAt: "2026-10-11T00:00:00.000Z" },
+            started: false,
+          }),
       });
       const result = yield* harness.call("write_pull_request_guides", {
         pullRequests: [{ repository: "t3tools/t3code", number: 4 }],
       });
       expect(result.guides.map((guide) => guide.outcome)).toEqual(["running"]);
-    }),
-  );
-
-  it.effect("reports a run for a new head as started, not as the older run it replaced", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        running: { _tag: "Running", headSha: "head-old", startedAt: "2026-10-11T00:00:00.000Z" },
-      });
-      const result = yield* harness.call("write_pull_request_guides", {
-        pullRequests: [{ repository: "t3tools/t3code", number: 6 }],
-      });
-      expect(result.guides.map((guide) => guide.outcome)).toEqual(["started"]);
     }),
   );
 

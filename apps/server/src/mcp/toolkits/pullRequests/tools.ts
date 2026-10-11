@@ -181,7 +181,7 @@ export class PullRequestProjectNotFoundError extends Schema.TaggedError<PullRequ
 
 export class PullRequestGuideFailedError extends Schema.TaggedError<PullRequestGuideFailedError>()(
   "PullRequestGuideFailedError",
-  { detail: Schema.String },
+  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return this.detail;
