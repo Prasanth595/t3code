@@ -166,6 +166,8 @@ interface ScopedServerWrite {
   readonly environmentId: EnvironmentId;
   readonly label: string;
   readonly patch: ServerSettingsPatch;
+  /** The environment's settings before the write, to tell a dropped key from a saved one. */
+  readonly previous: ServerSettings;
 }
 
 function projectOverrideWrites(
@@ -194,6 +196,7 @@ function projectOverrideWrites(
     writes.set(member.environmentId, {
       environmentId: member.environmentId,
       label: environment.label,
+      previous: settings,
       patch: {
         projectSettingsOverrides: {
           ...existing?.patch.projectSettingsOverrides,
@@ -266,29 +269,38 @@ export function planScopedSettingsPatch(
               return next as ProjectSettingsOverrides;
             })
         : scope.kind === "all" || scope.kind === "environment"
-          ? connectedEnvironments.map((environment) => ({
-              environmentId: environment.environmentId,
-              label: environment.label,
-              patch:
-                environment.serverConfig?.settings.worktreeCleanup != null &&
-                serverPatch.storageCleanup &&
-                Object.keys(serverPatch.storageCleanup).some((key) => key.startsWith("worktree"))
-                  ? {
-                      ...serverPatch,
-                      worktreeCleanup: {
-                        mode: "custom",
-                        rules: {
-                          ...resolveWorktreeCleanup(environment.serverConfig.settings, null),
-                          ...Object.fromEntries(
-                            Object.entries(serverPatch.storageCleanup).filter(([key]) =>
-                              key.startsWith("worktree"),
-                            ),
-                          ),
-                        },
-                      },
-                    }
-                  : serverPatch,
-            }))
+          ? connectedEnvironments.flatMap((environment) => {
+              const previous = environment.serverConfig?.settings;
+              if (!previous) return [];
+              return [
+                {
+                  environmentId: environment.environmentId,
+                  label: environment.label,
+                  previous,
+                  patch:
+                    previous.worktreeCleanup != null &&
+                    serverPatch.storageCleanup &&
+                    Object.keys(serverPatch.storageCleanup).some((key) =>
+                      key.startsWith("worktree"),
+                    )
+                      ? {
+                          ...serverPatch,
+                          worktreeCleanup: {
+                            mode: "custom",
+                            rules: {
+                              ...resolveWorktreeCleanup(previous, null),
+                              ...Object.fromEntries(
+                                Object.entries(serverPatch.storageCleanup).filter(([key]) =>
+                                  key.startsWith("worktree"),
+                                ),
+                              ),
+                            },
+                          },
+                        }
+                      : serverPatch,
+                },
+              ];
+            })
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
@@ -371,6 +383,7 @@ export function planProjectOverridesClear(
     writes.set(environmentId, {
       environmentId,
       label: environment.label,
+      previous: settings,
       patch: {
         projectSettingsOverrides: {
           ...existing?.patch.projectSettingsOverrides,
@@ -389,13 +402,44 @@ export function planProjectOverridesClear(
   };
 }
 
+/** Whether writing `value` leaves `current` as it is. Partial objects compare only the fields they set. */
+function patchLeavesUnchanged(value: unknown, current: unknown): boolean {
+  if (typeof value === "string" && typeof current === "string") return value.trim() === current;
+  if (isPlainObject(value) && isPlainObject(current)) {
+    return Object.entries(value).every(([field, next]) =>
+      next === null ? current[field] == null : patchLeavesUnchanged(next, current[field]),
+    );
+  }
+  return Equal.equals(value, current);
+}
+
+/**
+ * An older server drops keys it does not know, top-level or nested, and still
+ * succeeds. A key that should have changed but reads back as it was before
+ * the write was dropped; left unreported, the row stays mixed forever.
+ */
+function droppedSettingKeys(write: ScopedServerWrite, saved: ServerSettings | undefined) {
+  if (saved === undefined) return [];
+  return Object.entries(write.patch).flatMap(([key, value]) => {
+    const before = write.previous[key as keyof ServerSettings];
+    return Equal.equals(saved[key as keyof ServerSettings], before) &&
+      !patchLeavesUnchanged(value, before)
+      ? [key]
+      : [];
+  });
+}
+
 /** Wait for every target so a failed environment does not hide successful or later writes. */
 export async function persistScopedSettingsPatch(
   plan: ReturnType<typeof planScopedSettingsPatch>,
   persistServer: (input: {
     environmentId: EnvironmentId;
     input: { patch: ServerSettingsPatch };
-  }) => Promise<{ readonly _tag: "Success" | "Failure"; readonly cause?: Cause.Cause<unknown> }>,
+  }) => Promise<{
+    readonly _tag: "Success" | "Failure";
+    readonly cause?: Cause.Cause<unknown>;
+    readonly value?: ServerSettings;
+  }>,
   persistClient: (patch: ClientSettingsPatch) => void,
 ) {
   if (plan.hasClientWrite) persistClient(plan.clientPatch);
@@ -404,9 +448,25 @@ export async function persistScopedSettingsPatch(
       persistServer({ environmentId, input: { patch } }),
     ),
   );
-  const failedEnvironments = plan.serverWrites.flatMap((environment, index) => {
+  const saved = (index: number) => {
     const result = results[index];
-    if (result?.status === "fulfilled" && result.value._tag === "Success") return [];
+    return (
+      result?.status === "fulfilled" &&
+      result.value._tag === "Success" &&
+      droppedSettingKeys(plan.serverWrites[index]!, result.value.value).length === 0
+    );
+  };
+  const failedEnvironments = plan.serverWrites.flatMap((environment, index) => {
+    if (saved(index)) return [];
+    const result = results[index];
+    if (result?.status === "fulfilled" && result.value._tag === "Success") {
+      return [
+        {
+          ...environment,
+          message: "This environment does not support this setting. Update T3 Code on it.",
+        },
+      ];
+    }
     const error: unknown =
       result?.status === "rejected"
         ? result.reason
@@ -423,10 +483,7 @@ export async function persistScopedSettingsPatch(
       },
     ];
   });
-  const savedEnvironments = plan.serverWrites.filter((_, index) => {
-    const result = results[index];
-    return result?.status === "fulfilled" && result.value._tag === "Success";
-  });
+  const savedEnvironments = plan.serverWrites.filter((_, index) => saved(index));
   return {
     failedEnvironments,
     savedEnvironments,
