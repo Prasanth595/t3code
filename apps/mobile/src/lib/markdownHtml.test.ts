@@ -24,6 +24,16 @@ describe("HTML in native Markdown", () => {
     ).toBe("![Review](<https://example.com/banner.svg>)");
   });
 
+  it("ignores code delimiters in HTML attributes and comments when collecting screenshots", () => {
+    const markdown =
+      '<details data-example="`">\n<summary>Proof</summary>\n<img src="https://example.com/shot.png" alt="Screenshot">\n<!-- ` -->\n</details>';
+    expect(markdownHtmlContent(markdown)).toContain(
+      "![Screenshot](<https://example.com/shot.png>)",
+    );
+    expect(markdownImageSources(markdown)).toEqual(["https://example.com/shot.png"]);
+    expect(markdownWithHtml(markdown)).not.toContain("<img");
+  });
+
   it("removes bot metadata and details wrappers while keeping the content", () => {
     const markdown =
       "<!-- generated bot metadata -->\n<details>\n<summary>Walkthrough</summary>\n\n## Changes\n\nText\n\n</details>";

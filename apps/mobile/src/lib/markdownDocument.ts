@@ -71,7 +71,14 @@ function attribute(tag: string, name: string): string | null {
 export function markdownHtmlContent(content: string): string {
   // An HTML block such as <details> can also contain Markdown fences and code spans.
   const codeRanges: Array<{ start: number; end: number }> = [];
-  const delimiters = [...content.matchAll(/`+|~{3,}/g)];
+  const tags = [...content.matchAll(HTML_TAG)];
+  let tagIndex = 0;
+  const delimiters = [...content.matchAll(/`+|~{3,}/g)].filter((delimiter) => {
+    while (tags[tagIndex] && tags[tagIndex]!.index + tags[tagIndex]![0].length <= delimiter.index)
+      tagIndex += 1;
+    const tag = tags[tagIndex];
+    return !tag || delimiter.index < tag.index;
+  });
   for (let index = 0; index < delimiters.length; index += 1) {
     const opening = delimiters[index]!;
     const lineStart = content.lastIndexOf("\n", opening.index - 1) + 1;
