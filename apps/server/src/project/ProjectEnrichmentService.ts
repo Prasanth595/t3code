@@ -13,6 +13,8 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
+
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
 import * as RepositoryIdentityMemory from "./RepositoryIdentityMemory.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
@@ -112,7 +114,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   // Git has nothing to read in a deleted folder, so a removed worktree would resolve to no
   // repository and fall out of its group. The identity it last resolved to still names the
   // repository, so that is the answer while the folder is gone. A folder that exists and resolves
-  // to null really has no repository, and memory stays out of it.
+  // to null really has no repository, and memory stays out of it; so does one whose existence
+  // check fails, since an unreadable folder is not a deleted one.
   const resolveRepositoryIdentityWithMemory = Effect.fn(
     "ProjectEnrichmentService.resolveRepositoryIdentityWithMemory",
   )(function* (workspaceRoot: string) {
@@ -330,5 +333,5 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
 });
 
 export const layer = Layer.effect(ProjectEnrichmentService, make()).pipe(
-  Layer.provide(RepositoryIdentityMemory.layerSql),
+  Layer.provide(ProjectStore.layerRepositoryIdentityMemory),
 );

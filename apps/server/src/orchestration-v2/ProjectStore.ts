@@ -3,6 +3,7 @@ import {
   IsoDateTime,
   ModelSelection,
   type OrchestrationProjectShell,
+  RepositoryIdentity,
   StoredProjectIcon,
   ProjectId,
   ProjectScript,
@@ -14,6 +15,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as RepositoryIdentityMemory from "../project/RepositoryIdentityMemory.ts";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
 export class ProjectStoreV2Error extends Schema.TaggedError<ProjectStoreV2Error>()(
@@ -284,3 +286,63 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(ProjectStoreV2, make);
+
+const RepositoryIdentityJson = Schema.fromJsonString(RepositoryIdentity);
+const encodeRepositoryIdentity = Schema.encodeEffect(RepositoryIdentityJson);
+const decodeRepositoryIdentity = Schema.decodeUnknownEffect(RepositoryIdentityJson);
+
+/**
+ * Durable RepositoryIdentityMemory on the active `projection_projects` rows for a root, so the
+ * memory dies with the project and `apply` clears it when the project moves to another folder.
+ * Writes skip rows that already hold the same identity: enrichment remembers on every cache
+ * miss, which is once a minute per root, and the steady state should not touch the database.
+ */
+export const layerRepositoryIdentityMemory = Layer.effect(
+  RepositoryIdentityMemory.RepositoryIdentityMemory,
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const swallow =
+      <A>(operation: string, fallback: A) =>
+      <E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Repository identity memory failed", { operation, cause }).pipe(
+              Effect.as(fallback),
+            ),
+          ),
+        );
+
+    return RepositoryIdentityMemory.RepositoryIdentityMemory.of({
+      remember: (workspaceRoot, identity) =>
+        encodeRepositoryIdentity(identity).pipe(
+          Effect.flatMap(
+            (json) => sql`
+              UPDATE projection_projects
+              SET repository_identity_json = ${json}
+              WHERE workspace_root = ${workspaceRoot}
+                AND deleted_at IS NULL
+                AND (repository_identity_json IS NULL OR repository_identity_json != ${json})
+            `,
+          ),
+          Effect.asVoid,
+          swallow<void>("remember", undefined),
+        ),
+      recall: (workspaceRoot) =>
+        sql<{ readonly identity: string | null }>`
+          SELECT repository_identity_json AS identity
+          FROM projection_projects
+          WHERE workspace_root = ${workspaceRoot}
+            AND deleted_at IS NULL
+            AND repository_identity_json IS NOT NULL
+          LIMIT 1
+        `.pipe(
+          Effect.flatMap((rows) =>
+            rows[0]?.identity == null
+              ? Effect.succeedNone
+              : decodeRepositoryIdentity(rows[0].identity).pipe(Effect.map(Option.some)),
+          ),
+          swallow("recall", Option.none<RepositoryIdentity>()),
+        ),
+    });
+  }),
+);

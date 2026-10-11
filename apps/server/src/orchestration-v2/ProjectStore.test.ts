@@ -61,10 +61,10 @@ it.layer(ProjectStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemor
 );
 
 it.layer(
-  Layer.mergeAll(ProjectStore.layer, RepositoryIdentityMemory.layerSql).pipe(
+  Layer.mergeAll(ProjectStore.layer, ProjectStore.layerRepositoryIdentityMemory).pipe(
     Layer.provideMerge(SqlitePersistence.layerMemory),
   ),
-)("RepositoryIdentityMemory.layerSql", (it) => {
+)("ProjectStore.layerRepositoryIdentityMemory", (it) => {
   const at = "2026-03-24T00:00:00.000Z";
   const identity: RepositoryIdentity = {
     canonicalKey: "example.test/owner/repo",
