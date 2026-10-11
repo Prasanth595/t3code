@@ -20,9 +20,7 @@ export function parseNativeMarkdownWithSkillTokens(
 ): MarkdownNode {
   const document = parse(markdown);
   if (!markdown.includes('"')) return document;
-  const quoted = collectComposerSkillTokens(markdown).filter(
-    (token) => token.source.includes('"') && /[\\&<>`*_[\]~]/u.test(token.source),
-  );
+  const quoted = collectComposerSkillTokens(markdown).filter((token) => token.source.includes('"'));
   if (quoted.length === 0) return document;
   const opaque: { start: number; end: number }[] = [];
   const visit = (node: MarkdownNode) => {

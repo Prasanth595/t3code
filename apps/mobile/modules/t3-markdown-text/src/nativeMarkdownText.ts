@@ -8,7 +8,8 @@ import {
 import { imageMimeType } from "@t3tools/shared/image";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { videoMimeType } from "@t3tools/shared/video";
-export { parseNativeMarkdownWithSkillTokens } from "./nativeMarkdownSkills";
+import { parseNativeMarkdownWithSkillTokens } from "./nativeMarkdownSkills";
+export { parseNativeMarkdownWithSkillTokens };
 /**
  * Every accent shares a lightness so no kind reads heavier than another; only hue carries
  * identity. These are the sRGB form of the same OKLCH set web uses, so a chip looks the
@@ -1131,6 +1132,17 @@ export function markdownHtmlContent(content: string): string {
     if (/^<\/?(?:p|div|details)\b/i.test(tag)) return "\n\n";
     return "";
   });
+}
+
+/** Parses chat Markdown and its converted HTML, keeping quoted skill tokens whole in both. */
+export function parseNativeChatMarkdown(
+  markdown: string,
+  parse: (source: string, html: boolean) => MarkdownNode,
+): MarkdownNode {
+  return nativeMarkdownWithHtml(
+    parseNativeMarkdownWithSkillTokens(markdown, (source) => parse(source, true)),
+    (content) => parseNativeMarkdownWithSkillTokens(content, (source) => parse(source, false)),
+  );
 }
 
 export function nativeMarkdownWithHtml(

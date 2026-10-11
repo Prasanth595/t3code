@@ -34,6 +34,7 @@ import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexError from "effect-codex-app-server/errors";
 import * as CodexReplay from "effect-codex-app-server/replay";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
@@ -1414,10 +1415,13 @@ describe("CodexAdapterV2 skill mentions", () => {
       ["first line\n₹ship it", "first line\n$ship it"],
       ["𑿝review then €2spec", "$review then $2spec"],
       ["$review", "$review"],
-      ['Use $"Poteto Mode" then $2spec with $20k', "Use $Poteto Mode then $2spec with $20k"],
-      ['€"Poteto Mode"', "$Poteto Mode"],
-      ['use $"quote\\\"skill"', 'use $quote"skill'],
-      ['use $"line\\nbreak"', "use $line\nbreak"],
+      ['€"review" now', "$review now"],
+      // Codex ignores `$HOME`, so a skill with that name needs a structured input.
+      ["$home", "$home"],
+      // Codex would read `$Poteto Mode` as `$Poteto`, so these stay quoted.
+      ['Use $"Poteto Mode" then $2spec with $20k', 'Use $"Poteto Mode" then $2spec with $20k'],
+      ['€"Poteto Mode"', '€"Poteto Mode"'],
+      ['use $"quote\\\"skill"', 'use $"quote\\\"skill"'],
       ["costs €20", "costs €20"],
       ["€5k", "€5k"],
       ["budget €100M or €1e6", "budget €100M or €1e6"],
@@ -1426,6 +1430,15 @@ describe("CodexAdapterV2 skill mentions", () => {
     for (const [text, expected] of cases) {
       assert.equal(CodexAdapterV2.codexSkillMentionText(text), expected, text);
     }
+  });
+
+  it("lists each name Codex cannot read from text once", () => {
+    assert.deepStrictEqual(
+      CodexAdapterV2.codexStructuredSkillNames(
+        'Use $"Poteto Mode" $"review" $"Poteto Mode" $home and $"line\\nbreak" with €20',
+      ),
+      ["Poteto Mode", "home", "line\nbreak"],
+    );
   });
 });
 
@@ -1563,7 +1576,13 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
   /** Text the adapter should send, when it differs from what the user typed. */
   readonly sentPrompt?: string;
+  /** Inputs the adapter should send after the text. */
+  readonly sentInputs?: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
+  /** Requests the adapter makes after thread/start, which shift the turn/start request id. */
+  readonly beforeTurnStart?: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
+  const turnStartId =
+    3 + (input.beforeTurnStart ?? []).filter((entry) => entry.type === "expect_outbound").length;
   return [
     {
       type: "expect_outbound",
@@ -1645,15 +1664,19 @@ function codexReplayPreamble(input: {
         },
       },
     },
+    ...(input.beforeTurnStart ?? []),
     {
       type: "expect_outbound",
       label: "turn/start",
       frame: {
-        id: 3,
+        id: turnStartId,
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
-          input: [{ type: "text", text: input.sentPrompt ?? input.prompt }],
+          input: [
+            { type: "text", text: input.sentPrompt ?? input.prompt },
+            ...(input.sentInputs ?? []),
+          ],
           cwd: "/workspace",
           model: "gpt-5.4",
           approvalPolicy: "never",
@@ -1667,7 +1690,7 @@ function codexReplayPreamble(input: {
       type: "emit_inbound",
       label: "turn/start",
       frame: {
-        id: 3,
+        id: turnStartId,
         result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
       },
     },
@@ -2520,28 +2543,62 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("sends complete quoted skill names to Codex on start and steer", () =>
+  it.effect("sends spaced skill names to Codex as structured skills on start and steer", () =>
     Effect.gen(function* () {
       const nativeThreadId = "skill-sigil-thread";
       const nativeTurnId = "skill-sigil-turn";
+      const skill = (name: string, path: string) => ({
+        name,
+        path,
+        description: "",
+        enabled: true,
+        scope: "user" as const,
+      });
+      const skillsList = (id: number, skills: ReadonlyArray<ReturnType<typeof skill>>) => [
+        {
+          type: "expect_outbound" as const,
+          label: "skills/list",
+          frame: { id, method: "skills/list", params: { cwds: ["/workspace"] } },
+        },
+        {
+          type: "emit_inbound" as const,
+          label: "skills/list",
+          frame: { id, result: { data: [{ cwd: "/workspace", errors: [], skills }] } },
+        },
+      ];
       const transcript = makeCodexReplayTranscript({
         scenario: "skill-sigil-canonicalized",
         entries: [
           ...codexReplayPreamble({
             nativeThreadId,
             nativeTurnId,
-            prompt: '€"Poteto Mode" do it',
-            sentPrompt: "$Poteto Mode do it",
+            prompt: '€"Poteto Mode" and €review do it',
+            // `$Poteto Mode` would select a `Poteto` skill instead.
+            sentPrompt: '€"Poteto Mode" and $review do it',
+            beforeTurnStart: skillsList(3, [
+              skill("Poteto", "/skills/poteto/SKILL.md"),
+              skill("Poteto Mode", "/skills/poteto-mode/SKILL.md"),
+              // The same path listed twice is still one skill.
+              skill("Poteto Mode", "/skills/poteto-mode/SKILL.md"),
+            ]),
+            sentInputs: [
+              { type: "skill", name: "Poteto Mode", path: "/skills/poteto-mode/SKILL.md" },
+            ],
           }),
+          // An ambiguous name stays text only, as Codex treats an ambiguous plain name.
+          ...skillsList(5, [
+            skill("Another Skill", "/skills/one/SKILL.md"),
+            skill("Another Skill", "/skills/two/SKILL.md"),
+          ]),
           {
             type: "expect_outbound",
             label: "turn/steer",
             frame: {
-              id: 4,
+              id: 6,
               method: "turn/steer",
               params: {
                 expectedTurnId: nativeTurnId,
-                input: [{ type: "text", text: "then $Another Skill it" }],
+                input: [{ type: "text", text: 'then £"Another Skill" it' }],
                 threadId: nativeThreadId,
               },
             },
@@ -2549,7 +2606,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           {
             type: "emit_inbound",
             label: "turn/steer",
-            frame: { id: 4, result: { turnId: nativeTurnId } },
+            frame: { id: 6, result: { turnId: nativeTurnId } },
           },
         ],
       });
@@ -2559,7 +2616,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerThread: harness.providerThread,
         now: yield* DateTime.now,
         attemptId: RunAttemptId.make("skill-sigil-attempt"),
-        text: '€"Poteto Mode" do it',
+        text: '€"Poteto Mode" and €review do it',
       });
       yield* harness.runtime.startTurn(turnInput);
       yield* harness.runtime.steerTurn({

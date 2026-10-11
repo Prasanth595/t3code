@@ -13,6 +13,7 @@ import {
   nativeMarkdownWithPreservedSoftBreaks,
   nativeMarkdownContextCopyRanges,
   contextChipPresentation,
+  parseNativeChatMarkdown,
   parseNativeMarkdownWithSkillTokens,
 } from "@t3tools/mobile-markdown-text/markdown";
 
@@ -150,6 +151,31 @@ describe("native quoted skill preservation", () => {
       nativeMarkdownContextCopyRanges([{ run: chips[0]!, text: "\uFFFC", inlineImageLength: 0 }]),
     ).toEqual([{ start: 0, end: 1, text: serializeComposerSkillToken(name) }]);
     expect(runs.map((run) => run.text).join("")).toBe(source);
+  });
+});
+
+describe("parseNativeChatMarkdown", () => {
+  it("keeps a quoted skill whole inside converted HTML", () => {
+    const token = serializeComposerSkillToken("Review **UI**");
+    // MD4C reads the details element as one HTML block, then consumes `**` in its converted text.
+    const parse = (source: string, html: boolean): MarkdownNode =>
+      html
+        ? { type: "document", children: [{ type: "html_block", content: source }] }
+        : {
+            type: "document",
+            children: [
+              {
+                type: "paragraph",
+                children: [{ type: "text", content: source.trim().replaceAll("**", "") }],
+              },
+            ],
+          };
+    const document = parseNativeChatMarkdown(`<details>${token}</details>`, parse);
+    const chips = nativeMarkdownDocumentRuns(document, [
+      { name: "Review UI" },
+      { name: "Review **UI**" },
+    ]).filter((run) => run.skillName);
+    expect(chips.map((run) => run.skillName)).toEqual(["Review **UI**"]);
   });
 });
 

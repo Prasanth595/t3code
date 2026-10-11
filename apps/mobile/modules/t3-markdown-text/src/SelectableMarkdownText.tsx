@@ -3,13 +3,12 @@ import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 
 import {
-  nativeMarkdownWithHtml,
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
   nativeMarkdownDocumentRuns,
   nativeMarkdownWithAuthoredWindowsPaths,
   nativeMarkdownWithPreservedSoftBreaks,
-  parseNativeMarkdownWithSkillTokens,
+  parseNativeChatMarkdown,
 } from "./nativeMarkdownText";
 import { MarkdownImageRendererContext, NativeMarkdownBlock } from "./NativeMarkdownBlock";
 import {
@@ -55,11 +54,8 @@ export function SelectableMarkdownText({
 }: SelectableMarkdownTextProps) {
   const chunks = useMemo(() => {
     const parsedDocument = nativeMarkdownWithAuthoredWindowsPaths(
-      nativeMarkdownWithHtml(
-        parseNativeMarkdownWithSkillTokens(markdown, (source) =>
-          parseMarkdownWithOptions(source, { gfm: true, html: true, math: false }),
-        ),
-        (content) => parseMarkdownWithOptions(content, { gfm: true, html: false, math: false }),
+      parseNativeChatMarkdown(markdown, (source, html) =>
+        parseMarkdownWithOptions(source, { gfm: true, html, math: false }),
       ),
       markdown,
     );
