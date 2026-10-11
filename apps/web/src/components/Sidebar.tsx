@@ -3264,10 +3264,12 @@ export default function Sidebar() {
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
       // Confirm navigation before loading data: pointer presses can become drags.
-      void prefetchEnvironmentThread.run(appAtomRegistry, {
-        environmentId: threadRef.environmentId,
-        input: threadRef.threadId,
-      });
+      if (routeThreadKeyRef.current !== scopedThreadKey(threadRef)) {
+        void prefetchEnvironmentThread.run(appAtomRegistry, {
+          environmentId: threadRef.environmentId,
+          input: threadRef.threadId,
+        });
+      }
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
