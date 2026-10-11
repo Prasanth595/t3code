@@ -874,6 +874,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Review guides (beta)",
     to: "/settings/source-control",
     searchTerms: ["pull request pr guided review guide tour beta experimental"],
+    environmentOnly: true,
   },
   {
     id: "review-guide-model",

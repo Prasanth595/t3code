@@ -146,6 +146,8 @@ const makeLayer = (input: {
   readonly generate: TextGeneration.TextGeneration["Service"]["generateReviewGuide"];
   /** Completed when a run stores its guide, which is the last thing a run does but forget it. */
   readonly stored: Deferred.Deferred<void>;
+  /** The server's beta switch; on unless a test is about it being off. */
+  readonly enabled?: boolean;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -185,7 +187,7 @@ const makeLayer = (input: {
         generateReviewGuide: input.generate,
       } as unknown as TextGeneration.TextGeneration["Service"]),
     ),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(ServerSettings.layerTest({ reviewGuidesEnabled: input.enabled ?? true })),
     Layer.provide(ServerConfig.layerTest(input.root, { prefix: "t3-review-guide-config-" })),
   );
 
@@ -320,6 +322,29 @@ it.layer(layerBase)("PullRequestReviewGuideService", (it) => {
         assert.isFalse(yield* fs.exists(observed.input.cwd));
         const worktrees = yield* git(repositories.workspace, ["worktree", "list", "--porcelain"]);
         assert.notInclude(worktrees, observed.input.cwd);
+      }),
+    ),
+  );
+
+  it.effect("refuses to write a guide while the server has review guides off", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            enabled: false,
+            generate: () => Effect.die("a guide must not be written while the beta is off"),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const result = yield* Effect.flip(service.generate(reference));
+        assert.include(result.message, "Review guides are off");
       }),
     ),
   );

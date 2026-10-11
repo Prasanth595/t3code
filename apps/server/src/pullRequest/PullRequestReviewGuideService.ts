@@ -294,6 +294,23 @@ const make = Effect.gen(function* () {
   const generate: PullRequestReviewGuideService["Service"]["generate"] = Effect.fn(
     "PullRequestReviewGuideService.generate",
   )(function* (input) {
+    // A beta the server owns, so every client and agent sees the same answer.
+    const settings = yield* serverSettings.getSettings.pipe(
+      Effect.mapError(
+        (cause) =>
+          new PullRequestOperationError({
+            operation: "generateReviewGuide",
+            detail: "Could not read the server settings.",
+            cause,
+          }),
+      ),
+    );
+    if (!settings.reviewGuidesEnabled) {
+      return yield* new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail: "Review guides are off. Turn them on in Settings → Source Control.",
+      });
+    }
     const { key, workspaceRoot } = yield* keyFor(input);
     const runKey = keyString(key);
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {

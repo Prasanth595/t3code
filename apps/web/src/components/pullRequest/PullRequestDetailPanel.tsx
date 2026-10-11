@@ -61,7 +61,7 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
@@ -1550,8 +1550,11 @@ export function PullRequestDetailPanel({
   // A host that cannot produce a patch has no Code tab to open. While detail is loading the ghost
   // uses this optimistic tab set to reserve the same chrome; a host without a patch removes Code
   // when its capabilities arrive.
-  // The Guide tab is a beta this device opts into in Settings → Source Control.
-  const reviewGuidesEnabled = useClientSettings((settings) => settings.reviewGuidesEnabled);
+  // The Guide tab is a beta the pull request's server opts into in Settings → Source Control.
+  const reviewGuidesEnabled = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.reviewGuidesEnabled,
+  );
   const visibleTabs = TABS.filter(
     (item) =>
       (item.value !== "code" || detail === null || detail.capabilities.diff) &&

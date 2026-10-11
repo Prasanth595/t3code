@@ -2,7 +2,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 
-import { getClientSettings, useClientSettings } from "~/hooks/useSettings";
+import { getClientSettings } from "~/hooks/useSettings";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -26,9 +26,6 @@ const UNSEEN_RUN_MS = 60_000;
  */
 export function PullRequestGuideRunCoordinator() {
   const watches = useGuideRunStore((state) => state.watches);
-  // Nothing starts a run while the beta is off, but one started before it was turned off ends quietly.
-  const enabled = useClientSettings((settings) => settings.reviewGuidesEnabled);
-  if (!enabled) return null;
   return Object.entries(watches).map(([key, watch]) => (
     <GuideRunWatcher key={key} runKey={key} watch={watch} />
   ));

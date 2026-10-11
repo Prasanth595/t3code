@@ -28,7 +28,6 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
@@ -65,9 +64,7 @@ const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; descr
 export function SourceControlWritingSettingsSection() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  // A beta: the Guide tab and its settings stay out of the way until this device opts in.
-  const reviewGuidesEnabled = useClientSettings((client) => client.reviewGuidesEnabled);
-  const updateClientSettings = useUpdateClientSettings();
+  const mixedReviewGuidesEnabled = useScopedSettingsMixed(["reviewGuidesEnabled"]);
   const navigate = useNavigate();
   const { environment, connectedEnvironments, targets } = useSettingsScope();
   // The representative supplies the provider list; a model choice is checked
@@ -380,19 +377,24 @@ export function SourceControlWritingSettingsSection() {
         }
       />
 
+      {/* A beta the server owns: off hides the Guide tab in every client and refuses agents. */}
       <SettingsRow
+        serverScoped
+        settingKeys={["reviewGuidesEnabled"]}
+        mixed={mixedReviewGuidesEnabled}
         {...searchableSetting("review-guides")}
-        description="Adds a Guide tab to pull requests: an agent writes a tour of the change, stop by stop, with the calls a maintainer should make. Applies to this device."
+        description="Adds a Guide tab to pull requests: an agent writes a tour of the change, stop by stop, with the calls a maintainer should make."
         control={
           <Switch
-            checked={reviewGuidesEnabled}
-            onCheckedChange={(checked) => updateClientSettings({ reviewGuidesEnabled: checked })}
+            mixed={mixedReviewGuidesEnabled}
+            checked={mixedReviewGuidesEnabled ? false : settings.reviewGuidesEnabled}
+            onCheckedChange={(checked) => updateSettings({ reviewGuidesEnabled: Boolean(checked) })}
             aria-label="Review guides"
           />
         }
       />
 
-      {reviewGuidesEnabled ? (
+      {settings.reviewGuidesEnabled || mixedReviewGuidesEnabled ? (
         <>
           <SettingsRow
             serverScoped

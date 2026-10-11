@@ -17,7 +17,10 @@ vi.mock("./useScopedSettings", () => ({
     ...DEFAULT_UNIFIED_SETTINGS,
     sourceControlWritingStyle: state.styles[0],
   }),
-  useScopedSettingsMixed: () => JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
+  // Review guides stay off and agreed here, so their rows do not render beside the style's.
+  useScopedSettingsMixed: (keys: ReadonlyArray<string>) =>
+    !keys.includes("reviewGuidesEnabled") &&
+    JSON.stringify(state.styles[0]) !== JSON.stringify(state.styles[1]),
   useUpdateScopedSettings: () => state.updateSettings,
 }));
 vi.mock("./SettingsScopeContext", () => ({
@@ -35,12 +38,6 @@ vi.mock("./useScopedModelAvailability", () => ({
 }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("../../state/server", () => ({ EMPTY_SERVER_PROVIDERS: [] }));
-// Review guides are a beta that is off here; these tests cover the writing style.
-vi.mock("../../hooks/useSettings", () => ({
-  useClientSettings: (select: (settings: { reviewGuidesEnabled: boolean }) => unknown) =>
-    select({ reviewGuidesEnabled: false }),
-  useUpdateClientSettings: () => vi.fn(),
-}));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
 vi.mock("./settingsSearch", () => ({ searchableSetting: (id: string) => ({ id, title: id }) }));
 vi.mock("./settingsLayout", () => ({
