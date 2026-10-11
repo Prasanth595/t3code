@@ -297,34 +297,6 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
-/**
- * Refuses a new turn on an instance the project has effectively disabled.
- * A command that already has a receipt was let through before, so its retry
- * replays instead of being refused under newer settings.
- */
-export const assertProviderInstanceEnabledForProject = (
-  settings: ServerSettings.ServerSettingsService["Service"],
-  receipts: CommandReceiptStore.CommandReceiptStoreV2["Service"],
-  commandId: CommandId,
-  projectId: ProjectId,
-  instanceId: ProviderInstanceId,
-): Effect.Effect<void, ThreadManagementProviderInstanceDisabledError> =>
-  receipts.getByCommandId(commandId).pipe(
-    Effect.orElseSucceed(() => Option.none()),
-    Effect.flatMap((receipt) =>
-      Option.isSome(receipt)
-        ? Effect.void
-        : settings.getSettings.pipe(
-            Effect.orDie,
-            Effect.flatMap((current) =>
-              resolveProjectProviderInstanceEnabled(current, projectId, instanceId)
-                ? Effect.void
-                : new ThreadManagementProviderInstanceDisabledError({ projectId, instanceId }),
-            ),
-          ),
-    ),
-  );
-
 export interface ThreadManagementServiceShape {
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -386,9 +358,9 @@ export interface ThreadManagementServiceShape {
     input: ThreadManagementSendInput,
   ) => Effect.Effect<ThreadManagementSendResult, ThreadManagementFailure>;
   /**
-   * Bound form of `assertProviderInstanceEnabledForProject` for callers that
-   * already hold a `ThreadManagementService` instance but not the settings
-   * and receipt-store services it needs.
+   * Refuses a new turn on an instance the project has effectively disabled.
+   * A command that already has a receipt was let through before, so its
+   * retry replays instead of being refused under newer settings.
    */
   readonly assertProviderInstanceEnabled: (input: {
     readonly projectId: ProjectId;
@@ -526,12 +498,23 @@ const make = Effect.gen(function* () {
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
-      assertProviderInstanceEnabledForProject(
-        serverSettings,
-        receipts,
-        input.commandId,
-        input.projectId,
-        input.instanceId,
+      receipts.getByCommandId(input.commandId).pipe(
+        Effect.orElseSucceed(() => Option.none()),
+        Effect.flatMap((receipt) =>
+          Option.isSome(receipt)
+            ? Effect.void
+            : serverSettings.getSettings.pipe(
+                Effect.orDie,
+                Effect.flatMap((current) =>
+                  resolveProjectProviderInstanceEnabled(current, input.projectId, input.instanceId)
+                    ? Effect.void
+                    : new ThreadManagementProviderInstanceDisabledError({
+                        projectId: input.projectId,
+                        instanceId: input.instanceId,
+                      }),
+                ),
+              ),
+        ),
       );
 
   const isProviderInstanceEnabledForProject: ThreadManagementServiceShape["isProviderInstanceEnabledForProject"] =

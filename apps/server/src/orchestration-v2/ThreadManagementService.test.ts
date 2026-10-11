@@ -280,28 +280,31 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),
 );
 
+const layerThreadManagementTest = (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
+  ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({})),
+    Layer.provide(settingsLayer),
+    Layer.provide(layerReceiptsTest),
+  );
+
 it.effect("refuses a new turn when the project effectively disables the instance", () => {
   const projectId = ProjectId.make("project:thread-management:gate-disabled");
   const instanceId = ProviderInstanceId.make("codex_work");
   const commandId = CommandId.make("command:thread-management:gate-disabled");
-  const layerTest = ServerSettings.layerTest({
-    providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
-    projectSettingsOverrides: {
-      [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
-    },
-  });
+  const layerTest = layerThreadManagementTest(
+    ServerSettings.layerTest({
+      providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+      },
+    }),
+  );
 
   return Effect.gen(function* () {
-    const settings = yield* ServerSettings.ServerSettingsService;
-    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const error = yield* Effect.flip(
-      ThreadManagementService.assertProviderInstanceEnabledForProject(
-        settings,
-        receipts,
-        commandId,
-        projectId,
-        instanceId,
-      ),
+      threads.assertProviderInstanceEnabled({ projectId, commandId, instanceId }),
     );
 
     expect(error).toBeInstanceOf(
@@ -311,58 +314,48 @@ it.effect("refuses a new turn when the project effectively disables the instance
     expect(error.message).toBe(
       `Provider instance "${instanceId}" is disabled for project ${projectId}.`,
     );
-  }).pipe(Effect.provide(Layer.merge(layerTest, layerReceiptsTest)));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("allows a new turn when the project enables an instance the machine disabled", () => {
   const projectId = ProjectId.make("project:thread-management:gate-enabled");
   const instanceId = ProviderInstanceId.make("codex_work");
   const commandId = CommandId.make("command:thread-management:gate-enabled");
-  const layerTest = ServerSettings.layerTest({
-    providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
-    projectSettingsOverrides: {
-      [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
-    },
-  });
+  const layerTest = layerThreadManagementTest(
+    ServerSettings.layerTest({
+      providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+      },
+    }),
+  );
 
   return Effect.gen(function* () {
-    const settings = yield* ServerSettings.ServerSettingsService;
-    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
-    yield* ThreadManagementService.assertProviderInstanceEnabledForProject(
-      settings,
-      receipts,
-      commandId,
-      projectId,
-      instanceId,
-    );
-  }).pipe(Effect.provide(Layer.merge(layerTest, layerReceiptsTest)));
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.assertProviderInstanceEnabled({ projectId, commandId, instanceId });
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("inherits the machine value when the project has no override", () => {
   const projectId = ProjectId.make("project:thread-management:gate-inherit");
   const instanceId = ProviderInstanceId.make("codex_work");
   const commandId = CommandId.make("command:thread-management:gate-inherit");
-  const layerTest = ServerSettings.layerTest({
-    providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
-  });
+  const layerTest = layerThreadManagementTest(
+    ServerSettings.layerTest({
+      providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
+    }),
+  );
 
   return Effect.gen(function* () {
-    const settings = yield* ServerSettings.ServerSettingsService;
-    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
     const error = yield* Effect.flip(
-      ThreadManagementService.assertProviderInstanceEnabledForProject(
-        settings,
-        receipts,
-        commandId,
-        projectId,
-        instanceId,
-      ),
+      threads.assertProviderInstanceEnabled({ projectId, commandId, instanceId }),
     );
 
     expect(error).toBeInstanceOf(
       ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
     );
-  }).pipe(Effect.provide(Layer.merge(layerTest, layerReceiptsTest)));
+  }).pipe(Effect.provide(layerTest));
 });
 
 it.effect("classifies projection infrastructure failures separately from a missing thread", () => {
