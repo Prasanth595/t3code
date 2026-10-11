@@ -1,11 +1,24 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  SourceControlProviderKind,
+  VcsProcessSpawnError,
+  VcsProcessTimeoutError,
+  type ServerSettings as ContractServerSettings,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
+import * as PubSub from "effect/PubSub";
 import * as Redacted from "effect/Redacted";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsRepositoryDetectionError } from "@t3tools/contracts";
 
@@ -54,6 +67,8 @@ function makeRegistry(input: {
   readonly process?: Partial<VcsProcess.VcsProcess["Service"]>;
   readonly githubApi?: Partial<GitHubApi.GitHubApi["Service"]>;
   readonly gitlab?: Partial<GitLabCli.GitLabCli["Service"]>;
+  readonly forgejo?: Partial<ForgejoCli.ForgejoCli["Service"]>;
+  readonly settingsChanges?: Stream.Stream<ContractServerSettings>;
   readonly resolve?: VcsDriverRegistry.VcsDriverRegistry["Service"]["resolve"];
 }) {
   const driver = {
@@ -118,7 +133,9 @@ function makeRegistry(input: {
         Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
-        ServerSettings.ServerSettingsService.layerTest(),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          subscribeChanges: Effect.succeed(input.settingsChanges ?? Stream.empty),
+        }),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         Layer.mock(GitHubApi.GitHubApi)({
           // No GitHub credential unless a test supplies one, so custom hosts stay unclaimed.
@@ -128,7 +145,10 @@ function makeRegistry(input: {
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(GitLabCli.GitLabCli)(input.gitlab ?? {}),
         Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({}),
-        Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () => Effect.succeed([]),
+          ...input.forgejo,
+        }),
         Layer.mock(GitCafeApi.GitCafeApi)({}),
         Layer.mock(GitCafeCredentials.GitCafeCredentials)({
           cliEnv: () => Effect.succeed({}),
@@ -457,5 +477,318 @@ it.effect("skips GitHub discovery for the identity resolver's empty base URL", (
       "https://githubenterprise.dev.example.com",
     );
     assert.deepStrictEqual(hosts, ["githubenterprise.dev.example.com"]);
+  }),
+);
+
+// What PullRequestService and GitManager pass for a remote whose host names no integration.
+const unknownRemote = (remoteUrl: string) => ({
+  provider: {
+    kind: SourceControlProviderKind.make("unknown"),
+    name: "git.example.internal",
+    baseUrl: "https://git.example.internal",
+  },
+  remoteName: "origin",
+  remoteUrl,
+});
+
+// The spawner checks the cwd before it spawns, so a missing checkout fails in `FileSystem` and only
+// a missing executable fails in `ChildProcess`.
+const spawnError = (
+  command: string,
+  cwd: string,
+  reason: "NotFound" | "PermissionDenied",
+  module: "ChildProcess" | "FileSystem",
+) =>
+  new VcsProcessSpawnError({
+    operation: "source-control.discovery.refine-unknown-remote",
+    command,
+    cwd,
+    cause: PlatformError.systemError({
+      _tag: reason,
+      module,
+      method: module === "ChildProcess" ? "spawn" : "access",
+      pathOrDescriptor: module === "ChildProcess" ? command : cwd,
+    }),
+  });
+
+const missingCli = (command: string, cwd: string) =>
+  spawnError(command, cwd, "NotFound", "ChildProcess");
+
+it.effect("asks the hosting CLIs once for every checkout of an unclaimed host", () =>
+  Effect.gen(function* () {
+    // No hosting CLI is installed and GitHub holds no credential, so every integration answers no.
+    const makeUnclaimedRegistry = (beforeSpawn: Effect.Effect<void>) =>
+      Effect.gen(function* () {
+        const commands: Array<string> = [];
+        const logins: Array<string> = [];
+        const hosts: Array<string> = [];
+        const registry = yield* makeRegistry({
+          remotes: [],
+          process: {
+            run: ({ command, cwd }) => {
+              commands.push(command);
+              return beforeSpawn.pipe(Effect.andThen(Effect.fail(missingCli(command, cwd))));
+            },
+          },
+          githubApi: {
+            credential: (host) => {
+              hosts.push(host);
+              return Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }));
+            },
+          },
+          forgejo: {
+            listLogins: ({ command, cwd }) => {
+              logins.push(command);
+              return command === "fj"
+                ? Effect.succeed([])
+                : Effect.fail(
+                    new ForgejoCli.ForgejoCliError({
+                      command,
+                      cwd,
+                      reason: "missing-cli",
+                      detail: "tea is not installed.",
+                      cause: missingCli(command, cwd),
+                    }),
+                  );
+            },
+          },
+        });
+        return { registry, commands, logins, hosts };
+      });
+    const checkouts = ["a", "b", "c"].map((name) => ({
+      cwd: `/${name}`,
+      remoteUrl: `https://git.example.internal/team/${name}.git`,
+    }));
+    const resolveCheckout = (
+      registry: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"],
+      checkout: (typeof checkouts)[number],
+    ) => registry.resolveHandle({ cwd: checkout.cwd, context: unknownRemote(checkout.remoteUrl) });
+
+    const sequential = yield* makeUnclaimedRegistry(Effect.void);
+    for (const checkout of [...checkouts, ...checkouts]) {
+      const handle = yield* resolveCheckout(sequential.registry, checkout);
+      assert.strictEqual(handle.provider.kind, "unknown");
+      // One answer serves the host; each checkout keeps its own remote.
+      assert.strictEqual(handle.context?.remoteUrl, checkout.remoteUrl);
+    }
+    assert.deepStrictEqual(sequential.commands, ["glab"]);
+    assert.deepStrictEqual(sequential.logins, ["fj", "tea"]);
+    assert.deepStrictEqual(sequential.hosts, ["git.example.internal"]);
+
+    // Checkouts that ask at the same time wait for the first one's probes.
+    const spawned = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const concurrent = yield* makeUnclaimedRegistry(
+      Deferred.succeed(spawned, undefined).pipe(Effect.andThen(Deferred.await(release))),
+    );
+    const lookups = yield* Effect.forEach(
+      checkouts,
+      (checkout) => resolveCheckout(concurrent.registry, checkout),
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(spawned);
+    yield* Effect.yieldNow;
+    yield* Deferred.succeed(release, undefined);
+    const handles = yield* Fiber.join(lookups);
+    assert.deepStrictEqual(
+      handles.map((handle) => handle.context?.remoteUrl),
+      checkouts.map((checkout) => checkout.remoteUrl),
+    );
+    assert.deepStrictEqual(concurrent.commands, ["glab"]);
+  }),
+);
+
+// GitHub holds no credential for the host until `signIn`, as after a `gh auth login` in a terminal.
+const makeSignInRegistry = (
+  settingsChanges: Stream.Stream<ContractServerSettings> = Stream.empty,
+) =>
+  Effect.gen(function* () {
+    let signedIn = false;
+    const hosts: Array<string> = [];
+    const commands: Array<string> = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      settingsChanges,
+      process: {
+        run: ({ command }) => {
+          commands.push(command);
+          return Effect.succeed(processOutput(""));
+        },
+      },
+      githubApi: {
+        credential: (host) => {
+          hosts.push(host);
+          return signedIn
+            ? Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:fingerprint` })
+            : Effect.fail(new GitHubCredentials.GitHubNotSignedInError({ host }));
+        },
+      },
+    });
+    return {
+      hosts,
+      commands,
+      signIn: () => {
+        signedIn = true;
+      },
+      resolveKind: registry
+        .resolveHandle({
+          cwd: "/repo",
+          context: unknownRemote("https://git.example.internal/team/a.git"),
+        })
+        .pipe(Effect.map((handle) => handle.provider.kind)),
+    };
+  });
+
+it.effect("notices a CLI login made outside the app once the verdict expires", () =>
+  Effect.gen(function* () {
+    const github = yield* makeSignInRegistry();
+
+    assert.strictEqual(yield* github.resolveKind, "unknown");
+    github.signIn();
+    yield* TestClock.adjust(Duration.minutes(4));
+    assert.strictEqual(yield* github.resolveKind, "unknown");
+    assert.deepStrictEqual(github.hosts, ["git.example.internal"]);
+    assert.deepStrictEqual(github.commands, ["glab"]);
+
+    yield* TestClock.adjust(Duration.minutes(1));
+    assert.strictEqual(yield* github.resolveKind, "github");
+    assert.deepStrictEqual(github.hosts, ["git.example.internal", "git.example.internal"]);
+  }),
+);
+
+it.effect("asks again as soon as settings change", () =>
+  Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<ContractServerSettings>();
+    const github = yield* makeSignInRegistry(
+      Stream.fromSubscription(yield* PubSub.subscribe(changes)),
+    );
+
+    assert.strictEqual(yield* github.resolveKind, "unknown");
+    // A token saved in Settings; the registry hears of it only through the settings stream.
+    github.signIn();
+    assert.strictEqual(yield* github.resolveKind, "unknown");
+    yield* PubSub.publish(changes, DEFAULT_SERVER_SETTINGS);
+    yield* Effect.yieldNow;
+    yield* Effect.yieldNow;
+    assert.strictEqual(yield* github.resolveKind, "github");
+    assert.deepStrictEqual(github.hosts, ["git.example.internal", "git.example.internal"]);
+  }),
+);
+
+const signedInGitLab = processOutput(`git.example.internal
+  ✓ Logged in to git.example.internal as gitlab-user
+`);
+
+it.effect.each([
+  { name: "a missing checkout", failure: "missing-checkout" },
+  { name: "a glab timeout", failure: "timeout" },
+  { name: "glab without permission to run", failure: "permission-denied" },
+  { name: "a tea failure", failure: "tea" },
+] as const)("does not keep an answer a checkout could not reach: $name", (scenario) =>
+  Effect.gen(function* () {
+    // The checkouts that reached the failing CLI.
+    const asked: Array<string> = [];
+    const glabFailure = (cwd: string) =>
+      scenario.failure === "missing-checkout"
+        ? spawnError("glab", cwd, "NotFound", "FileSystem")
+        : scenario.failure === "timeout"
+          ? new VcsProcessTimeoutError({
+              operation: "source-control.discovery.refine-unknown-remote",
+              command: "glab",
+              cwd,
+              timeoutMs: 5_000,
+            })
+          : spawnError("glab", cwd, "PermissionDenied", "ChildProcess");
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: ({ command, cwd }) => {
+          if (scenario.failure === "tea") return Effect.fail(missingCli(command, cwd));
+          asked.push(cwd);
+          return cwd === "/gone" ? Effect.fail(glabFailure(cwd)) : Effect.succeed(signedInGitLab);
+        },
+      },
+      forgejo: {
+        listLogins: ({ command, cwd }) => {
+          if (scenario.failure !== "tea" || command === "fj") return Effect.succeed([]);
+          asked.push(cwd);
+          return cwd === "/gone"
+            ? Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command,
+                  cwd,
+                  detail: "Forgejo CLI command failed.",
+                }),
+              )
+            : Effect.succeed([
+                {
+                  name: "forge",
+                  url: "https://git.example.internal",
+                  user: "forgejo-user",
+                  default: "true",
+                },
+              ]);
+        },
+      },
+    });
+    const context = unknownRemote("https://git.example.internal/team/a.git");
+
+    const gone = yield* registry.resolveHandle({ cwd: "/gone", context });
+    assert.strictEqual(gone.provider.kind, "unknown");
+    // A healthy checkout of the same remote asks again and gets its own answer.
+    const healthy = yield* registry.resolveHandle({ cwd: "/healthy", context });
+    assert.strictEqual(healthy.provider.kind, scenario.failure === "tea" ? "forgejo" : "gitlab");
+    assert.deepStrictEqual(asked, ["/gone", "/healthy"]);
+  }),
+);
+
+it.effect("keeps Forgejo mounts on one host apart", () =>
+  Effect.gen(function* () {
+    const logins: Array<string> = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      forgejo: {
+        listLogins: ({ command }) => {
+          logins.push(command);
+          return Effect.succeed(
+            command === "tea"
+              ? [
+                  {
+                    name: "forge-one",
+                    url: "https://git.example.internal/forge-one",
+                    user: "forgejo-user",
+                    default: "true",
+                  },
+                ]
+              : [],
+          );
+        },
+      },
+    });
+    const resolveContext = (cwd: string, remoteUrl: string) =>
+      registry
+        .resolveHandle({ cwd, context: unknownRemote(remoteUrl) })
+        .pipe(Effect.map((handle) => handle.context));
+
+    const mounted = yield* resolveContext(
+      "/a",
+      "https://git.example.internal/forge-one/team/a.git",
+    );
+    assert.strictEqual(mounted?.provider.kind, "forgejo");
+    assert.strictEqual(mounted?.provider.baseUrl, "https://git.example.internal/forge-one");
+    // The login serves only its mount, so another installation on the host stays unclaimed.
+    const outside = yield* resolveContext(
+      "/b",
+      "https://git.example.internal/forge-two/team/b.git",
+    );
+    assert.strictEqual(outside?.provider.kind, "unknown");
+    const sibling = yield* resolveContext(
+      "/c",
+      "https://git.example.internal/forge-one/team/c.git",
+    );
+    assert.strictEqual(sibling?.provider.kind, "forgejo");
+    assert.strictEqual(sibling?.provider.baseUrl, "https://git.example.internal/forge-one");
+    assert.strictEqual(sibling?.remoteUrl, "https://git.example.internal/forge-one/team/c.git");
+    assert.deepStrictEqual(logins, ["fj", "tea", "fj", "tea"]);
   }),
 );
