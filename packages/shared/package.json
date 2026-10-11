@@ -451,6 +451,10 @@
       "types": "./src/threadSearch.ts",
       "import": "./src/threadSearch.ts"
     },
+    "./markdownImagePreviews": {
+      "types": "./src/markdownImagePreviews.ts",
+      "import": "./src/markdownImagePreviews.ts"
+    },
     "./markdownLinks": {
       "types": "./src/markdownLinks.ts",
       "import": "./src/markdownLinks.ts"

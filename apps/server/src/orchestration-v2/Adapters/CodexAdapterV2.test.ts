@@ -3733,6 +3733,193 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     });
   };
 
+  it.effect.each([
+    { name: "text-only final", reply: "Done.", image: {}, appends: true },
+    { name: "path mention", reply: "Saved to /tmp/generated image.png", image: {}, appends: true },
+    {
+      name: "ordinary link",
+      reply: "[Open](</tmp/generated image.png>)",
+      image: {},
+      appends: true,
+    },
+    {
+      name: "angle bracket path",
+      reply: "Done.",
+      image: { savedPath: "/tmp/a<b>.png" },
+      appends: true,
+      embed: "![Generated image](</tmp/a%3Cb%3E.png>)",
+    },
+    { name: "existing image", reply: "![Generated](</tmp/generated image.png>)", image: {} },
+    {
+      name: "existing plain image",
+      reply: "![Generated](/tmp/generated.png)",
+      image: { savedPath: "/tmp/generated.png" },
+    },
+    {
+      name: "Windows normalized embed",
+      reply: "![Generated](<C:/Users/example/generated%20image.png>)",
+      image: { savedPath: "C:\\Users\\example\\generated image.png" },
+    },
+    {
+      name: "reference image",
+      reply: "![Generated][image]\n\n[image]: </tmp/generated image.png>",
+      image: {},
+    },
+    {
+      name: "image example in code",
+      reply: "```markdown\n![Generated](</tmp/generated image.png>)\n```",
+      image: {},
+      appends: true,
+    },
+    { name: "incomplete status", reply: "Done.", image: { status: "inProgress" } },
+    { name: "failed status", reply: "Done.", image: { status: "failed" } },
+    {
+      name: "failure detail",
+      reply: "Done.",
+      image: { failure: { type: "usageLimitExceeded", limitId: "image-generation" } },
+    },
+    { name: "missing path", reply: "Done.", image: { savedPath: null } },
+    { name: "empty path", reply: "Done.", image: { savedPath: "" } },
+    { name: "no assistant message", reply: null, image: {} },
+  ])("projects native image generation: $name", ({ reply, image, appends, embed }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-native-image";
+        const savedPath = "/tmp/generated image.png";
+        const result = "aW1hZ2UtYnl0ZXMtbXVzdC1uZXZlci1yZWFjaC1jbGllbnRz";
+        const base = finalAnswerTranscript(
+          scenario,
+          reply === null ? [] : [{ id: "image-answer", text: reply }],
+        );
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...base.entries.slice(0, -1),
+            ...(["item/started", "item/completed"] as const).map((method) => ({
+              type: "emit_inbound" as const,
+              frame: {
+                method,
+                params: {
+                  threadId: `native-${scenario}-thread`,
+                  turnId: `native-${scenario}-turn`,
+                  item: {
+                    type: "imageGeneration",
+                    id: "generated-image",
+                    status: "completed",
+                    savedPath,
+                    result,
+                    ...image,
+                  },
+                },
+              },
+            })),
+            ...base.entries.slice(-1),
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-native-image"),
+            text: "Reply with the requested recovery marker.",
+          }),
+        );
+        yield* harness.firstTerminal;
+
+        const messages = assistantMessages(harness.events);
+        const final = messages.at(-1)?.message;
+        const markdown = embed ?? `![Generated image](</tmp/generated%20image.png>)`;
+        const expected = reply === null ? markdown : appends ? `${reply}\n\n${markdown}` : reply;
+        assert.strictEqual(final?.text, expected);
+        assert.strictEqual(final?.streaming, false);
+        assert.notInclude(encodeUnknownJson(harness.events), result);
+        if (appends) {
+          assert.lengthOf(messages, 2);
+          assert.strictEqual(final?.id, messages[0]?.message.id);
+          assert.strictEqual(final?.nodeId, messages[0]?.message.nodeId);
+        } else {
+          assert.lengthOf(messages, 1);
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["completed", "interrupted", "failed"] as const)(
+    "preserves completed images when a multi-image turn is %s",
+    (status) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = `codex-multiple-images-${status}`;
+          const base = finalAnswerTranscript(scenario, [
+            { id: "first-answer", text: "![Existing](/tmp/one.png)" },
+            { id: "last-answer", text: "Done." },
+          ]);
+          const imageBytes = "aW1hZ2UtYnl0ZXMtbXVzdC1uZXZlci1yZWFjaC1jbGllbnRz";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...base.entries.slice(0, -1),
+              ...["/tmp/one.png", "/tmp/two.png", "/tmp/two.png"].map((savedPath, index) => ({
+                type: "emit_inbound" as const,
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: `native-${scenario}-thread`,
+                    turnId: `native-${scenario}-turn`,
+                    item: {
+                      type: "imageGeneration",
+                      id: `generated-${index}`,
+                      status: "completed",
+                      savedPath,
+                      result: imageBytes,
+                    },
+                  },
+                },
+              })),
+              {
+                type: "emit_inbound",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: `native-${scenario}-thread`,
+                    turn: makeCodexReplayTurn({ id: `native-${scenario}-turn`, status }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`attempt-${scenario}`),
+              text: "Reply with the requested recovery marker.",
+            }),
+          );
+          yield* harness.firstTerminal;
+          const messages = assistantMessages(harness.events);
+          const final = messages.at(-1)?.message;
+          assert.strictEqual(final?.text, "Done.\n\n![Generated image](</tmp/two.png>)");
+          assert.strictEqual(final?.streaming, false);
+          assert.strictEqual(final?.id, messages[1]?.message.id);
+          assert.notInclude(encodeUnknownJson(harness.events), imageBytes);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
   it.effect("suppresses a trailing empty final answer after a non-empty final answer", () =>
     Effect.scoped(
       Effect.gen(function* () {

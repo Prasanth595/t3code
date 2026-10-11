@@ -1,3 +1,4 @@
+import { appendMissingImagePreviews } from "@t3tools/shared/markdownImagePreviews";
 import { revertCodexThread } from "../../provider/CodexThreadRevert.ts";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
@@ -1878,6 +1879,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const offeredContinuationItemsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const finalAnswerItemIdsByTurn = yield* Ref.make(new Map<string, Set<string>>());
         const completedFinalAnswerTextsByTurn = yield* Ref.make(new Map<string, Set<string>>());
+        const lastFinalAnswerByTurn = yield* Ref.make(
+          new Map<string, { readonly id: string; readonly text: string }>(),
+        );
+        const generatedImagesByTurn = yield* Ref.make(new Map<string, Map<string, string>>());
         // Native completion and the interrupt timeout share one finalization
         // path. Serialize the race so only one can publish terminal events.
         const turnTerminalizationPermit = yield* Semaphore.make(1);
@@ -2196,6 +2201,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return updated;
             });
             yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(lastFinalAnswerByTurn, (current) => {
+              if (!current.has(nativeTurnId)) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(nativeTurnId);
+              return updated;
+            });
+            yield* Ref.update(generatedImagesByTurn, (current) => {
               if (!current.has(nativeTurnId)) {
                 return current;
               }
@@ -3404,6 +3425,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 turnItem: artifacts.turnItem,
               });
               if (finalAnswerItem && update.completed) {
+                yield* Ref.update(lastFinalAnswerByTurn, (current) =>
+                  new Map(current).set(update.turnId, { id: update.itemId, text: update.text }),
+                );
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
                   const updated = new Map(current);
                   const texts = new Set(updated.get(update.turnId) ?? []);
@@ -4956,6 +4980,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return;
             }
 
+            if (payload.item.type === "imageGeneration") {
+              const { id, savedPath, status, failure } = payload.item;
+              if (savedPath?.trim() && status === "completed" && failure == null) {
+                yield* Ref.update(generatedImagesByTurn, (current) => {
+                  const updated = new Map(current);
+                  const images = new Map(updated.get(payload.turnId));
+                  images.set(id, savedPath);
+                  updated.set(payload.turnId, images);
+                  return updated;
+                });
+              }
+              return;
+            }
+
             if (payload.item.type !== "agentMessage") {
               return;
             }
@@ -5767,6 +5805,45 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               yield* agentMessageDeltas.flushTurn(input.nativeTurnId);
+              const images = (yield* Ref.get(generatedImagesByTurn)).get(input.nativeTurnId);
+              const firstImageItemId = images?.keys().next().value;
+              if (images !== undefined && firstImageItemId !== undefined) {
+                const finalAnswer = (yield* Ref.get(lastFinalAnswerByTurn)).get(input.nativeTurnId);
+                const text = appendMissingImagePreviews(
+                  finalAnswer?.text ?? "",
+                  images.values(),
+                  (yield* Ref.get(completedFinalAnswerTextsByTurn)).get(input.nativeTurnId),
+                );
+                // Settled timelines retain the final assistant message, so attach images there.
+                if (text !== (finalAnswer?.text ?? "")) {
+                  const artifacts = yield* buildAgentMessageArtifacts(
+                    input.context,
+                    { id: finalAnswer?.id ?? firstImageItemId, text },
+                    true,
+                  );
+                  yield* emitProviderEvent({
+                    type: "node.updated",
+                    driver: CODEX_PROVIDER,
+                    node: artifacts.node,
+                  });
+                  yield* emitProviderEvent({
+                    type: "message.updated",
+                    driver: CODEX_PROVIDER,
+                    message: artifacts.message,
+                  });
+                  yield* emitProviderEvent({
+                    type: "turn_item.updated",
+                    driver: CODEX_PROVIDER,
+                    turnItem: artifacts.turnItem,
+                  });
+                }
+              }
+              yield* Ref.update(generatedImagesByTurn, (current) => {
+                const updated = new Map(current);
+                updated.delete(input.nativeTurnId);
+                return updated;
+              });
+
               yield* reasoningDeltas.flushTurn(input.nativeTurnId);
               for (const [key, part] of reasoningParts) {
                 if (part.turnId === input.nativeTurnId) reasoningParts.delete(key);
@@ -5952,6 +6029,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }
               if (!retainSettledContext) {
                 yield* Ref.update(completedFinalAnswerTextsByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(lastFinalAnswerByTurn, (current) => {
+                  if (!current.has(input.nativeTurnId)) {
+                    return current;
+                  }
+                  const updated = new Map(current);
+                  updated.delete(input.nativeTurnId);
+                  return updated;
+                });
+                yield* Ref.update(generatedImagesByTurn, (current) => {
                   if (!current.has(input.nativeTurnId)) {
                     return current;
                   }
