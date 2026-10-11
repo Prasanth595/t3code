@@ -1676,13 +1676,7 @@ export interface ChatComposerProps {
   onAdvanceActivePendingUserInput: () => void;
   onDismissActivePendingUserInput: (requestId: RuntimeRequestId) => void;
   onPreviousActivePendingUserInputQuestion: () => void;
-  onChangeActivePendingUserInputCustomAnswer: (
-    questionId: string,
-    value: string,
-    nextCursor: number,
-    expandedCursor: number,
-    cursorAdjacentToMention: boolean,
-  ) => void;
+  onChangeActivePendingUserInputCustomAnswer: (questionId: string, value: string) => void;
 
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
@@ -3731,9 +3725,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
-          nextCursor,
-          expandedCursor,
-          cursorAdjacentToMention,
         );
         return;
       }
@@ -3927,13 +3918,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
-        onChangeActivePendingUserInputCustomAnswer(
-          activePendingQuestion.id,
-          next.text,
-          nextCursor,
-          nextExpandedCursor,
-          isLiteralPendingAnswer,
-        );
+        onChangeActivePendingUserInputCustomAnswer(activePendingQuestion.id, next.text);
       } else {
         setPrompt(next.text);
         onTypingGuardDraftChange();
