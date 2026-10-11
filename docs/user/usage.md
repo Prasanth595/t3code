@@ -13,6 +13,9 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
 
+To look at specific days, pick dates beside the period, or drag across the daily
+chart to zoom in. Double-click the chart to return to the period you had before zooming.
+
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.
 

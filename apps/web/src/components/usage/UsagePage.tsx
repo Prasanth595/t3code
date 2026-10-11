@@ -8,7 +8,13 @@ import {
   type EnvironmentId,
   type UsageProviderKind,
 } from "@t3tools/contracts";
-import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
+import {
+  CalendarIcon,
+  CircleAlertIcon,
+  ChevronDownIcon,
+  InfoIcon,
+  SlidersHorizontalIcon,
+} from "lucide-react";
 import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   cursorKeychainAccessEnvironments,
@@ -48,10 +54,13 @@ import {
   formatTokens,
   formatUsageContractMismatch,
   formatUsd,
+  makeRangeWindow,
   makeWindow,
 } from "@t3tools/shared/usageFormat";
 import { Button, InlineButton } from "../ui/button";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { Calendar } from "../ui/calendar";
+import { weekStartsOn } from "../../timestampFormat";
 import {
   Menu,
   MenuCheckboxItem,
@@ -125,12 +134,15 @@ export function UsagePage() {
   };
   const [windowSelection, setWindowSelection] = useState(() => ({
     days: preferences.windowDays,
+    custom: false,
     window: makeWindow(
       preferences.windowDays,
       undefined,
       preferences.windowDays === 1 ? "hour" : "day",
     ),
   }));
+  // The selection a chart zoom replaced, so double-click can restore it.
+  const zoomedFrom = useRef<typeof windowSelection | null>(null);
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -145,8 +157,8 @@ export function UsagePage() {
     () => new Set(preferences.hiddenProviders),
     [preferences.hiddenProviders],
   );
-  const { days: windowDays, window } = windowSelection;
-  const isPast24Hours = windowDays === 1;
+  const { days: windowDays, custom: isCustomWindow, window } = windowSelection;
+  const isPast24Hours = !isCustomWindow && windowDays === 1;
   const {
     merged: answeredUsage,
     environments,
@@ -276,11 +288,37 @@ export function UsagePage() {
   };
   const selectWindow = (days: number) => {
     if (!isUsageWindowDays(days)) return;
+    zoomedFrom.current = null;
     updatePreferences({ windowDays: days });
     setWindowSelection({
       days,
+      custom: false,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
+  };
+  const selectRange = (sinceDay: string, untilDay: string) => {
+    zoomedFrom.current = null;
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeRangeWindow(sinceDay, untilDay),
+    });
+  };
+  const zoomToRange = (sinceDay: string, untilDay: string) => {
+    zoomedFrom.current ??= windowSelection;
+    setWindowSelection({
+      days: windowDays,
+      custom: true,
+      window: makeRangeWindow(sinceDay, untilDay),
+    });
+  };
+  const resetZoom = () => {
+    const previous = zoomedFrom.current;
+    if (previous === null) return;
+    zoomedFrom.current = null;
+    // A preset is rebuilt so it ends today, not when the zoom started.
+    if (previous.custom) setWindowSelection(previous);
+    else selectWindow(previous.days);
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     if (nextMetric === "limits") setLimitsNow(Date.now());
@@ -343,14 +381,16 @@ export function UsagePage() {
       });
       return;
     }
-    const nextWindow = makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
+    const nextWindow = isCustomWindow
+      ? window
+      : makeWindow(windowDays, undefined, isPast24Hours ? "hour" : "day");
     if (
       nextWindow.sinceDay !== window.sinceDay ||
       nextWindow.untilDay !== window.untilDay ||
       nextWindow.sinceTime !== window.sinceTime ||
       nextWindow.untilTime !== window.untilTime
     ) {
-      setWindowSelection({ days: windowDays, window: nextWindow });
+      setWindowSelection({ days: windowDays, custom: false, window: nextWindow });
     }
     refreshingRef.current = true;
     setIsRefreshing(true);
@@ -431,12 +471,18 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
+        <UsageRangeFields
+          sinceDay={window.sinceDay}
+          untilDay={window.untilDay}
+          onChange={selectRange}
+          disabled={showingLimits}
+        />
         {/* The period does not apply to Limits, so it stays in place but
             disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
-          value={[String(windowDays)]}
+          value={isCustomWindow ? [] : [String(windowDays)]}
           disabled={showingLimits}
           onValueChange={(next) => {
             const value = next[0];
@@ -486,7 +532,7 @@ export function UsagePage() {
           </SelectPopup>
         </Select>
         <Select
-          value={String(windowDays)}
+          value={isCustomWindow ? "custom" : String(windowDays)}
           disabled={showingLimits}
           onValueChange={(value) => selectWindow(Number(value))}
         >
@@ -497,7 +543,9 @@ export function UsagePage() {
             className="w-auto min-w-0"
           >
             <SelectValue>
-              {WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
+              {isCustomWindow
+                ? "Custom"
+                : WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label}
             </SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -533,6 +581,14 @@ export function UsagePage() {
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="wide">
+            {showingLimits ? null : (
+              <UsageRangeFields
+                className="mb-4 flex-wrap xl:hidden"
+                sinceDay={window.sinceDay}
+                untilDay={window.untilDay}
+                onChange={selectRange}
+              />
+            )}
             {selectedEnvironments.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {environments.length === 0
@@ -707,10 +763,17 @@ export function UsagePage() {
                   </div>
 
                   <div className="flex min-w-0 flex-col gap-3">
-                    <h2 className="text-sm font-medium text-foreground">
-                      {shownHourly ? "Hourly" : "Daily"}{" "}
-                      {metric === "tokens" ? "processed tokens" : "cost"}
-                    </h2>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h2 className="text-sm font-medium text-foreground">
+                        {shownHourly ? "Hourly" : "Daily"}{" "}
+                        {metric === "tokens" ? "processed tokens" : "cost"}
+                      </h2>
+                      {shownHourly ? null : (
+                        <span className="text-3xs tracking-wide text-muted-foreground uppercase">
+                          drag to zoom · double-click resets
+                        </span>
+                      )}
+                    </div>
                     <UsageProviderChart
                       providers={activeProviders}
                       loadingProviders={chartLoadingProviders}
@@ -722,6 +785,8 @@ export function UsagePage() {
                       referenceTime={shownWindow.untilTime}
                       resolution={shownHourly ? "hour" : "day"}
                       timeZone={shownWindow.timeZone}
+                      onZoom={zoomToRange}
+                      onResetZoom={resetZoom}
                     />
                   </div>
                 </section>
@@ -1139,6 +1204,93 @@ function CursorEnableLimits({
         </div>
       </div>
     </section>
+  );
+}
+
+/** A `YYYY-MM-DD` usage day as a local-midnight date, which is what the calendar compares. */
+function dayToDate(day: string): Date {
+  const [year = 0, month = 1, dayOfMonth = 1] = day.split("-").map((part) => Number(part));
+  return new Date(year, month - 1, dayOfMonth);
+}
+
+/** From/To day pickers; choosing either bound selects a custom daily range. */
+function UsageRangeFields({
+  className,
+  sinceDay,
+  untilDay,
+  disabled = false,
+  onChange,
+}: {
+  readonly className?: string;
+  readonly sinceDay: string;
+  readonly untilDay: string;
+  readonly disabled?: boolean;
+  readonly onChange: (sinceDay: string, untilDay: string) => void;
+}) {
+  const since = dayToDate(sinceDay);
+  const until = dayToDate(untilDay);
+  return (
+    <div className={cn("flex w-fit items-center gap-1.5 text-xs text-muted-foreground", className)}>
+      <UsageDayPicker
+        label="From day"
+        value={since}
+        locked={disabled}
+        limit={{ after: until }}
+        onSelect={(date) => onChange(date.toLocaleDateString("en-CA"), untilDay)}
+      />
+      to
+      <UsageDayPicker
+        label="To day"
+        value={until}
+        locked={disabled}
+        limit={{ before: since }}
+        onSelect={(date) => onChange(sinceDay, date.toLocaleDateString("en-CA"))}
+      />
+    </div>
+  );
+}
+
+/** One bound of the range: a button showing the day that opens a calendar. */
+function UsageDayPicker({
+  label,
+  value,
+  locked,
+  limit,
+  onSelect,
+}: {
+  readonly label: string;
+  readonly value: Date;
+  /** The whole picker is off, as on the Limits tab. */
+  readonly locked: boolean;
+  /** Days beyond the other bound, which cannot be picked. */
+  readonly limit: { readonly after: Date } | { readonly before: Date };
+  readonly onSelect: (date: Date) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={<Button variant="outline" size="compact" aria-label={label} disabled={locked} />}
+      >
+        {value.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+        <CalendarIcon className="text-muted-foreground" />
+      </PopoverTrigger>
+      <PopoverPopup align="start" aria-label={label}>
+        <Calendar
+          mode="single"
+          required
+          selected={value}
+          defaultMonth={value}
+          {...(weekStartsOn === undefined ? {} : { weekStartsOn })}
+          // Usage cannot exist in the future, so those days are never offered.
+          disabled={[limit, { after: new Date() }]}
+          onSelect={(date) => {
+            onSelect(date);
+            setOpen(false);
+          }}
+        />
+      </PopoverPopup>
+    </Popover>
   );
 }
 
