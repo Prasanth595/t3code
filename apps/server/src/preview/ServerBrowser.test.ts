@@ -762,6 +762,34 @@ it.live("a popup becomes the agent's own tab and keeps its opener page", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a person's click on an agent tab shows the popup instead of leaving it hidden", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const manager = yield* Manager.PreviewManager;
+      const watcher = yield* browser.attachViewer(viewerInput(tabId, false));
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const opener = contexts[0]!.page;
+      const popup = makeContext();
+      opener.emit("popup", popup.page);
+      let shown = yield* Queue.take(viewer.output);
+      while (shown._tag !== "popup") shown = yield* Queue.take(viewer.output);
+      const sessions = (yield* manager.list({ threadId: scope.thread.threadId })).sessions;
+      const popupTab = sessions.find((session) => session.tabId === shown.tabId);
+      const opened = sessions.find((session) => session.tabId === tabId)!;
+      expect(popupTab).toMatchObject({
+        automationOwner: opened.automationOwner,
+        reveal: true,
+      });
+      expect((yield* Queue.clear(watcher.output)).some((item) => item._tag === "popup")).toBe(
+        false,
+      );
+      expect(opener.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("a tab opened to a file the browser cannot show reports the file to download", () =>
   Effect.scoped(
     Effect.gen(function* () {

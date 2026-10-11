@@ -1143,16 +1143,18 @@ const make = Effect.gen(function* () {
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
     const agentId = opener.control.agentId;
+    // Whoever holds the pointer clicked. Google results use target=_blank, so the
+    // page they asked for only exists as this popup. Hide it and the click looks dead.
+    const humanId = opener.control.controller;
     // A popup past an agent's limit closes; its page sees window.open return a closed window.
-    if (opener.closing || (agentId !== null && atTabLimit(agentId))) {
+    // A person driving the tab is not spending that hidden-tab budget.
+    if (opener.closing || (agentId !== null && humanId === null && atTabLimit(agentId))) {
       await popup.close().catch(constVoid);
       return;
     }
     const url = popup.url();
     // Captured now: the person whose click opened the popup gets switched to it.
-    const controller = [...opener.viewers].find(
-      (viewer) => viewer.id === opener.control.controller,
-    );
+    const controller = [...opener.viewers].find((viewer) => viewer.id === humanId);
     await Effect.runPromise(
       manager.open({
         threadId: opener.threadId,
@@ -1160,9 +1162,13 @@ const make = Effect.gen(function* () {
         runtime: "server",
         ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
         // Agent popups stay with the agent and only float when it asks, like its own opens.
-        ...(opener.control.agentId === null
+        // A person's click on that same tab has to come forward, or the link never shows.
+        ...(agentId === null
           ? {}
-          : { automationOwner: opener.control.agentId, reveal: false }),
+          : {
+              automationOwner: agentId,
+              ...(humanId === null ? { reveal: false } : { reveal: true }),
+            }),
         beforePublish: (snapshot) =>
           adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
             page: popup,
@@ -1172,8 +1178,7 @@ const make = Effect.gen(function* () {
     ).then(
       (snapshot) => {
         // The opener stays open behind it, so `window.opener` can still report back.
-        if (opener.control.agentId === null)
-          controller?.push({ _tag: "popup", tabId: snapshot.tabId });
+        if (humanId !== null) controller?.push({ _tag: "popup", tabId: snapshot.tabId });
       },
       async () => {
         await popup.close().catch(constVoid);
