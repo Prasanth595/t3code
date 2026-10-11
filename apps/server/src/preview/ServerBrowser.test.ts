@@ -1169,6 +1169,85 @@ it.live("sizes a desktop-drawn snapshot by the zoom the page has, not one still 
   ).pipe(Effect.provide(layer)),
 );
 
+// A 150% display at 100% zoom and the same display at 200%: both are 1280x800 in
+// device-independent pixels, so either state alone gives the same clip.
+const beforeZoom = { ratio: 1.5, width: 1280, height: 800, zoom: 1 };
+const afterZoom = { ratio: 3, width: 640, height: 400, zoom: 2 };
+
+/** A desktop page that applies its pending zoom right after the given read. */
+const applyZoomAfter = (
+  context: ReturnType<typeof makeContext>,
+  read: "evaluate" | "first-layout-metrics" | "every-evaluate",
+) => {
+  let current = beforeZoom;
+  let layoutReads = 0;
+  for (const session of context.sessions) {
+    const send = session.send.getMockImplementation()!;
+    session.send.mockImplementation(async (method, input) => {
+      if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+      if (method === "Page.createIsolatedWorld") return { executionContextId: 7 };
+      if (method === "Runtime.evaluate" && (input as { contextId?: number })?.contextId === 7) {
+        const { zoom: _zoom, ...reported } = current;
+        if (read === "evaluate") current = afterZoom;
+        if (read === "every-evaluate") current = current === beforeZoom ? afterZoom : beforeZoom;
+        return { result: { value: reported } };
+      }
+      if (method === "Page.getLayoutMetrics") {
+        const reply = { cssVisualViewport: { pageX: 0, pageY: 0, zoom: current.zoom } };
+        layoutReads += 1;
+        if (read === "first-layout-metrics" && layoutReads === 1) current = afterZoom;
+        return reply;
+      }
+      return send(method, input);
+    });
+  }
+};
+
+it.live.each(["evaluate", "first-layout-metrics"] as const)(
+  "sizes a desktop-drawn snapshot from one page state when the zoom lands after its %s read",
+  (read) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        desktopRendersNext = true;
+        const { browser, broker, tabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        yield* browser.attachViewer(viewerInput(tabId, false));
+        const context = desktopConnections[0]!.context;
+        yield* manager.adjust({ threadId: scope.thread.threadId, tabId, zoomFactor: 2 });
+        applyZoomAfter(context, read);
+        yield* broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        });
+        expect(captureClips(context)).toEqual([{ width: 1280, height: 800, scale: 1280 / 1920 }]);
+      }),
+    ).pipe(Effect.provide(layer)),
+);
+
+it.live("fails a desktop-drawn snapshot whose zoom keeps changing during its read", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      applyZoomAfter(context, "every-evaluate");
+      const failure = yield* Effect.flip(
+        broker.invoke<PreviewAutomationSnapshot>({
+          scope,
+          tabId,
+          operation: "snapshot",
+          input: {},
+        }),
+      );
+      expect(JSON.stringify(failure)).toContain("zoom kept changing");
+      expect(captureClips(context)).toEqual([]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("starts a zoomed desktop-drawn page's clip where it is scrolled to", () =>
   Effect.scoped(
     Effect.gen(function* () {

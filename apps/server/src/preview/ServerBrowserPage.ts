@@ -176,20 +176,37 @@ export const readPageMetrics = async (cdp: CDPSession) => {
     // Chromium reuses a named world; an unnamed one is created again on each call.
     worldName: "t3-preview-metrics",
   });
-  const { result } = await cdp.send("Runtime.evaluate", {
-    expression: "({ ratio: devicePixelRatio, width: innerWidth, height: innerHeight })",
-    contextId: executionContextId,
-    returnByValue: true,
-  });
-  const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
-  return {
-    ...(result.value as {
-      readonly ratio: number;
-      readonly width: number;
-      readonly height: number;
-    }),
-    zoom: cssVisualViewport.zoom ?? 1,
-  };
+  const readZoom = async () =>
+    (await cdp.send("Page.getLayoutMetrics")).cssVisualViewport.zoom ?? 1;
+  // The desktop applies a published zoom on its own schedule. Reading the zoom on both sides of
+  // the ratio and viewport read catches a change in between, which would pair old CSS sizes
+  // with the new zoom.
+  let zoom = await readZoom();
+  for (let attempt = 1; ; attempt += 1) {
+    const { result } = await cdp.send("Runtime.evaluate", {
+      expression: "({ ratio: devicePixelRatio, width: innerWidth, height: innerHeight })",
+      contextId: executionContextId,
+      returnByValue: true,
+    });
+    const zoomAfter = await readZoom();
+    if (zoomAfter === zoom) {
+      return {
+        ...(result.value as {
+          readonly ratio: number;
+          readonly width: number;
+          readonly height: number;
+        }),
+        zoom,
+      };
+    }
+    // A capture sized from a torn read is cropped and oversized, so fail instead.
+    if (attempt === 3) {
+      throw new Error(
+        "The page's zoom kept changing while the snapshot read its size. Try the snapshot again.",
+      );
+    }
+    zoom = zoomAfter;
+  }
 };
 
 // Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
