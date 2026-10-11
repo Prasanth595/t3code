@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { normalizeClaudeTurnTokenUsage } from "./ClaudeTurnTokenUsage.ts";
+import {
+  accumulateClaudeTurnTokenUsage,
+  completeClaudeTurnTokenUsage,
+  makeClaudeTurnTokenUsageAccumulator,
+  normalizeClaudeTurnTokenUsage,
+} from "./ClaudeTurnTokenUsage.ts";
 import {
   accumulateCodexTurnTokenUsage,
   completeCodexTurnTokenUsage,
@@ -129,5 +134,103 @@ describe("billable native turn usage", () => {
         "interrupted",
       ),
     ).toMatchObject({ usageStatus: "partial", inputTokens: 4, outputTokens: 2 });
+  });
+
+  it("bills a steered Claude turn across its aborted and final segments", () => {
+    // A mid-turn steer ends the pre-steer segment with an aborted result the
+    // turn survives; its usage only covers the calls before the steer, the
+    // final success only the calls after (issue #18245).
+    const preSteer = {
+      subtype: "error_during_execution",
+      usage: {
+        input_tokens: 120,
+        cache_read_input_tokens: 2000,
+        cache_creation_input_tokens: 500,
+        output_tokens: 40,
+        output_tokens_details: { thinking_tokens: 20 },
+      },
+    } as const;
+    const postSteer = {
+      subtype: "success",
+      usage: {
+        input_tokens: 3,
+        cache_read_input_tokens: 9455,
+        cache_creation_input_tokens: 2347,
+        output_tokens: 6,
+      },
+    } as const;
+    const accumulator = makeClaudeTurnTokenUsageAccumulator();
+    accumulateClaudeTurnTokenUsage(accumulator, preSteer);
+    accumulateClaudeTurnTokenUsage(accumulator, postSteer);
+    expect(completeClaudeTurnTokenUsage(accumulator, postSteer, false, "completed")).toEqual({
+      usageStatus: "complete",
+      usageScope: "main_agent",
+      hasSubagents: false,
+      inputTokens: 120 + 3 + 2000 + 500 + 9455 + 2347,
+      cachedInputTokens: 2000 + 9455,
+      cacheCreationTokens: 500 + 2347,
+      outputTokens: 40 + 6,
+      reasoningTokens: 20,
+    });
+  });
+
+  it("bills a single-result Claude turn from its final result unchanged", () => {
+    const result = {
+      subtype: "success",
+      usage: { input_tokens: 4, cache_read_input_tokens: 10, output_tokens: 2 },
+    } as const;
+    const accumulator = makeClaudeTurnTokenUsageAccumulator();
+    accumulateClaudeTurnTokenUsage(accumulator, result);
+    expect(completeClaudeTurnTokenUsage(accumulator, result, false, "completed")).toEqual(
+      normalizeClaudeTurnTokenUsage(result, false, "completed"),
+    );
+  });
+
+  it("does not double-count an abort result that settles an interrupted steered turn", () => {
+    const aborted = {
+      subtype: "error_during_execution",
+      usage: { input_tokens: 120, output_tokens: 40 },
+    } as const;
+    const accumulator = makeClaudeTurnTokenUsageAccumulator();
+    accumulateClaudeTurnTokenUsage(accumulator, aborted);
+    expect(completeClaudeTurnTokenUsage(accumulator, aborted, false, "interrupted")).toEqual(
+      normalizeClaudeTurnTokenUsage(aborted, false, "interrupted"),
+    );
+  });
+
+  it("bills the folded pre-steer usage when no final result settles the turn", () => {
+    const aborted = {
+      subtype: "error_during_execution",
+      usage: { input_tokens: 120, cache_read_input_tokens: 2000, output_tokens: 40 },
+    } as const;
+    const accumulator = makeClaudeTurnTokenUsageAccumulator();
+    accumulateClaudeTurnTokenUsage(accumulator, aborted);
+    expect(
+      completeClaudeTurnTokenUsage(accumulator, undefined, false, "interrupted"),
+    ).toMatchObject({ usageStatus: "partial", inputTokens: 2120, outputTokens: 40 });
+  });
+
+  it("keeps a steered turn's input unknown when a segment misreports cache reads", () => {
+    const accumulator = makeClaudeTurnTokenUsageAccumulator();
+    accumulateClaudeTurnTokenUsage(accumulator, {
+      subtype: "error_during_execution",
+      usage: { input_tokens: 120, cache_read_input_tokens: -5, output_tokens: 40 },
+    });
+    accumulateClaudeTurnTokenUsage(accumulator, {
+      subtype: "success",
+      usage: { input_tokens: 3, cache_read_input_tokens: 10, output_tokens: 6 },
+    });
+    const usage = completeClaudeTurnTokenUsage(
+      accumulator,
+      {
+        subtype: "success",
+        usage: { input_tokens: 3, cache_read_input_tokens: 10, output_tokens: 6 },
+      },
+      false,
+      "completed",
+    );
+    expect(usage.usageStatus).toBe("partial");
+    expect(usage.inputTokens).toBeUndefined();
+    expect(usage.outputTokens).toBe(46);
   });
 });

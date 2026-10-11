@@ -14,7 +14,12 @@ import {
 } from "./claudeWorkflowProgress.ts";
 
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
-import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
+import {
+  accumulateClaudeTurnTokenUsage,
+  completeClaudeTurnTokenUsage,
+  makeClaudeTurnTokenUsageAccumulator,
+  type ClaudeTurnTokenUsageAccumulator,
+} from "../../provider/ClaudeTurnTokenUsage.ts";
 import {
   type CanUseTool,
   forkSession as forkClaudeSession,
@@ -2891,6 +2896,12 @@ interface ActiveClaudeTurnContext {
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
+  // Every SDK result settling part of this turn folds its usage here. A
+  // mid-turn steer ends the pre-steer segment with an aborted result the turn
+  // survives, and each result's usage covers only its own segment, so
+  // finalizeActiveTurn bills the fold instead of the final result alone
+  // (see ClaudeTurnTokenUsage.ts).
+  readonly turnTokenUsage: ClaudeTurnTokenUsageAccumulator;
   // Item ordinals allocated in this turn. Later turns never look items up
   // here: a subagent resumed from another turn keeps its ordinal on the
   // session subagent registry.
@@ -5858,7 +5869,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     status: input.status,
                     completedAt: input.completedAt,
                   }),
-                  turnTokenUsage: normalizeClaudeTurnTokenUsage(
+                  turnTokenUsage: completeClaudeTurnTokenUsage(
+                    input.context.turnTokenUsage,
                     input.result,
                     input.context.subagentsByTaskId.size > 0 ||
                       input.context.subagentsByToolUseId.size > 0,
@@ -7544,6 +7556,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "result") {
+            // Every result settles one segment of this turn and carries only
+            // its own segment's usage. Fold it before the steering-abort drop
+            // below, so a steered turn's pre-steer calls stay billable.
+            accumulateClaudeTurnTokenUsage(context.turnTokenUsage, message);
             const completedAt = yield* DateTime.now;
             const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
             const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
@@ -8430,6 +8446,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               providerTurnId,
               providerTurnOrdinal,
               startedAt,
+              turnTokenUsage: makeClaudeTurnTokenUsageAccumulator(),
               itemOrdinals: new Map(),
               assistant: {
                 fallbackText: "",

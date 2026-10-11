@@ -36,6 +36,7 @@ import { claudeMcpToolPresentationInput } from "./claude_mcp_tool_presentation/i
 import { assertClaudeMcpToolPresentationOutput } from "./claude_mcp_tool_presentation/output.ts";
 import { claudeResultIsErrorInput } from "./claude_result_is_error/input.ts";
 import { assertClaudeResultIsErrorOutput } from "./claude_result_is_error/output.ts";
+import { assertClaudeSteeringUsageOutput } from "./claude_steering_usage/claude_output.ts";
 import { grokAutoBlockedCommandInput } from "./grok_auto_blocked_command/input.ts";
 import { assertGrokAutoBlockedCommandOutput } from "./grok_auto_blocked_command/output.ts";
 import { grokBackgroundBashInput } from "./grok_background_bash/input.ts";
@@ -1462,6 +1463,25 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         transcriptFile: new URL("./message_steering/pi_transcript.ndjson", import.meta.url),
         modelSelection: PI_MODEL_SELECTION,
         assertOutput: assertPiMessageSteeringOutput,
+      },
+    ],
+  },
+  {
+    // The message_steering capture aborted before any API response, so its
+    // aborted result reports zeroed usage and cannot catch the undercount.
+    // This variant carries pre-steer usage on the aborted segment (issue
+    // #18245): the steered turn's billable usage must span both results.
+    name: "claude_steering_usage",
+    buildInput: messageSteeringInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        transcriptFile: new URL(
+          "./claude_steering_usage/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeSteeringUsageOutput,
       },
     ],
   },
