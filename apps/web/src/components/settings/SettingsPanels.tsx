@@ -149,6 +149,7 @@ import {
   getChangedBrowserSettingLabels,
   getChangedTypographySettingLabels,
   normalizeIntervalSeconds,
+  normalizeProviderHealthIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
@@ -1008,14 +1009,14 @@ function BackgroundActivityAdvancedDialog({
                   step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
                   size="sm"
                   className="w-32"
-                  onValueChange={(value) =>
+                  onValueCommitted={(value) =>
                     updateSettings(
                       backgroundActivityOverrideSettings(
                         settings.backgroundActivity,
                         resolvedBackgroundActivity,
                         {
                           providerHealthRefreshInterval: Duration.seconds(
-                            normalizeIntervalSeconds(value),
+                            normalizeProviderHealthIntervalSeconds(value),
                           ),
                         },
                       ),

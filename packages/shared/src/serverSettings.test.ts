@@ -811,6 +811,42 @@ describe("serverSettings helpers", () => {
 
     expect(resolved.pauseWhenOnBattery).toBe(false);
   });
+
+  describe("provider health interval floor", () => {
+    const resolveInterval = (override: Duration.Duration) =>
+      Duration.toMillis(
+        resolveServerBackgroundActivitySettings({
+          ...DEFAULT_SERVER_SETTINGS,
+          backgroundActivity: {
+            schemaVersion: 1,
+            profile: "custom",
+            baseProfile: "balanced",
+            overrides: { providerHealthRefreshInterval: override },
+          },
+        }).providerHealthRefreshInterval,
+      );
+
+    it("lifts a persisted override below the minimum to the minimum", () => {
+      expect(resolveInterval(Duration.seconds(5))).toBe(30_000);
+    });
+
+    it("lifts a legacy flat interval below the minimum", () => {
+      expect(
+        Duration.toMillis(
+          resolveServerBackgroundActivitySettings({
+            ...DEFAULT_SERVER_SETTINGS,
+            providerHealthRefreshInterval: Duration.seconds(1),
+          }).providerHealthRefreshInterval,
+        ),
+      ).toBe(30_000);
+    });
+
+    it("keeps zero (disabled) and values at or above the minimum", () => {
+      expect(resolveInterval(Duration.zero)).toBe(0);
+      expect(resolveInterval(Duration.seconds(30))).toBe(30_000);
+      expect(resolveInterval(Duration.seconds(45))).toBe(45_000);
+    });
+  });
 });
 
 describe("worktreesDirectory", () => {

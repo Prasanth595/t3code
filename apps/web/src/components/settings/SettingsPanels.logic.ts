@@ -8,7 +8,10 @@ import type {
   SidebarProjectGroupingMode,
   UnifiedSettings,
 } from "@t3tools/contracts";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  MIN_PROVIDER_HEALTH_REFRESH_INTERVAL,
+} from "@t3tools/contracts/settings";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -293,6 +296,17 @@ export function normalizeIntervalSeconds(value: number | null, minimum = 0): num
     return minimum;
   }
   return Math.max(minimum, Math.round(value));
+}
+
+/**
+ * Seconds to persist for a committed provider health interval: 0 disables
+ * periodic checks, anything else is at least the server's minimum.
+ */
+export function normalizeProviderHealthIntervalSeconds(value: number | null): number {
+  const seconds = normalizeIntervalSeconds(value);
+  return seconds === 0
+    ? 0
+    : Math.max(seconds, Duration.toMillis(MIN_PROVIDER_HEALTH_REFRESH_INTERVAL) / 1_000);
 }
 
 export function backgroundActivityOverrideSettings(

@@ -860,6 +860,8 @@ export interface BranchNamingOptions {
 
 export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 export const DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.minutes(5);
+/** Shortest positive provider health interval. 0 still disables periodic checks. */
+export const MIN_PROVIDER_HEALTH_REFRESH_INTERVAL = Duration.seconds(30);
 
 export const BackgroundActivityProfile = Schema.Literals([
   "balanced",

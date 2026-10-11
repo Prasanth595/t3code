@@ -16,6 +16,7 @@ import {
   getChangedTypographySettingLabels,
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
+  normalizeProviderHealthIntervalSeconds,
   projectGroupingModeFromToggle,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
@@ -253,5 +254,15 @@ describe("getChangedBrowserSettingLabels", () => {
       "Open links in",
       "Floating preview",
     ]);
+  });
+});
+
+describe("provider health interval input", () => {
+  it("keeps 0 as disabled and lifts other committed values to the 30s minimum", () => {
+    expect(normalizeProviderHealthIntervalSeconds(0)).toBe(0);
+    expect(normalizeProviderHealthIntervalSeconds(null)).toBe(0);
+    expect(normalizeProviderHealthIntervalSeconds(5)).toBe(30);
+    expect(normalizeProviderHealthIntervalSeconds(30)).toBe(30);
+    expect(normalizeProviderHealthIntervalSeconds(600)).toBe(600);
   });
 });

@@ -102,7 +102,7 @@ import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
   durationToSeconds,
-  normalizeIntervalSeconds,
+  normalizeProviderHealthIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
 } from "./SettingsPanels.logic";
 import {
@@ -1244,14 +1244,14 @@ export function EnvironmentProviderSettings({
                 step={PROVIDER_HEALTH_INTERVAL_STEP_SECONDS}
                 size="sm"
                 className="w-32"
-                onValueChange={(value) =>
+                onValueCommitted={(value) =>
                   updateSettings(
                     backgroundActivityOverrideSettings(
                       settings.backgroundActivity,
                       resolvedBackgroundActivity,
                       {
                         providerHealthRefreshInterval: Duration.seconds(
-                          normalizeIntervalSeconds(value),
+                          normalizeProviderHealthIntervalSeconds(value),
                         ),
                       },
                     ),

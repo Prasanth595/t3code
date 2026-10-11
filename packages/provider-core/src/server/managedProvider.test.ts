@@ -348,7 +348,8 @@ describe("makeManagedServerProvider", () => {
         yield* PubSub.publish(serverSettingsChanges, nextServerSettings);
         yield* Effect.yieldNow;
 
-        yield* TestClock.adjust("999 millis");
+        // A 1s interval is lifted to the 30s minimum, so nothing runs at 1s.
+        yield* TestClock.adjust("29999 millis");
         assert.strictEqual(yield* Ref.get(checkCalls), 1);
         yield* TestClock.adjust("1 millis");
         yield* Deferred.await(periodicCheckDone);
