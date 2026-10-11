@@ -1,10 +1,9 @@
 [Unit]
-Description=Check for a new T3 Code fork release every hour
+Description=Check fork main for a new T3 Code server every minute
 
 [Timer]
-OnCalendar=hourly
-RandomizedDelaySec=5min
-Persistent=true
+OnBootSec=2min
+OnUnitInactiveSec=1min
 
 [Install]
 WantedBy=timers.target

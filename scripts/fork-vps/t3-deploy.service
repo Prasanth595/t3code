@@ -1,5 +1,5 @@
 [Unit]
-Description=Deploy the newest T3 Code fork release
+Description=Deploy the newest T3 Code fork main
 After=network-online.target
 
 [Service]
