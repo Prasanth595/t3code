@@ -1242,15 +1242,17 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
 
 interface KeybindingsGroupsProps extends KeybindingRowActions {
   groups: ReadonlyArray<KeybindingGroup>;
+  showSkillTrigger: boolean;
   anchorIds: ReadonlyMap<string, string>;
   savingCommand: KeybindingCommand | null;
 }
 
 /** One titled section per command area, each holding its binding rows. */
 function KeybindingsGroups(props: KeybindingsGroupsProps) {
-  const { groups, anchorIds, savingCommand, ...rowActions } = props;
+  const { groups, anchorIds, savingCommand, showSkillTrigger, ...rowActions } = props;
   return groups.map((group) => (
     <SettingsSection key={group.id} id={`keybindings-${group.id}`} title={group.title}>
+      {group.id === "composer" && showSkillTrigger ? <SkillTriggerSetting /> : null}
       {group.rows.map((row) => (
         <KeybindingSettingsRow
           key={row.id}
@@ -1375,7 +1377,13 @@ export function KeybindingsSettingsPanel() {
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const [isAddingBinding, setIsAddingBinding] = useState(false);
   const rows = useMemo(() => buildKeybindingRows(keybindings, query), [keybindings, query]);
-  const groups = useMemo(() => groupKeybindingRows(rows), [rows]);
+  const showSkillTrigger = searchableSetting("skill-trigger-character").title.toLowerCase().includes(query.trim().toLowerCase());
+  const groups = useMemo(() => {
+    const groups = groupKeybindingRows(rows);
+    return showSkillTrigger && !groups.some((group) => group.id === "composer")
+      ? [...groups, { id: "composer", title: "Composer", rows: [] }]
+      : groups;
+  }, [rows, showSkillTrigger]);
   // Settings search jumps to a command, so only its first row anchors.
   const anchorIds = useMemo(() => {
     const ids = new Map<string, string>();
@@ -1581,12 +1589,10 @@ export function KeybindingsSettingsPanel() {
           </SettingsGroup>
         ) : null}
 
-        {searchableSetting("skill-trigger-character").title.toLowerCase().includes(query.trim().toLowerCase()) ? (
-          <SettingsGroup><SkillTriggerSetting /></SettingsGroup>
-        ) : null}
         {groups.length > 0 ? (
           <KeybindingsGroups
             groups={groups}
+            showSkillTrigger={showSkillTrigger}
             anchorIds={anchorIds}
             savingCommand={savingCommand}
             {...rowActions}
