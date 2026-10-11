@@ -1,11 +1,18 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- tests replace the native OS lookup and sync its ESM bindings.
 import * as NodeModule from "node:module";
-import * as NodeOS from "node:os";
+import type * as NodeOS from "node:os";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as HostProcess from "./HostProcess.ts";
 
 const mutableOs = NodeModule.createRequire(import.meta.url)("node:os") as typeof NodeOS;
+const userInfo = {
+  username: "remote-user",
+  uid: 1000,
+  gid: 1000,
+  shell: null,
+  homedir: "/home/remote-user",
+} satisfies NodeOS.UserInfo<string>;
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -14,7 +21,6 @@ afterEach(() => {
 
 describe("Username", () => {
   it("uses the OS login account", () => {
-    const userInfo = NodeOS.userInfo();
     vi.spyOn(mutableOs, "userInfo").mockReturnValue({ ...userInfo, username: " remote-user " });
     NodeModule.syncBuiltinESMExports();
     expect(HostProcess.Username.defaultValue()).toBe("remote-user");
@@ -29,7 +35,6 @@ describe("Username", () => {
   });
 
   it("leaves an empty username unavailable", () => {
-    const userInfo = NodeOS.userInfo();
     vi.spyOn(mutableOs, "userInfo").mockReturnValue({ ...userInfo, username: " " });
     NodeModule.syncBuiltinESMExports();
     expect(HostProcess.Username.defaultValue()).toBeNull();
