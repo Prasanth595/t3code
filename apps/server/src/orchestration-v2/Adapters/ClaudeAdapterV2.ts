@@ -8597,7 +8597,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     continue;
                   }
                   if (entry.type !== "result") {
-                    yield* handleSdkMessage({ query: querySession.query, message: entry, replayedWake: true });
+                    yield* handleSdkMessage({
+                      query: querySession.query,
+                      message: entry,
+                      replayedWake: true,
+                    });
                   }
                   yield* Ref.update(wakeBuffers, (current) => {
                     const buffered = current.get(nativeThreadId);

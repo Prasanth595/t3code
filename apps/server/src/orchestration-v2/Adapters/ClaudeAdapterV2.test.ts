@@ -3316,7 +3316,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.class, "usage_limit");
       assert.equal(terminal.failure.resetAt, expectedResetAt);
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect.each([
@@ -3423,7 +3427,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         if (terminal.status !== "failed") return;
         assert.equal(terminal.failure.class, "usage_limit");
         assert.equal(terminal.failure.resetAt, expected);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   const crossTurnResetCases: ReadonlyArray<{
@@ -3570,7 +3578,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }
           }
         }
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect(
@@ -3663,7 +3675,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(terminal.failure.resetAt, limitResetAt);
         }
         assert.lengthOf(harness.offeredMessages, 1);
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
   );
 
   it.effect.each([
