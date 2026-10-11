@@ -253,6 +253,13 @@ const mobileEndorsementRows = [
             <div class="harness-tag">Google sign-in</div>
           </div>
         </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/fx-dark.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">fx</div>
+            <div class="harness-tag">fx login</div>
+          </div>
+        </div>
       </div>
 
       <div class="harness-footer">
@@ -830,10 +837,12 @@ const mobileEndorsementRows = [
   .harness-name {
     font-size: 14px; font-weight: 500;
     letter-spacing: -0.01em; margin-bottom: 2px;
+    overflow-wrap: anywhere;
   }
   .harness-tag {
     font-family: var(--font-mono);
     font-size: 11px; color: var(--fg-dim);
+    overflow-wrap: anywhere;
   }
 
   .harness-footer {
