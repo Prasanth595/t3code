@@ -646,6 +646,19 @@ function ThreadRouteContent(
     });
   }, [composer.interruptibleRunId, interruptThreadTurn, selectedThread]);
 
+  const canStopBackgroundWork =
+    selectedThread !== null &&
+    selectedThread !== undefined &&
+    readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope);
+  // No runId: the server stops whatever the settled thread still runs.
+  const handleStopBackgroundWork = useCallback(async () => {
+    if (!selectedThread) return;
+    await interruptThreadTurn({
+      environmentId: selectedThread.environmentId,
+      input: { threadId: selectedThread.id },
+    });
+  }, [interruptThreadTurn, selectedThread]);
+
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {
       terminalDebugLog("terminal-menu:open-existing", {
@@ -1064,6 +1077,7 @@ function ThreadRouteContent(
           onRemoveDraftImage={composer.onRemoveDraftImage}
           serverConfig={serverConfig}
           onStopThread={awaitingBootstrapTurn ? handleCancelWorktreeSetup : handleStopThread}
+          onStopBackgroundWork={canStopBackgroundWork ? handleStopBackgroundWork : null}
           onSendMessage={composer.onSendMessage}
           onReconnectEnvironment={handleReconnectEnvironment}
           canSwitchThreadProvider={composer.canSwitchThreadProvider}
