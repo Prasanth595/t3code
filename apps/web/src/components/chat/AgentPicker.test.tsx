@@ -202,3 +202,27 @@ it("does not collide custom agents whose id is 'default' or 'none' with control 
   choose("control:default");
   expect(label()).toBe("Agent");
 });
+
+it("renders an explicit trigger label and suppresses the tier badge when triggerLabel is provided", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  act(() => {
+    renderer = create(
+      <AgentPicker
+        agents={sampleAgents}
+        selectedAgentId={AgentId.make("code-reviewer")}
+        onSelectAgent={() => {}}
+        triggerLabel="Mixed"
+      />,
+    );
+  });
+  const label = renderer.root
+    .findByProps({ "data-composer-control-label": true })
+    .children.join("");
+  expect(label).toBe("Mixed");
+  expect(
+    renderer.root
+      .findAllByType("span")
+      .map((s) => s.children.join(""))
+      .filter((t) => t === "Reasoning"),
+  ).toHaveLength(0);
+});

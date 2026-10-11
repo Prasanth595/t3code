@@ -398,6 +398,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 ? "New threads in this project do not use a custom agent by default."
                 : "New threads do not use a custom agent by default."
             }
+            {...(mixedAgent ? { triggerLabel: "Mixed" } : {})}
             getAgentDisabledReason={agentDisabledReason}
             disabled={unavailable || (isAgentRosterPending && agentRoster.data === null)}
             triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}

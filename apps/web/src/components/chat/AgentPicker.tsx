@@ -186,6 +186,7 @@ export interface AgentPickerProps extends AgentPickerMenuContentProps {
   hidden?: boolean | undefined;
   className?: string | undefined;
   triggerClassName?: string | undefined;
+  triggerLabel?: string | undefined;
 }
 
 export const AgentPicker = memo(function AgentPicker({
@@ -205,6 +206,7 @@ export const AgentPicker = memo(function AgentPicker({
   hidden = false,
   className,
   triggerClassName,
+  triggerLabel: propsTriggerLabel,
 }: AgentPickerProps) {
   const [open, setOpen] = useComposerMenuState(hidden);
   const menuProps = useComposerMenuProps();
@@ -217,13 +219,15 @@ export const AgentPicker = memo(function AgentPicker({
     ? (agents.find((agent) => agent.id === defaultAgentId) ?? null)
     : null;
 
-  const triggerLabel = activeAgent
-    ? activeAgent.name
-    : allowNone && selectedAgentId === null
-      ? noneLabel
-      : defaultAgent
-        ? `${defaultAgent.name} (Default)`
-        : "Agent";
+  const triggerLabel =
+    propsTriggerLabel ??
+    (activeAgent
+      ? activeAgent.name
+      : allowNone && selectedAgentId === null
+        ? noneLabel
+        : defaultAgent
+          ? `${defaultAgent.name} (Default)`
+          : "Agent");
 
   return (
     <Menu open={open} onOpenChange={setOpen}>
@@ -241,7 +245,7 @@ export const AgentPicker = memo(function AgentPicker({
         <span data-composer-control-label className="max-w-28 truncate text-left sm:max-w-36">
           {triggerLabel}
         </span>
-        {activeAgent?.tier ? (
+        {propsTriggerLabel === undefined && activeAgent?.tier ? (
           <Badge variant="outline" size="sm" className="hidden sm:inline-flex">
             {activeAgent.tier === "economy" ? "Economy" : "Reasoning"}
           </Badge>
