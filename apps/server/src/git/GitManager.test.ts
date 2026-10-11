@@ -2624,22 +2624,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       ]);
       const calls: SourceControlHost.SourceControlProcessInput[] = [];
+      const host = TestSourceControlHost.layer({
+        process: {
+          run: (input) =>
+            Effect.sync(() => {
+              calls.push(input);
+              return fakeGhOutput(output);
+            }),
+        },
+      });
       const provider = yield* GitLabSourceControlProvider.make.pipe(
-        Effect.provide(
-          GitLabCli.layer.pipe(
-            Layer.provide(
-              TestSourceControlHost.layer({
-                process: {
-                  run: (input) =>
-                    Effect.sync(() => {
-                      calls.push(input);
-                      return fakeGhOutput(output);
-                    }),
-                },
-              }),
-            ),
-          ),
-        ),
+        Effect.provide(Layer.mergeAll(GitLabCli.layer.pipe(Layer.provide(host)), host)),
       );
       const { manager } = yield* makeManager({ sourceControlProvider: provider });
 
@@ -5069,6 +5064,59 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           call.includes(`pr create --base ${baseBranch} --head feature/configured-base`),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect("passes a non-GitHub provider's change request template to content generation", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature-gitlab-template"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+      yield* runGit(repoDir, ["add", "changes.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature-gitlab-template"]);
+      yield* runGit(repoDir, ["config", "branch.feature-gitlab-template.gh-merge-base", "main"]);
+      let generatedChangeRequestTemplate: string | undefined;
+      const templateReads: Array<{ cwd: string; treeish: string }> = [];
+      const { service: fakeProvider } = createGitHubProviderWithFakeGh({
+        prListSequence: [
+          "[]",
+          JSON.stringify([
+            {
+              number: 5,
+              title: "Template follows the host",
+              url: "https://gitlab.com/group/project/-/merge_requests/5",
+              baseRefName: "main",
+              headRefName: "feature-gitlab-template",
+            },
+          ]),
+        ],
+      });
+
+      const { manager } = yield* makeManager({
+        sourceControlProvider: {
+          ...fakeProvider,
+          kind: SourceControlProviderKind.make("gitlab"),
+          readChangeRequestTemplate: (input) =>
+            Effect.sync(() => {
+              templateReads.push(input);
+              return Option.some("## Merge request checklist");
+            }),
+        },
+        textGeneration: {
+          generatePrContent: (input) => {
+            generatedChangeRequestTemplate = input.changeRequestTemplate;
+            return Effect.succeed({ title: "Template follows the host", body: "Body" });
+          },
+        },
+      });
+      yield* runStackedAction(manager, { cwd: repoDir, action: "commit_push_pr" });
+
+      expect(generatedChangeRequestTemplate).toBe("## Merge request checklist");
+      expect(templateReads).toHaveLength(1);
     }),
   );
 

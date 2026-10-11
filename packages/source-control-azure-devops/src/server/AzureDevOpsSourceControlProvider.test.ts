@@ -3,13 +3,20 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import { ChildProcessSpawner } from "effect/process";
 
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsSourceControlProvider from "./AzureDevOpsSourceControlProvider.ts";
 
 function makeProvider(azure: Partial<AzureDevOpsCli.AzureDevOpsCli["Service"]>) {
   return AzureDevOpsSourceControlProvider.make.pipe(
-    Effect.provide(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)(azure)),
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)(azure),
+        TestSourceControlHost.layer(),
+      ),
+    ),
   );
 }
 
@@ -118,5 +125,34 @@ it.effect("creates Azure DevOps PRs through provider-neutral input names", () =>
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
     });
+  }),
+);
+
+it.effect("reads the change request template through the host's git", () =>
+  Effect.gen(function* () {
+    const gitArgs: Array<ReadonlyArray<string>> = [];
+    const host = TestSourceControlHost.layer({
+      git: {
+        execute: (input) =>
+          Effect.sync(() => {
+            gitArgs.push(input.args);
+            return {
+              exitCode: ChildProcessSpawner.ExitCode(0),
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            };
+          }),
+      },
+    });
+    const provider = yield* AzureDevOpsSourceControlProvider.make.pipe(
+      Effect.provide(Layer.mergeAll(Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}), host)),
+    );
+
+    const template = yield* provider.readChangeRequestTemplate!({ cwd: "/repo", treeish: "main" });
+
+    assert.isTrue(Option.isNone(template));
+    assert.deepStrictEqual(gitArgs[0]?.slice(0, 5), ["ls-tree", "-r", "-z", "--full-tree", "main"]);
   }),
 );

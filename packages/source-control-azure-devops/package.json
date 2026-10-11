@@ -7,6 +7,10 @@
       "types": "./src/client/definition.ts",
       "import": "./src/client/definition.ts"
     },
+    "./server/azureDevOpsChangeRequestTemplate": {
+      "types": "./src/server/azureDevOpsChangeRequestTemplate.ts",
+      "import": "./src/server/azureDevOpsChangeRequestTemplate.ts"
+    },
     "./server/AzureDevOpsCli": {
       "types": "./src/server/AzureDevOpsCli.ts",
       "import": "./src/server/AzureDevOpsCli.ts"

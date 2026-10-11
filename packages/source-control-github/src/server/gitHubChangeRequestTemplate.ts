@@ -8,11 +8,12 @@ import type { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-
-const TEMPLATE_MAX_BYTES = 8_000;
-const TREE_LIST_MAX_BYTES = 100_000;
-const TRUNCATION_MARKER = "[truncated]";
+import {
+  listTemplateEntries,
+  readTemplateBlob,
+  type ExecuteGit,
+  type TemplateTreeEntry,
+} from "@t3tools/source-control-core/server/changeRequestTemplate";
 
 const TEMPLATE_PATHS = [
   ".github/pull_request_template.md",
@@ -30,68 +31,6 @@ const TEMPLATE_DIRECTORIES = [
 ] as const;
 
 const TREE_PATHS = [...TEMPLATE_PATHS, ...TEMPLATE_DIRECTORIES] as const;
-
-type ExecuteGit = SourceControlHost.SourceControlHost["Service"]["git"]["execute"];
-
-interface TemplateTreeEntry {
-  readonly objectId: string;
-  readonly path: string;
-}
-
-function parseTemplateTreeEntries(output: string): ReadonlyArray<TemplateTreeEntry> {
-  const entries: TemplateTreeEntry[] = [];
-  for (const record of output.split("\0")) {
-    if (record.length === 0) {
-      continue;
-    }
-
-    const separator = record.indexOf("\t");
-    if (separator < 0) {
-      continue;
-    }
-
-    const [mode, type, objectId] = record.slice(0, separator).split(" ");
-    if (
-      type !== "blob" ||
-      (mode !== "100644" && mode !== "100755") ||
-      !objectId ||
-      !/^[0-9a-f]{40,64}$/.test(objectId)
-    ) {
-      continue;
-    }
-
-    entries.push({ objectId, path: record.slice(separator + 1) });
-  }
-  return entries;
-}
-
-function readTemplateBlob(input: {
-  readonly cwd: string;
-  readonly executeGit: ExecuteGit;
-  readonly entry: TemplateTreeEntry;
-}): Effect.Effect<Option.Option<string>, GitCommandError> {
-  return input
-    .executeGit({
-      operation: "gitHubChangeRequestTemplate.readTemplateBlob",
-      cwd: input.cwd,
-      args: ["cat-file", "blob", input.entry.objectId],
-      maxOutputBytes: TEMPLATE_MAX_BYTES,
-      appendTruncationMarker: true,
-    })
-    .pipe(
-      Effect.map((result) => {
-        const template = result.stdout.trim();
-        if (template.length === 0) {
-          return Option.none();
-        }
-        return Option.some(
-          result.stdoutTruncated && !template.endsWith(TRUNCATION_MARKER)
-            ? `${template}\n\n${TRUNCATION_MARKER}`
-            : template,
-        );
-      }),
-    );
-}
 
 type DirectoryTemplateResult =
   | { readonly _tag: "None" }
@@ -137,20 +76,18 @@ export const detect = Effect.fn("gitHubChangeRequestTemplate.detect")(function* 
   executeGit: ExecuteGit,
 ) {
   return yield* Effect.gen(function* () {
-    // Worktree paths can be replaced between validation and open. Read regular blobs from the
-    // committed base tree so repository-controlled symlinks and path races never reach the host filesystem.
-    const result = yield* executeGit({
-      operation: "gitHubChangeRequestTemplate.listTemplates",
+    const listed = yield* listTemplateEntries({
       cwd,
-      args: ["ls-tree", "-r", "-z", "--full-tree", treeish, "--", ...TREE_PATHS],
-      maxOutputBytes: TREE_LIST_MAX_BYTES,
-      appendTruncationMarker: true,
+      treeish,
+      executeGit,
+      operation: "gitHubChangeRequestTemplate.listTemplates",
+      paths: TREE_PATHS,
     });
-    if (result.stdoutTruncated) {
+    if (Option.isNone(listed)) {
       return Option.none();
     }
 
-    const entries = parseTemplateTreeEntries(result.stdout);
+    const entries = listed.value;
     const entriesByPath = new Map(entries.map((entry) => [entry.path, entry]));
     for (const templatePath of TEMPLATE_PATHS) {
       const entry = entriesByPath.get(templatePath);
