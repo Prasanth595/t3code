@@ -399,6 +399,12 @@ export function summarizeT3ToolCalls(
         `linked pull requests${selected.length === 1 ? "" : ` ${times}`}`,
       );
       break;
+    case "write-pr-guides":
+      label = phrase("Started", "start", `review guides ${times}`);
+      break;
+    case "read-pr-guide":
+      label = phrase("Read", "read", quantity(selected.length, "review guide"));
+      break;
     case "browser":
       label = phrase("Used", "use", `browser ${times}`);
       break;
