@@ -27,6 +27,7 @@ import {
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import {
+  planMobileAutoSettleScopePatch,
   planMobileScopedSettingsClear,
   planMobileScopedSettingsPatch,
   resolveMobileSettingsTargets,
@@ -94,12 +95,7 @@ function AutoSettleSettingsRows() {
     return null;
   }
 
-  const writeToAll = (
-    patch: Partial<AutoSettleSettings> & {
-      autoResumeLimitedThreads?: boolean;
-      snoozeLimitedThreads?: boolean;
-    },
-  ) => {
+  const runWrites = (writes: ReturnType<typeof planMobileScopedSettingsPatch>) => {
     if (
       writeInFlight.current ||
       !syncTargets.every((target) =>
@@ -107,7 +103,6 @@ function AutoSettleSettingsRows() {
       )
     )
       return;
-    const writes = planMobileScopedSettingsPatch(syncTargets, projectSelected, patch);
     if (writes.length === 0) return;
     writeInFlight.current = true;
     setPendingTargets(syncTargets);
@@ -122,6 +117,12 @@ function AutoSettleSettingsRows() {
       setPendingWrites((count) => count - 1);
     });
   };
+  const writeToAll = (
+    patch: Partial<AutoSettleSettings> & {
+      autoResumeLimitedThreads?: boolean;
+      snoozeLimitedThreads?: boolean;
+    },
+  ) => runWrites(planMobileScopedSettingsPatch(syncTargets, projectSelected, patch));
 
   const { patch: autoSettlePatch, mismatches } = planAutoSettleSettingsSync(
     {
@@ -264,11 +265,18 @@ function AutoSettleSettingsRows() {
             if (disabled) return;
             const value = nativeEvent.event;
             if (value !== "off" && value !== "all" && value !== "without-pr") return;
-            writeToAll({
-              sidebarAutoSettleAfterDays:
-                value === "off" ? null : (afterDays ?? AUTO_SETTLE_DEFAULT_DAYS),
-              sidebarAutoSettleScope: value === "off" ? "all" : value,
-            });
+            if (value === "off") {
+              writeToAll({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" });
+              return;
+            }
+            runWrites(
+              planMobileAutoSettleScopePatch(
+                syncTargets,
+                projectSelected,
+                value,
+                AUTO_SETTLE_DEFAULT_DAYS,
+              ),
+            );
           }}
         >
           <SettingsControlRow

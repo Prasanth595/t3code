@@ -332,6 +332,50 @@ export function planScopedSettingsPatch(
   return { clientPatch, hasClientWrite, serverWrites, unavailableReason };
 }
 
+/**
+ * Changing the inactivity scope keeps each target's own duration. Only a
+ * target whose inactivity rule is off gets `defaultDays` so the scope applies.
+ */
+export function planAutoSettleScopePatch(
+  scope: ResolvedSettingsScope,
+  environments: readonly ScopedSettingsEnvironment[],
+  targets: readonly Pick<ScopedSettingsTarget, "environmentId" | "projectId" | "settings">[],
+  value: ServerSettings["sidebarAutoSettleScope"],
+  defaultDays: number,
+) {
+  const plan = planScopedSettingsPatch(scope, environments, { sidebarAutoSettleScope: value });
+  const isOff = (environmentId: EnvironmentId, projectId: ProjectId | null) =>
+    targets.some(
+      (target) =>
+        target.environmentId === environmentId &&
+        target.projectId === projectId &&
+        target.settings.sidebarAutoSettleAfterDays === null,
+    );
+  const serverWrites = plan.serverWrites.map((write) => {
+    const overrides = write.patch.projectSettingsOverrides;
+    if (overrides === undefined) {
+      return isOff(write.environmentId, null)
+        ? { ...write, patch: { ...write.patch, sidebarAutoSettleAfterDays: defaultDays } }
+        : write;
+    }
+    return {
+      ...write,
+      patch: {
+        ...write.patch,
+        projectSettingsOverrides: Object.fromEntries(
+          Object.entries(overrides).map(([projectId, entry]) => [
+            projectId,
+            entry !== null && isOff(write.environmentId, projectId as ProjectId)
+              ? { ...entry, sidebarAutoSettleAfterDays: defaultDays }
+              : entry,
+          ]),
+        ),
+      },
+    };
+  });
+  return { ...plan, serverWrites };
+}
+
 /** Remove the keys' project overrides so each member inherits its environment value again. */
 export function planScopedSettingsClear(
   scope: ResolvedSettingsScope,

@@ -26,6 +26,7 @@ import { toastManager } from "../ui/toast";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
+  planAutoSettleScopePatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -117,6 +118,17 @@ export function useUpdateScopedSettings() {
   return useCallback(
     (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch)),
     [environments, run, scope],
+  );
+}
+
+/** Set the inactivity scope on every target without overwriting their durations. */
+export function useUpdateAutoSettleScope() {
+  const { scope, environments, targets } = useSettingsScope();
+  const run = useRunScopedPlan();
+  return useCallback(
+    (value: ServerSettings["sidebarAutoSettleScope"], defaultDays: number) =>
+      run(planAutoSettleScopePatch(scope, environments, targets, value, defaultDays)),
+    [environments, run, scope, targets],
   );
 }
 

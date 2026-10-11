@@ -101,6 +101,51 @@ export function planMobileScopedSettingsPatch(
   }));
 }
 
+/**
+ * Changing the inactivity scope keeps each target's own duration. Only a
+ * target whose inactivity rule is off gets `defaultDays` so the scope applies.
+ */
+export function planMobileAutoSettleScopePatch(
+  targets: readonly ScopedMobileSettingsTarget[],
+  projectSelected: boolean,
+  value: ServerSettings["sidebarAutoSettleScope"],
+  defaultDays: number,
+) {
+  const isOff = (environmentId: EnvironmentId, projectId: ProjectId | null) =>
+    targets.some(
+      (target) =>
+        target.environment.environmentId === environmentId &&
+        target.projectId === projectId &&
+        target.settings.sidebarAutoSettleAfterDays === null,
+    );
+  return planMobileScopedSettingsPatch(targets, projectSelected, {
+    sidebarAutoSettleScope: value,
+  }).map(({ environmentId, patch }) => {
+    const overrides = patch.projectSettingsOverrides;
+    if (overrides === undefined) {
+      return {
+        environmentId,
+        patch: isOff(environmentId, null)
+          ? { ...patch, sidebarAutoSettleAfterDays: defaultDays }
+          : patch,
+      };
+    }
+    return {
+      environmentId,
+      patch: {
+        projectSettingsOverrides: Object.fromEntries(
+          Object.entries(overrides).map(([projectId, entry]) => [
+            projectId,
+            entry !== null && isOff(environmentId, projectId as ProjectId)
+              ? { ...entry, sidebarAutoSettleAfterDays: defaultDays }
+              : entry,
+          ]),
+        ),
+      } as ServerSettingsPatch,
+    };
+  });
+}
+
 /** A mixed selection has no single value to display. */
 export function uniformMobileSetting<K extends keyof ServerSettings>(
   targets: readonly Pick<ScopedMobileSettingsTarget, "settings">[],

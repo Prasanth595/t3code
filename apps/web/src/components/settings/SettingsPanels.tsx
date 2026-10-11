@@ -82,6 +82,7 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
+  useUpdateAutoSettleScope,
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
@@ -2197,8 +2198,9 @@ export function GeneralSettingsPanel() {
   ] as const;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
+  const updateAutoSettleScope = useUpdateAutoSettleScope();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments, targets } = useSettingsScope();
+  const { scope, environment, connectedEnvironments } = useSettingsScope();
   // The representative environment supplies the provider list for pickers;
   // a fanned-out model choice is validated against every target before it
   // is written. Per-machine tuning (background activity overrides) still
@@ -2238,17 +2240,7 @@ export function GeneralSettingsPanel() {
       updateSettings({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleScope: "all" });
       return;
     }
-    // A scope change keeps each target's own duration. Only a selection that
-    // includes a target with inactivity off needs a duration written.
-    const turnsOn =
-      autoSettleAfterDays === null ||
-      targets.some((target) => target.settings.sidebarAutoSettleAfterDays === null);
-    updateSettings({
-      ...(turnsOn
-        ? { sidebarAutoSettleAfterDays: autoSettleAfterDays ?? AUTO_SETTLE_DEFAULT_DAYS }
-        : {}),
-      sidebarAutoSettleScope: value,
-    });
+    updateAutoSettleScope(value, AUTO_SETTLE_DEFAULT_DAYS);
   }
 
   const supportsRestartContinuation =

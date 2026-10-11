@@ -14,6 +14,7 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import {
   listProjectOverrides,
   persistScopedSettingsPatch,
+  planAutoSettleScopePatch,
   planProjectOverridesClear,
   planScopedSettingsClear,
   planScopedSettingsPatch,
@@ -182,6 +183,61 @@ describe("scoped settings writes", () => {
       ]);
     },
   );
+
+  it("keeps each environment's duration when changing the inactivity scope", () => {
+    const custom = environment("Laptop", {
+      settlementScope: true,
+      settings: { sidebarAutoSettleAfterDays: 30 },
+    });
+    const off = environment("Server", {
+      settlementScope: true,
+      settings: { sidebarAutoSettleAfterDays: null },
+    });
+    const targets = resolveScopedSettingsTargets(all, [custom, off]);
+    const plan = planAutoSettleScopePatch(all, [custom, off], targets, "without-pr", 3);
+    expect(plan.serverWrites.map(({ environmentId, patch }) => ({ environmentId, patch }))).toEqual(
+      [
+        { environmentId: custom.environmentId, patch: { sidebarAutoSettleScope: "without-pr" } },
+        {
+          environmentId: off.environmentId,
+          patch: { sidebarAutoSettleScope: "without-pr", sidebarAutoSettleAfterDays: 3 },
+        },
+      ],
+    );
+  });
+
+  it("keeps each project override's duration when changing the inactivity scope", () => {
+    const custom = environment("Laptop", {
+      settlementScope: true,
+      settings: {
+        projectSettingsOverrides: { [laptopProjectId]: { sidebarAutoSettleAfterDays: 14 } },
+      },
+    });
+    const off = environment("Server", {
+      settlementScope: true,
+      settings: {
+        sidebarAutoSettleAfterDays: 7,
+        projectSettingsOverrides: { [projectId]: { sidebarAutoSettleAfterDays: null } },
+      },
+    });
+    const targets = resolveScopedSettingsTargets(project, [custom, off]);
+    const plan = planAutoSettleScopePatch(project, [custom, off], targets, "all", 3);
+    expect(
+      Object.fromEntries(
+        plan.serverWrites.map(({ environmentId, patch }) => [
+          environmentId,
+          patch.projectSettingsOverrides,
+        ]),
+      ),
+    ).toEqual({
+      [custom.environmentId]: {
+        [laptopProjectId]: { sidebarAutoSettleAfterDays: 14, sidebarAutoSettleScope: "all" },
+      },
+      [off.environmentId]: {
+        [projectId]: { sidebarAutoSettleAfterDays: 3, sidebarAutoSettleScope: "all" },
+      },
+    });
+  });
 
   it("edits the effective machine policy without changing other machines' rules", () => {
     const custom = environment("Laptop", {
