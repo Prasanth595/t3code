@@ -1,9 +1,11 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import {
   buildProjectGroups,
+  derivePhysicalProjectKey,
   type ProjectGroup,
   type ProjectGroupingSettings,
 } from "./logicalProject";
+import { resolveScratchProjectScopeKey } from "@t3tools/client-runtime/state/project-grouping";
 import type { Project } from "./types";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
@@ -50,13 +52,14 @@ export interface SidebarProjectPickerEntry {
 }
 
 // Environment labels and other settings can arrive independently of projects.
-// Reuse the grouping pass across those renders and the chat's physical-key map.
+// Reuse the grouping pass when those renders request the same grouping policy.
 const projectGroupsBySource = new WeakMap<
   ReadonlyArray<Project>,
   {
     mode: ProjectGroupingSettings["sidebarProjectGroupingMode"];
     overrides: ProjectGroupingSettings["sidebarProjectGroupingOverrides"];
     primaryEnvironmentId: EnvironmentId | null;
+    groupScratchProjects: boolean;
     groups: ReadonlyArray<ProjectGroup<Project>>;
   }
 >();
@@ -65,14 +68,17 @@ function groupedProjects(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
+  groupScratchProjects?: boolean;
 }) {
   const { sidebarProjectGroupingMode: mode, sidebarProjectGroupingOverrides: overrides } =
     input.settings;
+  const groupScratchProjects = input.groupScratchProjects ?? false;
   const previous = projectGroupsBySource.get(input.projects);
   if (
     previous?.mode === mode &&
     previous.overrides === overrides &&
-    previous.primaryEnvironmentId === input.primaryEnvironmentId
+    previous.primaryEnvironmentId === input.primaryEnvironmentId &&
+    previous.groupScratchProjects === groupScratchProjects
   ) {
     return previous.groups;
   }
@@ -80,14 +86,57 @@ function groupedProjects(input: {
     projects: input.projects,
     settings: input.settings,
     preferredEnvironmentId: input.primaryEnvironmentId,
+    groupScratchProjects,
   });
   projectGroupsBySource.set(input.projects, {
     mode,
     overrides,
     primaryEnvironmentId: input.primaryEnvironmentId,
+    groupScratchProjects,
     groups,
   });
   return groups;
+}
+
+/** A merged filter still opens settings for the chosen physical project. */
+export function getSidebarProjectSettingsKey(
+  group: SidebarProjectSnapshot,
+  settings: ProjectGroupingSettings,
+  projects: ReadonlyArray<Project>,
+  projectRef?: ScopedProjectRef,
+): string {
+  if (!group.isScratch) return group.projectKey;
+  const project =
+    group.memberProjects.find(
+      (member) =>
+        member.environmentId === projectRef?.environmentId && member.id === projectRef.projectId,
+    ) ??
+    group.memberProjects.find((member) => member.environmentId === projectRef?.environmentId) ??
+    group;
+  return (
+    buildPhysicalToLogicalProjectKeyMap({ projects, settings, primaryEnvironmentId: null }).get(
+      derivePhysicalProjectKey(project),
+    ) ?? group.projectKey
+  );
+}
+
+/** Retains a saved physical scratch scope when its environment config coalesces the group. */
+export function resolveSidebarProjectScopeKey(input: {
+  readonly groups: ReadonlyArray<SidebarProjectSnapshot>;
+  readonly key: string | null;
+  readonly settings?: ProjectGroupingSettings;
+  readonly canClearMissingScope?: boolean;
+}): string | null {
+  if (input.key === null) return null;
+  const group =
+    input.groups.find((candidate) => candidate.projectKey === input.key) ??
+    input.groups.find(
+      (candidate) =>
+        candidate.isScratch &&
+        resolveScratchProjectScopeKey(input.key, candidate.memberProjects, input.settings) ===
+          candidate.projectKey,
+    );
+  return group?.projectKey ?? (input.canClearMissingScope ? null : input.key);
 }
 
 export function buildPhysicalToLogicalProjectKeyMap(input: {
@@ -108,6 +157,7 @@ export function buildPhysicalToLogicalProjectKeyMap(input: {
 export function buildSidebarProjectSnapshots(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
+  groupScratchProjects?: boolean;
   primaryEnvironmentId: EnvironmentId | null;
   resolveEnvironmentLabel: (environmentId: EnvironmentId) => string | null;
   // Returns true when an env id maps to a desktop-local saved-env
