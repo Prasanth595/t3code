@@ -140,6 +140,8 @@ export const make = Effect.gen(function* () {
         outputMode: input.outputMode ?? "truncate",
         truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
         timeoutBehavior: "error",
+        // A timed-out Git/filter process must exit before its scope releases the index/lock.
+        forceKillAfter: "1 second",
       })
       .pipe(
         Effect.mapError(

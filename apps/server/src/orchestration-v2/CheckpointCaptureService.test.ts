@@ -301,7 +301,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     capture: () => Effect.succeed(captured),
                   }),
               Layer.mock(EventSink.EventSinkV2)({
-                commitCommand: (input) =>
+                writeIfRunCurrent: (input) =>
                   Ref.set(committed, input.events).pipe(
                     Effect.as({
                       commandId: input.commandId,
@@ -463,7 +463,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
               capture: () => Effect.die("a discarded run must not be captured"),
             }),
             Layer.mock(EventSink.EventSinkV2)({
-              commitCommand: (input) =>
+              writeIfRunCurrent: (input) =>
                 Ref.set(committed, input.events).pipe(Effect.as({ committed: true } as never)),
             }),
           ),
@@ -695,7 +695,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
             // Commit straight into the projection so the test reads what a
             // client would see after the capture lands.
             Layer.mock(EventSink.EventSinkV2)({
-              commitCommand: (input) =>
+              writeIfRunCurrent: (input) =>
                 Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
                   Effect.andThen(Ref.update(commits, (count) => count + 1)),
                   Effect.as({ committed: true } as never),

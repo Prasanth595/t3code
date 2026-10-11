@@ -258,6 +258,10 @@ export const layer: Layer.Layer<
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
+    // Queue time is not operation time: a competing capture gets its own budget
+    // only once it owns the workspace. Interruption releases the lock after cleanup.
+    const withCaptureLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
+      withWorkspaceLock(cwd, effect.pipe(Effect.timeout("2 minutes")));
 
     const isGitCheckpointable = (cwd: string) =>
       checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
@@ -265,7 +269,7 @@ export const layer: Layer.Layer<
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
     const captureBaseline: CheckpointServiceV2Shape["captureBaseline"] = (input) =>
-      withWorkspaceLock(
+      withCaptureLock(
         input.scope.cwd,
         Effect.gen(function* () {
           if (!(yield* isGitCheckpointable(input.scope.cwd))) {
@@ -302,7 +306,7 @@ export const layer: Layer.Layer<
 
     const materializeBaselineCheckpoint: CheckpointServiceV2Shape["materializeBaselineCheckpoint"] =
       (input) =>
-        withWorkspaceLock(
+        withCaptureLock(
           input.scope.cwd,
           Effect.gen(function* () {
             const checkpointRef = yield* checkpointRefFor({
@@ -355,7 +359,7 @@ export const layer: Layer.Layer<
         );
 
     const capture: CheckpointServiceV2Shape["capture"] = (input) =>
-      withWorkspaceLock(
+      withCaptureLock(
         input.scope.cwd,
         Effect.gen(function* () {
           const checkpointId = yield* checkpointIdForScopeOrdinal(idAllocator, {

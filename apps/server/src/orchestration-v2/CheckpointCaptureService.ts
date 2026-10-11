@@ -2,6 +2,7 @@ import {
   CheckpointScopeId,
   CommandId,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -9,6 +10,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -37,6 +39,7 @@ export interface CheckpointCaptureServiceV2Shape {
     readonly threadId: ThreadId;
     readonly runId: RunId;
     readonly scopeId: CheckpointScopeId;
+    readonly willRetry?: boolean;
   }) => Effect.Effect<void, CheckpointCaptureExecutionError>;
 }
 
@@ -134,11 +137,12 @@ export const layer: Layer.Layer<
       // (ProjectionStore preserves the field when absent from the payload).
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
-      yield* eventSink.commitCommand({
+      yield* eventSink.writeIfRunCurrent({
         commandId,
         threadId: input.threadId,
-        commandType: "checkpoint.capture",
-        acceptedAt: capturedAt,
+        runId: run.id,
+        activeAttemptId: run.activeAttemptId,
+        expectedStatus: run.status,
         effects: [],
         events: [
           ...(threadStartCheckpoint === null
@@ -238,9 +242,96 @@ export const layer: Layer.Layer<
       });
     });
 
+    const failCapture = Effect.fn("orchestrationV2.checkpointCapture.fail")(function* (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly scopeId: CheckpointScopeId;
+    }) {
+      const { run, rootNode } = yield* projections.getCheckpointCaptureContext(
+        input.threadId,
+        input,
+      );
+      // A retry may have already committed capture, or Stop/rollback settled it.
+      if (run?.status !== "waiting") return;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make(`command:effect:checkpoint.capture.failed:${run.id}`);
+      const { delegatedCompletion: _delegatedCompletion, ...currentRun } = run;
+      const events: Array<OrchestrationV2DomainEvent> = [
+        {
+          id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+          type: "run.updated",
+          threadId: input.threadId,
+          runId: run.id,
+          ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: now,
+          payload: { ...currentRun, status: "failed", completedAt: now },
+        },
+      ];
+      if (rootNode !== undefined) {
+        events.push(
+          {
+            id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+            type: "turn-item.updated" as const,
+            threadId: input.threadId,
+            runId: run.id,
+            nodeId: rootNode.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: ids.derive.runSignalTurnItem({
+                runId: run.id,
+                signal: "checkpoint-failed",
+              }),
+              threadId: input.threadId,
+              runId: run.id,
+              nodeId: rootNode.id,
+              providerThreadId: run.providerThreadId,
+              providerTurnId: rootNode.providerTurnId,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: run.ordinal * 100 + 99,
+              type: "system_notice" as const,
+              status: "completed" as const,
+              title: "Checkpoint capture failed",
+              message:
+                "Checkpoint capture failed after retries. This turn has no checkpoint to restore.",
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+          {
+            id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+            type: "node.updated" as const,
+            threadId: input.threadId,
+            runId: run.id,
+            nodeId: rootNode.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...rootNode, status: "failed" as const, completedAt: now },
+          },
+        );
+      }
+      yield* eventSink.writeIfRunCurrent({
+        commandId,
+        threadId: input.threadId,
+        runId: run.id,
+        activeAttemptId: run.activeAttemptId,
+        expectedStatus: "waiting",
+        effects: [],
+        events,
+      });
+    });
+
     return CheckpointCaptureServiceV2.of({
       execute: (input) =>
         execute(input).pipe(
+          Effect.tapCause((cause) =>
+            input.willRetry !== false || Cause.hasInterruptsOnly(cause)
+              ? Effect.void
+              : failCapture(input),
+          ),
           Effect.mapError((cause) =>
             isCheckpointCaptureExecutionError(cause)
               ? cause
