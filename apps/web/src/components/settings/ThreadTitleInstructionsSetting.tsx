@@ -14,8 +14,9 @@ export function ThreadTitleInstructionsSetting() {
   const updateSettings = useUpdateScopedSettings();
   const mixed = useScopedSettingsMixed(["threadTitleInstructions"]);
   const value = mixed ? "" : settings.threadTitleInstructions;
-  // Holds the text only while the field is focused, so a settings push from
-  // another client or a scope change never replaces an edit in progress.
+  // Holds the text from the first edit until blur, so a settings push from
+  // another client or a scope change never replaces an edit in progress, and
+  // leaving the field without an edit writes nothing.
   const [draft, setDraft] = useState<string | null>(null);
 
   return (
@@ -43,12 +44,12 @@ export function ThreadTitleInstructionsSetting() {
               ? "Mixed. Enter instructions to apply to all selected targets."
               : "Start with the issue key when the message names one, such as ABC-123 Fix login timeout."
           }
-          onFocus={() => setDraft(value)}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => {
-            const next = (draft ?? value).trim();
+            if (draft === null) return;
+            const next = draft.trim();
             setDraft(null);
-            if (next !== value) updateSettings({ threadTitleInstructions: next });
+            if (mixed || next !== value) updateSettings({ threadTitleInstructions: next });
           }}
         />
       </div>
