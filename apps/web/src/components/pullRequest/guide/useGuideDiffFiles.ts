@@ -28,13 +28,16 @@ const NO_FILES: ReadonlyMap<string, FileDiffMetadata> = new Map();
 export function useGuideDiffFiles({
   environmentId,
   reference,
+  headSha,
   wantedPaths,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
+  /** The guide's head. A push writes a new guide, whose excerpts must read the new diff. */
+  headSha: string;
   wantedPaths: ReadonlyArray<string>;
 }) {
-  const key = `${environmentId}:${pullRequestReviewKey(reference)}`;
+  const key = `${environmentId}:${pullRequestReviewKey(reference)}:${headSha}`;
   const [loaded, setLoaded] = useState<LoadedDiff>({
     key,
     cursor: null,

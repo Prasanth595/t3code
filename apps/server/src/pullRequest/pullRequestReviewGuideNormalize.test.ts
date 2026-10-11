@@ -57,6 +57,30 @@ const excerpt = (path: string, start: number, end: number, side: "new" | "old" =
 });
 
 describe("parseReviewGuideChange", () => {
+  it("reads a removed or added line that looks like a file header as a source line", () => {
+    const tricky = [
+      "diff --git a/notes.md b/notes.md",
+      "--- a/notes.md",
+      "+++ b/notes.md",
+      "@@ -3,1 +3,2 @@",
+      "--- a/old-heading",
+      "+++ b/other.ts",
+      "+tail",
+      "@@ -9,0 +10,1 @@",
+      "+later",
+      "",
+    ].join("\n");
+    const parsed = parseReviewGuideChange("notes.md\0", tricky);
+    expect([...parsed.hunks.keys()]).toEqual(["notes.md"]);
+    expect(parsed.hunks.get("notes.md")).toEqual({
+      new: [
+        { start: 3, end: 4 },
+        { start: 10, end: 10 },
+      ],
+      old: [{ start: 3, end: 3 }],
+    });
+  });
+
   it("reads each side's hunks, keying a deleted file by its old path", () => {
     expect(change.files).toEqual(["src/a.ts", "src/gone.ts", "docs/readme.md"]);
     expect(change.hunks.get("src/a.ts")).toEqual({

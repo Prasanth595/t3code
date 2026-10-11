@@ -64,7 +64,12 @@ export function GuideTour({
 
   // Only the open stop's files are read: its excerpts, and the files it lists to open in place.
   const wantedPaths = useMemo(() => (stop === null ? [] : stopFilePaths(stop)), [stop]);
-  const diff = useGuideDiffFiles({ environmentId, reference, wantedPaths });
+  const diff = useGuideDiffFiles({
+    environmentId,
+    reference,
+    headSha: guide.headSha,
+    wantedPaths,
+  });
   // The same file reads the Code tab uses, so the bars between hunks load what lies between.
   const getDiffFileContents = useAtomCommand(pullRequestEnvironment.diffFileContents);
   const loadDiffFiles = useMemo(

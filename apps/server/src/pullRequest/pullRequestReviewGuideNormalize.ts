@@ -38,13 +38,16 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
   const hunks = new Map<string, FileHunks>();
   let oldPath: string | null = null;
   let current: FileHunks | null = null;
+  // Inside a file's hunks a `--- ` or `+++ ` line is a removed or added source line, not a header.
+  let inHunks = false;
   for (const line of patch.split("\n")) {
     if (line.startsWith("diff --git ")) {
       oldPath = null;
       current = null;
-    } else if (line.startsWith("--- ")) {
+      inHunks = false;
+    } else if (!inHunks && line.startsWith("--- ")) {
       oldPath = line.startsWith("--- a/") ? line.slice(6) : null;
-    } else if (line.startsWith("+++ ")) {
+    } else if (!inHunks && line.startsWith("+++ ")) {
       const path = line.startsWith("+++ b/") ? line.slice(6) : oldPath;
       if (path === null) continue;
       current = hunks.get(path) ?? { new: [], old: [] };
@@ -52,6 +55,7 @@ export function parseReviewGuideChange(nameOnly: string, patch: string): ReviewG
     } else if (current !== null) {
       const header = HUNK_HEADER.exec(line);
       if (header === null) continue;
+      inHunks = true;
       const removed = hunkRange(header[1]!, header[2]);
       const added = hunkRange(header[3]!, header[4]);
       if (removed !== null) current.old.push(removed);

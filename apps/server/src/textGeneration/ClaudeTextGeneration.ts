@@ -51,6 +51,11 @@ const CLAUDE_INVESTIGATION_ALLOWED = [
   "Bash(git log:*)",
   "Bash(git show:*)",
 ].join(",");
+/**
+ * The allowed git commands accept any trailing arguments, and `--output` makes each of them write
+ * a file anywhere. Deny rules win over allow rules, so this keeps the investigation read-only.
+ */
+const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"].join(",");
 
 /**
  * Schema for the wrapper JSON returned by `claude -p --output-format json`.
@@ -209,6 +214,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 CLAUDE_INVESTIGATION_TOOLS,
                 "--allowedTools",
                 CLAUDE_INVESTIGATION_ALLOWED,
+                "--disallowedTools",
+                CLAUDE_INVESTIGATION_DENIED,
               ]
             : ["--tools", ""]),
           "--disable-slash-commands",

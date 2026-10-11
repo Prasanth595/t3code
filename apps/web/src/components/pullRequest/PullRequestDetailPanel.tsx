@@ -1450,7 +1450,10 @@ export function PullRequestDetailPanel({
     );
   };
 
-  const addSelectionToAgent = (selection: PullRequestAgentSelectionInput) => {
+  const addSelectionToAgent = (
+    selection: PullRequestAgentSelectionInput,
+    options?: { readonly keepGuide?: boolean },
+  ) => {
     if (!detail) return;
     void startAsk(
       `selection:${selection.comment.id}`,
@@ -1465,6 +1468,7 @@ export function PullRequestDetailPanel({
         comment: selection.comment,
         request: selection.request,
       }),
+      options,
     );
   };
 
@@ -2947,7 +2951,9 @@ export function PullRequestDetailPanel({
                   canComment={
                     detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
                   }
-                  onAskAboutLines={(comment, request) => addSelectionToAgent({ comment, request })}
+                  onAskAboutLines={(comment, request) =>
+                    addSelectionToAgent({ comment, request }, { keepGuide: true })
+                  }
                   onAskAboutStop={askAboutGuideStop}
                   onFinishReview={
                     detail.capabilities.review.verdicts.some((verdict) =>

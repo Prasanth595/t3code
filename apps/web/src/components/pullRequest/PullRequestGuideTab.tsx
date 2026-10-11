@@ -86,7 +86,7 @@ export function PullRequestGuideTab({
                 body,
               }),
             onRemove: (commentId) => removeComment(reviewKey, commentId),
-            onAskAgent: (comment, request) => onAskAboutLines?.(comment, request),
+            onAskAgent: onAskAboutLines,
           },
     [addComment, canComment, onAskAboutLines, pending, removeComment, reviewKey],
   );

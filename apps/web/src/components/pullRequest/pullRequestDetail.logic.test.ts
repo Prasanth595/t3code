@@ -1238,7 +1238,10 @@ describe("buildAskAboutGuideStopHandoff", () => {
     title: "The index is built on write",
     summary: "Writes now update the index.",
     attention: "A tradeoff: writes get slower.",
-    excerpts: [{ path: "src/index.ts", start: 10, end: 20 }],
+    excerpts: [
+      { path: "src/index.ts", side: "new" as const, start: 10, end: 20 },
+      { path: "src/old.ts", side: "old" as const, start: 3, end: 5 },
+    ],
   };
 
   it("carries the stop beside the pull request and asks only for an answer", () => {
@@ -1252,7 +1255,8 @@ describe("buildAskAboutGuideStopHandoff", () => {
     const chip = handoff.reviewComments[1]?.text ?? "";
     expect(chip).toContain("Writes now update the index.");
     expect(chip).toContain("A tradeoff: writes get slower.");
-    expect(chip).toContain("- src/index.ts lines 10-20");
+    expect(chip).toContain("- src/index.ts lines 10-20\n");
+    expect(chip).toContain("- src/old.ts lines 3-5 (removed; numbered as in the base branch)");
   });
 
   it("leaves the question to the reader when none was suggested", () => {

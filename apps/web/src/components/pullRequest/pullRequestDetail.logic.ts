@@ -1199,6 +1199,7 @@ export function buildAskAboutGuideStopHandoff(input: {
     readonly attention: string | null;
     readonly excerpts: ReadonlyArray<{
       readonly path: string;
+      readonly side: "new" | "old";
       readonly start: number;
       readonly end: number;
     }>;
@@ -1206,8 +1207,10 @@ export function buildAskAboutGuideStopHandoff(input: {
   readonly question: string;
 }): FixFindingsHandoff {
   const { stop } = input;
+  // Removed code is numbered on the base side; the head has other code at those lines.
   const where = stop.excerpts.map(
-    (excerpt) => `- ${excerpt.path} lines ${excerpt.start}-${excerpt.end}`,
+    (excerpt) =>
+      `- ${excerpt.path} lines ${excerpt.start}-${excerpt.end}${excerpt.side === "old" ? " (removed; numbered as in the base branch)" : ""}`,
   );
   return {
     prompt: bounded(input.question),
@@ -1229,7 +1232,10 @@ export function buildAskAboutGuideStopHandoff(input: {
             : [`It asked the reader to judge: ${bounded(stop.attention)}`]),
           ...(where.length === 0
             ? []
-            : ["The lines it showed, in the pull request's head:", ...where]),
+            : [
+                "The lines it showed, numbered as in the pull request's head unless marked:",
+                ...where,
+              ]),
         ].join("\n"),
         diff: "",
       },

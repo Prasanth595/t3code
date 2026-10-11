@@ -69,7 +69,8 @@ export interface ExcerptCommenting {
     readonly body: string;
   }) => void;
   readonly onRemove: (commentId: string) => void;
-  readonly onAskAgent: (comment: ReviewCommentContext, request: string) => void;
+  /** Opens an agent thread about the lines; null where no thread can be opened. */
+  readonly onAskAgent: ((comment: ReviewCommentContext, request: string) => void) | null;
 }
 
 interface ExcerptAnnotation {
@@ -211,8 +212,9 @@ export function GuideExcerpt({
     [file],
   );
   const interactive = commenting !== null && draft === null;
+  const onAskAgent = commenting?.onAskAgent ?? null;
   const askAgent = (request: string) => {
-    if (draft === null || file === null || commenting === null) return;
+    if (draft === null || file === null || onAskAgent === null) return;
     const comment = buildDiffReviewComment({
       id: `pull-request-guide:${excerpt.path}:${draft.range.start}:${draft.range.end}`,
       sectionId: `pull-request-guide:${excerpt.path}`,
@@ -223,7 +225,7 @@ export function GuideExcerpt({
       text: request,
     });
     setDraft(null);
-    if (comment !== null) commenting.onAskAgent(comment, request);
+    if (comment !== null) onAskAgent(comment, request);
   };
 
   const options = useMemo(
@@ -290,7 +292,7 @@ export function GuideExcerpt({
                       commenting.canComment ? "Add a comment…" : "Ask the agent about these lines…"
                     }
                     submitLabel={commenting.canComment ? "Add to review" : "Ask agent"}
-                    {...(commenting.canComment
+                    {...(commenting.canComment && onAskAgent !== null
                       ? {
                           secondaryAction: {
                             label: "Ask agent",

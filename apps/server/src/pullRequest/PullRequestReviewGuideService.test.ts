@@ -5,6 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import {
   ProjectId,
@@ -148,6 +149,8 @@ const makeLayer = (input: {
   readonly stored: Deferred.Deferred<void>;
   /** The server's beta switch; on unless a test is about it being off. */
   readonly enabled?: boolean;
+  /** The head the host reports now, for a test that pushes between runs. */
+  readonly currentHead?: Ref.Ref<string>;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -167,7 +170,11 @@ const makeLayer = (input: {
     ),
     Layer.provide(
       Layer.succeed(PullRequestService.PullRequestService, {
-        detail: () => Effect.succeed(detail(input.workspace, input.headSha)),
+        detail: () =>
+          (input.currentHead === undefined
+            ? Effect.succeed(input.headSha)
+            : Ref.get(input.currentHead)
+          ).pipe(Effect.map((head) => detail(input.workspace, head))),
         activity: () => Effect.succeed(activity),
         stack: () => Effect.succeed(stack(input)),
       } as unknown as PullRequestService.PullRequestService["Service"]),
@@ -199,7 +206,8 @@ const layerBase = Layer.mergeAll(
   SqlitePersistence.layerMemory,
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
-it.layer(layerBase)("PullRequestReviewGuideService", (it) => {
+// Runs drive real git, which the test clock does not advance, so waits use real time.
+it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideService", (it) => {
   it.effect("briefs the change against its own base in a checkout it then removes", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -347,5 +355,100 @@ it.layer(layerBase)("PullRequestReviewGuideService", (it) => {
         assert.include(result.message, "Review guides are off");
       }),
     ),
+  );
+
+  it.effect(
+    "keeps a newer run's guide when an older run for the same pull request finishes late",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const repositories = yield* makeRepositories;
+          const stored = yield* Deferred.make<void>();
+          const currentHead = yield* Ref.make(repositories.headSha);
+          // The old run waits on this; the new one answers at once.
+          const releaseOld = yield* Deferred.make<void>();
+          const oldStarted = yield* Deferred.make<void>();
+          const answer = (title: string) => ({
+            stops: [
+              {
+                title,
+                summary: "",
+                attention: null,
+                excerpts: [],
+                files: [],
+                notes: [],
+                questions: [],
+              },
+            ],
+          });
+          const context = yield* Layer.build(
+            makeLayer({
+              ...repositories,
+              stored,
+              currentHead,
+              generate: (input) =>
+                input.cwd.length > 0 && input.baseCommit.length > 0
+                  ? Ref.get(currentHead).pipe(
+                      Effect.flatMap((head) =>
+                        head === repositories.headSha
+                          ? Deferred.succeed(oldStarted, undefined).pipe(
+                              Effect.andThen(Deferred.await(releaseOld)),
+                              Effect.as(answer("old head")),
+                            )
+                          : Effect.succeed(answer("new head")),
+                      ),
+                    )
+                  : Effect.die("unreachable"),
+            }),
+          );
+          const service = Context.get(
+            context,
+            PullRequestReviewGuideService.PullRequestReviewGuideService,
+          );
+
+          yield* service.generate(reference);
+          const firstFailed = service.get(reference).pipe(
+            Effect.flatMap((result) =>
+              result.run?._tag === "Failed"
+                ? Effect.die(`first run failed: ${result.run.detail}`)
+                : Effect.fail("still running" as const),
+            ),
+            Effect.retry(Schedule.spaced("20 millis")),
+          );
+          yield* Effect.raceFirst(Deferred.await(oldStarted), firstFailed);
+          // A push: the host reports the upper layer's commit as the head now, and a new run starts.
+          yield* Ref.set(currentHead, repositories.upperSha);
+          const second = yield* service.generate(reference);
+          assert.strictEqual(second.run?._tag, "Running");
+          assert.strictEqual(second.run?.headSha, repositories.upperSha);
+          // A run that fails reports why rather than leaving this waiting.
+          const failedRun = service.get(reference).pipe(
+            Effect.flatMap((result) =>
+              result.run?._tag === "Failed"
+                ? Effect.die(`run failed: ${result.run.detail}`)
+                : Effect.fail("still running" as const),
+            ),
+            Effect.retry(Schedule.spaced("20 millis")),
+          );
+          yield* Effect.raceFirst(Deferred.await(stored), failedRun);
+
+          // The old run finishes last. Its guide is for a head nobody is looking at any more.
+          yield* Deferred.succeed(releaseOld, undefined);
+          const settled = yield* service.get(reference).pipe(
+            Effect.filterOrFail(
+              (result) => result.run === null,
+              () => "still running" as const,
+            ),
+            Effect.retry({ schedule: Schedule.spaced("20 millis"), times: 250 }),
+          );
+          assert.strictEqual(settled.guide?.headSha, repositories.upperSha);
+          // Give the late run every chance to write over the newer guide; it must not.
+          yield* Effect.sleep("200 millis");
+          const after = yield* service.get(reference);
+          assert.isNull(after.run);
+          assert.strictEqual(after.guide?.headSha, repositories.upperSha);
+          assert.strictEqual(after.guide?.stops[0]?.title, "new head");
+        }),
+      ),
   );
 });

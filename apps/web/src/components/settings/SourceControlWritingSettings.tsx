@@ -143,6 +143,13 @@ export function SourceControlWritingSettingsSection() {
     },
     textGenerationProviders,
   );
+  // Its own list: a custom model chosen for guides is not among the writer model's options.
+  const reviewGuideModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    reviewGuideSelection.instanceId,
+    reviewGuideSelection.model,
+  );
 
   return (
     <SettingsSection id="source-control-text-generation" title="Text generation">
@@ -408,14 +415,14 @@ export function SourceControlWritingSettingsSection() {
                 </span>
               ) : (
                 <div className="flex flex-wrap items-center justify-end gap-2">
-                  {usesReviewGuideModel && canEnableDedicatedModel ? (
+                  {(usesReviewGuideModel || mixedReviewGuideModel) && canEnableDedicatedModel ? (
                     <ProviderModelPicker
                       environmentId={environmentId}
                       activeInstanceId={reviewGuideSelection.instanceId}
                       model={reviewGuideSelection.model}
                       lockedProvider={null}
                       instanceEntries={instanceEntries}
-                      modelOptionsByInstance={modelOptionsByInstance}
+                      modelOptionsByInstance={reviewGuideModelOptionsByInstance}
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                       triggerAriaLabel="Review guide model"
                       {...(mixedReviewGuideModel ? { triggerLabel: "Mixed" } : {})}
@@ -437,19 +444,35 @@ export function SourceControlWritingSettingsSection() {
                     />
                   ) : null}
                   <Switch
-                    checked={usesReviewGuideModel}
+                    mixed={mixedReviewGuideModel}
+                    checked={mixedReviewGuideModel ? false : usesReviewGuideModel}
                     disabled={!usesReviewGuideModel && !canEnableDedicatedModel}
-                    onCheckedChange={(checked) =>
+                    onCheckedChange={(checked) => {
+                      if (!checked) {
+                        updateSettings({ reviewGuideModelSelection: null });
+                        return;
+                      }
+                      // Every selected target gets this model, so it must run on all of them.
+                      const reason = writerModelDisabledReason(
+                        activeSelection.instanceId,
+                        activeSelection.model,
+                      );
+                      if (reason) {
+                        toastManager.add({
+                          type: "error",
+                          title: "Review guide model not saved",
+                          description: reason,
+                        });
+                        return;
+                      }
                       updateSettings({
-                        reviewGuideModelSelection: checked
-                          ? createModelSelection(
-                              activeSelection.instanceId,
-                              activeSelection.model,
-                              activeSelection.options,
-                            )
-                          : null,
-                      })
-                    }
+                        reviewGuideModelSelection: createModelSelection(
+                          activeSelection.instanceId,
+                          activeSelection.model,
+                          activeSelection.options,
+                        ),
+                      });
+                    }}
                     aria-label="Use a separate review guide model"
                   />
                 </div>

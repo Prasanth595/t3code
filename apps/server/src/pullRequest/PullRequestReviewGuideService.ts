@@ -85,6 +85,8 @@ const make = Effect.gen(function* () {
   const serviceScope = yield* Effect.scope;
   // In memory on purpose: a restart drops a run in progress, and a reader presses Generate again.
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
+  // Names each run's private git refs; unique for the server's lifetime, like the runs map.
+  let runCounter = 0;
 
   const keyFor = Effect.fn("PullRequestReviewGuideService.keyFor")(function* (
     input: PullRequestRef,
@@ -115,14 +117,6 @@ const make = Effect.gen(function* () {
       Effect.map(Option.getOrNull),
     );
 
-  const setRun = (key: string, run: PullRequestReviewGuideRun | null) =>
-    Ref.update(runs, (current) => {
-      const next = new Map(current);
-      if (run === null) next.delete(key);
-      else next.set(key, run);
-      return next;
-    });
-
   const get: PullRequestReviewGuideService["Service"]["get"] = Effect.fn(
     "PullRequestReviewGuideService.get",
   )(function* (input) {
@@ -148,6 +142,7 @@ const make = Effect.gen(function* () {
     detail: PullRequestDetail,
     headSha: string,
     stack: PullRequestStack | null,
+    runId: string,
   ) {
     const remote = yield* git.resolvePrimaryRemoteName(workspaceRoot);
     const fetch = (args: ReadonlyArray<string>) =>
@@ -160,8 +155,38 @@ const make = Effect.gen(function* () {
     // The base branch is what the change is measured from; the head commit is the change. Hosts
     // that do not serve an unadvertised commit still serve their pull refs, which GitHub and
     // Forgejo name the same way.
-    yield* fetch([`refs/heads/${detail.baseBranch}`]);
-    const baseTip = yield* git.resolveCommit({ cwd: workspaceRoot, revision: "FETCH_HEAD" });
+    // The host names the base branch. A name git rejects, or one that would change the refspec
+    // (a leading `+`, a `:`), is refused before it reaches `git fetch`.
+    yield* git
+      .execute({
+        operation: "PullRequestReviewGuideService.checkBaseBranch",
+        cwd: workspaceRoot,
+        args: ["check-ref-format", "--branch", detail.baseBranch],
+      })
+      .pipe(
+        Effect.filterOrFail(
+          () => !detail.baseBranch.startsWith("+") && !detail.baseBranch.includes(":"),
+          () =>
+            new PullRequestOperationError({
+              operation: "generateReviewGuide",
+              detail: "The pull request's base branch name is not one git can fetch.",
+            }),
+        ),
+      );
+    // Fetched into a ref of this run's own: FETCH_HEAD is shared by every fetch in the
+    // workspace, so a concurrent run could otherwise measure this change from its base.
+    const baseRef = `refs/t3/review-guide/${runId}/base`;
+    yield* fetch([`+refs/heads/${detail.baseBranch}:${baseRef}`]);
+    yield* Effect.addFinalizer(() =>
+      git
+        .execute({
+          operation: "PullRequestReviewGuideService.dropBaseRef",
+          cwd: workspaceRoot,
+          args: ["update-ref", "-d", baseRef],
+        })
+        .pipe(Effect.ignore({ log: true })),
+    );
+    const baseTip = yield* git.resolveCommit({ cwd: workspaceRoot, revision: baseRef });
     const fetchHead = (number: number, sha: string) =>
       fetch([sha]).pipe(Effect.catch(() => fetch([`refs/pull/${number}/head`])));
     yield* fetchHead(detail.number, headSha);
@@ -237,6 +262,8 @@ const make = Effect.gen(function* () {
     workspaceRoot: string,
     detail: PullRequestDetail,
     headSha: string,
+    runId: string,
+    owns: Effect.Effect<boolean>,
   ) {
     const [activity, settings, providers, stack] = yield* Effect.all(
       [
@@ -255,7 +282,13 @@ const make = Effect.gen(function* () {
     );
     // The checkout lives only as long as the model is reading it. The change's hunks are read
     // from it too, so the guide can be held to the lines the change actually touched.
-    const { generated, change } = yield* checkoutHead(workspaceRoot, detail, headSha, stack).pipe(
+    const { generated, change } = yield* checkoutHead(
+      workspaceRoot,
+      detail,
+      headSha,
+      stack,
+      runId,
+    ).pipe(
       Effect.flatMap((checkout) =>
         Effect.all(
           {
@@ -279,7 +312,9 @@ const make = Effect.gen(function* () {
       modelSelection,
       ...normalizeReviewGuide(generated, change),
     };
-    yield* guides.put(key, guide);
+    // A newer run for this pull request, say after a push, owns its guide now; this one's result
+    // is for an older head and is dropped rather than written over it.
+    if (yield* owns) yield* guides.put(key, guide);
   });
 
   /** What a reader is told when a run fails; the full cause goes to the log. */
@@ -338,18 +373,30 @@ const make = Effect.gen(function* () {
     });
     if (claimed !== running) return { guide: stored, run: claimed, currentHeadSha };
 
-    yield* write(input, key, workspaceRoot, detail, currentHeadSha).pipe(
-      Effect.andThen(setRun(runKey, null)),
+    // The run is identified by its own Running value: a later claim replaces it, and from then
+    // on this run's completion leaves the newer run's state and guide alone.
+    const owns = Ref.get(runs).pipe(Effect.map((current) => current.get(runKey) === running));
+    const finish = (next: PullRequestReviewGuideRun | null) =>
+      Ref.update(runs, (current) => {
+        if (current.get(runKey) !== running) return current;
+        const updated = new Map(current);
+        if (next === null) updated.delete(runKey);
+        else updated.set(runKey, next);
+        return updated;
+      });
+    const runId = `${runCounter++}`;
+    yield* write(input, key, workspaceRoot, detail, currentHeadSha, runId, owns).pipe(
+      Effect.andThen(finish(null)),
       Effect.catchCause((cause) =>
         Cause.hasInterruptsOnly(cause)
-          ? setRun(runKey, null)
+          ? finish(null)
           : Effect.logWarning("Review guide generation failed", {
               key: runKey,
               cause: Cause.pretty(cause),
             }).pipe(
               Effect.andThen(nowIso),
               Effect.flatMap((failedAt) =>
-                setRun(runKey, {
+                finish({
                   _tag: "Failed",
                   headSha: currentHeadSha,
                   failedAt,

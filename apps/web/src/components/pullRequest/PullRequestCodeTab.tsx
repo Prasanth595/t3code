@@ -685,10 +685,14 @@ function PullRequestCodeTab({
   const answeredReveal = useRef<number | null>(null);
   useEffect(() => {
     if (revealRequest === null || answeredReveal.current === revealRequest.nonce) return;
-    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) return;
+    if (!items.some((item) => resolveFileDiffPath(item.fileDiff) === revealRequest.path)) {
+      // The reader is not scrolling toward it, so the sentinel would never ask for its slice.
+      if (canLoadNextSlice) loadNextSlice();
+      return;
+    }
     answeredReveal.current = revealRequest.nonce;
     revealFile(revealRequest.path);
-  }, [items, revealFile, revealRequest]);
+  }, [canLoadNextSlice, items, loadNextSlice, revealFile, revealRequest]);
 
   const toggleAllFiles = () => {
     // Held as an override of the default rather than as the file keys on screen: a diff that is
