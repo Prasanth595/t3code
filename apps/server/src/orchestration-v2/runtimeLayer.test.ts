@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { promptlessContinuationRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -5008,6 +5009,8 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           creationSource: "web" as const,
         });
         if (promptless) {
+          const stopped = yield* orchestrator.getThreadProjection(threadId);
+          assert.isNull(promptlessContinuationRun({ ...stopped, providerTurns: [] }, true));
           assert.equal(
             (yield* orchestrator
               .dispatch({
@@ -5101,6 +5104,49 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           yield* orchestrator.dispatch(scheduledResume);
         }
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 3);
+        if (promptless) {
+          let retrySource = after.runs[2]!;
+          for (const suffix of ["retry", "retry-again"]) {
+            yield* events.write({
+              events: [
+                {
+                  id: EventId.make(`manual-resume:failed-${suffix}:${scenario}`),
+                  type: "run.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: { ...retrySource, status: "failed", completedAt: now },
+                },
+              ],
+            });
+            const failed = yield* orchestrator.getThreadProjection(threadId);
+            assert.equal(promptlessContinuationRun(failed, true)?.id, retrySource.id);
+            assert.isNull(promptlessContinuationRun({ ...failed, providerTurns: [] }, true));
+            assert.isNull(
+              promptlessContinuationRun(
+                {
+                  ...failed,
+                  providerThreads: failed.providerThreads.map((thread) => ({
+                    ...thread,
+                    nativeThreadRef: { driver, nativeId: "replacement-thread", strength: "strong" },
+                  })),
+                },
+                true,
+              ),
+            );
+            const retry = { ...resume(suffix), manualContinuationOfRunId: retrySource.id };
+            yield* orchestrator.dispatch(retry);
+            const retried = yield* orchestrator.getThreadProjection(threadId);
+            const continued = retried.runs.find((run) => run.userMessageId === retry.messageId)!;
+            assert.equal(continued.status, "starting");
+            assert.equal(continued.manualContinuationOfRunId, retrySource.id);
+            assert.equal(
+              (yield* orchestrator.dispatch(resume(`stale-${suffix}`)).pipe(Effect.exit))._tag,
+              "Failure",
+            );
+            retrySource = continued;
+          }
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 5);
+        }
       }),
   );
 

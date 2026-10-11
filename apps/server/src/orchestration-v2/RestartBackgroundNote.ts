@@ -201,6 +201,7 @@ export function pendingRestartCancelledBackgroundWork(input: {
     | "userMessageId"
     | "providerThreadId"
     | "restartContinuationOfRunId"
+    | "manualContinuationOfRunId"
     | "activeAttemptId"
   >;
   /** Include earlier attempts: a steer replaces the attempt but not the run. */
@@ -212,6 +213,7 @@ export function pendingRestartCancelledBackgroundWork(input: {
   if (
     input.run.providerThreadId === null ||
     input.run.restartContinuationOfRunId !== undefined ||
+    input.run.manualContinuationOfRunId !== undefined ||
     isCompaction(input.run)
   )
     return [];
@@ -232,6 +234,7 @@ export function pendingRestartCancelledBackgroundWork(input: {
           (attempt) => attempt.runId === candidate.id && deliveredAttemptIds.has(attempt.id),
         )) &&
       !isCompaction(candidate) &&
+      candidate.manualContinuationOfRunId === undefined &&
       (candidate.restartContinuationOfRunId === undefined ||
         isRestartNoteContinuation(candidate, input.runs, input.providerTurns, input.attempts)),
   );

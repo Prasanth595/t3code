@@ -97,19 +97,35 @@ export function promptlessContinuationRun(
     nativeThread.status === "archived"
   )
     return null;
-  return projection.providerTurns.some(
-    (turn) =>
-      turn.nodeId === run.rootNodeId &&
-      turn.providerThreadId === nativeThread.id &&
-      projection.attempts.some(
-        (attempt) =>
-          attempt.id === turn.runAttemptId &&
-          attempt.runId === run.id &&
-          attempt.nativeThreadId === nativeThread.nativeThreadRef?.nativeId,
-      ),
-  )
-    ? run
-    : null;
+  let historyRun = run;
+  while (true) {
+    if (
+      projection.providerTurns.some(
+        (turn) =>
+          turn.nodeId === historyRun.rootNodeId &&
+          turn.providerThreadId === nativeThread.id &&
+          projection.attempts.some(
+            (attempt) =>
+              attempt.id === turn.runAttemptId &&
+              attempt.runId === historyRun.id &&
+              attempt.nativeThreadId === nativeThread.nativeThreadRef?.nativeId,
+          ),
+      )
+    )
+      return run;
+    // A validated continuation can fail before admission without changing the
+    // native input. Retry that run using its original admission evidence.
+    const source = projection.runs.find(
+      (candidate) =>
+        candidate.id === historyRun.manualContinuationOfRunId &&
+        candidate.ordinal < historyRun.ordinal &&
+        candidate.providerInstanceId === run.providerInstanceId &&
+        candidate.providerThreadId === run.providerThreadId &&
+        (candidate.status === "failed" || candidate.status === "interrupted"),
+    );
+    if (source === undefined) return null;
+    historyRun = source;
+  }
 }
 
 /**

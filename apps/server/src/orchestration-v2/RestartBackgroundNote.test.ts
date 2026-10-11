@@ -89,6 +89,33 @@ it("delivers a resumed queued run's note even after a higher-ordinal run", () =>
   );
 });
 
+it("keeps a cancellation note pending after a promptless manual continuation", () => {
+  const failed = run(1, codexThread, {
+    status: "failed",
+    restartCancelledBackgroundWork: lost,
+  });
+  const continued = run(2, codexThread, { manualContinuationOfRunId: failed.id });
+  const nextPrompt = run(3, codexThread);
+  const input = {
+    runs: [failed, continued, nextPrompt],
+    providerTurns: [turnFor(continued)],
+    compactionMessageIds: new Set<string>(),
+    attempts: [{ id: continued.activeAttemptId!, runId: continued.id }],
+  };
+  assert.deepEqual(pendingRestartCancelledBackgroundWork({ ...input, run: continued }), []);
+  assert.deepEqual(pendingRestartCancelledBackgroundWork({ ...input, run: nextPrompt }), lost);
+  const laterPrompt = run(4, codexThread);
+  assert.deepEqual(
+    pendingRestartCancelledBackgroundWork({
+      ...input,
+      runs: [...input.runs, laterPrompt],
+      providerTurns: [...input.providerTurns, turnFor(nextPrompt)],
+      run: laterPrompt,
+    }),
+    [],
+  );
+});
+
 it("bounds the note so it cannot crowd out the turn's context", () => {
   const work = Array.from({ length: 25 }, (_, index) => ({
     kind: "shell" as const,
