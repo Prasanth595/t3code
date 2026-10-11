@@ -161,7 +161,7 @@ const MuseProviderCapabilitiesV2 = {
   },
   subagents: {
     supportsSubagents: true,
-    exposesSubagentThreadIds: true,
+    exposesSubagentThreadIds: false,
     emitsSubagentLifecycle: true,
     canWaitForSubagents: false,
     canCloseSubagents: false,
