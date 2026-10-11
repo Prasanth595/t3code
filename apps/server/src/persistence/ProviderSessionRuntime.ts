@@ -6,14 +6,13 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Struct from "effect/Struct";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
-import * as SqlSchema from "effect/unstable/sql/SqlSchema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
 import {
   AgentSessionImportSource,
   IsoDateTime,
   ProviderInstanceId,
-  ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -32,6 +31,8 @@ import {
  *
  * @module ProviderSessionRuntimeRepository
  */
+
+const ProviderSessionRuntimeStatus = Schema.Literals(["starting", "running", "stopped", "error"]);
 
 export const ProviderSessionRuntime = Schema.Struct({
   threadId: ThreadId,
@@ -102,11 +103,14 @@ export class ProviderSessionRuntimeRepository extends Context.Service<
     >;
 
     /**
-     * List all provider runtime rows.
+     * List provider runtime rows.
      *
-     * Returned in ascending last-seen order.
+     * Returned in ascending last-seen order. `excludeStopped` filters stopped
+     * rows in SQL. Long-lived installs keep thousands for their resume cursors.
      */
-    readonly list: () => Effect.Effect<
+    readonly list: (options?: {
+      readonly excludeStopped?: boolean;
+    }) => Effect.Effect<
       ReadonlyArray<ProviderSessionRuntime>,
       ProviderSessionRuntimeRepositoryError
     >;
@@ -336,9 +340,9 @@ export const make = Effect.gen(function* () {
   });
 
   const listRuntimeRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.Struct({ excludeStopped: Schema.Boolean }),
     Result: ProviderSessionRuntimeRawDbRowSchema,
-    execute: () =>
+    execute: ({ excludeStopped }) =>
       sql`
         SELECT
           thread_id AS "threadId",
@@ -351,6 +355,7 @@ export const make = Effect.gen(function* () {
           resume_cursor_json AS "resumeCursor",
           runtime_payload_json AS "runtimePayload"
         FROM provider_session_runtime
+        ${excludeStopped ? sql`WHERE status != 'stopped'` : sql``}
         ORDER BY last_seen_at ASC, thread_id ASC
       `,
   });
@@ -414,8 +419,8 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const list: ProviderSessionRuntimeRepository["Service"]["list"] = () =>
-    listRuntimeRows(undefined).pipe(
+  const list: ProviderSessionRuntimeRepository["Service"]["list"] = (options) =>
+    listRuntimeRows({ excludeStopped: options?.excludeStopped === true }).pipe(
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProviderSessionRuntimeRepository.list:query",
