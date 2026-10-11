@@ -813,6 +813,14 @@ export const layer = Layer.effect(
 
     // Defined before `syncLiveSources`: the rescan consumers it forks may
     // already have a report waiting and must find these initialized.
+    const publishIfChanged = (
+      previousProviders: ReadonlyArray<ServerProvider>,
+      nextProviders: ReadonlyArray<ServerProvider>,
+    ) =>
+      haveProvidersChanged(previousProviders, nextProviders)
+        ? PubSub.publish(changesPubSub, nextProviders)
+        : Effect.void;
+
     const updateProviders = (
       update: (providers: ReadonlyArray<ServerProvider>) => ReadonlyArray<ServerProvider>,
     ) =>
@@ -821,9 +829,7 @@ export const layer = Layer.effect(
         return [[currentProviders, nextProviders] as const, nextProviders];
       }).pipe(
         Effect.tap(([previousProviders, nextProviders]) =>
-          haveProvidersChanged(previousProviders, nextProviders)
-            ? PubSub.publish(changesPubSub, nextProviders)
-            : Effect.void,
+          publishIfChanged(previousProviders, nextProviders),
         ),
         Effect.map(([, nextProviders]) => nextProviders),
       );
@@ -909,39 +915,58 @@ export const layer = Layer.effect(
                   // scan. A session event or another scan that landed first is newer.
                   // A rescan starts after the change it reports, so a scan that
                   // started earlier and landed first is the stale one. It still
-                  // loses to a scan that started after it and landed first.
-                  return Ref.modify(committedScanStartsRef, (committed) => {
-                    const forInstance = committed.get(input.instanceId);
-                    const latest = forInstance?.get(input.cwd) ?? 0;
-                    const cwds = new Map(forInstance);
-                    cwds.delete(input.cwd);
-                    cwds.set(input.cwd, Math.max(latest, startedAt));
-                    for (const oldest of cwds.keys()) {
-                      if (cwds.size <= MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER) break;
-                      cwds.delete(oldest);
+                  // loses to a scan that started after it and landed first. Only a
+                  // scan that wrote counts as landed: one the guard rejected must
+                  // not make a rescan that started before it look superseded.
+                  return Effect.gen(function* () {
+                    // Read, write and commit run with no yield between them, and
+                    // the publish comes last: a yield after the write but before
+                    // the commit would let an older rescan pass the check and
+                    // overwrite this snapshot.
+                    const latest =
+                      (yield* Ref.get(committedScanStartsRef))
+                        .get(input.instanceId)
+                        ?.get(input.cwd) ?? 0;
+                    if (input.rescan === true && latest > startedAt) {
+                      return yield* Ref.get(providersRef);
                     }
-                    return [
-                      input.rescan === true && latest > startedAt,
-                      new Map(committed).set(input.instanceId, cwds),
-                    ] as const;
-                  }).pipe(
-                    Effect.flatMap((superseded) =>
-                      superseded
-                        ? Ref.get(providersRef)
-                        : updateProviders((currentProviders) =>
-                            currentProviders.map((candidate) =>
-                              candidate.instanceId === input.instanceId &&
-                              (input.rescan === true ||
-                                Equal.equals(workspaceSnapshotOf(candidate), scannedFrom))
-                                ? upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
-                                    ...scopedSnapshot,
-                                    checkedAt: scannedAt,
-                                  })
-                                : candidate,
-                            ),
-                          ),
-                    ),
-                  );
+                    const [previousProviders, nextProviders, written] = yield* Ref.modify(
+                      providersRef,
+                      (currentProviders) => {
+                        let written = false;
+                        const nextProviders = currentProviders.map((candidate) => {
+                          if (
+                            candidate.instanceId !== input.instanceId ||
+                            (input.rescan !== true &&
+                              !Equal.equals(workspaceSnapshotOf(candidate), scannedFrom))
+                          ) {
+                            return candidate;
+                          }
+                          written = true;
+                          return upsertProviderWorkspaceSnapshot(candidate, input.cwd, {
+                            ...scopedSnapshot,
+                            checkedAt: scannedAt,
+                          });
+                        });
+                        return [[currentProviders, nextProviders, written] as const, nextProviders];
+                      },
+                    );
+                    if (written) {
+                      yield* Ref.update(committedScanStartsRef, (committed) => {
+                        const forInstance = committed.get(input.instanceId);
+                        const cwds = new Map(forInstance);
+                        cwds.delete(input.cwd);
+                        cwds.set(input.cwd, Math.max(forInstance?.get(input.cwd) ?? 0, startedAt));
+                        for (const oldest of cwds.keys()) {
+                          if (cwds.size <= MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER) break;
+                          cwds.delete(oldest);
+                        }
+                        return new Map(committed).set(input.instanceId, cwds);
+                      });
+                    }
+                    yield* publishIfChanged(previousProviders, nextProviders);
+                    return nextProviders;
+                  });
                 }),
               ),
         ),

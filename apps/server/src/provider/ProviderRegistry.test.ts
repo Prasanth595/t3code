@@ -2370,6 +2370,68 @@ it.layer(
       }),
     );
 
+    it.effect("keeps a rescan alive when a later scan was rejected by the snapshot guard", () =>
+      Effect.gen(function* () {
+        const firstGate = yield* Deferred.make<void>();
+        const rescanGate = yield* Deferred.make<void>();
+        const freshGate = yield* Deferred.make<void>();
+        const rescans = yield* Queue.unbounded<string>();
+        const { instanceId, runtimeServices, started, heldSkills } =
+          yield* makeScriptedWorkspaceRegistry(
+            [
+              { skills: "other-initial" },
+              { skills: "first", gate: firstGate },
+              { skills: "rescan", gate: rescanGate },
+              { skills: "fresh", gate: freshGate },
+              { skills: "other-rescan" },
+            ],
+            rescans,
+          );
+        yield* Effect.gen(function* () {
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          yield* registry.refreshWorkspaceSnapshot({ instanceId, cwd: "/other" });
+          assert.strictEqual(yield* Queue.take(started), 0);
+          // The first scan of /workspace is still running when the rescan and
+          // a fresh scan start, so the fresh scan began with no snapshot.
+          const first = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+            .pipe(Effect.forkChild);
+          assert.strictEqual(yield* Queue.take(started), 1);
+          yield* Queue.offer(rescans, "/workspace");
+          assert.strictEqual(yield* Queue.take(started), 2);
+          const fresh = yield* registry
+            .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace", fresh: true })
+            .pipe(Effect.forkChild);
+          assert.strictEqual(yield* Queue.take(started), 3);
+          // The first scan lands, so the fresh scan finds the snapshot changed
+          // under it and writes nothing.
+          yield* Deferred.succeed(firstGate, undefined);
+          yield* Fiber.join(first);
+          yield* Deferred.succeed(freshGate, undefined);
+          yield* Fiber.join(fresh);
+          assert.deepStrictEqual(yield* heldSkills("/workspace"), ["first"]);
+          // A scan that wrote nothing has not committed, so the rescan that
+          // started before it is not superseded.
+          yield* Deferred.succeed(rescanGate, undefined);
+          const settled = yield* registry.streamChanges.pipe(
+            Stream.filter(
+              (providers) =>
+                providers[0]?.workspaceSnapshots?.some(
+                  (snapshot) =>
+                    snapshot.cwd === "/other" && snapshot.skills[0]?.name === "other-rescan",
+                ) === true,
+            ),
+            Stream.runHead,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* Queue.offer(rescans, "/other");
+          yield* Fiber.join(settled);
+          assert.deepStrictEqual(yield* heldSkills("/workspace"), ["rescan"]);
+        }).pipe(Effect.provide(runtimeServices));
+      }),
+    );
+
     it.effect(
       "serves a session start reported before the registry finished building",
       () =>
