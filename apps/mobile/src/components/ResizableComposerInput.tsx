@@ -248,10 +248,12 @@ export function ResizableComposerInput(props: {
     measureRoom(true);
     settle(value ? 1 : 0, 0);
   };
+  // An undefined animated height leaves the last native height in place when
+  // a questionnaire hides the composer. Restore intrinsic sizing explicitly.
   const style = useAnimatedStyle(() => ({
     height: enabled
       ? INPUT_HEIGHT + HANDLE_HEIGHT + Math.max(0, Math.min(1, progress.value)) * maximum.value
-      : undefined,
+      : "auto",
   }));
 
   return (
