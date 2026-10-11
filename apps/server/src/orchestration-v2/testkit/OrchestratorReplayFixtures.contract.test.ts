@@ -38,14 +38,18 @@ describe("orchestrator replay fixture contract", () => {
 
           for (const provider of fixture.providers) {
             const transcript = yield* readTranscript(provider.transcriptFile);
-            const replayGateLabels = fixture
-              .buildInput()
-              .steps.flatMap((step) =>
+            const replayGateLabels = fixture.buildInput().steps.flatMap((step) => {
+              if (
                 step.type === "release_replay_gate" ||
                 step.type === "release_replay_gate_after_waiting"
-                  ? [step.label]
-                  : [],
-              );
+              ) {
+                return [step.label];
+              }
+              if (step.type === "interrupt" && step.releaseLabel !== undefined) {
+                return [step.releaseLabel];
+              }
+              return [];
+            });
             const materialized = yield* materializeFixtureInput({
               scenario: fixture.name,
               fixtureInput: fixture.buildInput(),

@@ -14,6 +14,7 @@ import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testk
 import { CursorOrchestratorReplayHarness } from "../Adapters/CursorAdapterV2.testkit.ts";
 import { AcpRegistryOrchestratorReplayHarness } from "../Adapters/AcpRegistryAdapterV2.testkit.ts";
 import { GrokOrchestratorReplayHarness } from "../Adapters/GrokAdapterV2.testkit.ts";
+import { FxOrchestratorReplayHarness } from "../Adapters/FxAdapterV2.testkit.ts";
 import { OpenCodeOrchestratorReplayHarness } from "../Adapters/OpenCodeAdapterV2.testkit.ts";
 import {
   OPENCODE2_HTTP_PROTOCOL,
@@ -102,7 +103,9 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     transcriptEntriesThroughLabel(rawTranscript, input.driver.transcriptEntriesThroughLabel),
     { driver: input.driver.driver, model: input.driver.modelSelection.model },
   );
-  const fixtureInput = input.buildInput();
+  const builtInput = input.buildInput();
+  const runtimeMode = builtInput.runtimeMode ?? input.driver.runtimeMode;
+  const fixtureInput = runtimeMode === undefined ? builtInput : { ...builtInput, runtimeMode };
   const workspace = yield* checkpointWorkspace(input.fixtureName, fixtureInput.workspaceFiles);
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"
@@ -198,6 +201,11 @@ function runFixtureProviderWithRegisteredHarness(input: {
       return runFixtureProvider({
         ...input,
         harness: GrokOrchestratorReplayHarness,
+      }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
+    case "fx":
+      return runFixtureProvider({
+        ...input,
+        harness: FxOrchestratorReplayHarness,
       }).pipe(Effect.mapError(normalizeTestError), Effect.scoped);
     case "acpRegistry":
       return runFixtureProvider({

@@ -261,6 +261,12 @@ export type OrchestratorFixtureInputStep =
       readonly type: "interrupt";
       readonly targetRunIndex: number;
       readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
+      /**
+       * Release a held inbound frame after Stop and before waiting for idle.
+       * A cancel that waits for the prompt response never reaches idle if the
+       * release is a later step.
+       */
+      readonly releaseLabel?: string;
     }
   | {
       /** The Waiting strip's Stop: interrupts a settled run's leftover background work. */
@@ -327,6 +333,11 @@ export interface ProviderOrchestratorReplayVariant {
    * e.g. the target of a tool call the run was configured to deny.
    */
   readonly expectedAbsentWorkspacePaths?: ReadonlyArray<string>;
+  /**
+   * Permission mode for this provider's thread.create when the shared fixture
+   * input does not set one. Replay does not coerce an unsupported stored mode.
+   */
+  readonly runtimeMode?: RuntimeMode;
   readonly assertOutput: (
     result: OrchestratorV2ScenarioResult,
     transcript: ProviderReplayTranscript,
@@ -374,6 +385,12 @@ export const MUSE_MODEL_SELECTION = {
 export const GROK_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("grok"),
   model: "grok-build",
+} satisfies ModelSelection;
+
+/** fx fixtures send `default` and let the adapter resolve the probed model. */
+export const FX_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("fx"),
+  model: "default",
 } satisfies ModelSelection;
 
 export const OPENCODE_MODEL_SELECTION = {
@@ -875,6 +892,9 @@ export function materializeFixtureInput(input: {
             steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
           }
           steps.push({ type: "advance_clock", duration: "1 millis" });
+          if (step.releaseLabel !== undefined) {
+            steps.push({ type: "release_replay_gate", label: step.releaseLabel });
+          }
           steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           break;
         case "stop_background_work":
