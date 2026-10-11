@@ -10,6 +10,9 @@ Object.assign(process.env, repoEnv);
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
+// Apple grants the CarPlay voice-based conversation entitlement per team, and
+// a device build fails to sign without the grant. The simulator needs none.
+const hasIosCarPlayEntitlement = repoEnv.T3CODE_IOS_CARPLAY === "1" && !isIosPersonalTeamBuild;
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
@@ -450,6 +453,7 @@ const config: ExpoConfig = {
       },
     ],
     "./plugins/withIosCocoaPodsUuidCache.cjs",
+    ["./plugins/withVoiceDispatch.cjs", { carPlayEntitlement: hasIosCarPlayEntitlement }],
     // Only the accelerometer is used (device viewer shake). Compile out the
     // pedometer so iOS needs no motion purpose string.
     ["expo-sensors", { motionPermission: false }],

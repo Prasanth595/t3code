@@ -4,6 +4,7 @@
 
 - [Install T3 Code](./user/install.md)
 - [Messages and context](./user/composer.md)
+- [Start threads hands-free](./user/voice-dispatch.md)
 - [Working with threads](./user/thread-sidebar.md)
 - [Permission modes](./user/permission-modes.md)
 - [Terminal history](./user/terminal.md)

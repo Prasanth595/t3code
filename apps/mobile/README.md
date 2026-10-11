@@ -90,6 +90,18 @@ T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID=com.example.t3code \
 vp run ios:release
 ```
 
+Siri's "Start a thread" intent is in every build. The CarPlay voice screen also needs Apple's
+`com.apple.developer.carplay-voice-based-conversation` entitlement. Apple grants it per team, and
+device builds fail to sign without it, so builds opt in once the signing team has the grant. The
+simulator accepts the entitlement without one:
+
+```bash
+T3CODE_IOS_CARPLAY=1 node ../../scripts/mobile-native-client.ts ensure ios <simulator-udid>
+```
+
+Xcode 27.0's Device Hub has no control for the simulator's CarPlay display (FB24785359). Test the
+CarPlay screen with Apple's CarPlay Simulator app and a cabled iPhone, or in a car.
+
 Build and run the local iOS preview app:
 
 ```bash
