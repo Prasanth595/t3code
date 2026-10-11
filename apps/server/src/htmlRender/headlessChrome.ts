@@ -346,10 +346,12 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
   const disconnect = Effect.gen(function* () {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
     const exit = yield* child.exitCode.pipe(
-      Effect.map((code): { exitCode?: number; signal?: string } => ({ exitCode: code })),
+      Effect.map((code): { exitCode?: number; signal?: string; cause?: unknown } => ({
+        exitCode: code,
+      })),
       Effect.catch((error) => {
         const signal = EXIT_SIGNAL.exec(String(error.cause))?.[1];
-        return Effect.succeed(signal === undefined ? {} : { signal });
+        return Effect.succeed(signal === undefined ? { cause: error } : { signal, cause: error });
       }),
       Effect.timeoutOption("1 second"),
     );
