@@ -20,6 +20,7 @@ import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
+import * as McpAppDocument from "./assets/McpAppDocument.ts";
 
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
 
@@ -120,7 +121,9 @@ describe("browser API CORS", () => {
   });
 });
 
-const layerFileResponse = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer);
+const layerFileResponse = Layer.merge(NodeHttpPlatform.layer, McpAppDocument.layer).pipe(
+  Layer.provideMerge(NodeServices.layer),
+);
 
 const makeStaticRequest = Effect.fn("HttpTest.makeStaticRequest")(function* (staticDir: string) {
   const config = yield* ServerConfig.ServerConfig;

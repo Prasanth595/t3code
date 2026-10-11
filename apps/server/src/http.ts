@@ -28,7 +28,8 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, readMcpAppDocument, resolveAsset } from "./assets/AssetAccess.ts";
+import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
+import * as McpAppDocument from "./assets/McpAppDocument.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -179,7 +180,8 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     !asset.download &&
     headers["Content-Type"] === "text/html; charset=utf-8"
   ) {
-    const document = yield* readMcpAppDocument(asset.path);
+    const mcpAppDocument = yield* McpAppDocument.McpAppDocument;
+    const document = yield* mcpAppDocument.read(asset.path);
     if (document._tag === "TooLarge") {
       return HttpServerResponse.text("MCP App is too large to preview.", { status: 413 });
     }

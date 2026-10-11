@@ -28,6 +28,7 @@ import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import * as McpAppDocument from "./assets/McpAppDocument.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
@@ -1087,6 +1088,7 @@ const layerMakeServer = Layer.unwrap(
     );
 
     return layerServerApplication.pipe(
+      Layer.provide(McpAppDocument.layer),
       // The connect routes and the startup/shutdown link work share one instance.
       Layer.provide(CloudLink.layer),
       Layer.provideMerge(layerRuntimeServices),

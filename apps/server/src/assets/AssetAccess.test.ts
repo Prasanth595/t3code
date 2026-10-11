@@ -32,6 +32,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as McpAppDocument from "./McpAppDocument.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
@@ -117,6 +118,7 @@ const layerTest = Layer.mergeAll(
     Layer.provide(T3ProjectFileLoader.layer),
   ),
   NativeAppIconResolver.layer.pipe(Layer.provide(layerConfig)),
+  McpAppDocument.layer,
   ServerSecretStore.layer.pipe(Layer.provide(layerConfig)),
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
