@@ -119,17 +119,28 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
   const act = async (runId: RunId, action: QueueAction) => {
     if (busyRef.current) return;
     const index = queuedRuns.findIndex(({ run }) => run.id === runId);
-    if (index < 0) return;
-    if (action === "up" && index > 0) {
+    const entry = queuedRuns[index];
+    if (!entry) return;
+    const controls = resolveThreadQueueRowControls({
+      busy: busyRunId !== null || draggedRunId !== null,
+      canEdit: entry.canEdit,
+      canPromoteToSteer: entry.canPromoteToSteer,
+      canReorder: workflow?.canReorder ?? false,
+      index,
+      isEditing: editing?.runId === runId,
+      queuedCount: queuedRuns.length,
+      text: entry.text,
+    });
+    if (action === "up" && controls.canMoveUp) {
       await move(runId, queuedRuns[index - 1]!.run.id);
       return;
     }
-    if (action === "down" && index < queuedRuns.length - 1) {
+    if (action === "down" && controls.canMoveDown) {
       await move(runId, queuedRuns[index + 2]?.run.id ?? null);
       return;
     }
     if (action === "edit") {
-      const entry = queuedRuns[index]!;
+      if (!controls.canEdit) return;
       void Haptics.selectionAsync();
       beginQueuedRunEdit(threadKey, {
         runId,
@@ -142,13 +153,15 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       return;
     }
     if (action !== "steer" && action !== "remove") return;
+    if (action === "steer" && !controls.canSteer) return;
+    if (action === "remove" && !controls.canDismiss) return;
     busyRef.current = true;
     setBusyRunId(runId);
     void Haptics.selectionAsync();
     try {
       if (action === "remove") {
         await cancel(buildCancelQueuedRunCommand({ ...target, runId }));
-      } else if (workflow?.activeRun && workflow.canPromoteToSteer) {
+      } else if (workflow?.activeRun) {
         await promote({
           ...target,
           input: {
@@ -212,203 +225,221 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           No messages waiting in this queue.
         </Text>
       ) : null}
-      {queuedRuns.map(({ run, text, attachments }, index) => {
-        const layout = dragRows?.find((row) => row.id === run.id);
-        const offset =
-          sourceLayout?.y !== undefined &&
-          sourceLayout.height !== undefined &&
-          layout?.y !== undefined &&
-          insertionOffset !== undefined
-            ? threadDragGapOffset(layout.y, sourceLayout.y, sourceLayout.height, insertionOffset)
-            : 0;
-        const controls = resolveThreadQueueRowControls({
-          busy: busyRunId !== null || draggedRunId !== null,
-          canPromoteToSteer: workflow?.canPromoteToSteer ?? false,
-          canReorder: workflow?.canReorder ?? false,
-          index,
-          isEditing: editing?.runId === run.id,
-          queuedCount: queuedRuns.length,
-          text,
-        });
-        const title =
-          controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
-        return (
-          <QueueShiftedRow
-            key={run.id}
-            offset={offset}
-            dragging={draggedRunId !== null}
-            lifted={draggedRunId === run.id}
-            onLayout={({ nativeEvent }) => rowLayouts.current.set(run.id, nativeEvent.layout)}
-          >
-            <Animated.View
-              className="flex-row items-center border-b border-border bg-sheet"
-              style={
-                draggedRunId === run.id
-                  ? { transform: [{ translateY: translation }], zIndex: 1, opacity: 0.85 }
-                  : undefined
-              }
+      {queuedRuns.map(
+        ({ run, text, attachments, canEdit, canPromoteToSteer, queueOnlyReason }, index) => {
+          const layout = dragRows?.find((row) => row.id === run.id);
+          const offset =
+            sourceLayout?.y !== undefined &&
+            sourceLayout.height !== undefined &&
+            layout?.y !== undefined &&
+            insertionOffset !== undefined
+              ? threadDragGapOffset(layout.y, sourceLayout.y, sourceLayout.height, insertionOffset)
+              : 0;
+          const controls = resolveThreadQueueRowControls({
+            busy: busyRunId !== null || draggedRunId !== null,
+            canPromoteToSteer,
+            canReorder: workflow?.canReorder ?? false,
+            index,
+            isEditing: editing?.runId === run.id,
+            queuedCount: queuedRuns.length,
+            text,
+            canEdit,
+          });
+          const title =
+            controls.displayText || (attachments.length > 0 ? "Attachments" : "Queued message");
+          return (
+            <QueueShiftedRow
+              key={run.id}
+              offset={offset}
+              dragging={draggedRunId !== null}
+              lifted={draggedRunId === run.id}
+              onLayout={({ nativeEvent }) => rowLayouts.current.set(run.id, nativeEvent.layout)}
             >
-              {canReorder ? (
-                // Outside the swipeable: two pans on one row would race, and
-                // the handle owns vertical movement while the row owns sideways.
-                <QueueDragHandle
-                  disabled={busyRunId !== null}
-                  title={title}
-                  canMoveUp={controls.canMoveUp}
-                  canMoveDown={controls.canMoveDown}
-                  onStep={(action) => void act(run.id, action)}
-                  onStart={() => {
-                    const rows = queueRows();
-                    const beforeRunId = resolveQueueDragBeforeRunId(rows, run.id, 0);
-                    drag.current = { runId: run.id, order, beforeRunId, rows };
-                    translation.setValue(0);
-                    setDragRows(rows);
-                    setPreviewBeforeRunId(beforeRunId);
-                    setDraggedRunId(run.id);
-                    void Haptics.selectionAsync();
-                  }}
-                  onMove={(y) => {
-                    const current = drag.current;
-                    if (current?.runId !== run.id || current.order !== order) return;
-                    translation.setValue(y);
-                    const before = resolveQueueDragBeforeRunId(current.rows, run.id, y);
-                    if (current.beforeRunId !== before) {
-                      current.beforeRunId = before;
-                      setPreviewBeforeRunId(before);
-                    }
-                  }}
-                  onEnd={(y, success) => {
-                    const started = drag.current;
-                    const stop = () => {
-                      if (drag.current !== started) return;
-                      drag.current = null;
-                      setDraggedRunId(null);
-                      setPreviewBeforeRunId(undefined);
-                      setDragRows(null);
-                      translation.setValue(0);
-                    };
-                    // A remote reorder or a newly started run invalidates this drag.
-                    if (!success || started?.order !== order || started.runId !== run.id) {
-                      stop();
-                      return;
-                    }
-                    const before = resolveQueueDropBeforeRunId(started.rows, run.id, y);
-                    if (before === undefined) {
-                      stop();
-                      return;
-                    }
-                    const source = started.rows.find((row) => row.id === run.id);
-                    const tail = started.rows.at(-1);
-                    const insertion =
-                      before === null
-                        ? tail?.y !== undefined && tail.height !== undefined
-                          ? tail.y + tail.height
-                          : undefined
-                        : started.rows.find((row) => row.id === before)?.y;
-                    if (
-                      source?.y !== undefined &&
-                      source.height !== undefined &&
-                      insertion !== undefined
-                    ) {
-                      Animated.timing(translation, {
-                        toValue: insertion - source.y - (insertion > source.y ? source.height : 0),
-                        duration: 160,
-                        useNativeDriver: true,
-                      }).start();
-                    }
-                    setPreviewBeforeRunId(before);
-                    void move(run.id, before).finally(stop);
-                  }}
-                />
-              ) : null}
-              <QueueRowSwipeable
-                enabled={draggedRunId === null && busyRunId === null && controls.canDismiss}
-                background={theme["--color-sheet"]}
-                onRemove={() => void act(run.id, "remove")}
+              <Animated.View
+                className="flex-row items-center border-b border-border bg-sheet"
+                style={
+                  draggedRunId === run.id
+                    ? { transform: [{ translateY: translation }], zIndex: 1, opacity: 0.85 }
+                    : undefined
+                }
               >
-                <ControlPillMenu
-                  accessibilityLabel={`Actions for queued message ${index + 1}`}
-                  shouldOpenOnLongPress
-                  actions={[
-                    ...(workflow?.canPromoteToSteer
-                      ? [
-                          {
-                            id: "steer",
-                            title: "Steer now",
-                            attributes: { disabled: !controls.canSteer },
-                            image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
-                          },
-                        ]
-                      : []),
-                    {
-                      id: "edit",
-                      title: "Edit",
-                      attributes: { disabled: !controls.canEdit },
-                      image: Platform.OS === "ios" ? "pencil" : "edit",
-                    },
-                    { id: "up", title: "Move up", attributes: { disabled: !controls.canMoveUp } },
-                    {
-                      id: "down",
-                      title: "Move down",
-                      attributes: { disabled: !controls.canMoveDown },
-                    },
-                    {
-                      id: "remove",
-                      title: "Remove",
-                      attributes: { disabled: !controls.canDismiss, destructive: true },
-                    },
-                  ]}
-                  onPressAction={({ nativeEvent }) =>
-                    void act(run.id, nativeEvent.event as QueueAction)
-                  }
-                >
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel={title}
-                    accessibilityHint="Opens this message in the composer for editing"
-                    disabled={!controls.canEdit}
-                    onPress={() => void act(run.id, "edit")}
-                    className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
-                  >
-                    <QueueAttachmentThumbnails
-                      environmentId={target.environmentId}
-                      attachments={attachments}
-                    />
-                    <Text
-                      className={
-                        controls.isEditing
-                          ? "min-w-0 flex-1 text-sm text-foreground-muted"
-                          : "min-w-0 flex-1 text-sm text-foreground"
+                {canReorder ? (
+                  // Outside the swipeable: two pans on one row would race, and
+                  // the handle owns vertical movement while the row owns sideways.
+                  <QueueDragHandle
+                    disabled={busyRunId !== null}
+                    title={title}
+                    canMoveUp={controls.canMoveUp}
+                    canMoveDown={controls.canMoveDown}
+                    onStep={(action) => void act(run.id, action)}
+                    onStart={() => {
+                      const rows = queueRows();
+                      const beforeRunId = resolveQueueDragBeforeRunId(rows, run.id, 0);
+                      drag.current = { runId: run.id, order, beforeRunId, rows };
+                      translation.setValue(0);
+                      setDragRows(rows);
+                      setPreviewBeforeRunId(beforeRunId);
+                      setDraggedRunId(run.id);
+                      void Haptics.selectionAsync();
+                    }}
+                    onMove={(y) => {
+                      const current = drag.current;
+                      if (current?.runId !== run.id || current.order !== order) return;
+                      translation.setValue(y);
+                      const before = resolveQueueDragBeforeRunId(current.rows, run.id, y);
+                      if (current.beforeRunId !== before) {
+                        current.beforeRunId = before;
+                        setPreviewBeforeRunId(before);
                       }
-                      numberOfLines={1}
+                    }}
+                    onEnd={(y, success) => {
+                      const started = drag.current;
+                      const stop = () => {
+                        if (drag.current !== started) return;
+                        drag.current = null;
+                        setDraggedRunId(null);
+                        setPreviewBeforeRunId(undefined);
+                        setDragRows(null);
+                        translation.setValue(0);
+                      };
+                      // A remote reorder or a newly started run invalidates this drag.
+                      if (!success || started?.order !== order || started.runId !== run.id) {
+                        stop();
+                        return;
+                      }
+                      const before = resolveQueueDropBeforeRunId(started.rows, run.id, y);
+                      if (before === undefined) {
+                        stop();
+                        return;
+                      }
+                      const source = started.rows.find((row) => row.id === run.id);
+                      const tail = started.rows.at(-1);
+                      const insertion =
+                        before === null
+                          ? tail?.y !== undefined && tail.height !== undefined
+                            ? tail.y + tail.height
+                            : undefined
+                          : started.rows.find((row) => row.id === before)?.y;
+                      if (
+                        source?.y !== undefined &&
+                        source.height !== undefined &&
+                        insertion !== undefined
+                      ) {
+                        Animated.timing(translation, {
+                          toValue:
+                            insertion - source.y - (insertion > source.y ? source.height : 0),
+                          duration: 160,
+                          useNativeDriver: true,
+                        }).start();
+                      }
+                      setPreviewBeforeRunId(before);
+                      void move(run.id, before).finally(stop);
+                    }}
+                  />
+                ) : null}
+                <QueueRowSwipeable
+                  enabled={draggedRunId === null && busyRunId === null && controls.canDismiss}
+                  background={theme["--color-sheet"]}
+                  onRemove={() => void act(run.id, "remove")}
+                >
+                  <ControlPillMenu
+                    accessibilityLabel={`Actions for queued message ${index + 1}`}
+                    shouldOpenOnLongPress
+                    actions={[
+                      ...(canPromoteToSteer
+                        ? [
+                            {
+                              id: "steer",
+                              title: "Steer now",
+                              attributes: { disabled: !controls.canSteer },
+                              image: Platform.OS === "ios" ? "arrow.turn.left.up" : "arrow_upward",
+                            },
+                          ]
+                        : []),
+                      {
+                        id: "edit",
+                        title: canEdit ? "Edit" : "Peer message cannot be edited",
+                        attributes: { disabled: !controls.canEdit },
+                        image: Platform.OS === "ios" ? "pencil" : "edit",
+                      },
+                      { id: "up", title: "Move up", attributes: { disabled: !controls.canMoveUp } },
+                      {
+                        id: "down",
+                        title: "Move down",
+                        attributes: { disabled: !controls.canMoveDown },
+                      },
+                      {
+                        id: "remove",
+                        title: "Remove",
+                        attributes: { disabled: !controls.canDismiss, destructive: true },
+                      },
+                    ]}
+                    onPressAction={({ nativeEvent }) => {
+                      switch (nativeEvent.event) {
+                        case "steer":
+                        case "edit":
+                        case "up":
+                        case "down":
+                        case "remove":
+                          void act(run.id, nativeEvent.event);
+                      }
+                    }}
+                  >
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={title}
+                      accessibilityHint={
+                        queueOnlyReason ?? "Opens this message in the composer for editing"
+                      }
+                      disabled={!controls.canEdit}
+                      onPress={() => void act(run.id, "edit")}
+                      className="min-h-14 flex-row items-center gap-2.5 py-2.5 active:opacity-70"
                     >
-                      {title}
-                    </Text>
-                    {controls.isEditing ? (
-                      <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
-                        Editing
-                      </Text>
-                    ) : null}
-                    {workflow?.canPromoteToSteer ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel={`Steer with message ${index + 1} now`}
-                        disabled={!controls.canSteer}
-                        onPress={() => void act(run.id, "steer")}
-                        className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
-                      >
-                        <Text className="font-t3-medium text-xs text-primary-foreground">
-                          Steer
+                      <QueueAttachmentThumbnails
+                        environmentId={target.environmentId}
+                        attachments={attachments}
+                      />
+                      <View className="min-w-0 flex-1">
+                        <Text
+                          className={
+                            controls.isEditing
+                              ? "min-w-0 flex-1 text-sm text-foreground-muted"
+                              : "min-w-0 flex-1 text-sm text-foreground"
+                          }
+                          numberOfLines={1}
+                        >
+                          {title}
                         </Text>
-                      </Pressable>
-                    ) : null}
-                  </Pressable>
-                </ControlPillMenu>
-              </QueueRowSwipeable>
-            </Animated.View>
-          </QueueShiftedRow>
-        );
-      })}
+                        {queueOnlyReason ? (
+                          <Text className="text-2xs text-foreground-muted">{queueOnlyReason}</Text>
+                        ) : null}
+                      </View>
+                      {controls.isEditing ? (
+                        <Text className="shrink-0 text-2xs uppercase tracking-wide text-primary">
+                          Editing
+                        </Text>
+                      ) : null}
+                      {canPromoteToSteer ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Steer with message ${index + 1} now`}
+                          disabled={!controls.canSteer}
+                          onPress={() => void act(run.id, "steer")}
+                          className="h-8 shrink-0 justify-center rounded-full bg-primary px-3 active:opacity-70 disabled:opacity-40"
+                        >
+                          <Text className="font-t3-medium text-xs text-primary-foreground">
+                            Steer
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </Pressable>
+                  </ControlPillMenu>
+                </QueueRowSwipeable>
+              </Animated.View>
+            </QueueShiftedRow>
+          );
+        },
+      )}
     </ScrollView>
   );
 

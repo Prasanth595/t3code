@@ -1,6 +1,7 @@
 import {
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  SWARM_MAX_MEMBERS,
 } from "@t3tools/contracts";
 import * as Predicate from "effect/Predicate";
 
@@ -37,6 +38,8 @@ interface CompactToolOutput {
   threadId?: string;
   messageId?: string;
   taskId?: string;
+  swarmId?: string;
+  taskIds?: Array<string>;
   scheduledTaskId?: string;
   status?: "rolled_back";
   htmlRender?: HtmlRenderReference;
@@ -119,9 +122,23 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
   const output: CompactToolOutput = result.failed ? { isError: true } : {};
   const data = budget.exceeded ? undefined : result.data;
   if (data !== undefined) {
-    for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId"] as const) {
+    for (const key of ["threadId", "messageId", "taskId", "scheduledTaskId", "swarmId"] as const) {
       const id = boundedId(data[key]);
       if (id !== undefined) output[key] = id;
+    }
+    if (output.swarmId === undefined && Predicate.isObject(data.swarm)) {
+      const swarmId = boundedId(data.swarm.id);
+      if (swarmId !== undefined) output.swarmId = swarmId;
+    }
+    const taskRows = Array.isArray(data.tasks) ? data.tasks : data.taskIds;
+    if (Array.isArray(taskRows) && taskRows.length >= 2 && taskRows.length <= SWARM_MAX_MEMBERS) {
+      const taskIds = taskRows.map((row) => boundedId(Predicate.isObject(row) ? row.taskId : row));
+      if (
+        taskIds.every((taskId) => taskId !== undefined) &&
+        new Set(taskIds).size === taskIds.length
+      ) {
+        output.taskIds = taskIds;
+      }
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
     const htmlRender = readHtmlRenderReference(data.htmlRender);
@@ -169,6 +186,7 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     delete output.threads;
     delete output.threadId;
     delete output.status;
+    delete output.taskIds;
   }
   // An app's declared origins are the only unbounded-ish part of its
   // reference; hosting works without them (the stored document carries its

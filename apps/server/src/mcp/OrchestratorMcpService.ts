@@ -1,3 +1,17 @@
+import { stableStringify } from "@t3tools/shared/relaySigning";
+import {
+  type SwarmId,
+  type OrchestratorMcpSwarmCreateInput,
+  type OrchestratorMcpSwarmCreateResult,
+  type OrchestratorMcpSwarmRosterInput,
+  type OrchestratorMcpSwarmRosterResult,
+  type OrchestratorMcpSwarmSendInput,
+  type OrchestratorMcpSwarmSendResult,
+  type OrchestratorMcpSwarmStopInput,
+  type OrchestratorMcpSwarmStopResult,
+} from "@t3tools/contracts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import { SwarmInvocation } from "../orchestration-v2/SwarmInvocation.ts";
 import {
   CommandId,
   type RunId,
@@ -123,6 +137,22 @@ type TerminalTaskStatus = Extract<
 >;
 
 export interface OrchestratorMcpServiceShape {
+  readonly swarmCreate: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpSwarmCreateInput,
+  ) => Effect.Effect<OrchestratorMcpSwarmCreateResult, OrchestratorMcpFailure>;
+  readonly swarmRoster: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpSwarmRosterInput,
+  ) => Effect.Effect<OrchestratorMcpSwarmRosterResult, OrchestratorMcpFailure>;
+  readonly swarmSend: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpSwarmSendInput,
+  ) => Effect.Effect<OrchestratorMcpSwarmSendResult, OrchestratorMcpFailure>;
+  readonly swarmStop: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpSwarmStopInput,
+  ) => Effect.Effect<OrchestratorMcpSwarmStopResult, OrchestratorMcpFailure>;
   readonly capabilities: (
     scope: McpInvocationScope,
   ) => Effect.Effect<OrchestratorMcpCapabilitiesResult, OrchestratorMcpFailure>;
@@ -897,6 +927,7 @@ function timelineItem(input: {
 
 const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
+  const swarmRegistry = yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry);
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
@@ -1568,7 +1599,296 @@ const make = Effect.gen(function* () {
       return task;
     });
 
+  const loadSwarmCaller = (caller: McpInvocationScope, operation: string) =>
+    Effect.gen(function* () {
+      yield* requireCapability(caller);
+      const scope = yield* requireThreadScope(caller, operation);
+      const parent = yield* threadManagement
+        .getThreadRecords(scope.thread.threadId, ["runs"])
+        .pipe(Effect.mapError(threadManagementFailure));
+      return { scope, parent };
+    });
+
+  const normalizedSwarmCreateIntent = (input: OrchestratorMcpSwarmCreateInput) => ({
+    title: input.title,
+    members: input.members.map((member) => ({
+      task: member.task,
+      title: member.title ?? null,
+      role: member.role ?? "general",
+      runtimeMode: member.runtimeMode ?? "inherit",
+      interactionMode: member.interactionMode ?? "inherit",
+      target:
+        member.target === undefined
+          ? null
+          : {
+              providerInstanceId: member.target.providerInstanceId ?? null,
+              driverKind: member.target.driverKind ?? null,
+              model: member.target.model ?? null,
+              options: member.target.options?.toSorted((a, b) => a.id.localeCompare(b.id)) ?? null,
+            },
+    })),
+  });
+  const swarmIdentity = (scope: McpThreadInvocationScope, operation: string, key: string) =>
+    CommandId.make(
+      `command:swarm:${encodeURIComponent(scope.environmentId)}:${encodeURIComponent(scope.thread.threadId)}:${operation}:${encodeURIComponent(key)}`,
+    );
+  const intentFingerprint = (input: unknown) =>
+    crypto.digest("SHA-256", new TextEncoder().encode(stableStringify(input))).pipe(
+      Effect.map((bytes) =>
+        Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join(""),
+      ),
+      Effect.orDie,
+    );
+  const swarmAuthority = (scope: McpThreadInvocationScope) =>
+    Option.isSome(swarmRegistry)
+      ? Effect.succeed({
+          validate: swarmRegistry.value.isCurrentCredential(scope),
+          withLease: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            swarmRegistry.value.withCurrentCredential(scope, effect),
+        })
+      : Effect.fail(
+          failure(
+            "capability_denied",
+            "This server has no issued credential registry for scoped swarms.",
+          ),
+        );
+  const readSwarm = (scope: McpThreadInvocationScope, swarmId: SwarmId) =>
+    Effect.gen(function* () {
+      const authority = yield* swarmAuthority(scope);
+      if (!(yield* authority.validate))
+        return yield* failure(
+          "parent_not_active",
+          "The calling credential was revoked or replaced.",
+        );
+      const group = yield* threadManagement
+        .getSwarm(swarmId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (
+        group === undefined ||
+        (group.ownerThreadId !== scope.thread.threadId &&
+          !group.members.some((member) => member.threadId === scope.thread.threadId))
+      )
+        return yield* failure(
+          "invalid_request",
+          "This caller does not own or belong to the swarm.",
+        );
+      const owner = yield* threadManagement
+        .getThreadRecords(group.ownerThreadId, [])
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (owner.thread.archivedAt !== null || owner.thread.deletedAt !== null)
+        return yield* failure("thread_not_found", "The swarm owner is no longer available.");
+      return group;
+    });
+
   return OrchestratorMcpService.of({
+    swarmCreate: (callerScope, input) =>
+      Effect.gen(function* () {
+        const { scope, parent } = yield* loadSwarmCaller(callerScope, "swarm_create");
+        const authority = yield* swarmAuthority(scope);
+        yield* assertLiveCaller(scope, parent);
+        const parentRun = ThreadManagementService.latestActiveRun(parent);
+        if (parentRun === undefined || parentRun.rootNodeId === null)
+          return yield* failure("parent_not_active", "Swarm creation requires a live owner run.");
+        if (!(yield* authority.validate))
+          return yield* failure(
+            "parent_not_active",
+            "The calling credential was revoked or replaced.",
+          );
+        const commandId = swarmIdentity(scope, "create", input.clientRequestId);
+        const fingerprint = yield* intentFingerprint(normalizedSwarmCreateIntent(input));
+        const replay = yield* threadManagement
+          .readSwarmCreation({
+            commandId,
+            threadId: parent.thread.id,
+            ownerRunId: parentRun.id,
+            ownerProviderInstanceId: scope.thread.providerInstanceId,
+            intentFingerprint: fingerprint,
+          })
+          .pipe(
+            Effect.provideService(SwarmInvocation, authority),
+            Effect.mapError(threadManagementFailure),
+          );
+        if (replay !== undefined)
+          return {
+            swarm: replay,
+            tasks: yield* Effect.forEach(replay.members, (member) =>
+              readTask(scope, member.taskId, false, true),
+            ),
+          };
+        const providers = yield* loadProviders;
+        const members = yield* Effect.forEach(input.members, (member) =>
+          Effect.gen(function* () {
+            const target = yield* resolveTargetRechecking({
+              parent,
+              target: member.target,
+              providers,
+            });
+            return {
+              task: taskPrompt(member),
+              ...(member.title === undefined ? {} : { title: member.title }),
+              modelSelection: target.modelSelection,
+              runtimeMode: yield* resolveRuntimeMode(
+                parent.thread.runtimeMode,
+                member.runtimeMode,
+                target,
+              ),
+              interactionMode: yield* resolveInteractionMode(
+                parent.thread.interactionMode,
+                member.interactionMode,
+              ),
+            };
+          }),
+        ).pipe(
+          Effect.catch((cause) =>
+            Effect.gen(function* () {
+              yield* threadManagement
+                .readSwarmCreation({
+                  commandId,
+                  threadId: parent.thread.id,
+                  intentFingerprint: fingerprint,
+                  rejection: cause.message,
+                })
+                .pipe(
+                  Effect.provideService(SwarmInvocation, authority),
+                  Effect.mapError(threadManagementFailure),
+                );
+              return yield* cause;
+            }),
+          ),
+        );
+        const result = yield* threadManagement
+          .dispatch({
+            type: "swarm.create",
+            ownerProviderInstanceId: scope.thread.providerInstanceId,
+            commandId,
+            threadId: parent.thread.id,
+            parentRunId: parentRun.id,
+            parentNodeId: parentRun.rootNodeId,
+            title: input.title,
+            members,
+            intentFingerprint: fingerprint,
+          })
+          .pipe(
+            Effect.provideService(SwarmInvocation, authority),
+            Effect.mapError(threadManagementFailure),
+          );
+        const group = result.storedEvents
+          .flatMap((stored) =>
+            stored.event.type === "swarm.updated" ? [stored.event.payload] : [],
+          )
+          .at(-1);
+        if (group === undefined)
+          return yield* failure("orchestration_error", "Swarm admission returned no roster.");
+        const tasks = yield* Effect.forEach(group.members, (member) =>
+          readTask(scope, member.taskId, false, true),
+        );
+        return { swarm: group, tasks };
+      }),
+    swarmRoster: (callerScope, input) =>
+      Effect.gen(function* () {
+        const { scope } = yield* loadSwarmCaller(callerScope, "swarm_roster");
+        const inferred =
+          input.swarmId ??
+          (yield* threadManagement
+            .getSwarmForMember(scope.thread.threadId)
+            .pipe(Effect.mapError(threadManagementFailure)))?.id;
+        if (inferred === undefined)
+          return yield* failure(
+            "invalid_request",
+            "Pass swarmId as the owner; ordinary children cannot infer swarm membership.",
+          );
+        return { swarm: yield* readSwarm(scope, inferred) };
+      }),
+    swarmSend: (callerScope, input) =>
+      Effect.gen(function* () {
+        const { scope, parent } = yield* loadSwarmCaller(callerScope, "swarm_send");
+        const group = yield* readSwarm(scope, input.swarmId);
+        const authority = yield* swarmAuthority(scope);
+        yield* assertLiveCaller(scope, parent);
+        const liveRun = ThreadManagementService.latestActiveRun(parent);
+        if (liveRun === undefined)
+          return yield* failure("parent_not_active", "Peer delivery requires a live sender run.");
+        const result = yield* threadManagement
+          .dispatch({
+            type: "swarm.send",
+            senderProviderInstanceId: scope.thread.providerInstanceId,
+            commandId: swarmIdentity(scope, "send", input.clientRequestId),
+            threadId: input.threadId,
+            swarmId: input.swarmId,
+            senderThreadId: scope.thread.threadId,
+            senderRunId: liveRun.id,
+            text: input.message,
+            runtimeMode: parent.thread.runtimeMode,
+            interactionMode: parent.thread.interactionMode,
+            intentFingerprint: yield* intentFingerprint(input),
+          })
+          .pipe(
+            Effect.provideService(SwarmInvocation, authority),
+            Effect.mapError(threadManagementFailure),
+          );
+        const accepted = result.storedEvents
+          .flatMap((stored) =>
+            stored.event.type === "message.updated" &&
+            stored.event.payload.swarmPeerDelivery !== undefined
+              ? [stored.event.payload]
+              : [],
+          )
+          .at(-1);
+        const run = result.storedEvents
+          .flatMap((stored) =>
+            stored.event.type === "run.created" || stored.event.type === "run.updated"
+              ? [stored.event.payload]
+              : [],
+          )
+          .findLast((candidate) => candidate.id === accepted?.runId);
+        const initial = group.members.find((member) => member.threadId === input.threadId);
+        if (accepted === undefined || run === undefined || initial === undefined)
+          return yield* failure(
+            "orchestration_error",
+            "Peer admission returned no tracked delivery.",
+          );
+        return {
+          swarmId: input.swarmId,
+          threadId: input.threadId,
+          messageId: accepted.id,
+          runId: run.id,
+          taskId: run.delegatedTaskId ?? initial.taskId,
+          delivery: run.status === "queued" ? "queued" : "started",
+          status: run.status,
+        };
+      }),
+    swarmStop: (callerScope, input) =>
+      Effect.gen(function* () {
+        const { scope, parent } = yield* loadSwarmCaller(callerScope, "swarm_stop");
+        yield* assertLiveCaller(scope, parent);
+        const ownerRun = ThreadManagementService.latestActiveRun(parent);
+        if (ownerRun === undefined)
+          return yield* failure("parent_not_active", "Agent swarm Stop requires a live owner run.");
+        const group = yield* readSwarm(scope, input.swarmId);
+        if (group.ownerThreadId !== parent.thread.id)
+          return yield* failure("invalid_request", "Only the swarm owner can stop the group.");
+        const authority = yield* swarmAuthority(scope);
+        yield* threadManagement
+          .dispatch({
+            type: "swarm.stop",
+            agentOwnerRunId: ownerRun.id,
+            agentOwnerProviderInstanceId: scope.thread.providerInstanceId,
+            commandId: swarmIdentity(scope, "stop", input.clientRequestId),
+            threadId: parent.thread.id,
+            swarmId: input.swarmId,
+            intentFingerprint: yield* intentFingerprint(input),
+          })
+          .pipe(
+            Effect.provideService(SwarmInvocation, authority),
+            Effect.provideService(DispatchModeLimit, {
+              runtimeMode: parent.thread.runtimeMode,
+              interactionMode: parent.thread.interactionMode,
+            }),
+            Effect.mapError(threadManagementFailure),
+          );
+        return { swarm: yield* readSwarm(scope, input.swarmId) };
+      }),
+
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
@@ -1897,6 +2217,7 @@ const make = Effect.gen(function* () {
             };
           }),
           features: {
+            nativeSwarms: Option.isSome(swarmRegistry),
             appOwnedSubagents: true,
             asyncPolling: true,
             cancellation: true,
@@ -2076,8 +2397,14 @@ const make = Effect.gen(function* () {
         const parentTask = parentProjection.subagents.find(
           (task) => task.id === input.taskId && task.origin === "app_owned",
         );
+        const childWork = yield* threadManagement
+          .getThreadRecords(current.childThreadId, ["runs"])
+          .pipe(Effect.mapError(threadManagementFailure));
+        const scoped = childWork.runs.some(
+          (run) => run.swarmId !== undefined || run.swarmPeerDelivery !== undefined,
+        );
         const disposeCompletionDelivery =
-          parentTask?.completionDelivery?.state === "disposed"
+          scoped || parentTask?.completionDelivery?.state === "disposed"
             ? Effect.void
             : threadManagement
                 .dispatch({

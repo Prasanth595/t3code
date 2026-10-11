@@ -199,7 +199,7 @@ import {
 } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
-import { useLiveThreadLinkLabels } from "../../state/entities";
+import { useLiveThreadLinkLabels, useThreadShell } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -1482,12 +1482,23 @@ function useMarkdownStyles(
 function AgentMessageAttribution(props: {
   readonly environmentId: EnvironmentId;
   readonly senderThreadId?: ThreadId;
+  readonly swarmPeerDelivery?: import("@t3tools/contracts").OrchestrationV2SwarmPeerDelivery;
 }) {
   const navigation = useNavigation();
   const senderThreadId = props.senderThreadId;
+  const peer = props.swarmPeerDelivery;
+  const sender = useThreadShell(
+    peer && senderThreadId ? scopeThreadRef(props.environmentId, senderThreadId) : null,
+  );
+  const owner = useThreadShell(
+    peer ? scopeThreadRef(props.environmentId, peer.ownerThreadId) : null,
+  );
+  const swarmTitle = owner?.source.swarms?.find((swarm) => swarm.id === peer?.swarmId)?.title;
   const label = (
     <Text className="mb-1 pr-1 font-t3-medium text-2xs text-foreground-muted opacity-60">
-      Sent by another agent
+      {peer
+        ? `Sent by ${sender?.title ?? "another agent"}${swarmTitle ? ` · ${swarmTitle}` : " · Swarm"}`
+        : "Sent by another agent"}
     </Text>
   );
   return senderThreadId ? (
@@ -1731,6 +1742,7 @@ function renderFeedEntry(
             <AgentMessageAttribution
               environmentId={props.environmentId}
               senderThreadId={message.senderThreadId}
+              swarmPeerDelivery={message.swarmPeerDelivery}
             />
           ) : null}
           <View

@@ -673,6 +673,7 @@ export const ServerDirectEndpoint = Schema.Struct({
 export type ServerDirectEndpoint = typeof ServerDirectEndpoint.Type;
 
 export const ServerConfig = Schema.Struct({
+  nativeSwarms: Schema.optionalKey(Schema.Boolean),
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,

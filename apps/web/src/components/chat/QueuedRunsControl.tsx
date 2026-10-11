@@ -131,22 +131,27 @@ export function QueuedRunsControl({
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
   const items = [
-    ...queued.map(({ run, text, attachments }, serverIndex) => ({
-      key: run.id,
-      runId: run.id,
-      messageId: run.userMessageId,
-      serverIndex,
-      text,
-      attachments,
-      thumbnails: attachments
-        .filter((attachment) => attachment.type === "image")
-        .map<QueuedRowThumbnail>((attachment) => ({
-          key: attachment.id,
-          name: attachment.name,
-          url: queuedImageUrlById.get(attachment.id) ?? null,
-        })),
-      pending: false,
-    })),
+    ...queued.map(
+      ({ run, text, attachments, canEdit, canPromoteToSteer, queueOnlyReason }, serverIndex) => ({
+        key: run.id,
+        runId: run.id,
+        messageId: run.userMessageId,
+        serverIndex,
+        text,
+        attachments,
+        thumbnails: attachments
+          .filter((attachment) => attachment.type === "image")
+          .map<QueuedRowThumbnail>((attachment) => ({
+            key: attachment.id,
+            name: attachment.name,
+            url: queuedImageUrlById.get(attachment.id) ?? null,
+          })),
+        pending: false,
+        canEdit,
+        canPromoteToSteer,
+        queueOnlyReason,
+      }),
+    ),
     ...optimisticQueued.map((message) => ({
       key: message.id,
       runId: null,
@@ -162,6 +167,9 @@ export function QueuedRunsControl({
           url: attachment.previewUrl ?? null,
         })),
       pending: true,
+      canEdit: false,
+      canPromoteToSteer: false,
+      queueOnlyReason: null,
     })),
   ];
 
@@ -190,7 +198,8 @@ export function QueuedRunsControl({
 
   const steerInFlightRef = useRef(false);
   const steer = async (queuedRunId: RunId) => {
-    if (activeRun === null || !workflow?.canPromoteToSteer || steerInFlightRef.current) return;
+    const entry = queued.find(({ run }) => run.id === queuedRunId);
+    if (activeRun === null || !entry?.canPromoteToSteer || steerInFlightRef.current) return;
     steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     try {
@@ -207,14 +216,14 @@ export function QueuedRunsControl({
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
-      if (!next || !workflow?.canPromoteToSteer) return false;
+      if (!next?.canPromoteToSteer) return false;
       if (!repeat && busyRunId === null) void steer(next.run.id);
       return true;
     },
     // Declines while a queued message is already being edited so the key keeps
     // moving the caret inside that draft.
     editLatest(repeat) {
-      const latest = queued.at(-1);
+      const latest = queued.findLast((entry) => entry.canEdit);
       if (!latest || props.editingRunId !== null || busyRunId !== null) return false;
       if (!repeat) {
         setExpanded(true);
@@ -402,6 +411,21 @@ export function QueuedRunsControl({
                         {previewText}
                       </TooltipPopup>
                     </Tooltip>
+                    {item.queueOnlyReason ? (
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <span
+                              tabIndex={0}
+                              className="shrink-0 text-2xs text-muted-foreground"
+                            />
+                          }
+                        >
+                          Peer message
+                        </TooltipTrigger>
+                        <TooltipPopup>{item.queueOnlyReason}</TooltipPopup>
+                      </Tooltip>
+                    ) : null}
                   </ComposerBanner.Content>
                   <ComposerBanner.Actions>
                     {isEditing ? (
@@ -422,9 +446,15 @@ export function QueuedRunsControl({
                                 size="icon-xs"
                                 variant="ghost-muted"
                                 aria-label="Edit queued message"
-                                disabled={item.runId === null || busyRunId !== null}
+                                disabled={
+                                  !item.canEdit || item.runId === null || busyRunId !== null
+                                }
                                 onClick={() => {
-                                  if (item.runId !== null && item.messageId !== null) {
+                                  if (
+                                    item.canEdit &&
+                                    item.runId !== null &&
+                                    item.messageId !== null
+                                  ) {
                                     props.onEditQueuedRun({
                                       runId: item.runId,
                                       messageId: item.messageId,
@@ -439,7 +469,8 @@ export function QueuedRunsControl({
                             <PencilIcon />
                           </TooltipTrigger>
                           <TooltipPopup>
-                            {`Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
+                            {item.queueOnlyReason ??
+                              `Edit in the composer${item.serverIndex === queued.length - 1 && props.editShortcutLabel ? ` (${props.editShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>
@@ -448,9 +479,7 @@ export function QueuedRunsControl({
                               size="xs"
                               variant="ghost-muted"
                               disabled={
-                                item.runId === null ||
-                                busyRunId !== null ||
-                                !workflow?.canPromoteToSteer
+                                item.runId === null || busyRunId !== null || !item.canPromoteToSteer
                               }
                               onClick={() => {
                                 if (item.runId !== null) {
@@ -463,9 +492,10 @@ export function QueuedRunsControl({
                             </Button>
                           </TooltipTrigger>
                           <TooltipPopup>
-                            {activeRun === null
-                              ? "There is no active run to steer"
-                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
+                            {item.queueOnlyReason ??
+                              (activeRun === null
+                                ? "There is no active run to steer"
+                                : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`)}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>

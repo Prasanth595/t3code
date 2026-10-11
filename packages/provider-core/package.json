@@ -51,6 +51,10 @@
       "types": "./src/server/instanceIdentity.ts",
       "import": "./src/server/instanceIdentity.ts"
     },
+    "./server/peerMessage": {
+      "types": "./src/server/peerMessage.ts",
+      "import": "./src/server/peerMessage.ts"
+    },
     "./server/maintenance": {
       "types": "./src/server/maintenance.ts",
       "import": "./src/server/maintenance.ts"

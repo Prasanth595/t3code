@@ -1,0 +1,378 @@
+import { describe, expect, it } from "vite-plus/test";
+import {
+  CommandId,
+  EventId,
+  NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  RuntimeRequestId,
+  SwarmId,
+  ThreadId,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadShell,
+  OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2Swarm,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Schema from "effect/Schema";
+
+import {
+  deriveThreadSwarmGroups,
+  filterSwarmMemberTasks,
+  resolveThreadAgentsPillSegment,
+} from "./threadSwarms.ts";
+import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
+import { v2Now, v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
+
+const owner = v2Projection.thread.id;
+const a = ThreadId.make("member-a");
+const b = ThreadId.make("member-b");
+const later = DateTime.makeUnsafe("2026-06-20T00:01:00.000Z");
+const decodeProjection = Schema.decodeSync(OrchestrationV2ThreadProjection);
+const decodeShell = Schema.decodeSync(OrchestrationV2ThreadShell);
+const decodeStreamItems = Schema.decodeUnknownSync(
+  Schema.toCodecJson(Schema.Array(OrchestrationV2ThreadStreamItem)),
+);
+function swarm(overrides: Partial<OrchestrationV2Swarm> = {}): OrchestrationV2Swarm {
+  return {
+    id: SwarmId.make("swarm-review"),
+    ownerThreadId: owner,
+    ownerRunId: RunId.make("owner-run"),
+    creationCommandId: CommandId.make("create-review"),
+    title: "Review",
+    lifecycle: { state: "open" },
+    members: [
+      {
+        threadId: a,
+        taskId: NodeId.make("task-a"),
+        title: "API",
+        admission: { state: "admitted" },
+      },
+      { threadId: b, taskId: NodeId.make("task-b"), title: "UI", admission: { state: "admitted" } },
+    ],
+    createdAt: v2Now,
+    updatedAt: v2Now,
+    ...overrides,
+  };
+}
+function shell(
+  id: ThreadId,
+  overrides: Partial<OrchestrationV2ThreadShell> = {},
+): OrchestrationV2ThreadShell {
+  return {
+    ...v2ThreadShell,
+    id,
+    title: id,
+    lineage: { rootThreadId: owner, parentThreadId: owner, relationshipToParent: "subagent" },
+    ...overrides,
+  };
+}
+function task(
+  threadId: ThreadId,
+  overrides: Partial<OrchestrationV2Subagent> = {},
+): OrchestrationV2Subagent {
+  return {
+    id: NodeId.make(threadId === a ? "task-a" : "task-b"),
+    threadId: owner,
+    runId: RunId.make("owner-run"),
+    parentNodeId: NodeId.make("owner-node"),
+    origin: "app_owned",
+    createdBy: "agent",
+    driver: ProviderDriverKind.make("codex"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerThreadId: null,
+    childThreadId: threadId,
+    nativeTaskRef: null,
+    prompt: "Review the change",
+    title: "Review",
+    model: "gpt-5.4",
+    status: "completed",
+    result: "Original result",
+    startedAt: v2Now,
+    completedAt: v2Now,
+    updatedAt: v2Now,
+    ...overrides,
+  };
+}
+
+describe("thread swarm groups", () => {
+  it("counts member threads once, follows current work and removes every followup task from ordinary rows", () => {
+    const tasks = [
+      task(a),
+      task(b),
+      task(a, {
+        id: NodeId.make("followup-a"),
+        status: "running",
+        startedAt: later,
+        completedAt: null,
+        progress: "Checking API",
+        result: null,
+      }),
+      task(ThreadId.make("ordinary"), { id: NodeId.make("ordinary-task") }),
+    ];
+    const groups = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm()],
+      tasks,
+      threads: [
+        shell(a, {
+          status: "running",
+          activityRunStatus: "running",
+          latestRunRequestedAt: later,
+          queuedMessageCount: 2,
+          heldQueuedMessageCount: 1,
+        }),
+        shell(b),
+      ],
+    });
+    expect(
+      groups.map((group) => ({
+        members: group.members.map((member) => member.member.threadId),
+        working: group.workingCount,
+        queued: group.queuedCount,
+        held: group.heldCount,
+        summary: group.summary,
+      })),
+    ).toEqual([
+      {
+        members: ["member-a", "member-b"],
+        working: 1,
+        queued: 2,
+        held: 1,
+        summary: "1 working · 2 queued, 1 held",
+      },
+    ]);
+    expect(groups[0]?.members[0]?.task?.id).toBe("followup-a");
+    expect(groups[0]?.members[0]?.task?.progress).toBe("Checking API");
+    expect(filterSwarmMemberTasks(tasks, [swarm()]).map((row) => row.id)).toEqual([
+      "ordinary-task",
+    ]);
+    expect(filterSwarmMemberTasks(tasks, []).map((row) => row.id)).toEqual([
+      "task-a",
+      "task-b",
+      "followup-a",
+      "ordinary-task",
+    ]);
+  });
+
+  it("shows newer ordinary work on a closed revoked member without reopening access or showing an old result", () => {
+    const closed = swarm({
+      lifecycle: { state: "closed", closedAt: later },
+      members: swarm().members.map((member) => ({
+        ...member,
+        admission: { state: "revoked", revokedAt: later },
+      })),
+    });
+    const group = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [closed],
+      tasks: [task(a), task(b)],
+      threads: [
+        shell(a, { status: "running", activityRunStatus: "running", latestRunRequestedAt: later }),
+        shell(b),
+      ],
+    })[0];
+    expect({
+      lifecycle: group?.swarm.lifecycle.state,
+      summary: group?.summary,
+      admission: group?.members[0]?.member.admission.state,
+      result: group?.members[0]?.task?.result,
+      canMessage: group?.members[0]?.canMessage,
+    }).toEqual({
+      lifecycle: "closed",
+      summary: "Closed · 1 working",
+      admission: "revoked",
+      result: null,
+      canMessage: true,
+    });
+    const idle = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm()],
+      tasks: [task(a), task(b)],
+      threads: [shell(a), shell(b)],
+    })[0];
+    expect(idle?.summary).toBe("Idle");
+  });
+
+  it("keeps descendant question attention in the collapsed summary and ignores provider-owned questions", () => {
+    const grandchild = ThreadId.make("question-child");
+    const request = {
+      id: RuntimeRequestId.make("question"),
+      kind: "user_input" as const,
+      createdAt: later,
+    };
+    const group = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm()],
+      tasks: [],
+      threads: [
+        shell(a),
+        shell(b),
+        shell(grandchild, {
+          pendingRuntimeRequest: request,
+          lineage: { rootThreadId: owner, parentThreadId: a, relationshipToParent: "subagent" },
+        }),
+        shell(ThreadId.make("native"), {
+          creationSource: "provider",
+          pendingRuntimeRequest: request,
+          lineage: { rootThreadId: owner, parentThreadId: a, relationshipToParent: "subagent" },
+        }),
+      ],
+    })[0];
+    expect({
+      summary: group?.summary,
+      inputs: group?.members.flatMap((member) => member.inputThreads.map((thread) => thread.id)),
+    }).toEqual({ summary: "1 question", inputs: ["question-child"] });
+  });
+
+  it("retains missing, failed and archived members and keeps the historical Agents entry through an unrelated later turn", () => {
+    const groups = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm({ lifecycle: { state: "closed", closedAt: later } })],
+      tasks: [task(a, { status: "failed", result: "Startup failed" }), task(b)],
+      threads: [shell(b, { archivedAt: later })],
+    });
+    expect(
+      groups[0]?.members.map((member) => ({
+        id: member.member.threadId,
+        status: member.status,
+        open: member.canOpen,
+        message: member.canMessage,
+        result: member.task?.result,
+      })),
+    ).toEqual([
+      { id: "member-a", status: "failed", open: false, message: false, result: "Startup failed" },
+      { id: "member-b", status: "idle", open: true, message: false, result: "Original result" },
+    ]);
+    expect(resolveThreadAgentsPillSegment({ turn: null, groups })).toEqual({
+      label: "Agents",
+      accessibilityLabel: "Inspect 2 agents, including previous swarms",
+    });
+    expect(
+      resolveThreadAgentsPillSegment({
+        turn: {
+          runId: RunId.make("later-owner-run"),
+          turnActive: false,
+          subagents: [],
+          liveCount: 0,
+          settledCount: 0,
+        },
+        groups,
+      }),
+    ).toEqual({
+      label: "Agents",
+      accessibilityLabel: "Inspect 2 agents, including previous swarms",
+    });
+    expect(resolveThreadAgentsPillSegment({ turn: null, groups: [] })).toBeNull();
+  });
+
+  it("does not count held-only queues as working or let an archived stale shell replace a live shell", () => {
+    const group = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [swarm()],
+      tasks: [],
+      threads: [
+        shell(a, { status: "queued", queuedMessageCount: 1, heldQueuedMessageCount: 1 }),
+        shell(b),
+        shell(b, { status: "running", archivedAt: later }),
+      ],
+    })[0];
+    expect({
+      working: group?.workingCount,
+      queued: group?.queuedCount,
+      summary: group?.summary,
+      message: group?.members[1]?.canMessage,
+    }).toEqual({ working: 0, queued: 1, summary: "1 queued, 1 held", message: true });
+  });
+});
+
+describe("swarm projection compatibility", () => {
+  it("preserves immutable identity, closed lifecycle and revoked admission across stale replacement", () => {
+    const closed = swarm({
+      lifecycle: { state: "closed", closedAt: later },
+      members: swarm().members.map((member) => ({
+        ...member,
+        admission: { state: "revoked", revokedAt: later },
+      })),
+    });
+    const incoming = swarm({
+      ownerThreadId: ThreadId.make("wrong-owner"),
+      title: "Wrong",
+      members: swarm().members.toReversed(),
+    });
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...v2Projection, swarms: [closed] },
+      {
+        id: EventId.make("stale"),
+        threadId: owner,
+        type: "swarm.updated",
+        occurredAt: later,
+        payload: incoming,
+      },
+    );
+    expect(
+      next?.swarms?.map((group) => ({
+        owner: group.ownerThreadId,
+        title: group.title,
+        lifecycle: group.lifecycle.state,
+        members: group.members.map((member) => [member.threadId, member.admission.state]),
+      })),
+    ).toEqual([
+      {
+        owner: owner,
+        title: "Review",
+        lifecycle: "closed",
+        members: [
+          ["member-a", "revoked"],
+          ["member-b", "revoked"],
+        ],
+      },
+    ]);
+  });
+
+  it("decodes historical snapshots with empty groups and handles newer unknown events without removing existing groups", () => {
+    expect(decodeProjection(v2Projection).swarms).toEqual([]);
+    expect(decodeShell(v2ThreadShell).queuedMessageCount).toBe(0);
+    const items = decodeStreamItems([
+      {
+        kind: "event",
+        sequence: 1,
+        event: {
+          id: "future",
+          threadId: owner,
+          type: "swarm.future-event",
+          occurredAt: DateTime.formatIso(later),
+          payload: { swarmId: "swarm-review" },
+        },
+      },
+      {
+        kind: "event",
+        sequence: 2,
+        event: {
+          id: "detach",
+          threadId: owner,
+          type: "provider-session.detached",
+          occurredAt: DateTime.formatIso(later),
+          payload: { providerSessionId: "session", detachedAt: DateTime.formatIso(later) },
+        },
+      },
+    ]);
+    let projection: OrchestrationV2ThreadProjection | null = { ...v2Projection, swarms: [swarm()] };
+    for (const item of items)
+      if (item.kind === "event")
+        projection = applyOrchestrationV2ProjectionEvent(projection, item.event);
+    expect(items.map((item) => item.kind)).toEqual(["unknown-event", "event"]);
+    expect(projection?.swarms?.map((group) => group.title)).toEqual(["Review"]);
+    const downgraded = decodeProjection(v2Projection);
+    expect(
+      deriveThreadSwarmGroups({
+        ownerThreadId: owner,
+        swarms: downgraded.swarms ?? [],
+        tasks: [],
+        threads: [],
+      }),
+    ).toEqual([]);
+  });
+});

@@ -1,4 +1,5 @@
 import type { T3McpToolSummaryAction } from "@t3tools/shared/t3McpToolPresentation";
+import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 
 export interface T3ToolSummaryCall {
   readonly input: unknown;
@@ -112,6 +113,45 @@ export function summarizeT3ToolCalls(
   );
   let label: string;
   switch (action) {
+    case "swarm-create": {
+      const swarmIds = selected.map(
+        (call) => id(call.output?.swarmId) ?? id(asRecord(call.output?.swarm)?.id),
+      );
+      const tasks = completed.map((call) => compactDynamicToolOutput(call.output)?.taskIds);
+      const agents =
+        tasks.length > 0 && tasks.every((rows) => rows !== undefined)
+          ? ` with ${quantity(new Set(tasks.flat()).size, "agent")}`
+          : "";
+      label = phrase("Created", "create", `${quantity(countEntities(swarmIds), "swarm")}${agents}`);
+      break;
+    }
+    case "swarm-roster":
+      label = phrase("Read", "read", quantity(countEntities(entityIds("swarmId")), "swarm roster"));
+      break;
+    case "swarm-send":
+      label = phrase(
+        "Queued",
+        "queue",
+        `${quantity(countEntities(entityIds("messageId")), "message")} to ${quantity(countEntities(threadIds), "member")}`,
+      );
+      break;
+    case "swarm-stop":
+      label = phrase(
+        "Requested stops for",
+        "stop",
+        quantity(
+          countEntities(
+            selected.map(
+              (call) =>
+                id(call.output?.swarmId) ??
+                id(asRecord(call.output?.swarm)?.id) ??
+                id(call.input?.swarmId),
+            ),
+          ),
+          "swarm",
+        ),
+      );
+      break;
     case "thread-send": {
       const messages = countEntities(selected.map((call) => id(call.output?.messageId)));
       const targetsKnown = threadIds.every((value) => value !== undefined);

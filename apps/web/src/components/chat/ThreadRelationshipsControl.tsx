@@ -12,6 +12,7 @@ import {
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
+import { deriveThreadSwarmGroups } from "@t3tools/client-runtime/state/thread-swarms";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -28,6 +29,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-workflows";
 import {
   NodeId,
+  CommandId,
+  type SwarmId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
@@ -64,6 +67,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { AgentElapsed } from "./AgentElapsed";
 import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadRelationshipIcon";
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
+import { ThreadLineageSwarmRow } from "./ThreadLineageSwarmRow";
+import { serverEnvironment } from "../../state/server";
+import { randomUUID } from "../../lib/utils";
 
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -108,7 +114,7 @@ export function ThreadLineageRowList(props: {
       */}
       <ul
         aria-label="Related threads"
-        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)]"
+        className="m-0 max-h-[13.5rem] list-none overflow-y-auto overscroll-contain p-0 has-data-workflow-expanded:max-h-[min(28rem,55dvh)] has-data-swarm-expanded:max-h-[min(28rem,55dvh)]"
       >
         {props.children}
       </ul>
@@ -285,6 +291,33 @@ export function ThreadRelationshipsPanel(props: {
   );
   const [busyAction, setBusyAction] = useState<"merge" | "detach" | null>(null);
   const [stoppingId, setStoppingId] = useState<string | null>(null);
+  const [visibleSwarmCount, setVisibleSwarmCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
+  const stopSwarmCommand = useAtomCommand(orchestrationEnvironment.stopSwarm);
+  const canOperateSwarm = useAtomValue(
+    orchestrationEnvironment.stopSwarm.permissionAtom(props.environmentId),
+  );
+  const supportsSwarms = useAtomValue(
+    serverEnvironment.nativeSwarmsSupportedAtom(props.environmentId),
+  );
+  const swarmGroups = useMemo(
+    () =>
+      deriveThreadSwarmGroups({
+        ownerThreadId: props.threadId,
+        swarms: projection?.swarms ?? [],
+        tasks: projection?.subagents ?? [],
+        threads: Array.from(graph.nodes.values()).flatMap((node) =>
+          node.thread === null ? [] : [node.thread],
+        ),
+      }),
+    [graph, projection?.swarms, projection?.subagents, props.threadId],
+  );
+  const swarmMemberThreadIds = useMemo(
+    () =>
+      new Set(
+        swarmGroups.flatMap((group) => group.members.map((member) => member.member.threadId)),
+      ),
+    [swarmGroups],
+  );
   const latestMergeBackRun = projection === null ? null : resolveLatestMergeBackRun(projection);
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = useMemo(
@@ -294,17 +327,26 @@ export function ThreadRelationshipsPanel(props: {
         rows: immediateThreadRelationships(graph, props.threadId),
         currentThreadId: props.threadId,
         mergeTargetThreadId,
-      }).map((row) => {
-        const agent =
-          row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
-            ? subagentsByThreadId.get(row.threadId)
-            : undefined;
-        const workflowGroup = agent === undefined ? undefined : workflowGroupsById.get(agent.id);
-        return workflowGroup === undefined
-          ? row
-          : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
-      }),
-    [graph, mergeTargetThreadId, props.threadId, subagentsByThreadId, workflowGroupsById],
+      })
+        .filter((row) => !swarmMemberThreadIds.has(row.threadId))
+        .map((row) => {
+          const agent =
+            row.edge.kind === "subagent" && !isParentThreadRelationship(row.edge, props.threadId)
+              ? subagentsByThreadId.get(row.threadId)
+              : undefined;
+          const workflowGroup = agent === undefined ? undefined : workflowGroupsById.get(agent.id);
+          return workflowGroup === undefined
+            ? row
+            : { ...row, edge: { ...row.edge, status: workflowGroup.workflow.status } };
+        }),
+    [
+      graph,
+      mergeTargetThreadId,
+      props.threadId,
+      subagentsByThreadId,
+      workflowGroupsById,
+      swarmMemberThreadIds,
+    ],
   );
   const canMerge = mergeTargetThreadId !== null && latestMergeBackRun !== null;
   const canDetach = projection ? canDetachThreadProviderSession(projection) : false;
@@ -331,9 +373,11 @@ export function ThreadRelationshipsPanel(props: {
   const runningCount =
     (projection?.subagents.filter(
       (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+    ).length ?? 0) +
+    active.filter(({ edge }) => edge.status === "running").length +
+    swarmGroups.reduce((count, group) => count + group.workingCount, 0);
 
-  if (relationshipRows.length === 0 && runningCount === 0) {
+  if (relationshipRows.length === 0 && runningCount === 0 && swarmGroups.length === 0) {
     return null;
   }
 
@@ -400,6 +444,17 @@ export function ThreadRelationshipsPanel(props: {
       toastManager.add({ type: "error", title: "Could not stop workflow" });
     }
   };
+  const stopSwarm = async (swarmId: SwarmId) => {
+    if (stoppingId !== null || !supportsSwarms || !canOperateSwarm) return;
+    setStoppingId(swarmId);
+    const result = await stopSwarmCommand({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId, swarmId, commandId: CommandId.make(randomUUID()) },
+    });
+    setStoppingId(null);
+    if (result._tag === "Failure")
+      toastManager.add({ type: "error", title: "Could not stop swarm" });
+  };
 
   const parentTitle =
     mergeTargetThreadId === null
@@ -437,6 +492,41 @@ export function ThreadRelationshipsPanel(props: {
         ) : null
       }
     >
+      {swarmGroups.length > 0 ? (
+        <ThreadLineageRowList
+          hiddenCount={Math.max(0, swarmGroups.length - visibleSwarmCount)}
+          onShowMore={() => setVisibleSwarmCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
+        >
+          {swarmGroups.slice(0, visibleSwarmCount).map((group) => (
+            <ThreadLineageSwarmRow
+              key={`${scopedThreadKey(ref)}:${group.swarm.id}`}
+              group={group}
+              providers={providers}
+              onOpenThread={openThread}
+              onMessage={canOperateSwarm ? openThread : undefined}
+              onStopMember={
+                canOperateSwarm
+                  ? (threadId) => {
+                      const member = group.members.find((row) => row.member.threadId === threadId);
+                      if (member)
+                        void stopSubagent(threadId, {
+                          id: member.member.taskId,
+                          origin: "app_owned",
+                          threadId: group.swarm.ownerThreadId,
+                        });
+                    }
+                  : undefined
+              }
+              onStop={
+                supportsSwarms && canOperateSwarm && group.swarm.lifecycle.state === "open"
+                  ? () => void stopSwarm(group.swarm.id)
+                  : undefined
+              }
+              stoppingId={stoppingId}
+            />
+          ))}
+        </ThreadLineageRowList>
+      ) : null}
       {groups.map((group) => (
         <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
           {(visibleRows) =>

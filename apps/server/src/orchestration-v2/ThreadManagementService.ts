@@ -1,3 +1,7 @@
+import {
+  OrchestrationV2StopSwarmError,
+  type OrchestrationV2StopSwarmInput,
+} from "@t3tools/contracts";
 import type {
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
@@ -281,6 +285,12 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly readSwarmCreation: Orchestrator.OrchestratorV2["Service"]["readSwarmCreation"];
+  readonly getSwarmForMember: Orchestrator.OrchestratorV2["Service"]["getSwarmForMember"];
+  readonly getSwarm: Orchestrator.OrchestratorV2["Service"]["getSwarm"];
+  readonly stopSwarm: (
+    input: OrchestrationV2StopSwarmInput,
+  ) => Effect.Effect<void, OrchestrationV2StopSwarmError>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, Orchestrator.OrchestratorV2Error>;
@@ -942,18 +952,41 @@ const make = Effect.gen(function* () {
 
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = (input) =>
     Effect.gen(function* () {
+      let ancestor: ThreadId | null = input.threadId;
+      const seen = new Set<ThreadId>();
+      while (ancestor !== null && !seen.has(ancestor)) {
+        seen.add(ancestor);
+        if ((yield* orchestrator.getSwarmForMember(ancestor)) !== undefined) return;
+        const records: ProjectionRecords<never> = yield* orchestrator.getThreadRecords(
+          ancestor,
+          [],
+        );
+        ancestor =
+          records.thread.lineage.relationshipToParent === "subagent"
+            ? records.thread.lineage.parentThreadId
+            : null;
+      }
       const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
       const failures: Array<Orchestrator.OrchestratorV2Error> = [];
       for (const task of subagents) {
         if (task.origin !== "app_owned" || task.childThreadId === null) continue;
         const threadId = task.childThreadId;
-        yield* dispatch({
-          type: "thread.stop",
-          commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
-          threadId,
-          ...(input.reason === undefined ? {} : { reason: input.reason }),
+        yield* Effect.gen(function* () {
+          const child = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
+          if (
+            child.runs.some(
+              (run) => run.swarmId !== undefined || run.swarmPeerDelivery !== undefined,
+            )
+          )
+            return;
+          yield* dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
+            threadId,
+            ...(input.reason === undefined ? {} : { reason: input.reason }),
+          });
+          yield* stopDelegatedTasks({ ...input, threadId });
         }).pipe(
-          Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
           Effect.catch((error) =>
             Effect.logWarning("Unable to stop a delegated task", {
               parentThreadId: input.threadId,
@@ -967,6 +1000,25 @@ const make = Effect.gen(function* () {
     });
 
   return ThreadManagementService.of({
+    getSwarmForMember: orchestrator.getSwarmForMember,
+    readSwarmCreation: orchestrator.readSwarmCreation,
+    getSwarm: orchestrator.getSwarm,
+    stopSwarm: (input) =>
+      orchestrator
+        .dispatch({
+          type: "swarm.stop",
+          ...input,
+          intentFingerprint: JSON.stringify({
+            swarmId: input.swarmId,
+            ownerThreadId: input.threadId,
+          }),
+        })
+        .pipe(
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) => new OrchestrationV2StopSwarmError({ swarmId: input.swarmId, cause }),
+          ),
+        ),
     ensureLegacyTranscript,
     searchThreadStream: (input) =>
       Stream.unwrap(

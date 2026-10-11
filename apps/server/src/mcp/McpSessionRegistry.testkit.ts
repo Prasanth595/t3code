@@ -7,6 +7,8 @@ import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 export const layer = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
+    isCurrentCredential: () => Effect.succeed(false),
+    withCurrentCredential: () => Effect.fail(false as const),
     issue: ({ threadId, providerInstanceId }) =>
       Effect.succeed({
         config: {

@@ -2231,6 +2231,19 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
   const senderThreadId = row.message.senderThreadId;
+  const peerDelivery = row.message.swarmPeerDelivery;
+  const sender = useThreadShell(
+    peerDelivery && senderThreadId
+      ? scopeThreadRef(ctx.activeThreadEnvironmentId, senderThreadId)
+      : null,
+  )?.source;
+  const swarmOwner = useThreadShell(
+    peerDelivery ? scopeThreadRef(ctx.activeThreadEnvironmentId, peerDelivery.ownerThreadId) : null,
+  )?.source;
+  const swarmTitle = swarmOwner?.swarms?.find((swarm) => swarm.id === peerDelivery?.swarmId)?.title;
+  const attributionLabel = peerDelivery
+    ? `Sent by ${sender?.title ?? "another agent"}${swarmTitle ? ` · ${swarmTitle}` : " · Swarm"}`
+    : "Sent by another agent";
   const resources = useMemo(
     () => selectMessageImageResources(row.message.attachments),
     [row.message.attachments],
@@ -2424,10 +2437,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
               tone="muted"
               aria-label="Open sending thread"
             >
-              Sent by another agent
+              {attributionLabel}
             </InlineButton>
           ) : (
-            "Sent by another agent"
+            attributionLabel
           )}
         </p>
       ) : null}

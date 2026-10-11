@@ -303,6 +303,10 @@
       "types": "./src/state/threadSubagents.ts",
       "default": "./src/state/threadSubagents.ts"
     },
+    "./state/thread-swarms": {
+      "types": "./src/state/threadSwarms.ts",
+      "default": "./src/state/threadSwarms.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"

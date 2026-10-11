@@ -2,6 +2,7 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2Swarm,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,8 +20,16 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
   readonly command: Extract<OrchestrationV2Command, { readonly type: "thread.delete" }>;
   readonly projection: Pick<
     OrchestrationV2ThreadProjection,
-    "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
+    | "thread"
+    | "runs"
+    | "attempts"
+    | "nodes"
+    | "runtimeRequests"
+    | "subagents"
+    | "providerSessions"
+    | "swarms"
   >;
+  readonly memberSwarm?: OrchestrationV2Swarm | undefined;
   readonly attachmentIds: ReadonlyArray<string>;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
@@ -53,6 +62,27 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
       };
     }
   });
+
+  const groups = new Map((projection.swarms ?? []).map((group) => [group.id, group]));
+  if (input.memberSwarm !== undefined) groups.set(input.memberSwarm.id, input.memberSwarm);
+  for (const group of groups.values()) {
+    const owned = group.ownerThreadId === command.threadId;
+    yield* emitEvent({
+      type: "swarm.updated",
+      threadId: group.ownerThreadId,
+      occurredAt: now,
+      payload: {
+        ...group,
+        lifecycle: owned ? { state: "closed", closedAt: now } : group.lifecycle,
+        members: group.members.map((member) =>
+          owned || member.threadId === command.threadId
+            ? { ...member, admission: { state: "revoked", revokedAt: now } }
+            : member,
+        ),
+        updatedAt: now,
+      },
+    });
+  }
 
   yield* emitEvent({
     type: "thread.deleted",

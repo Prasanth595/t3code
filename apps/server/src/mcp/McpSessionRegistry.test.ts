@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
@@ -31,6 +32,47 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
       Effect.provide(NodeServices.layer),
     );
+
+it.effect(
+  "scoped authority rejects replacement and expired credentials while generic resolution retains its policy",
+  () =>
+    Effect.gen(function* () {
+      let timestamp = 1000;
+      const registry = yield* makeRegistry(() => timestamp);
+      const request = {
+        threadId: ThreadId.make("scoped-authority"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      };
+      const first = yield* registry.issue(request);
+      const token = first.config.authorizationHeader.replace("Bearer ", "");
+      const scope = yield* registry.resolve(token);
+      if (scope === undefined) return yield* Effect.die("Missing issued credential");
+      expect(yield* registry.withCurrentCredential(scope, Effect.succeed("admitted"))).toBe(
+        "admitted",
+      );
+      yield* registry.issue(request);
+      expect(yield* registry.isCurrentCredential(scope)).toBe(false);
+      expect((yield* registry.resolve(token))?.thread.providerSessionId).toBe(
+        scope.thread.providerSessionId,
+      );
+      expect(
+        Exit.isFailure(
+          yield* Effect.exit(registry.withCurrentCredential(scope, Effect.succeed("must refuse"))),
+        ),
+      ).toBe(true);
+      const current = yield* registry.issue({
+        ...request,
+        threadId: ThreadId.make("expiring-scoped"),
+      });
+      const currentScope = yield* registry.resolve(
+        current.config.authorizationHeader.replace("Bearer ", ""),
+      );
+      if (currentScope === undefined) return yield* Effect.die("Missing current credential");
+      expect(yield* registry.isCurrentCredential(currentScope)).toBe(true);
+      timestamp += 101;
+      expect(yield* registry.isCurrentCredential(currentScope)).toBe(false);
+    }),
+);
 
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {

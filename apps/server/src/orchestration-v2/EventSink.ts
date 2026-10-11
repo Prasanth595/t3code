@@ -123,6 +123,7 @@ export interface EventSinkV2Shape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly commandType: string;
+    readonly intentFingerprint?: string;
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -143,6 +144,7 @@ export interface EventSinkV2Shape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly commandType: string;
+    readonly intentFingerprint?: string;
     readonly rejectedAt: DateTime.Utc;
     readonly error: string;
   }) => Effect.Effect<CommandReceiptStore.CommandReceiptV2, EventSinkV2Error>;
@@ -524,6 +526,28 @@ const layerBase: Layer.Layer<
         return { receipt: existing.value, storedEvents };
       });
 
+    const validateReceiptIntent = (
+      receipt: CommandReceiptStore.CommandReceiptV2,
+      input: {
+        readonly commandId: CommandId;
+        readonly threadId: ThreadId;
+        readonly commandType: string;
+        readonly intentFingerprint?: string;
+      },
+    ) =>
+      (input.intentFingerprint === undefined && (receipt.intentFingerprint ?? null) === null) ||
+      (receipt.threadId === input.threadId &&
+        receipt.commandType === input.commandType &&
+        receipt.intentFingerprint === input.intentFingerprint)
+        ? Effect.void
+        : Effect.fail(
+            new EventSinkWriteError({
+              commandId: input.commandId,
+              eventCount: 0,
+              cause: "Command intent conflict.",
+            }),
+          );
+
     const commitCommandEffect = Effect.fn("orchestrationV2.EventSink.commitCommand")(function* (
       input: Parameters<EventSinkV2Shape["commitCommand"]>[0],
     ) {
@@ -533,6 +557,7 @@ const layerBase: Layer.Layer<
             commandId: input.commandId,
             threadId: input.threadId,
             commandType: input.commandType,
+            intentFingerprint: input.intentFingerprint ?? null,
             acceptedAt: input.acceptedAt,
             resultSequence: 0,
             status: "accepted",
@@ -540,6 +565,7 @@ const layerBase: Layer.Layer<
           });
           if (!reserved) {
             const existing = yield* existingCommandResult(input.commandId);
+            yield* validateReceiptIntent(existing.receipt, input);
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
@@ -560,6 +586,7 @@ const layerBase: Layer.Layer<
             commandId: input.commandId,
             threadId: input.threadId,
             commandType: input.commandType,
+            intentFingerprint: input.intentFingerprint ?? null,
             acceptedAt: input.acceptedAt,
             resultSequence: sequence,
             status: "accepted",
@@ -602,6 +629,7 @@ const layerBase: Layer.Layer<
             commandId: input.commandId,
             threadId: input.threadId,
             commandType: input.commandType,
+            intentFingerprint: input.intentFingerprint ?? null,
             acceptedAt: input.rejectedAt,
             resultSequence: sequence,
             status: "rejected",
@@ -612,7 +640,9 @@ const layerBase: Layer.Layer<
             return receipt;
           }
           const existing = yield* commandReceipts.getByCommandId(input.commandId);
-          return Option.getOrElse(existing, () => receipt);
+          const resolved = Option.getOrElse(existing, () => receipt);
+          yield* validateReceiptIntent(resolved, input);
+          return resolved;
         }),
       );
     });

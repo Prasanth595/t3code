@@ -133,6 +133,7 @@ export interface ThreadFeedMessage {
   readonly creationSource?: OrchestrationV2CreationSource;
   readonly scheduledTaskId?: ScheduledTaskId;
   readonly senderThreadId?: ThreadId;
+  readonly swarmPeerDelivery?: import("@t3tools/contracts").OrchestrationV2SwarmPeerDelivery;
   readonly visibility: OrchestrationV2ProjectedTurnItem["visibility"];
   readonly sourceThreadId: ThreadId;
   readonly createdAt: string;
@@ -1834,6 +1835,7 @@ export function buildThreadFeed(
                 creationSource: item.creationSource,
                 ...(item.scheduledTaskId ? { scheduledTaskId: item.scheduledTaskId } : {}),
                 ...(item.senderThreadId ? { senderThreadId: item.senderThreadId } : {}),
+                ...(item.swarmPeerDelivery ? { swarmPeerDelivery: item.swarmPeerDelivery } : {}),
               }
             : {}),
           visibility: row.visibility,

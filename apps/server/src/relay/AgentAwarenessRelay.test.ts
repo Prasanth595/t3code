@@ -181,6 +181,10 @@ const makeTestRelay = Effect.fnUntraced(function* (
   // Catch-up publishes read the whole shell once each.
   const catchUp = { shellSnapshotReads: 0 };
   const threads = ThreadManagementService.ThreadManagementService.of({
+    getSwarmForMember: () => Effect.succeed(undefined),
+    readSwarmCreation: () => Effect.succeed(undefined),
+    getSwarm: () => Effect.succeed(undefined),
+    stopSwarm: () => Effect.void,
     getThreadShell: (threadId) =>
       Effect.sync(() => shellReads.push(threadId)).pipe(
         Effect.andThen(options.readShell?.(threadId) ?? Ref.get(currentShell)),

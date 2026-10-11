@@ -1729,6 +1729,7 @@ const layerWsRpc = (
             settings,
             shellResumeCompletionMarker: true,
             threadResumeCompletionMarker: true,
+            nativeSwarms: true,
             threadSnapshotPagination: true,
             threadFind: true,
             threadFindProgressive: true,
@@ -1866,6 +1867,7 @@ const layerWsRpc = (
                 ),
             ),
           ),
+        [ORCHESTRATION_V2_WS_METHODS.stopSwarm]: (input) => threadManagement.stopSwarm(input),
         [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: (input) => threadManagement.stopWorkflow(input),
         [ORCHESTRATION_V2_WS_METHODS.getWorkflowScript]: (input) =>
           readWorkflowScript({ scriptPath: input.scriptPath }),

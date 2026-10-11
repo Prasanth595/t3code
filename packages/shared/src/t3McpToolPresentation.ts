@@ -8,6 +8,10 @@ export interface T3McpToolPresentation {
 export type T3McpToolSummaryAction =
   | "capabilities"
   | "delegate"
+  | "swarm-create"
+  | "swarm-roster"
+  | "swarm-send"
+  | "swarm-stop"
   | "task-status"
   | "task-cancel"
   | "schedule-run"
@@ -126,6 +130,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "capabilities",
   ),
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
+  swarm_create: tool(["Create", "Creating", "Created", "a swarm"], "swarm-create"),
+  swarm_roster: tool(["Read", "Reading", "Read", "a swarm roster"], "swarm-roster"),
+  swarm_send: tool(["Queue", "Queueing", "Queued", "a message to a swarm member"], "swarm-send"),
+  swarm_stop: tool(["Stop", "Stopping", "Requested a stop for", "a swarm"], "swarm-stop"),
   task_status: tool(["Get", "Getting", "Got", "delegated task status"], "task-status"),
   task_cancel: tool(
     ["Cancel", "Canceling", "Requested cancellation of", "delegated task"],

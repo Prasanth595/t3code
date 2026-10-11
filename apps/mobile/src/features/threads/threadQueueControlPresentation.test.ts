@@ -10,9 +10,41 @@ import {
 import { threadDragGapOffset } from "./threadDragGap";
 
 describe("threadQueueControlPresentation", () => {
+  it("disables peer editing and steering while retaining cancellation, reorder and ordinary actions", () => {
+    const input = {
+      busy: false,
+      canReorder: true,
+      index: 1,
+      queuedCount: 3,
+      text: "Peer question",
+    };
+    const peer = resolveThreadQueueRowControls({
+      ...input,
+      canEdit: false,
+      canPromoteToSteer: false,
+    });
+    const human = resolveThreadQueueRowControls({
+      ...input,
+      canEdit: true,
+      canPromoteToSteer: true,
+    });
+    expect(
+      [peer, human].map(({ canEdit, canSteer, canDismiss, canMoveUp, canMoveDown }) => ({
+        canEdit,
+        canSteer,
+        canDismiss,
+        canMoveUp,
+        canMoveDown,
+      })),
+    ).toEqual([
+      { canEdit: false, canSteer: false, canDismiss: true, canMoveUp: true, canMoveDown: true },
+      { canEdit: true, canSteer: true, canDismiss: true, canMoveUp: true, canMoveDown: true },
+    ]);
+  });
   it("preserves queue reorder and steer controls with removal", () => {
     const controls = resolveThreadQueueRowControls({
       busy: false,
+      canEdit: true,
       canPromoteToSteer: true,
       canReorder: true,
       index: 1,
@@ -31,6 +63,7 @@ describe("threadQueueControlPresentation", () => {
   it("disables edge reorder controls and busy dismissal", () => {
     const first = resolveThreadQueueRowControls({
       busy: false,
+      canEdit: true,
       canPromoteToSteer: false,
       canReorder: true,
       index: 0,
@@ -39,6 +72,7 @@ describe("threadQueueControlPresentation", () => {
     });
     const busy = resolveThreadQueueRowControls({
       busy: true,
+      canEdit: true,
       canPromoteToSteer: true,
       canReorder: true,
       index: 0,
@@ -57,6 +91,7 @@ describe("threadQueueControlPresentation", () => {
   it("keeps the row already open in the composer from being reopened or steered", () => {
     const editing = resolveThreadQueueRowControls({
       busy: false,
+      canEdit: true,
       canPromoteToSteer: true,
       canReorder: true,
       index: 1,

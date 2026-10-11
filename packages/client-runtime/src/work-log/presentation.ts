@@ -605,6 +605,9 @@ function summaryActionPriority(action: ToolGroupAction | T3McpToolSummaryAction)
     case "command":
     case "edit":
     case "delegate":
+    case "swarm-create":
+    case "swarm-send":
+    case "swarm-stop":
     case "task-cancel":
     case "thread-create":
     case "thread-send":

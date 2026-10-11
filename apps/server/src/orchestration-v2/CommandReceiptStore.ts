@@ -54,6 +54,7 @@ export const CommandReceiptV2 = Schema.Struct({
   resultSequence: NonNegativeInt,
   status: CommandReceiptV2Status,
   error: Schema.NullOr(Schema.String),
+  intentFingerprint: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
 
@@ -66,6 +67,7 @@ export const ProjectCommandReceiptV2 = Schema.Struct({
   resultSequence: NonNegativeInt,
   status: CommandReceiptV2Status,
   error: Schema.NullOr(Schema.String),
+  intentFingerprint: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 
@@ -118,6 +120,7 @@ function fromApplicationReceipt(receipt: OrchestrationCommandReceipts.Orchestrat
     resultSequence: receipt.resultSequence,
     status: receipt.status,
     error: receipt.error,
+    intentFingerprint: receipt.intentFingerprint ?? null,
   });
 }
 
@@ -134,6 +137,7 @@ function toApplicationReceipt(
     resultSequence: receipt.resultSequence,
     status: receipt.status,
     error: receipt.error,
+    intentFingerprint: receipt.intentFingerprint ?? null,
   };
 }
 

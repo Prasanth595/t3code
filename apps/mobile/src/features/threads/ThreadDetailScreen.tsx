@@ -37,7 +37,7 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
-import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
+import { resolveThreadAgentsPillSegment } from "@t3tools/client-runtime/state/thread-swarms";
 import {
   formatModelSelectionEffort,
   type ProviderSubagentStatus,
@@ -143,7 +143,7 @@ import {
 } from "./ThreadComposer";
 import { ComposerPopoverHost } from "./ComposerPopoverHost";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
-import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
+import { useThreadTurnSubagents, useThreadSwarmGroups } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -201,6 +201,7 @@ export interface ThreadDetailScreenProps {
   readonly canStopThread: boolean;
   /** Set while a queued message is open in the composer for editing. */
   readonly queuedRunEdit: QueuedRunEdit | null;
+  readonly focusComposer?: boolean;
   readonly composerDraftKey: string | null;
   readonly followUpBehavior: FollowUpBehavior;
   readonly canSteerActiveTurn: boolean;
@@ -419,7 +420,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
   });
-  const agentsSegment = resolveSubagentPillSegment(turnSubagents);
+  const swarmGroups = useThreadSwarmGroups({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
+  const agentsSegment = resolveThreadAgentsPillSegment({
+    turn: turnSubagents,
+    groups: swarmGroups,
+  });
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   // A provider-native subagent shows status instead of a composer.
   const isProviderSubagent = isProviderNativeSubagentThread(props.selectedThread.source);
@@ -438,8 +446,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
   const lastScrolledSubmittedMessageIdRef = useRef<MessageId | null>(null);
-  const [composerExpanded, setComposerExpanded] = useState(false);
+  const [composerExpanded, setComposerExpanded] = useState(props.focusComposer === true);
   const [composerFocused, setComposerFocused] = useState(false);
+  useEffect(() => {
+    if (!props.focusComposer || isProviderSubagent) return;
+    const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [props.focusComposer, isProviderSubagent]);
   const handleComposerFocusChange = useCallback(
     (focused: boolean) => {
       setComposerFocused(focused);

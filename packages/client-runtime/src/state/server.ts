@@ -974,6 +974,12 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly environmentId: EnvironmentId;
     readonly input: EnvironmentRpcInput<typeof WS_METHODS.subscribeServerLifecycle>;
   }) => welcomeFamily(target.environmentId);
+  const nativeSwarmsSupportedAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const current = Option.getOrNull(AsyncResult.value(get(welcomeFamily(environmentId))));
+      return current?.environment.capabilities.nativeSwarms === true;
+    }).pipe(Atom.withLabel(`environment-data:server:native-swarms:${environmentId}`)),
+  );
   const updateSettings = createEnvironmentRpcCommand(runtime, {
     label: "environment-data:server:update-settings",
     tag: WS_METHODS.serverUpdateSettings,
@@ -983,6 +989,7 @@ export function createServerEnvironmentAtoms<R, E>(
 
   return {
     configValueAtom,
+    nativeSwarmsSupportedAtom,
     runStorageCleanup: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:run-storage-cleanup",
       tag: WS_METHODS.serverRunStorageCleanup,

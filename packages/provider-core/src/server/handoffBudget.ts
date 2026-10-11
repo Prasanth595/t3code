@@ -1,3 +1,4 @@
+import { formatPeerMessage } from "./peerMessage.ts";
 import type {
   ChatAttachment,
   ModelSelection,
@@ -143,6 +144,8 @@ export function historicalMessage(
   let text: string;
   switch (item.type) {
     case "user_message":
+      text = formatPeerMessage(item.text, item.swarmPeerDelivery);
+      break;
     case "assistant_message":
       text = item.text;
       break;

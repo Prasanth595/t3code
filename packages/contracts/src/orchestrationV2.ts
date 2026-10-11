@@ -1,4 +1,14 @@
 import { OrchestrationMessageContext } from "./composerContext.ts";
+import {
+  SwarmId,
+  OrchestrationV2Swarm,
+  OrchestrationV2SwarmJson,
+  OrchestrationV2Swarms,
+  OrchestrationV2SwarmsJson,
+  OrchestrationV2SwarmPeerDelivery,
+  OrchestrationV2SwarmRunAdmission,
+  OrchestrationV2StopSwarmInput,
+} from "./swarm.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaAST from "effect/SchemaAST";
@@ -563,6 +573,9 @@ export const OrchestrationV2Run = Schema.Struct({
   restartContinuationOfRunId: Schema.optional(RunId),
   /** The delegated task this run answers, including a follow-up in an existing child thread. */
   delegatedTaskId: Schema.optional(NodeId),
+  swarmPeerDelivery: Schema.optional(OrchestrationV2SwarmPeerDelivery),
+  swarmId: Schema.optional(SwarmId),
+  swarmRunAdmission: Schema.optional(OrchestrationV2SwarmRunAdmission),
   /**
    * Set on wake runs (background notifications, delegated task results,
    * restart continuations): when the work they continue started. Read it
@@ -1202,6 +1215,7 @@ export const OrchestrationV2Notification = Schema.Struct({
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 
 export const OrchestrationV2ConversationMessage = Schema.Struct({
+  swarmPeerDelivery: Schema.optional(OrchestrationV2SwarmPeerDelivery),
   notification: Schema.optional(OrchestrationV2Notification),
   ...OrchestrationV2CreationFields,
   scheduledTaskId: Schema.optional(ScheduledTaskId),
@@ -1470,6 +1484,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
+    swarmPeerDelivery: Schema.optional(OrchestrationV2SwarmPeerDelivery),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -1736,6 +1751,11 @@ const OrchestrationV2EventBase = Schema.Struct({
 export const OrchestrationV2DomainEvent = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("swarm.updated"),
+    payload: OrchestrationV2Swarm,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("thread.created"),
     payload: OrchestrationV2AppThread,
   }),
@@ -1874,6 +1894,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
 export const OrchestrationV2ThreadProjection = Schema.Struct({
+  swarms: OrchestrationV2Swarms,
   thread: OrchestrationV2AppThread,
   runs: Schema.Array(OrchestrationV2Run),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
@@ -1925,6 +1946,13 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  swarms: OrchestrationV2Swarms,
+  queuedMessageCount: Schema.optional(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
+  heldQueuedMessageCount: Schema.optional(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(0)),
+  ),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -2249,6 +2277,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     ...OrchestrationV2CreationFields,
     type: Schema.Literal("user_message"),
+    swarmPeerDelivery: Schema.optional(OrchestrationV2SwarmPeerDelivery),
     messageId: MessageId,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -2455,6 +2484,7 @@ export type OrchestrationV2ProjectedTurnItemJson = typeof OrchestrationV2Project
 export const OrchestrationV2ThreadProjectionJson = OrchestrationV2ThreadProjection.mapFields(
   (fields) => ({
     ...fields,
+    swarms: OrchestrationV2SwarmsJson,
     thread: OrchestrationV2AppThreadJson,
     runs: Schema.Array(OrchestrationV2RunJson),
     attempts: Schema.Array(OrchestrationV2RunAttemptJson),
@@ -2501,6 +2531,7 @@ export type OrchestrationV2LatestVisibleMessageSummaryJson =
 
 export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFields((fields) => ({
   ...fields,
+  swarms: OrchestrationV2SwarmsJson,
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
@@ -2554,6 +2585,11 @@ export const OrchestrationV2RawProviderEventJson = OrchestrationV2RawProviderEve
 export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProviderEventJson.Type;
 
 export const OrchestrationV2DomainEventJson = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("swarm.updated"),
+    payload: OrchestrationV2SwarmJson,
+  }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("thread.created"),
@@ -3160,6 +3196,45 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("swarm.create"),
+    ownerProviderInstanceId: Schema.optional(ProviderInstanceId),
+    commandId: CommandId,
+    threadId: ThreadId,
+    parentRunId: RunId,
+    parentNodeId: NodeId,
+    intentFingerprint: Schema.String,
+    title: TrimmedNonEmptyString,
+    members: Schema.Array(
+      Schema.Struct({
+        task: TrimmedNonEmptyString,
+        title: Schema.optional(TrimmedNonEmptyString),
+        modelSelection: ModelSelection,
+        runtimeMode: RuntimeMode,
+        interactionMode: ProviderInteractionMode,
+      }),
+    ).check(Schema.isMinLength(2), Schema.isMaxLength(8)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("swarm.send"),
+    senderProviderInstanceId: Schema.optional(ProviderInstanceId),
+    commandId: CommandId,
+    threadId: ThreadId,
+    swarmId: SwarmId,
+    senderThreadId: ThreadId,
+    senderRunId: RunId,
+    intentFingerprint: Schema.String,
+    text: Schema.String,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("swarm.stop"),
+    agentOwnerRunId: Schema.optional(RunId),
+    agentOwnerProviderInstanceId: Schema.optional(ProviderInstanceId),
+    ...OrchestrationV2StopSwarmInput.fields,
+    intentFingerprint: Schema.String,
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is
@@ -3236,6 +3311,7 @@ export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalComma
 export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
+  stopSwarm: "orchestration.stopSwarm",
   dispatchCommand: "orchestration.dispatchCommand",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
@@ -3728,6 +3804,7 @@ export class OrchestrationV2SearchThreadError extends Schema.TaggedError<Orchest
 }
 
 export const OrchestrationV2RpcSchemas = {
+  stopSwarm: { input: OrchestrationV2StopSwarmInput, output: Schema.Void },
   searchThread: {
     input: OrchestrationV2SearchThreadInput,
     output: OrchestrationV2SearchThreadResult,

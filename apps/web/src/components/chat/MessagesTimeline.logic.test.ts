@@ -4515,6 +4515,93 @@ describe("linked timeline resources", () => {
   });
   const common = { isWorking: false, turnDiffSummaries: [], supportsConversationRollback: false };
 
+  it("deduplicates a successful swarm launch only after all returned tasks have durable cards", () => {
+    const now = DateTime.makeUnsafe("2026-09-08T10:00:02Z");
+    const itemBase = (id: string) => ({
+      id: TurnItemId.make(id),
+      threadId: ThreadId.make("parent"),
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed" as const,
+      title: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    });
+    const projected = (item: OrchestrationV2TurnItem): OrchestrationV2ProjectedTurnItem => ({
+      item,
+      sourceThreadId: item.threadId,
+      sourceItemId: item.id,
+      position: 1,
+      visibility: "local",
+    });
+    const child = (id: string): TimelineEntry => ({
+      id,
+      kind: "event",
+      createdAt: DateTime.formatIso(now),
+      projectedItem: projected({
+        ...itemBase(id),
+        type: "subagent",
+        subagentId: NodeId.make(id),
+        origin: "app_owned",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        childThreadId: null,
+        prompt: id,
+        result: null,
+      }),
+    });
+    const launch = (id: string, tasks: ReadonlyArray<string>, failed = false): TimelineEntry => ({
+      id,
+      kind: "work",
+      createdAt: DateTime.formatIso(now),
+      entry: {
+        id,
+        runId,
+        createdAt: DateTime.formatIso(now),
+        label: "Created a swarm",
+        tone: "tool",
+        itemType: "dynamic_tool",
+        toolLifecycleStatus: "completed",
+        projectedItem: projected({
+          ...itemBase(id),
+          type: "dynamic_tool",
+          toolName: "t3-code.swarm_create",
+          input: {},
+          output: {
+            ...(failed ? { isError: true } : {}),
+            swarm: { id: "swarm-1" },
+            tasks: tasks.map((taskId) => ({ taskId })),
+          },
+        }),
+      },
+    });
+    const rows = deriveMessagesTimelineRows({
+      ...common,
+      timelineEntries: [
+        child("a"),
+        child("b"),
+        launch("matched", ["a", "b"]),
+        launch("partial", ["a", "missing"]),
+        launch("failed", ["a", "b"], true),
+      ],
+      expandedRunIds: new Set([runId]),
+      expandedWorkGroupIds: new Set(["work-group:partial"]),
+    });
+    expect(
+      rows.flatMap((row) =>
+        row.kind === "work" || row.kind === "work-live"
+          ? row.groupedEntries.map((entry) => entry.id)
+          : [],
+      ),
+    ).toEqual(["partial", "failed"]);
+  });
+
   it("previews a thought and separates subagent cards from worklogs", () => {
     const rows = deriveMessagesTimelineRows({
       ...common,

@@ -412,6 +412,7 @@ export const make = Effect.gen(function* () {
       "nodes",
       "runtimeRequests",
       "subagents",
+      "swarms",
       "providerSessions",
     ]);
     if (projection.thread.deletedAt !== null || projection.thread.projectId !== input.projectId) {
@@ -426,6 +427,7 @@ export const make = Effect.gen(function* () {
     const plan = yield* planThreadDeletion({
       command,
       projection,
+      memberSwarm: yield* threadProjections.getSwarmForMember(threadId),
       attachmentIds: yield* threadProjections.getThreadAttachmentIds(threadId),
       now,
       idAllocator,
@@ -474,14 +476,16 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       projectThreads,
       (thread) =>
-        threadCommands
-          .withLock(thread.id, deleteChildThread(input, thread.id))
-          .pipe(
-            Effect.mapError(
-              (cause) =>
-                new ProjectOperationError({ operation: "delete-thread", projectId, cause }),
-            ),
+        ThreadCommandExecutor.withHierarchyLock(
+          threadCommands,
+          threadProjections,
+          [thread.id],
+          deleteChildThread(input, thread.id),
+        ).pipe(
+          Effect.mapError(
+            (cause) => new ProjectOperationError({ operation: "delete-thread", projectId, cause }),
           ),
+        ),
       { concurrency: 1, discard: true },
     );
   });

@@ -105,6 +105,8 @@ const MCP_URL = process.env.OPENCODE2_MCP_URL ?? "http://127.0.0.1/mcp";
 const layerMcpRegistry = Layer.succeed(
   McpSessionRegistry.McpSessionRegistry,
   McpSessionRegistry.McpSessionRegistry.of({
+    isCurrentCredential: () => Effect.succeed(false),
+    withCurrentCredential: () => Effect.fail(false as const),
     issue: ({ threadId, providerInstanceId }) =>
       Effect.succeed({
         config: {

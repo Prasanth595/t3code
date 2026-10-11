@@ -9,6 +9,47 @@ import {
 } from "./toolOutput.ts";
 
 describe("compactDynamicToolOutput", () => {
+  it("keeps every swarm creation task ID across compaction without retaining briefs or results", () => {
+    const result = {
+      swarm: {
+        id: "swarm-1",
+        title: "Private title",
+        members: [{ taskId: "not-the-returned-task" }],
+      },
+      tasks: [
+        { taskId: "task-a", summary: "Private result" },
+        { taskId: "task-b", childThreadId: "b" },
+      ],
+    };
+    const expected = { swarmId: "swarm-1", taskIds: ["task-a", "task-b"] };
+    expect(compactDynamicToolOutput({ structuredContent: result })).toEqual(expected);
+    expect(
+      compactDynamicToolOutput(
+        JSON.stringify({ content: [{ type: "text", text: JSON.stringify(result) }] }),
+      ),
+    ).toEqual(expected);
+    expect(compactDynamicToolOutput(compactDynamicToolOutput(result))).toEqual(expected);
+    expect(compactDynamicToolOutput({ isError: true, structuredContent: result })).toEqual({
+      isError: true,
+      ...expected,
+    });
+  });
+
+  it("does not retain partial or oversized swarm task evidence", () => {
+    for (const tasks of [
+      [{ taskId: "a" }, {}],
+      [{ taskId: "a" }, { taskId: "a" }],
+      Array.from({ length: 9 }, (_, index) => ({ taskId: `task-${index}` })),
+      [{ taskId: "a" }, { taskId: "x".repeat(257) }],
+    ]) {
+      expect(compactDynamicToolOutput({ swarm: { id: "swarm-1" }, tasks })).toEqual({
+        swarmId: "swarm-1",
+      });
+    }
+    expect(
+      compactDynamicToolOutput({ swarmId: "swarm-1", messageId: "message-a", threadId: "a" }),
+    ).toEqual({ swarmId: "swarm-1", messageId: "message-a", threadId: "a" });
+  });
   it("extracts IDs through the MCP result envelopes used by T3 summaries", () => {
     const metadata = { threadId: "thread-1", messageId: "message-1" };
     const json = JSON.stringify({ ...metadata, response: "Private response body" });

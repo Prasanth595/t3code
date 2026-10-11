@@ -1316,11 +1316,19 @@ function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
       item?.type !== "dynamic_tool" ||
       item.runId === null ||
       (item.status !== "running" && item.status !== "completed") ||
-      resolveT3McpToolDefinition(item.toolName)?.summaryAction !== "delegate"
+      !["delegate", "swarm-create"].includes(
+        resolveT3McpToolDefinition(item.toolName)?.summaryAction ?? "",
+      )
     )
       return true;
     const output = compactDynamicToolOutput(item.output);
     if (output?.isError) return true;
+    if (resolveT3McpToolDefinition(item.toolName)?.summaryAction === "swarm-create") {
+      const children = childrenByRun.get(item.runId);
+      return (
+        output?.taskIds === undefined || !output.taskIds.every((taskId) => children?.has(taskId))
+      );
+    }
     if (output?.taskId !== undefined) {
       return !childrenByRun.get(item.runId)?.has(output.taskId);
     }

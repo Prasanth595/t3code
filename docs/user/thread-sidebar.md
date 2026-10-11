@@ -217,9 +217,26 @@ retry and the normal snooze choices.
 On web and desktop, use **Agents** to follow work delegated to subagents.
 Stop on a thread also stops the subagents it delegated to.
 
-Subagent threads started by the agent can't take messages; message the parent
-thread instead. When such a subagent needs an approval or an answer, the parent
-thread asks for it.
+Provider-native subagent threads can't take independent messages. Message their
+parent thread instead. T3-owned delegated threads have their own conversations
+and can take follow-ups. Approvals keep the provider's existing routing.
+
+### Coordinate a swarm
+
+Ask your agent to create a swarm when delegated members need to exchange questions
+or findings directly. For example, ask it to "create a swarm to review the API and
+client together, and have the members compare their findings." Ordinary delegation
+does not enroll agents in a swarm.
+
+A swarm has a fixed group of T3-owned member conversations. Members can discover
+and message their peers without asking the parent agent to relay each message.
+Queued peer messages run as follow-up turns, so delivery does not mean the recipient
+has read or answered the message. An idle swarm retains its member contexts.
+
+Open a member's conversation to inspect its work or send a follow-up. Stop the swarm
+to close peer messaging and stop its current work. Stopped groups remain inspectable.
+Later human follow-ups do not reopen the group. Swarm members share the delegated
+workspace, so coordinate file changes as you would with ordinary subagents.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

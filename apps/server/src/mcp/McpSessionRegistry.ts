@@ -29,6 +29,13 @@ export interface McpIssuedCredential {
 }
 
 export interface McpSessionRegistryShape {
+  readonly isCurrentCredential: (
+    scope: McpInvocationContext.McpThreadInvocationScope,
+  ) => Effect.Effect<boolean>;
+  readonly withCurrentCredential: <A, E, R>(
+    scope: McpInvocationContext.McpThreadInvocationScope,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | false, R>;
   readonly issue: (request: McpCredentialRequest) => Effect.Effect<McpIssuedCredential>;
   readonly resolve: (
     rawToken: string,
@@ -203,6 +210,37 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     }));
 
   return McpSessionRegistry.of({
+    isCurrentCredential: (scope) =>
+      Effect.gen(function* () {
+        const timestamp = yield* currentTimeMillis;
+        const current = yield* SynchronizedRef.get(state);
+        const latest = [...pruneDead(current.records, timestamp).values()].findLast(
+          (record) => record.scope.thread.threadId === scope.thread.threadId,
+        )?.scope;
+        return (
+          latest?.thread.providerSessionId === scope.thread.providerSessionId &&
+          latest.thread.providerInstanceId === scope.thread.providerInstanceId &&
+          latest.environmentId === scope.environmentId
+        );
+      }),
+    withCurrentCredential: (scope, effect) =>
+      SynchronizedRef.modifyEffect(state, (current) =>
+        Effect.gen(function* () {
+          const timestamp = yield* currentTimeMillis;
+          const records = pruneDead(current.records, timestamp);
+          const latest = [...records.values()].findLast(
+            (record) => record.scope.thread.threadId === scope.thread.threadId,
+          )?.scope;
+          if (
+            latest?.thread.providerSessionId !== scope.thread.providerSessionId ||
+            latest.thread.providerInstanceId !== scope.thread.providerInstanceId ||
+            latest.environmentId !== scope.environmentId
+          )
+            return yield* Effect.fail(false as const);
+          const result = yield* effect;
+          return [result, { records }] as const;
+        }),
+      ),
     issue,
     resolve,
     touch,

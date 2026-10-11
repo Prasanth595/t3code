@@ -1,5 +1,5 @@
 import type {
-  OrchestrationV2Command,
+  OrchestrationV2ServerCommand as OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Run,
@@ -132,61 +132,13 @@ export class OrchestratorV2ScenarioStepError extends Schema.TaggedError<Orchestr
 }
 
 function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<ThreadId> {
+  if ("threadId" in command) return [command.threadId];
   switch (command.type) {
-    case "thread.create":
-    case "thread.archive":
-    case "thread.unarchive":
-    case "thread.delete":
-    case "thread.settle":
-    case "thread.auto-settle":
-    case "thread.unsettle":
-    case "thread.snooze":
-    case "thread.unsnooze":
-    case "thread.auto-settle.set":
-    case "thread.pin":
-    case "thread.unpin":
-    case "thread.pin.reorder":
-    case "thread.active.reorder":
-    case "thread.visit":
-    case "thread.mark-unread":
-    case "thread.metadata.update":
-    case "thread.pull-request.link":
-    case "thread.pull-request.unlink":
-    case "thread.pull-request-link.sync":
-    case "thread.pull-request.watch":
-    case "thread.pull-request.sync":
-    case "thread.title.regeneration.complete":
-    case "thread.runtime-mode.set":
-    case "thread.interaction-mode.set":
-    case "thread.model-selection.set":
-    case "provider-session.detach":
-    case "message.dispatch":
-    case "notification.delivery.accept":
-    case "prepared-run.release":
-    case "prepared-run.progress":
-    case "prepared-run.fail":
-    case "prepared-run.retry":
-    case "subagent.stop":
-    case "run.interrupt":
-    case "queued-message.promote-to-steer":
-    case "queue.resume":
-    case "queued-run.reorder":
-    case "queued-run.cancel":
-    case "queued-run.edit":
-    case "runtime-request.respond":
-    case "thread.user-input.dismiss":
-    case "checkpoint.rollback":
-    case "provider.switch":
-      return [command.threadId];
-    case "delegated_task.request":
-    case "delegated_task.wake-policy":
-    case "delegated_task.completion-delivery.acknowledge":
-    case "delegated_task.completion-delivery.dispose":
-    case "thread.created.record":
-      return [command.parentThreadId];
     case "thread.fork":
     case "thread.merge_back":
       return [command.sourceThreadId, command.targetThreadId];
+    default:
+      return [command.parentThreadId];
   }
 }
 

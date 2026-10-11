@@ -1,3 +1,5 @@
+import { formatPeerMessage } from "@t3tools/provider-core/server/peerMessage";
+import { SwarmAdmissionLost, swarmRunAllowed } from "./SwarmAdmission.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -62,6 +64,7 @@ const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
 /** Claude refuses to replace a process running background work before it reads the prompt. */
 const refusedBeforePrompt = (error: unknown): boolean =>
+  Predicate.isTagged(error, "SwarmAdmissionLost") ||
   Predicate.isTagged(error, "ClaudeBackgroundWorkBlocksQueryReplacementError") ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
@@ -230,6 +233,28 @@ export const layer: Layer.Layer<
         // The effect is idempotent once the run has advanced or terminalized.
         return;
       }
+      if (
+        !(yield* swarmRunAllowed(projectionStore, projection.thread, run)) &&
+        run.activeAttemptId !== null
+      ) {
+        yield* eventSink.writeIfRunCurrent({
+          threadId: input.threadId,
+          runId: run.id,
+          activeAttemptId: run.activeAttemptId,
+          expectedStatus: "starting",
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId: input.threadId }),
+              type: "run.updated",
+              threadId: input.threadId,
+              runId: run.id,
+              occurredAt: yield* DateTime.now,
+              payload: { ...run, status: "queued", queueHeld: true },
+            },
+          ],
+        });
+        return;
+      }
       const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
       const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
       const providerThread = projection.providerThreads.find(
@@ -255,7 +280,9 @@ export const layer: Layer.Layer<
                         (message) =>
                           message.id === source.userMessageId &&
                           message.attachments.length === 0 &&
-                          message.text.trim().toLowerCase() === "/compact",
+                          formatPeerMessage(message.text, message.swarmPeerDelivery)
+                            .trim()
+                            .toLowerCase() === "/compact",
                       ))),
               ))),
       );
@@ -370,9 +397,13 @@ export const layer: Layer.Layer<
           });
         },
       );
-      if (message.attachments.length === 0 && message.text.trimStart().startsWith("/")) {
+      if (
+        message.attachments.length === 0 &&
+        formatPeerMessage(message.text, message.swarmPeerDelivery).trimStart().startsWith("/")
+      ) {
         const isEmptyCompaction =
-          message.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
+          formatPeerMessage(message.text, message.swarmPeerDelivery).trim().toLowerCase() ===
+            "/compact" && !projection.hasConversation;
         // Preparing a run may already point the thread at a newly selected
         // provider. Account commands still belong to its last native session.
         const nativeThreads = new Map(
@@ -404,7 +435,7 @@ export const layer: Layer.Layer<
               providerAuth.tryHandlePromptCommand({
                 instanceId: authInstanceId,
                 text: projectComposerContextForProvider({
-                  text: message.text,
+                  text: formatPeerMessage(message.text, message.swarmPeerDelivery),
                   records: message.context?.records ?? [],
                 }),
                 hasAttachments: false,
@@ -948,7 +979,7 @@ export const layer: Layer.Layer<
         RunExecutionService.canRouteRelatedSubagent(subagent.status),
       );
       const userText = projectComposerContextForProvider({
-        text: message.text,
+        text: formatPeerMessage(message.text, message.swarmPeerDelivery),
         records: message.context?.records ?? [],
       });
       // Delivered once: this run's provider turn marks the work as told. A
@@ -967,7 +998,9 @@ export const layer: Layer.Layer<
             .filter(
               (candidate) =>
                 candidate.attachments.length === 0 &&
-                candidate.text.trim().toLowerCase() === "/compact",
+                formatPeerMessage(candidate.text, candidate.swarmPeerDelivery)
+                  .trim()
+                  .toLowerCase() === "/compact",
             )
             .map((candidate) => candidate.id),
         ),
@@ -1167,6 +1200,8 @@ export const layer: Layer.Layer<
               }),
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          if (!(yield* swarmRunAllowed(projectionStore, projection.thread, run)))
+            return yield* new SwarmAdmissionLost({ threadId: projection.thread.id, runId: run.id });
           const start = compact ? session.compactThread! : session.startTurn;
           const context = [delivery.context, restartNote]
             .filter((part) => part !== "")
@@ -1177,6 +1212,7 @@ export const layer: Layer.Layer<
             ...(noteContinuation ? promptedInput : turnInput),
             message: {
               ...turnInput.message,
+              swarmPeerDelivery: undefined,
               text: context === "" ? userText : `${context}\n\nUser message:\n${userText}`,
             },
           }).pipe(
@@ -1221,7 +1257,9 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         missedItems.length === 0 &&
         restartNote === "" &&
-        !noteContinuation
+        !noteContinuation &&
+        run.swarmId === undefined &&
+        run.swarmPeerDelivery === undefined
           ? session
           : makeDeliverySession(session, startWithHandoffs);
       yield* runExecution.startRootRun({

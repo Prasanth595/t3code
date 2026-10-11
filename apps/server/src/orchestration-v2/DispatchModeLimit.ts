@@ -40,6 +40,15 @@ const runtimeModeRank: Record<RuntimeMode, number> = {
 };
 const interactionModeRank: Record<ProviderInteractionMode, number> = { plan: 0, default: 1 };
 
+export const minimumDispatchModes = (...modes: ReadonlyArray<DispatchModes>): DispatchModes => ({
+  runtimeMode: modes.reduce<RuntimeMode>(
+    (minimum, mode) =>
+      runtimeModeRank[mode.runtimeMode] < runtimeModeRank[minimum] ? mode.runtimeMode : minimum,
+    "full-access",
+  ),
+  interactionMode: modes.some((mode) => mode.interactionMode === "plan") ? "plan" : "default",
+});
+
 /** Which of `modes` is broader than `limit`, if either. */
 export const exceededDispatchModeLimit = (
   limit: DispatchModes,

@@ -8,6 +8,7 @@ import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
 } from "@t3tools/shared/orchestrationV2Timeline";
+import { mergeOrchestrationV2Swarm } from "@t3tools/contracts";
 
 export type ApplyOrchestrationV2ProjectionEventOptions = {
   readonly partialTimeline?: boolean;
@@ -251,6 +252,17 @@ export function applyOrchestrationV2ProjectionEvent(
       return { ...base, nodes: upsertEntity(base.nodes, event.payload) };
     case "subagent.updated":
       return { ...base, subagents: upsertEntity(base.subagents, event.payload) };
+    case "swarm.updated":
+      return {
+        ...base,
+        swarms: upsertEntity(
+          base.swarms ?? [],
+          mergeOrchestrationV2Swarm(
+            base.swarms?.find((swarm) => swarm.id === event.payload.id),
+            event.payload,
+          ),
+        ),
+      };
     case "provider-session.attached":
     case "provider-session.updated":
       return {
@@ -322,5 +334,7 @@ export function applyOrchestrationV2ProjectionEvent(
     case "context-transfer.created":
     case "context-transfer.updated":
       return { ...base, contextTransfers: upsertEntity(base.contextTransfers, event.payload) };
+    default:
+      return projection;
   }
 }

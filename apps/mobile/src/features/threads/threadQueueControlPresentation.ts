@@ -22,6 +22,7 @@ export function resolveThreadQueueRowControls(input: {
   readonly isEditing?: boolean;
   readonly queuedCount: number;
   readonly text: string;
+  readonly canEdit: boolean;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
   const isEditing = input.isEditing === true;
@@ -30,7 +31,7 @@ export function resolveThreadQueueRowControls(input: {
     canDismiss: !input.busy,
     // Re-opening the row already in the composer would reload it and throw
     // away whatever has been typed since.
-    canEdit: mutationEnabled && !isEditing,
+    canEdit: mutationEnabled && !isEditing && input.canEdit,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
     canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,

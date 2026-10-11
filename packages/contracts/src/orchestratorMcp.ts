@@ -1,4 +1,10 @@
 import * as Effect from "effect/Effect";
+import {
+  SwarmId,
+  OrchestrationV2SwarmJson,
+  SWARM_MAX_MEMBERS,
+  SWARM_MAX_MESSAGE_BYTES,
+} from "./swarm.ts";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
@@ -212,6 +218,57 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   }),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
+
+export const OrchestratorMcpSwarmCreateInput = Schema.Struct({
+  title: OrchestratorMcpTitle,
+  members: Schema.Array(
+    OrchestratorMcpDelegateTaskInput.mapFields(
+      ({ task, title, target, role, runtimeMode, interactionMode }) => ({
+        task,
+        title,
+        target,
+        role,
+        runtimeMode,
+        interactionMode,
+      }),
+    ),
+  ).check(Schema.isMinLength(2), Schema.isMaxLength(SWARM_MAX_MEMBERS)),
+  clientRequestId: OrchestratorMcpClientRequestId,
+});
+export type OrchestratorMcpSwarmCreateInput = typeof OrchestratorMcpSwarmCreateInput.Type;
+export const OrchestratorMcpSwarmCreateResult = Schema.Struct({
+  swarm: OrchestrationV2SwarmJson,
+  tasks: Schema.Array(OrchestratorMcpDelegateTaskResult),
+});
+export type OrchestratorMcpSwarmCreateResult = typeof OrchestratorMcpSwarmCreateResult.Type;
+export const OrchestratorMcpSwarmRosterInput = Schema.Struct({ swarmId: Schema.optional(SwarmId) });
+export type OrchestratorMcpSwarmRosterInput = typeof OrchestratorMcpSwarmRosterInput.Type;
+export const OrchestratorMcpSwarmRosterResult = Schema.Struct({ swarm: OrchestrationV2SwarmJson });
+export type OrchestratorMcpSwarmRosterResult = typeof OrchestratorMcpSwarmRosterResult.Type;
+export const OrchestratorMcpSwarmSendInput = Schema.Struct({
+  swarmId: SwarmId,
+  threadId: ThreadId,
+  message: TrimmedNonEmptyString.check(Schema.isMaxLength(SWARM_MAX_MESSAGE_BYTES)),
+  clientRequestId: OrchestratorMcpClientRequestId,
+});
+export type OrchestratorMcpSwarmSendInput = typeof OrchestratorMcpSwarmSendInput.Type;
+export const OrchestratorMcpSwarmSendResult = Schema.Struct({
+  swarmId: SwarmId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  runId: RunId,
+  taskId: NodeId,
+  delivery: Schema.Literals(["started", "queued"]),
+  status: OrchestrationV2RunStatus,
+});
+export type OrchestratorMcpSwarmSendResult = typeof OrchestratorMcpSwarmSendResult.Type;
+export const OrchestratorMcpSwarmStopInput = Schema.Struct({
+  swarmId: SwarmId,
+  clientRequestId: OrchestratorMcpClientRequestId,
+});
+export type OrchestratorMcpSwarmStopInput = typeof OrchestratorMcpSwarmStopInput.Type;
+export const OrchestratorMcpSwarmStopResult = Schema.Struct({ swarm: OrchestrationV2SwarmJson });
+export type OrchestratorMcpSwarmStopResult = typeof OrchestratorMcpSwarmStopResult.Type;
 
 export const OrchestratorMcpTaskStatusInput = Schema.Struct({
   taskId: NodeId,
@@ -506,6 +563,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
   features: Schema.Struct({
+    nativeSwarms: Schema.optionalKey(Schema.Boolean),
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,
     cancellation: Schema.Boolean,

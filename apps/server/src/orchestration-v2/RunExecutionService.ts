@@ -1,3 +1,4 @@
+import { formatPeerMessage } from "@t3tools/provider-core/server/peerMessage";
 import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -1431,14 +1432,19 @@ export const layer: Layer.Layer<
             attemptId: input.attemptId,
             rootNodeId: input.rootNode.id,
             providerThread: input.providerThread,
-            message: input.message,
+            message: {
+              ...input.message,
+              text: formatPeerMessage(input.message.text, input.message.swarmPeerDelivery),
+            },
             modelSelection: input.modelSelection,
             runtimePolicy: input.runtimePolicy,
             ...(appContext.length === 0 ? {} : { appContext }),
           };
           const compact =
             input.message.attachments.length === 0 &&
-            input.message.text.trim().toLowerCase() === "/compact";
+            formatPeerMessage(input.message.text, input.message.swarmPeerDelivery)
+              .trim()
+              .toLowerCase() === "/compact";
           const startTurn = compact
             ? (input.session.compactThread?.(turnInput) ??
               Effect.fail(

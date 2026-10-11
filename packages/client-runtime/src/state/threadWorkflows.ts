@@ -26,7 +26,13 @@ export interface QueuedThreadRun {
   /** Editing replaces this message's content, so its id and context travel with the row. */
   readonly messageId: Message["id"];
   readonly context?: Message["context"];
+  readonly canEdit: boolean;
+  readonly canPromoteToSteer: boolean;
+  readonly queueOnlyReason: string | null;
 }
+
+export const SWARM_PEER_QUEUE_ONLY_REASON =
+  "Peer messages must stay queued and cannot be edited or sent as a steer. Cancel this message and send a new ordinary message from your composer.";
 
 export interface ThreadQueueWorkflowState {
   readonly activeRun: Run | null;
@@ -134,6 +140,10 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
+  const canPromoteToSteer =
+    hasSteerableProviderTurn &&
+    (capabilities?.supportsActiveSteering === true ||
+      capabilities?.supportsSteeringByInterruptRestart === true);
   const queuedRuns = copySorted(
     getUserQueuedThreadRuns(projection),
     (left, right) =>
@@ -141,11 +151,16 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       left.ordinal - right.ordinal,
   ).map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+    const isPeerDelivery =
+      run.swarmPeerDelivery !== undefined || message?.swarmPeerDelivery !== undefined;
     return {
       run,
       text: message?.text ?? "Queued message",
       attachments: message?.attachments ?? [],
       messageId: run.userMessageId,
+      canEdit: !isPeerDelivery,
+      canPromoteToSteer: canPromoteToSteer && !isPeerDelivery,
+      queueOnlyReason: isPeerDelivery ? SWARM_PEER_QUEUE_ONLY_REASON : null,
       ...(message?.context ? { context: message.context } : {}),
     };
   });
@@ -155,10 +170,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
     canReorder: capabilities?.supportsQueuedMessages === true,
-    canPromoteToSteer:
-      hasSteerableProviderTurn &&
-      (capabilities?.supportsActiveSteering === true ||
-        capabilities?.supportsSteeringByInterruptRestart === true),
+    canPromoteToSteer,
   };
 }
 

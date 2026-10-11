@@ -1,4 +1,14 @@
 import {
+  OrchestratorMcpSwarmCreateInput,
+  OrchestratorMcpSwarmCreateResult,
+  OrchestratorMcpSwarmRosterInput,
+  OrchestratorMcpSwarmRosterResult,
+  OrchestratorMcpSwarmSendInput,
+  OrchestratorMcpSwarmSendResult,
+  OrchestratorMcpSwarmStopInput,
+  OrchestratorMcpSwarmStopResult,
+} from "@t3tools/contracts";
+import {
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
   OrchestratorMcpCreateThreadsInput,
@@ -270,7 +280,50 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a T3 thread")
   .annotate(Tool.Destructive, true);
 
+const SwarmCreateTool = Tool.make("swarm_create", {
+  description:
+    "Atomically create a fixed swarm of 2 to 8 fresh app-owned agents. Only an ordinary live owner can create it. No nested swarms or broadcast. Reuse clientRequestId only for identical intent, including across replacement credentials. Initial startup failures keep the admitted roster.",
+  parameters: OrchestratorMcpSwarmCreateInput,
+  success: OrchestratorMcpSwarmCreateResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+}).annotate(Tool.Title, "Create a swarm");
+const SwarmRosterTool = Tool.make("swarm_roster", {
+  description:
+    "Read the fixed swarm membership as its owner or a member. Members may omit swarmId to resolve their own durable membership; owners must pass swarmId. Terminal tasks retain membership until Stop revokes it. Generic thread tools retain their ordinary behavior.",
+  parameters: OrchestratorMcpSwarmRosterInput,
+  success: OrchestratorMcpSwarmRosterResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+}).annotate(Tool.Title, "Read a swarm roster");
+const SwarmSendTool = Tool.make("swarm_send", {
+  description:
+    "Queue advisory conversation content to one other admitted member of the same open swarm. The sender is authenticated, never an argument. Maximum 16 KiB UTF-8 and 16 pending peer entries per recipient including held entries. Receipt means durable scheduling, not consumption. taskId reports historical admission ownership, which can change to fresh parent-owned work before execution after publication. Reuse clientRequestId only for identical intent.",
+  parameters: OrchestratorMcpSwarmSendInput,
+  success: OrchestratorMcpSwarmSendResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+}).annotate(Tool.Title, "Send to a swarm peer");
+const SwarmStopTool = Tool.make("swarm_stop", {
+  description:
+    "The owner permanently closes admission and stops the captured member work and descendants. Published results and later ordinary human messages remain available. Reuse clientRequestId only for identical intent.",
+  parameters: OrchestratorMcpSwarmStopInput,
+  success: OrchestratorMcpSwarmStopResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Stop a swarm")
+  .annotate(Tool.Destructive, true);
+
 export const OrchestratorToolkit = Toolkit.make(
+  SwarmCreateTool,
+  SwarmRosterTool,
+  SwarmSendTool,
+  SwarmStopTool,
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,

@@ -1,3 +1,9 @@
+import {
+  SwarmId,
+  OrchestrationV2SwarmJson,
+  mergeOrchestrationV2Swarm,
+  type OrchestrationV2Swarm,
+} from "@t3tools/contracts";
 import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
@@ -339,6 +345,13 @@ export interface ShellSnapshotOptions {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly getSwarm: (
+    swarmId: SwarmId,
+  ) => Effect.Effect<OrchestrationV2Swarm | undefined, ProjectionStoreV2Error>;
+  readonly getSwarmForMember: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2Swarm | undefined, ProjectionStoreV2Error>;
+
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -649,6 +662,16 @@ function preserveRunRecordedFields(
   if (current === undefined) return next;
   return {
     ...next,
+    ...(next.delegatedTaskId === undefined && current.delegatedTaskId !== undefined
+      ? { delegatedTaskId: current.delegatedTaskId }
+      : {}),
+    ...(current.swarmId === undefined ? {} : { swarmId: current.swarmId }),
+    ...(current.swarmRunAdmission === undefined
+      ? {}
+      : { swarmRunAdmission: current.swarmRunAdmission }),
+    ...(current.swarmPeerDelivery === undefined
+      ? {}
+      : { swarmPeerDelivery: current.swarmPeerDelivery }),
     ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
       ? { delegatedCompletion: current.delegatedCompletion }
       : {}),
@@ -678,6 +701,7 @@ export function emptyProjection(
     attempts: [],
     nodes: [],
     subagents: [],
+    swarms: [],
     providerSessions: [],
     providerThreads: [],
     providerTurns: [],
@@ -783,6 +807,17 @@ export function applyToProjection(
       return {
         ...base,
         nodes: upsertById(base.nodes, event.payload),
+      };
+    case "swarm.updated":
+      return {
+        ...base,
+        swarms: upsertById(
+          base.swarms ?? [],
+          mergeOrchestrationV2Swarm(
+            base.swarms?.find((group) => group.id === event.payload.id),
+            event.payload,
+          ),
+        ),
       };
     case "subagent.updated":
       return {
@@ -969,6 +1004,9 @@ type PayloadRow = {
 };
 
 type ShellThreadRow = {
+  readonly swarms_json: string;
+  readonly queued_message_count: number;
+  readonly held_queued_message_count: number;
   readonly thread_id: string;
   readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
@@ -1027,6 +1065,14 @@ const encodeTimelineSources = Schema.encodeEffect(
   ),
 );
 const encodeIdList = Schema.encodeSync(Schema.fromJsonString(Schema.Array(Schema.String)));
+
+const encodeSwarmPayload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2SwarmJson));
+const decodeSwarmPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2SwarmJson),
+);
+const decodeSwarmArray = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Array(OrchestrationV2SwarmJson)),
+);
 
 const encodeThreadPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema),
@@ -1458,7 +1504,21 @@ export function threadShellFromProjection(
     runs: projection.runs,
     pullRequests: projection.thread.pullRequests,
   });
+  const queuedMessages = projection.runs.filter(
+    (run) =>
+      run.status === "queued" &&
+      projection.messages.some(
+        (message) =>
+          message.id === run.userMessageId &&
+          message.notification === undefined &&
+          message.delegatedCompletion === undefined &&
+          run.restartContinuationOfRunId === undefined,
+      ),
+  );
   return {
+    swarms: projection.swarms ?? [],
+    queuedMessageCount: queuedMessages.length,
+    heldQueuedMessageCount: queuedMessages.filter((run) => run.queueHeld === true).length,
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
     id: projection.thread.id,
@@ -1595,6 +1655,9 @@ function isActivityRunForShell(
 }
 
 type ShellThreadState = {
+  readonly swarms: ReadonlyArray<OrchestrationV2Swarm>;
+  readonly queuedMessageCount: number;
+  readonly heldQueuedMessageCount: number;
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
@@ -1727,6 +1790,9 @@ function shellFromState(input: {
   readonly visibleItemCount: number;
 }): OrchestrationV2ThreadShell {
   return {
+    swarms: input.state.swarms,
+    queuedMessageCount: input.state.queuedMessageCount,
+    heldQueuedMessageCount: input.state.heldQueuedMessageCount,
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
     id: input.state.thread.id,
@@ -1807,9 +1873,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const sql = yield* SqlClient.SqlClient;
 
     // For run upserts: a snapshot without `path` keeps the value another event recorded there.
-    const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
+    const keepRecordedRunField = (
+      payload: Statement.Fragment,
+      path: string,
+      immutable = false,
+    ) => sql`
       CASE
-        WHEN json_type(excluded.payload_json, ${path}) IS NULL
+        WHEN (${immutable ? sql`1` : sql`json_type(excluded.payload_json, ${path}) IS NULL`})
           AND json_type(orchestration_v2_projection_runs.payload_json, ${path}) IS NOT NULL
         THEN json_set(
           ${payload},
@@ -1934,7 +2004,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
                 payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                  keepRecordedRunField(
+                    keepRecordedRunField(
+                      keepRecordedRunField(
+                        keepRecordedRunField(
+                          keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
+                          "$.delegatedTaskId",
+                        ),
+                        "$.swarmId",
+                        true,
+                      ),
+                      "$.swarmPeerDelivery",
+                      true,
+                    ),
+                    "$.swarmRunAdmission",
+                    true,
+                  ),
                   "$.restartCancelledBackgroundWork",
                 )}
             `;
@@ -2053,6 +2138,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 completed_at = excluded.completed_at,
                 payload_json = excluded.payload_json
             `;
+            break;
+          }
+          case "swarm.updated": {
+            const rows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_swarms WHERE swarm_id = ${event.payload.id}`;
+            const previous =
+              rows[0] === undefined ? undefined : yield* decodeSwarmPayload(rows[0].payload_json);
+            const group = mergeOrchestrationV2Swarm(previous, event.payload);
+            if (group.ownerThreadId !== event.threadId)
+              return yield* new ProjectionStoreApplyEventError({ eventType: event.type });
+            const payload = yield* encodeSwarmPayload(group);
+            yield* sql`INSERT INTO orchestration_v2_projection_swarms(swarm_id, owner_thread_id, payload_json) VALUES (${group.id}, ${group.ownerThreadId}, ${payload}) ON CONFLICT(swarm_id) DO UPDATE SET payload_json = excluded.payload_json`;
+            for (const member of group.members) {
+              yield* sql`INSERT INTO orchestration_v2_projection_swarm_members(thread_id, swarm_id) VALUES (${member.threadId}, ${group.id}) ON CONFLICT(thread_id) DO NOTHING`;
+            }
             break;
           }
           case "subagent.updated": {
@@ -3279,7 +3379,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           for (const row of rows) messageOrdinals.set(row.message_id, row.ordinal);
         }
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems, messageOrdinals);
+        const swarmRows =
+          fields !== undefined && !fields.includes("swarms")
+            ? []
+            : yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_swarms WHERE owner_thread_id = ${threadId} ORDER BY rowid`;
+        const swarms = yield* Effect.forEach(swarmRows, (row) =>
+          decodeSwarmPayload(row.payload_json),
+        );
         const projection = {
+          swarms,
           thread,
           runs,
           attempts,
@@ -4268,6 +4376,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const getSwarm: ProjectionStoreV2Shape["getSwarm"] = (swarmId) =>
+      sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_swarms WHERE swarm_id = ${swarmId}`.pipe(
+        Effect.flatMap((rows) =>
+          rows[0] === undefined
+            ? Effect.succeed(undefined)
+            : decodeSwarmPayload(rows[0].payload_json),
+        ),
+        Effect.mapError(
+          (cause) => new ProjectionStoreReadError({ threadId: ThreadId.make(swarmId), cause }),
+        ),
+      );
+    const getSwarmForMember: ProjectionStoreV2Shape["getSwarmForMember"] = (threadId) =>
+      sql<PayloadRow>`SELECT g.payload_json FROM orchestration_v2_projection_swarm_members m JOIN orchestration_v2_projection_swarms g ON g.swarm_id = m.swarm_id WHERE m.thread_id = ${threadId}`.pipe(
+        Effect.flatMap((rows) =>
+          rows[0] === undefined
+            ? Effect.succeed(undefined)
+            : decodeSwarmPayload(rows[0].payload_json),
+        ),
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+      );
+
     const getThread: ProjectionStoreV2Shape["getThread"] = (threadId) =>
       Effect.gen(function* () {
         const rows = yield* sql<PayloadRow>`
@@ -5161,6 +5290,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              (SELECT COALESCE(json_group_array(json(g.payload_json)), '[]') FROM orchestration_v2_projection_swarms g WHERE g.owner_thread_id = t.thread_id) AS swarms_json,
+              (SELECT COUNT(*) FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_messages m ON m.message_id = json_extract(r.payload_json, '$.userMessageId') WHERE r.thread_id = t.thread_id AND r.status = 'queued' AND json_extract(r.payload_json, '$.restartContinuationOfRunId') IS NULL AND json_extract(m.payload_json, '$.notification') IS NULL AND json_extract(m.payload_json, '$.delegatedCompletion') IS NULL) AS queued_message_count,
+              (SELECT COUNT(*) FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_messages m ON m.message_id = json_extract(r.payload_json, '$.userMessageId') WHERE r.thread_id = t.thread_id AND r.status = 'queued' AND json_extract(r.payload_json, '$.restartContinuationOfRunId') IS NULL AND json_extract(m.payload_json, '$.notification') IS NULL AND json_extract(m.payload_json, '$.delegatedCompletion') IS NULL AND json_extract(r.payload_json, '$.queueHeld') IS 1) AS held_queued_message_count,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
@@ -5703,6 +5835,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }),
         ];
         return {
+          swarms: yield* decodeSwarmArray(row.swarms_json),
+          queuedMessageCount: row.queued_message_count,
+          heldQueuedMessageCount: row.held_queued_message_count,
           thread,
           latestRunId,
           latestRunStatus,
@@ -5940,6 +6075,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     return {
       apply,
+      getSwarm,
+      getSwarmForMember,
       getShellSnapshot,
       readShellSnapshot,
       getThreadShell,
@@ -5987,6 +6124,22 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
     const sequence = yield* Ref.make(0);
 
     const service: ProjectionStoreV2Shape = {
+      getSwarm: (swarmId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .flatMap((projection) => projection.swarms ?? [])
+              .find((group) => group.id === swarmId),
+          ),
+        ),
+      getSwarmForMember: (threadId) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .flatMap((projection) => projection.swarms ?? [])
+              .find((group) => group.members.some((member) => member.threadId === threadId)),
+          ),
+        ),
       apply: (event) =>
         Effect.gen(function* () {
           const result = yield* Ref.modify(replayState, (existing) => {

@@ -7,6 +7,34 @@ function completed(input: unknown, output?: unknown): T3ToolSummaryCall {
 }
 
 describe("summarizeT3ToolCalls", () => {
+  it("summarizes explicit swarm creation, scoped roster, queue receipts and failures", () => {
+    const output = {
+      swarm: { id: "swarm-1" },
+      tasks: [{ taskId: "task-a" }, { taskId: "task-b" }],
+    };
+    expect(
+      summarizeT3ToolCalls("swarm-create", [completed({}, output), completed({}, output)]),
+    ).toEqual({ label: "Created 1 swarm with 2 agents", failedCount: 0 });
+    expect(
+      summarizeT3ToolCalls("swarm-roster", [
+        completed({ swarmId: "swarm-1" }, { swarm: { id: "swarm-1" } }),
+      ]),
+    ).toEqual({ label: "Read 1 swarm roster", failedCount: 0 });
+    expect(
+      summarizeT3ToolCalls("swarm-send", [
+        completed({ swarmId: "swarm-1", threadId: "b" }, { messageId: "message-a", threadId: "b" }),
+      ]),
+    ).toEqual({ label: "Queued 1 message to 1 member", failedCount: 0 });
+    expect(
+      summarizeT3ToolCalls("swarm-stop", [
+        completed({ swarmId: "swarm-1" }, { swarm: { id: "swarm-1" } }),
+      ]),
+    ).toEqual({ label: "Requested stops for 1 swarm", failedCount: 0 });
+    expect(summarizeT3ToolCalls("swarm-create", [completed({}, { isError: true })])).toEqual({
+      label: "Tried to create 1 swarm",
+      failedCount: 1,
+    });
+  });
   it("counts registered projects, repository destinations, and accepted thread launches", () => {
     expect(
       summarizeT3ToolCalls("project-create", [

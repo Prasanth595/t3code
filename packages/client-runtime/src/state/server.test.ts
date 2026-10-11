@@ -500,11 +500,14 @@ describe("server state projection", () => {
   it("keeps a current welcome on ready and rejects a buffered welcome from the old session", () => {
     const firstSession = session({} as WsRpcProtocolClient);
     const secondSession = session({} as WsRpcProtocolClient);
-    const welcome = {
-      environment: {} as ServerLifecycleWelcomePayload["environment"],
+    const welcome: ServerLifecycleWelcomePayload = {
+      environment: {
+        ...CONFIG.environment,
+        capabilities: { ...CONFIG.environment.capabilities, nativeSwarms: true },
+      },
       cwd: "/repo",
       projectName: "repo",
-    } as ServerLifecycleWelcomePayload;
+    };
     const initial = {
       currentSession: firstSession,
       welcomeSession: firstSession,
@@ -526,8 +529,22 @@ describe("server state projection", () => {
 
     expect(afterReady).toBe(afterWelcome);
     expect(resolveServerWelcomeState(afterReady)).toBe(welcome);
+    expect(
+      resolveServerWelcomeState(afterReady)?.environment.capabilities.nativeSwarms === true,
+    ).toBe(true);
     expect(afterBufferedOldWelcome).toBe(afterSwitch);
     expect(resolveServerWelcomeState(afterBufferedOldWelcome)).toBeNull();
+    expect(
+      resolveServerWelcomeState(afterBufferedOldWelcome)?.environment.capabilities.nativeSwarms ===
+        true,
+    ).toBe(false);
+    const afterDowngrade = applyServerWelcomeEvent(afterSwitch, secondSession, {
+      type: "welcome",
+      payload: { ...welcome, environment: { capabilities: {} } },
+    });
+    expect(
+      resolveServerWelcomeState(afterDowngrade)?.environment.capabilities.nativeSwarms === true,
+    ).toBe(false);
   });
 
   it.effect("checks the authoritative session before accepting a buffered welcome", () =>

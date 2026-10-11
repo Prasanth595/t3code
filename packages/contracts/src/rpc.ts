@@ -4,6 +4,7 @@ import {
   OrchestrationV2SearchThreadResult,
 } from "./orchestrationV2.ts";
 import { OrchestrationDispatchCommandError } from "./orchestrationDispatch.ts";
+import { OrchestrationV2StopSwarmError } from "./swarm.ts";
 import {
   McpAppCallToolInput,
   McpAppCallToolResult,
@@ -1684,6 +1685,12 @@ const WsOrchestrationV2StopWorkflowRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.st
   error: Schema.Union([OrchestrationV2StopWorkflowError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2StopSwarmRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.stopSwarm, {
+  payload: OrchestrationV2RpcSchemas.stopSwarm.input,
+  success: OrchestrationV2RpcSchemas.stopSwarm.output,
+  error: Schema.Union([OrchestrationV2StopSwarmError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -2057,6 +2064,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetWorkflowScriptRpc,
   WsOrchestrationV2StopWorkflowRpc,
+  WsOrchestrationV2StopSwarmRpc,
   WsOrchestrationV2GetTurnItemRpc,
   WsOrchestrationV2GetTurnDiffRpc,
   WsOrchestrationV2GetFullThreadDiffRpc,

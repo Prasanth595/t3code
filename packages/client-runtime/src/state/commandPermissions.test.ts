@@ -14,6 +14,9 @@ import {
   EnvironmentId,
   ScheduledTaskId,
   WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
+  CommandId,
+  SwarmId,
   type AuthSessionState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -59,6 +62,47 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it("guards swarm Stop availability and execution with the actual destination operate grant", async () => {
+    const registry = AtomRegistry.make();
+    const writes: Array<{ threadId: ThreadId; swarmId: SwarmId; commandId: CommandId }> = [];
+    const stop = createEnvironmentRpcCommand(runtime, {
+      label: "test.stop-swarm",
+      tag: ORCHESTRATION_V2_WS_METHODS.stopSwarm,
+      execute: (input) =>
+        Effect.sync(() => {
+          writes.push(input);
+        }),
+    });
+    const input = {
+      threadId: ThreadId.make("owner"),
+      swarmId: SwarmId.make("swarm"),
+      commandId: CommandId.make("stop"),
+    };
+    const mounted = [registry.mount(sessions(env)), registry.mount(sessions(other))];
+    try {
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      registry.set(sessions(other), AsyncResult.success(grant(false)));
+      expect([
+        registry.get(stop.permissionAtom(env)),
+        registry.get(stop.permissionAtom(other)),
+      ]).toEqual([true, false]);
+      expect((await stop.run(registry, { environmentId: other, input }))._tag).toBe("Failure");
+      expect((await stop.run(registry, { environmentId: env, input }))._tag).toBe("Success");
+      registry.set(sessions(env), AsyncResult.success(grant(false)));
+      expect(
+        (
+          await stop.run(registry, {
+            environmentId: env,
+            input: { ...input, commandId: CommandId.make("stale-stop") },
+          })
+        )._tag,
+      ).toBe("Failure");
+      expect(writes).toEqual([{ threadId: "owner", swarmId: "swarm", commandId: "stop" }]);
+    } finally {
+      for (const unmount of mounted) unmount();
+      registry.dispose();
+    }
+  });
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {
