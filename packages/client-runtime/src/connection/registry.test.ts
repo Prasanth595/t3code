@@ -650,10 +650,10 @@ describe("EnvironmentRegistry", () => {
 
       yield* Effect.gen(function* () {
         const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        const state = yield* registry.state(TARGET.environmentId);
+        expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connecting");
 
         yield* Deferred.await(connectionStarted);
-        expect(state.phase).toBe("connecting");
+        expect((yield* registry.state(TARGET.environmentId)).phase).toBe("connecting");
         yield* Deferred.succeed(finishConnection, undefined);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
