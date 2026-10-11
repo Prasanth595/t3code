@@ -107,9 +107,9 @@ export function markdownHtmlContent(content: string): string {
     if (/^<img\b/i.test(tag)) {
       const src = attribute(tag, "src");
       if (!src) return "";
-      const alt = (attribute(tag, "alt") ?? "").replace(/&/g, "&amp;").replace(/[\\[\]]/g, "\\$&");
+      const alt = (attribute(tag, "alt") ?? "").replace(/[\\[\]&]/g, "\\$&");
       const href = src
-        .replace(/&/g, "&amp;")
+        .replace(/&/g, "\\&")
         .replace(/</g, "%3C")
         .replace(/>/g, "%3E")
         .replace(/\n/g, "");
