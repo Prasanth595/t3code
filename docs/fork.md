@@ -32,7 +32,7 @@ magick $T/{16,24,32,48,64,128,256}.png $N/nightly-windows.ico && cp $N/nightly-w
 ## Versions
 
 The version is `<upstream base version>-nightly.<UTC date>.<build number>`, for example `0.0.46-nightly.20261010.3`.
-CI uses the workflow run number as the build number. Local builds use `1HHMMSS`.
+CI uses the workflow run number as the build number. A local build adds the time to the newest CI run number: `<UTC date>.<run number>.<HHMMSS>`, for example `0.0.46-nightly.20261011.14.161502`. Thus a local build is newer than the CI release it follows, and older than the next CI release.
 
 ## macOS signing
 
@@ -74,7 +74,7 @@ scripts/fork-desktop-mac.sh --install
 ```
 
 The script quits T3, keeps the previous app in `_shared/backup/`, installs the new build and starts it. GitHub is not involved.
-The fork updater never downgrades, so the local build stays until a newer release exists.
+The next CI release replaces the local build through the updater.
 
 ## Publish a local build
 

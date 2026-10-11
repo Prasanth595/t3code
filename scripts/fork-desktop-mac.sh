@@ -28,15 +28,23 @@ if ! security find-identity -v -p codesigning | grep -q "\"$SIGN_IDENTITY\""; th
 fi
 
 sha="$(git rev-parse HEAD)"
-# Local builds use 1HHMMSS as the build number, CI uses the run number.
-# The fork updater never downgrades, so a local build stays until a newer release.
-version="$(node scripts/resolve-nightly-release.ts \
-  --date "$(date -u +%Y%m%d)" --run-number "1$(date -u +%H%M%S)" --sha "$sha" |
+# CI versions end in .<run number>. A local build ends in .<newest CI run number>.<HHMMSS>,
+# so it sorts just above the CI release it follows and below the next CI release.
+ci_tag="$(gh release list --repo "$FORK_REPOSITORY" --exclude-drafts --limit 50 --json tagName,name \
+  --jq '[.[] | select(.name | endswith("(local)") | not)][0].tagName')"
+ci_run_number="${ci_tag##*.}"
+if [[ ! "$ci_run_number" =~ ^[0-9]+$ ]]; then
+  echo "Could not read the newest CI run number from the fork releases (got \"$ci_tag\")." >&2
+  exit 1
+fi
+ci_version="$(node scripts/resolve-nightly-release.ts \
+  --date "$(date -u +%Y%m%d)" --run-number "$ci_run_number" --sha "$sha" |
   sed -n 's/^version=//p')"
-if [[ -z "$version" ]]; then
+if [[ -z "$ci_version" ]]; then
   echo "Could not resolve the release version." >&2
   exit 1
 fi
+version="$ci_version.$(date -u +%H%M%S)"
 
 if [[ "$publish" == true ]] && ! git branch -r --contains "$sha" | grep -q "origin/"; then
   echo "Push $sha to origin before you publish, so the release tag points at a public commit." >&2
