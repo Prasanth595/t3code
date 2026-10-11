@@ -5,10 +5,5 @@
     "types": ["node", "electron"],
     "lib": ["ESNext", "DOM", "esnext.disposable"]
   },
-  "include": [
-    "src",
-    "vite.config.ts",
-    "../../scripts/lib",
-    "../../packages/shared/src/deviceToolVersions.ts"
-  ]
+  "include": ["src", "vite.config.ts", "../../scripts/lib"]
 }

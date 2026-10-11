@@ -33,7 +33,6 @@
     "test",
     "scripts/warm-dep-cache.ts",
     "../../scripts/lib/public-config.ts",
-    "../../scripts/lib/third-party-licenses.ts",
-    "../../packages/shared/src/deviceToolVersions.ts"
+    "../../scripts/lib/third-party-licenses.ts"
   ]
 }

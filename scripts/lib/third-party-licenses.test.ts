@@ -8,7 +8,6 @@ import * as NodeURL from "node:url";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { DEVICE_TOOL_VERSIONS } from "../../packages/shared/src/deviceToolVersions.ts";
 import {
   generateThirdPartyLicenseManifest,
   THIRD_PARTY_LICENSES_FILE_NAME,
@@ -20,6 +19,12 @@ const REPOSITORY_ROOT = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
   "../..",
 );
+const DEVICE_TOOL_VERSIONS = JSON.parse(
+  await NodeFSP.readFile(
+    NodePath.join(REPOSITORY_ROOT, "apps/server/src/device/deviceToolVersions.json"),
+    "utf8",
+  ),
+) as { readonly "agent-device": string; readonly "expo-device-hub": string };
 
 async function writeJson(path: string, value: unknown): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
@@ -82,20 +87,22 @@ describe("third-party license generation", () => {
   it("generates mobile notices without scripts workspace dependency links", async () => {
     const fixture = await createFixture();
     const generatorPath = NodePath.join(fixture.root, "scripts/lib/third-party-licenses.ts");
-    const versionsPath = NodePath.join(fixture.root, "packages/shared/src/deviceToolVersions.ts");
+    const versionsPath = NodePath.join(
+      fixture.root,
+      "apps/server/src/device/deviceToolVersions.json",
+    );
     await Promise.all([
       NodeFSP.mkdir(NodePath.dirname(generatorPath), { recursive: true }),
       NodeFSP.mkdir(NodePath.dirname(versionsPath), { recursive: true }),
     ]);
     await Promise.all([
       writeJson(NodePath.join(fixture.root, "scripts/package.json"), { type: "module" }),
-      writeJson(NodePath.join(fixture.root, "packages/shared/package.json"), { type: "module" }),
       NodeFSP.copyFile(
         NodePath.join(REPOSITORY_ROOT, "scripts/lib/third-party-licenses.ts"),
         generatorPath,
       ),
       NodeFSP.copyFile(
-        NodePath.join(REPOSITORY_ROOT, "packages/shared/src/deviceToolVersions.ts"),
+        NodePath.join(REPOSITORY_ROOT, "apps/server/src/device/deviceToolVersions.json"),
         versionsPath,
       ),
       writeJson(fixture.configFile, {
