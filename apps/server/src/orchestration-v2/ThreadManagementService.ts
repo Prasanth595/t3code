@@ -1011,6 +1011,7 @@ const make = Effect.gen(function* () {
           intentFingerprint: JSON.stringify({
             swarmId: input.swarmId,
             ownerThreadId: input.threadId,
+            memberThreadId: input.memberThreadId,
           }),
         })
         .pipe(

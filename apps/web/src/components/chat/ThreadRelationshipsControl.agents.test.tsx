@@ -44,6 +44,10 @@ vi.mock("../../state/orchestration", async () => {
   const granted = Atom.make(true);
   return {
     orchestrationEnvironment: {
+      stopSwarm: {
+        label: "environment-data:orchestration:stop-swarm",
+        permissionAtom: () => granted,
+      },
       stopWorkflow: {
         label: "environment-data:orchestration:stop-workflow",
         permissionAtom: () => granted,

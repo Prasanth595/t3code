@@ -18,6 +18,7 @@ import {
   CommandId,
   SwarmId,
   type AuthSessionState,
+  type OrchestrationV2StopSwarmInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -64,7 +65,7 @@ const setup = Effect.gen(function* () {
 describe("command permissions", () => {
   it("guards swarm Stop availability and execution with the actual destination operate grant", async () => {
     const registry = AtomRegistry.make();
-    const writes: Array<{ threadId: ThreadId; swarmId: SwarmId; commandId: CommandId }> = [];
+    const writes: OrchestrationV2StopSwarmInput[] = [];
     const stop = createEnvironmentRpcCommand(runtime, {
       label: "test.stop-swarm",
       tag: ORCHESTRATION_V2_WS_METHODS.stopSwarm,
@@ -88,16 +89,35 @@ describe("command permissions", () => {
       ]).toEqual([true, false]);
       expect((await stop.run(registry, { environmentId: other, input }))._tag).toBe("Failure");
       expect((await stop.run(registry, { environmentId: env, input }))._tag).toBe("Success");
+      const memberInput = {
+        ...input,
+        memberThreadId: ThreadId.make("member-without-active-run"),
+        commandId: CommandId.make("stop-member"),
+      };
+      expect((await stop.run(registry, { environmentId: other, input: memberInput }))._tag).toBe(
+        "Failure",
+      );
+      expect((await stop.run(registry, { environmentId: env, input: memberInput }))._tag).toBe(
+        "Success",
+      );
       registry.set(sessions(env), AsyncResult.success(grant(false)));
       expect(
         (
           await stop.run(registry, {
             environmentId: env,
-            input: { ...input, commandId: CommandId.make("stale-stop") },
+            input: { ...memberInput, commandId: CommandId.make("stale-stop") },
           })
         )._tag,
       ).toBe("Failure");
-      expect(writes).toEqual([{ threadId: "owner", swarmId: "swarm", commandId: "stop" }]);
+      expect(writes).toEqual([
+        { threadId: "owner", swarmId: "swarm", commandId: "stop" },
+        {
+          threadId: "owner",
+          swarmId: "swarm",
+          memberThreadId: "member-without-active-run",
+          commandId: "stop-member",
+        },
+      ]);
     } finally {
       for (const unmount of mounted) unmount();
       registry.dispose();

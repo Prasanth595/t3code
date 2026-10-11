@@ -48,6 +48,9 @@ import * as PubSub from "effect/PubSub";
 import { type RunId, ProviderTurnId } from "@t3tools/contracts";
 import { mergeOrchestrationV2Swarm } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ProjectionMaintenance from "./ProjectionMaintenance.ts";
+import * as EventStore from "./EventStore.ts";
+import { vi } from "vite-plus/test";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.4" };
@@ -177,6 +180,756 @@ const peer = (
       interactionMode: "default",
     });
   });
+
+const humanFollowup = (threadId: ThreadId, key: string, creationSource: "web" | "mcp" = "web") =>
+  Effect.gen(function* () {
+    yield* (yield* Orchestrator.OrchestratorV2).dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(key),
+      threadId,
+      messageId: MessageId.make(key),
+      text: key,
+      attachments: [],
+      createdBy: creationSource === "web" ? "user" : "agent",
+      creationSource,
+      ...(creationSource === "mcp" ? { senderThreadId: ownerId } : {}),
+      dispatchMode: { type: "queue_after_active" },
+    });
+  });
+
+const completeProjectedRun = (
+  threadId: ThreadId,
+  runId: RunId,
+  text: string,
+  status: "completed" | "failed" = "completed",
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const child = yield* orchestrator.getThreadProjection(threadId);
+    const run = child.runs.find((candidate) => candidate.id === runId)!;
+    const now = yield* DateTime.now;
+    yield* store.apply({
+      id: EventId.make(`result:${runId}`),
+      type: "message.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: {
+        ...child.messages[0]!,
+        id: MessageId.make(`result:${runId}`),
+        runId,
+        role: "assistant",
+        text,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    yield* store.apply({
+      id: EventId.make(`end:${runId}`),
+      type: "run.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload: { ...run, status, completedAt: now },
+    });
+  });
+
+it.effect.each([
+  { creationSource: "web", initialStatus: "completed" },
+  { creationSource: "web", initialStatus: "failed" },
+  { creationSource: "mcp", initialStatus: "completed" },
+  { creationSource: "mcp", initialStatus: "failed" },
+] as const)(
+  "r2 ordinary $creationSource followup publishes its result after $initialStatus original work",
+  ({ creationSource, initialStatus }) =>
+    Effect.gen(function* () {
+      yield* boot;
+      const { group } = yield* create();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const member = group.members[0]!;
+      yield* humanFollowup(member.threadId, "follow-up result", creationSource);
+      const child = yield* orchestrator.getThreadProjection(member.threadId);
+      yield* completeProjectedRun(
+        member.threadId,
+        child.runs[0]!.id,
+        "initial result",
+        initialStatus,
+      );
+      yield* orchestrator.dispatch({
+        type: "queue.resume",
+        commandId: CommandId.make("resume-followup"),
+        threadId: member.threadId,
+      });
+      const promoted = (yield* orchestrator.getThreadProjection(member.threadId)).runs.at(-1)!;
+      assert.equal(promoted.status, "starting");
+      yield* completeProjectedRun(member.threadId, promoted.id, "follow-up result");
+      yield* orchestrator.recoverDelegatedTask(member.threadId, promoted.id);
+      const parent = yield* orchestrator.getThreadProjection(ownerId);
+      const task = parent.subagents.find((candidate) => candidate.id === member.taskId)!;
+      assert.equal(task.status, "completed");
+      assert.equal(task.result, "follow-up result");
+      assert.equal(child.runs.at(-1)?.delegatedTaskId, member.taskId);
+      assert.equal(promoted.delegatedTaskId, member.taskId);
+      assert.equal(
+        parent.contextTransfers.find(
+          (transfer) =>
+            transfer.type === "subagent_result" && transfer.sourceThreadId === member.threadId,
+        )?.sourcePoint.runId,
+        promoted.id,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([false, true])(
+  "r2 group Stop removes both captured results with unrelated cohort work %s",
+  (unrelated) =>
+    Effect.gen(function* () {
+      const { run } = yield* boot;
+      const { group } = yield* create();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      if (unrelated)
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make("cohort-unrelated"),
+          parentThreadId: ownerId,
+          parentRunId: run.id,
+          parentNodeId: run.rootNodeId!,
+          task: "Unrelated",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+          createdBy: "agent",
+          creationSource: "mcp",
+        });
+      yield* humanFollowup(ownerId, "captured-wake");
+      const parent = yield* orchestrator.getThreadProjection(ownerId);
+      const wakeRun = parent.runs.at(-1)!;
+      const wakeMessage = parent.messages.find((message) => message.id === wakeRun.userMessageId)!;
+      const taskIds = parent.subagents.map((task) => task.id);
+      const now = yield* DateTime.now;
+      for (const task of parent.subagents)
+        yield* store.apply({
+          id: EventId.make(`claimed:${task.id}`),
+          type: "subagent.updated",
+          threadId: ownerId,
+          occurredAt: now,
+          payload: {
+            ...task,
+            status: "completed",
+            result: `Result ${task.title}`,
+            completedAt: now,
+            completionDelivery: { state: "claimed", observedByRunId: null },
+          },
+        });
+      yield* store.apply({
+        id: EventId.make("cohort"),
+        type: "run.updated",
+        threadId: ownerId,
+        occurredAt: now,
+        payload: {
+          ...parent.runs[0]!,
+          delegatedCompletion: {
+            disposition: "open",
+            nextGeneration: 2,
+            delivery: { generation: 1, messageId: wakeMessage.id, taskIds },
+          },
+        },
+      });
+      yield* store.apply({
+        id: EventId.make("wake"),
+        type: "message.updated",
+        threadId: ownerId,
+        occurredAt: now,
+        payload: {
+          ...wakeMessage,
+          delegatedCompletion: { parentRunId: run.id, generation: 1, taskIds },
+        },
+      });
+      const result = yield* orchestrator.dispatch({
+        type: "swarm.stop",
+        commandId: CommandId.make("cut-cohort"),
+        threadId: ownerId,
+        swarmId: group.id,
+        intentFingerprint: "cut-cohort",
+      });
+      const after = yield* orchestrator.getThreadProjection(ownerId);
+      const remaining = taskIds.filter(
+        (id) => !group.members.some((member) => member.taskId === id),
+      );
+      assert.deepEqual(
+        after.subagents
+          .filter((task) => group.members.some((member) => member.taskId === task.id))
+          .map((task) => task.completionDelivery?.state),
+        ["disposed", "disposed"],
+      );
+      assert.deepEqual(after.runs[0]?.delegatedCompletion?.delivery?.taskIds ?? [], remaining);
+      assert.equal(
+        after.runs.find((candidate) => candidate.id === wakeRun.id)?.status,
+        unrelated ? "queued" : "cancelled",
+      );
+      const message = after.messages.find((candidate) => candidate.id === wakeMessage.id)!;
+      if (unrelated) {
+        assert.deepEqual(message.delegatedCompletion?.taskIds, remaining);
+        assert.include(message.text, remaining[0]!);
+        for (const member of group.members) assert.notInclude(message.text, member.taskId);
+      }
+      assert.equal(
+        result.storedEvents.filter((stored) => {
+          const event = stored.event;
+          return (
+            event.type === "subagent.updated" &&
+            group.members.some((member) => member.taskId === event.payload.id) &&
+            event.payload.completionDelivery?.state === "disposed"
+          );
+        }).length,
+        2,
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "r2 human selected member Stop captures queue-only work and preserves later human work on replay",
+  () =>
+    Effect.gen(function* () {
+      yield* boot;
+      const { group } = yield* create();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
+      const member = group.members[0]!;
+      yield* peer(group, 1, 0, "queued-only-peer");
+      const before = yield* orchestrator.getThreadProjection(member.threadId);
+      yield* completeProjectedRun(member.threadId, before.runs[0]!.id, "failed", "failed");
+      const cut = {
+        threadId: ownerId,
+        swarmId: group.id,
+        memberThreadId: member.threadId,
+        commandId: CommandId.make("human-member-cut"),
+      };
+      yield* threads.stopSwarm(cut);
+      const stopped = yield* orchestrator.getThreadProjection(member.threadId);
+      assert.equal(stopped.runs.at(-1)?.queueHeld, true);
+      assert.deepEqual(
+        (yield* threads.getSwarm(group.id))?.members.map((row) => row.admission.state),
+        ["revoked", "admitted"],
+      );
+      assert.equal((yield* threads.getSwarm(group.id))?.lifecycle.state, "open");
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(peer(group, 1, 0, "refused-revoked"))));
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("later-human-cut"),
+        threadId: member.threadId,
+        messageId: MessageId.make("later-human-cut"),
+        text: "Later human",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const later = (yield* orchestrator.getThreadProjection(member.threadId)).runs.at(-1)!;
+      yield* threads.stopSwarm(cut);
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(member.threadId)).runs.at(-1)?.status,
+        "starting",
+      );
+      yield* threads.stopSwarm({
+        ...cut,
+        memberThreadId: undefined,
+        commandId: CommandId.make("close-group-after-member"),
+      });
+      assert.equal((yield* threads.getSwarm(group.id))?.lifecycle.state, "closed");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("human-closed-member"),
+        threadId: member.threadId,
+        messageId: MessageId.make("human-closed-member"),
+        text: "Explicit human",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "start_immediately" },
+      });
+      const newest = (yield* orchestrator.getThreadProjection(member.threadId)).runs.at(-1)!;
+      yield* threads.stopSwarm({
+        ...cut,
+        memberThreadId: undefined,
+        commandId: CommandId.make("closed-group-idempotent"),
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(member.threadId)).runs.at(-1)?.status,
+        "starting",
+      );
+      yield* threads.stopSwarm({
+        ...cut,
+        commandId: CommandId.make("fresh-selected-closed-member"),
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(member.threadId)).runs.at(-1)?.status,
+        "interrupted",
+      );
+      assert.deepEqual(
+        yield* sql`SELECT status FROM orchestration_v2_effect_outbox WHERE effect_type = 'provider-turn.start' AND json_extract(payload_json, '$.runId') = ${newest.id}`,
+        [{ status: "cancelled" }],
+      );
+      assert.notEqual(later.id, newest.id);
+      assert.isTrue(
+        Exit.isFailure(
+          yield* Effect.exit(
+            threads.stopSwarm({
+              ...cut,
+              memberThreadId: ownerId,
+              commandId: CommandId.make("invalid-selected-member"),
+            }),
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "r2 human selected member Stop captures descendant-only work through the public service",
+  () =>
+    Effect.gen(function* () {
+      yield* boot;
+      const { group } = yield* create();
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const member = group.members[0]!;
+      const child = yield* orchestrator.getThreadProjection(member.threadId);
+      const run = child.runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("selected-descendant"),
+        parentThreadId: member.threadId,
+        parentRunId: run.id,
+        parentNodeId: run.rootNodeId!,
+        task: "Selected descendant",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const descendant = (yield* orchestrator.getThreadProjection(member.threadId)).subagents[0]!;
+      yield* completeProjectedRun(member.threadId, run.id, "Member finished");
+      yield* threads.stopSwarm({
+        threadId: ownerId,
+        swarmId: group.id,
+        memberThreadId: member.threadId,
+        commandId: CommandId.make("cut-descendant-only"),
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(descendant.childThreadId!)).runs[0]?.status,
+        "interrupted",
+      );
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(group.members[1]!.threadId)).runs[0]?.status,
+        "starting",
+      );
+      assert.deepEqual(
+        (yield* threads.getSwarm(group.id))?.members.map((row) => row.admission.state),
+        ["revoked", "admitted"],
+      );
+      assert.equal((yield* threads.getSwarm(group.id))?.lifecycle.state, "open");
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "r2 canonical SQL rebuild repairs malformed payloads, wrong closure and member indexes",
+  () =>
+    Effect.gen(function* () {
+      yield* boot;
+      const { group } = yield* create();
+      const { group: other } = yield* create("other-maintenance-group");
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      assert.isTrue((yield* maintenance.verify).valid);
+      yield* sql`UPDATE orchestration_v2_projection_swarm_members SET swarm_id = ${other.id} WHERE thread_id = ${group.members[0]!.threadId}`;
+      assert.isFalse((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal((yield* store.getSwarmForMember(group.members[0]!.threadId))?.id, group.id);
+      yield* sql`DELETE FROM orchestration_v2_projection_swarm_members WHERE thread_id = ${group.members[0]!.threadId}`;
+      assert.isFalse((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      yield* sql`UPDATE orchestration_v2_projection_swarms SET payload_json = json_set(payload_json, '$.lifecycle', json(${JSON.stringify({ state: "closed", closedAt: DateTime.formatIso(group.createdAt) })})) WHERE swarm_id = ${group.id}`;
+      assert.equal((yield* store.getSwarm(group.id))?.lifecycle.state, "closed");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* store.getSwarm(group.id), group);
+      yield* sql`UPDATE orchestration_v2_projection_swarms SET payload_json = '{' WHERE swarm_id = ${group.id}`;
+      assert.isFalse((yield* maintenance.verify).valid);
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.deepEqual(yield* store.getSwarm(group.id), group);
+      assert.equal((yield* store.getSwarmForMember(group.members[0]!.threadId))?.id, group.id);
+    }).pipe(
+      Effect.provide(
+        ProjectionMaintenance.layer.pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(layerTest, EventStore.layer.pipe(Layer.provide(database))),
+          ),
+        ),
+      ),
+    ),
+);
+
+it.effect("r2 generic delegation uses only its bounded parent control records", () =>
+  Effect.gen(function* () {
+    const { run } = yield* boot;
+    const sql = yield* SqlClient.SqlClient;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* sql`UPDATE orchestration_v2_projection_messages SET payload_json = '{' WHERE thread_id = ${ownerId}`;
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("bounded-parent"),
+      parentThreadId: ownerId,
+      parentRunId: run.id,
+      parentNodeId: run.rootNodeId!,
+      task: "Bounded",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const controls = yield* orchestrator.getThreadRecords(ownerId, ["subagents", "turnItems"], {
+      turnItemTypes: ["subagent"],
+    });
+    assert.deepEqual(
+      controls.subagents.map((task) => task.prompt),
+      ["Bounded"],
+    );
+    assert.deepEqual(
+      controls.turnItems.map((item) => item.ordinal),
+      [1000002],
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+const controlledSwarmLayer = (input: {
+  readonly turns: Ref.Ref<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>;
+  readonly beforeSetup?: (threadId: ThreadId) => Effect.Effect<void>;
+  readonly beforeAcceptance?: (
+    turn: ProviderAdapter.ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<void>;
+}) => {
+  const controlledAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
+    ...adapter,
+    openSession: (sessionInput) =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        return {
+          instanceId,
+          driver: adapter.driver,
+          providerSessionId: sessionInput.providerSessionId,
+          providerSession: {
+            id: sessionInput.providerSessionId,
+            driver: adapter.driver,
+            providerInstanceId: instanceId,
+            status: "ready" as const,
+            cwd: process.cwd(),
+            model: "gpt-5.4",
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          events: Stream.fromPubSub(events),
+          ensureThread: (setup) =>
+            Effect.gen(function* () {
+              yield* input.beforeSetup?.(setup.threadId) ?? Effect.void;
+              if (setup.existingProviderThread === undefined)
+                return yield* Effect.die("Missing reserved provider thread");
+              return {
+                ...setup.existingProviderThread,
+                nativeThreadRef: {
+                  driver: adapter.driver,
+                  nativeId: setup.threadId,
+                  strength: "strong" as const,
+                },
+                status: "idle" as const,
+                updatedAt: now,
+              };
+            }),
+          resumeThread: (setup) => Effect.succeed(setup.providerThread),
+          startTurn: (turn) =>
+            Effect.gen(function* () {
+              yield* input.beforeAcceptance?.(turn) ?? Effect.void;
+              yield* Ref.update(input.turns, (current) => [...current, turn]);
+              yield* PubSub.publish(events, {
+                type: "provider_turn.updated",
+                driver: adapter.driver,
+                providerTurn: {
+                  id: ProviderTurnId.make(`turn:${turn.runId}`),
+                  providerThreadId: turn.providerThread.id,
+                  nodeId: turn.rootNodeId,
+                  runAttemptId: turn.attemptId,
+                  nativeTurnRef: {
+                    driver: adapter.driver,
+                    nativeId: `turn:${turn.runId}`,
+                    strength: "strong",
+                  },
+                  ordinal: turn.providerTurnOrdinal,
+                  status: "running",
+                  startedAt: yield* DateTime.now,
+                  completedAt: null,
+                },
+              });
+            }),
+          steerTurn: () => Effect.void,
+          interruptTurn: () => Effect.void,
+          respondToRuntimeRequest: () => Effect.void,
+          readThreadSnapshot: (setup) =>
+            Effect.succeed({
+              providerThread: setup.providerThread,
+              providerTurns: [],
+              messages: [],
+              runtimeRequests: [],
+            }),
+          rollbackThread: () => Effect.die("Unused rollback"),
+          forkThread: () => Effect.die("Unused fork"),
+        } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
+      }),
+  };
+  const db = SqlitePersistence.layerMemory;
+  return ThreadManagement.layer.pipe(
+    Layer.provideMerge(
+      Layer.mergeAll(
+        db,
+        ProjectionStore.layer.pipe(Layer.provide(db)),
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "swarm-r2-provider" },
+          ProviderAdapterRegistry.layerFromAdapters([controlledAdapter]),
+          { databaseLayer: db, runEffectWorker: false },
+        ),
+      ),
+    ),
+  );
+};
+
+it.effect(
+  "r2 Stop during the final admission read cancels the captured in-flight start without a native prompt",
+  () =>
+    Effect.gen(function* () {
+      const turns = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        yield* boot;
+        const { group } = yield* create();
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const sql = yield* SqlClient.SqlClient;
+        const target = group.members[0]!.threadId;
+        const originalGetSwarm = store.getSwarm;
+        let pause = true;
+        const spy = vi.spyOn(store, "getSwarm").mockImplementation((id) =>
+          Effect.gen(function* () {
+            const snapshot = yield* originalGetSwarm(id);
+            if (
+              pause &&
+              id === group.id &&
+              (yield* store.getThreadRecords(target, ["runs"])).runs[0]?.status === "running"
+            ) {
+              pause = false;
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(release);
+            }
+            return snapshot;
+          }),
+        );
+        const drain = yield* worker.drain(20).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const cut = {
+          threadId: ownerId,
+          swarmId: group.id,
+          commandId: CommandId.make("r2-stop-final-read"),
+        };
+        yield* (yield* ThreadManagement.ThreadManagementService).stopSwarm(cut);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(drain);
+        spy.mockRestore();
+        assert.deepEqual(
+          (yield* Ref.get(turns)).map((turn) => turn.threadId),
+          [ownerId],
+        );
+        assert.deepEqual(
+          (yield* store.getThreadRecords(target, ["runs"])).runs.map((run) => run.status),
+          ["interrupted"],
+        );
+        assert.deepEqual(
+          yield* sql`SELECT status FROM orchestration_v2_effect_outbox WHERE thread_id = ${target} AND effect_type = 'provider-turn.start'`,
+          [{ status: "cancelled" }],
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("r2-deliberate-human"),
+          threadId: target,
+          messageId: MessageId.make("r2-deliberate-human"),
+          text: "Later human",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* (yield* ThreadManagement.ThreadManagementService).stopSwarm(cut);
+        yield* worker.drain(20);
+        const submitted = yield* Ref.get(turns);
+        assert.deepEqual(
+          submitted.map((turn) => [turn.threadId, turn.message.messageId]),
+          [
+            [ownerId, MessageId.make("owner-message")],
+            [target, MessageId.make("r2-deliberate-human")],
+          ],
+        );
+        assert.isTrue(submitted[1]!.message.text.endsWith("User message:\nLater human"));
+        assert.equal(
+          (yield* store.getThreadRecords(target, ["runs"])).runs.at(-1)?.status,
+          "running",
+        );
+      }).pipe(Effect.provide(controlledSwarmLayer({ turns })));
+    }),
+);
+
+it.effect("r2 setup mode downgrades reach the actual adapter policy boundary", () =>
+  Effect.gen(function* () {
+    const turns = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let target: ThreadId | undefined;
+    const beforeSetup = (threadId: ThreadId) =>
+      threadId === target
+        ? Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.asVoid,
+          )
+        : Effect.void;
+    yield* Effect.gen(function* () {
+      yield* boot;
+      const { group } = yield* create();
+      target = group.members[0]!.threadId;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const drain = yield* worker.drain(20).pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      for (const threadId of [ownerId, ...group.members.map((member) => member.threadId)]) {
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`r2-low-runtime:${threadId}`),
+          threadId,
+          runtimeMode: "approval-required",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.interaction-mode.set",
+          commandId: CommandId.make(`r2-low-interaction:${threadId}`),
+          threadId,
+          interactionMode: "plan",
+        });
+      }
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(drain);
+      assert.deepEqual(
+        (yield* Ref.get(turns))
+          .filter((turn) => turn.threadId !== ownerId)
+          .map((turn) => [
+            turn.threadId,
+            turn.runtimePolicy.runtimeMode,
+            turn.runtimePolicy.interactionMode,
+          ]),
+        group.members.map((member) => [member.threadId, "approval-required", "plan"]),
+      );
+    }).pipe(Effect.provide(controlledSwarmLayer({ turns, beforeSetup })));
+  }),
+);
+
+it.effect(
+  "r2 an accepted start publishes its exact Stop target before releasing the owner boundary",
+  () =>
+    Effect.gen(function* () {
+      const turns = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let target: ThreadId | undefined;
+      const beforeAcceptance = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+        turn.threadId === target
+          ? Deferred.succeed(entered, undefined).pipe(
+              Effect.andThen(Deferred.await(release)),
+              Effect.asVoid,
+            )
+          : Effect.void;
+      yield* Effect.gen(function* () {
+        yield* boot;
+        const { group } = yield* create();
+        target = group.members[0]!.threadId;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const drain = yield* worker.drain(20).pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const stop = yield* (yield* ThreadManagement.ThreadManagementService)
+          .stopSwarm({
+            threadId: ownerId,
+            swarmId: group.id,
+            memberThreadId: target,
+            commandId: CommandId.make("r2-stop-acceptance-winner"),
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(stop);
+        yield* Fiber.join(drain);
+        const native = (yield* Ref.get(turns)).find((turn) => turn.threadId === target)!;
+        const sql = yield* SqlClient.SqlClient;
+        assert.equal(native.message.text, "Work A");
+        assert.deepEqual(
+          yield* sql`SELECT json_extract(payload_json, '$.providerTurnId') AS target FROM orchestration_v2_effect_outbox WHERE command_id = 'r2-stop-acceptance-winner' AND effect_type = 'provider-turn.interrupt'`,
+          [{ target: `turn:${native.runId}` }],
+        );
+        assert.deepEqual(
+          (yield* (yield* Orchestrator.OrchestratorV2).getSwarm(group.id))?.members.map(
+            (member) => member.admission.state,
+          ),
+          ["revoked", "admitted"],
+        );
+      }).pipe(Effect.provide(controlledSwarmLayer({ turns, beforeAcceptance })));
+    }),
+);
+
+it.effect("r2 admission reads current recipient availability and checks the submitted policy", () =>
+  Effect.gen(function* () {
+    yield* boot;
+    const { group } = yield* create();
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const recipient = yield* orchestrator.getThreadProjection(group.members[0]!.threadId);
+    const run = recipient.runs[0]!;
+    assert.isTrue(yield* swarmRunAllowed(store, recipient.thread, run, recipient.thread));
+    const now = yield* DateTime.now;
+    yield* store.apply({
+      id: EventId.make("r2-current-recipient-unavailable"),
+      type: "thread.metadata-updated",
+      threadId: recipient.thread.id,
+      occurredAt: now,
+      payload: { ...recipient.thread, archivedAt: now },
+    });
+    assert.isFalse(yield* swarmRunAllowed(store, recipient.thread, run, recipient.thread));
+    yield* store.apply({
+      id: EventId.make("r2-current-recipient-low"),
+      type: "thread.metadata-updated",
+      threadId: recipient.thread.id,
+      occurredAt: now,
+      payload: { ...recipient.thread, runtimeMode: "approval-required", interactionMode: "plan" },
+    });
+    assert.isFalse(yield* swarmRunAllowed(store, recipient.thread, run, recipient.thread));
+    assert.isTrue(
+      yield* swarmRunAllowed(store, recipient.thread, run, {
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      }),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("atomically admits ordered fresh members and replays without another effect", () =>
   Effect.gen(function* () {

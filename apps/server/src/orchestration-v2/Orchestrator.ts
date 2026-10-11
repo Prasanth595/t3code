@@ -1025,10 +1025,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const getProjectionWithPendingEvents = (
     threadId: ThreadId,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    storedProjection?: OrchestrationV2ThreadProjection,
   ) =>
     Effect.gen(function* () {
       const pending = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
-      const stored = yield* Effect.option(readCommandProjection(threadId));
+      const stored =
+        storedProjection === undefined
+          ? yield* Effect.option(readCommandProjection(threadId))
+          : Option.some(storedProjection);
       let projection: OrchestrationV2ThreadProjection;
       if (Option.isSome(stored)) {
         projection = stored.value;
@@ -1054,6 +1058,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       return projection;
     });
+
+  const readDelegationProjection = (threadId: ThreadId) =>
+    projectionStore
+      .getThreadRecords(threadId, [
+        "runs",
+        "nodes",
+        "subagents",
+        "providerThreads",
+        "providerTurns",
+        "attempts",
+      ])
+      .pipe(
+        Effect.map((records): OrchestrationV2ThreadProjection => ({
+          ...records,
+          swarms: [],
+          providerSessions: [],
+          runtimeRequests: [],
+          messages: [],
+          plans: [],
+          turnItems: [],
+          checkpointScopes: [],
+          checkpoints: [],
+          contextHandoffs: [],
+          contextTransfers: [],
+          visibleTurnItems: [],
+          updatedAt: records.thread.updatedAt,
+        })),
+      );
 
   const makeSystemEvent = <Event extends OrchestrationV2DomainEvent>(event: Omit<Event, "id">) =>
     Effect.gen(function* () {
@@ -1389,37 +1421,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ]);
         return;
       }
-      const ownership = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
-      if (queuedRun.swarmPeerDelivery !== undefined) {
-        const acceptedMessageId = queuedRun.userMessageId;
-        const accepted = projection.messages.find((message) => message.id === acceptedMessageId);
-        if (accepted === undefined) return;
-        yield* recordSubagentFollowup(
-          {
-            type: "message.dispatch",
-            commandId: queuedRun.swarmPeerDelivery.commandId,
-            threadId,
-            messageId: accepted.id,
-            senderThreadId: queuedRun.swarmPeerDelivery.senderThreadId,
-            createdBy: "agent",
-            creationSource: "mcp",
-            text: accepted.text,
-            attachments: accepted.attachments,
-            dispatchMode: { type: "queue_after_active" },
-            swarmPeerDelivery: queuedRun.swarmPeerDelivery,
-          },
-          ownership,
-        ).pipe(
-          mapDispatchError({
-            type: "queue.resume",
-            commandId: queuedRun.swarmPeerDelivery.commandId,
-          }),
-        );
-        const updated = (yield* Ref.get(ownership)).findLast(
-          (event) => event.type === "run.updated" && event.payload.id === queuedRun?.id,
-        );
-        if (updated?.type === "run.updated") queuedRun = updated.payload;
-      }
       // A provider that just failed will likely fail the next message too.
       // Hold the queue so the user decides when to resume it. Validation
       // failures (setup, unsupported handoff) belong to that message alone,
@@ -1455,6 +1456,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             })),
         );
         return;
+      }
+      const ownership = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
+      const acceptedMessageId = queuedRun.userMessageId;
+      const accepted = projection.messages.find((message) => message.id === acceptedMessageId);
+      if (accepted === undefined && queuedRun.swarmPeerDelivery !== undefined) return;
+      if (accepted !== undefined) {
+        const followupCommandId =
+          queuedRun.swarmPeerDelivery?.commandId ??
+          CommandId.make(`command:system:followup:${queuedRun.id}`);
+        yield* recordSubagentFollowup(
+          {
+            type: "message.dispatch",
+            commandId: followupCommandId,
+            threadId,
+            messageId: accepted.id,
+            ...(accepted.senderThreadId === undefined
+              ? {}
+              : { senderThreadId: accepted.senderThreadId }),
+            createdBy: accepted.createdBy,
+            creationSource: accepted.creationSource,
+            text: accepted.text,
+            attachments: accepted.attachments,
+            dispatchMode: { type: "queue_after_active" },
+            ...(queuedRun.swarmPeerDelivery === undefined
+              ? {}
+              : { swarmPeerDelivery: queuedRun.swarmPeerDelivery }),
+            ...(accepted.notification === undefined ? {} : { notification: accepted.notification }),
+            ...(accepted.scheduledTaskId === undefined
+              ? {}
+              : { scheduledTaskId: accepted.scheduledTaskId }),
+          },
+          ownership,
+        ).pipe(mapDispatchError({ type: "queue.resume", commandId: followupCommandId }));
+        const updated = (yield* Ref.get(ownership)).findLast(
+          (event) => event.type === "run.updated" && event.payload.id === queuedRun?.id,
+        );
+        if (updated?.type === "run.updated") queuedRun = updated.payload;
       }
       const rootNodeId = queuedRun.rootNodeId;
       const attemptId = queuedRun.activeAttemptId;
@@ -2050,7 +2088,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) =>
     Effect.gen(function* () {
-      const projection = yield* projectionStore
+      const stored = yield* projectionStore
         .getThreadRecords(
           command.parentThreadId,
           ["subagents", "runs", "messages", "nodes", "attempts", "turnItems"],
@@ -2065,6 +2103,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      const projection = yield* getProjectionWithPendingEvents(command.parentThreadId, events, {
+        ...stored,
+        swarms: [],
+        providerSessions: [],
+        providerThreads: [],
+        providerTurns: [],
+        runtimeRequests: [],
+        plans: [],
+        checkpointScopes: [],
+        checkpoints: [],
+        contextHandoffs: [],
+        contextTransfers: [],
+        visibleTurnItems: [],
+        updatedAt: stored.thread.updatedAt,
+      });
       const task = projection.subagents.find(
         (candidate) => candidate.id === command.taskId && candidate.origin === "app_owned",
       );
@@ -6716,10 +6769,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+      storedParent?: OrchestrationV2ThreadProjection,
     ) {
       const parentProjection = yield* getProjectionWithPendingEvents(
         command.parentThreadId,
         events,
+        storedParent ??
+          (yield* readDelegationProjection(command.parentThreadId).pipe(mapDispatchError(command))),
       ).pipe(mapDispatchError(command));
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
@@ -7039,11 +7095,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       (yield* projectionStore.getThreadRecords(command.threadId, ["runs"])).runs.find(
         (row) => row.id === accepted.runId,
       );
-    if (
-      run === undefined ||
-      (command.swarmPeerDelivery === undefined && run.delegatedTaskId !== undefined)
-    )
-      return;
+    if (run === undefined) return;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"])
       .pipe(mapDispatchError(command));
@@ -7057,17 +7109,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const assigned = parent.subagents.find((task) => task.id === run.delegatedTaskId);
     if (assigned !== undefined && assigned.result === null) return;
     if (original.result === null) {
-      if (command.swarmPeerDelivery !== undefined)
-        yield* emit(
-          events,
-          command,
-        )({
-          type: "run.updated",
-          threadId: child.id,
-          runId: run.id,
-          occurredAt: accepted.createdAt,
-          payload: { ...run, delegatedTaskId: original.id },
-        });
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "run.updated",
+        threadId: child.id,
+        runId: run.id,
+        occurredAt: accepted.createdAt,
+        payload: { ...run, delegatedTaskId: original.id },
+      });
       return;
     }
     const owner =
@@ -9574,9 +9625,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* Ref.update(effects, (existing) => [...existing, ...otherProviderInterrupts]);
         return {
           effectTypes: ["provider-turn.start", "provider-turn.restart"],
+          runIds: [run.id],
           reason: `Run ${run.id} was interrupted before its provider turn started.`,
         } satisfies {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+          readonly runIds: ReadonlyArray<RunId>;
           readonly reason: string;
         };
       }
@@ -10253,7 +10306,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? options.taskId === forkedFrom.nodeId
             ? options.resultRun
             : undefined
-          : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+          : taskRuns
+              .filter((run) => !(run.status === "queued" && run.queueHeld === true))
+              .toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (childRun === undefined) return;
       const terminalStatus = delegatedTaskTerminalStatus(childRun.status);
       if (terminalStatus === null) {
@@ -10845,9 +10900,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       yield* validateSwarmInvocation(command);
-      const parent = yield* getProjectionWithPendingEvents(command.threadId, events).pipe(
+      const storedParent = yield* readDelegationProjection(command.threadId).pipe(
         mapDispatchError(command),
       );
+      const parent = yield* getProjectionWithPendingEvents(
+        command.threadId,
+        events,
+        storedParent,
+      ).pipe(mapDispatchError(command));
       if (
         parent.thread.lineage.relationshipToParent === "subagent" ||
         parent.thread.archivedAt !== null ||
@@ -10887,6 +10947,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           },
           events,
           effects,
+          storedParent,
         );
         members.push({
           threadId: idAllocator.derive.delegatedTaskThread({ commandId: memberCommandId }),
@@ -11090,6 +11151,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadId: ThreadId,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    cancellations: Ref.Ref<
+      Array<Parameters<EffectOutbox.EffectOutboxV2["Service"]["cancelUnsettled"]>[0]>
+    >,
     includeRoot = true,
     visited = new Set<ThreadId>(),
   ): Effect.Effect<void, OrchestratorV2Error> =>
@@ -11101,12 +11165,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(command));
       yield* refuseAboveDispatchModeLimit(command, threadId, projection.thread);
       yield* closeSwarmAdmission(command, threadId, events, true);
-      if (includeRoot)
-        yield* dispatchThreadStop(
+      if (includeRoot) {
+        const cancellation = yield* dispatchThreadStop(
           { type: "thread.stop", commandId: command.commandId, threadId },
           events,
           effects,
         );
+        if (cancellation !== undefined)
+          yield* Ref.update(cancellations, (existing) => [
+            ...existing,
+            { threadId, ...cancellation },
+          ]);
+      }
       const stoppedCommand = {
         type: "thread.stop",
         commandId: command.commandId,
@@ -11126,9 +11196,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
       const parentId = projection.thread.lineage.parentThreadId;
       if (parentId !== null) {
-        const parent = yield* projectionStore
-          .getThreadRecords(parentId, ["subagents"])
-          .pipe(mapDispatchError(command));
+        const parent = yield* getProjectionWithPendingEvents(
+          parentId,
+          events,
+          yield* readDelegationProjection(parentId).pipe(mapDispatchError(command)),
+        );
         for (const task of parent.subagents)
           if (
             task.origin === "app_owned" &&
@@ -11147,7 +11219,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       for (const task of projection.subagents)
         if (task.origin === "app_owned" && task.childThreadId !== null) {
-          yield* planStoppedSubtree(command, task.childThreadId, events, effects, true, visited);
+          yield* planStoppedSubtree(
+            command,
+            task.childThreadId,
+            events,
+            effects,
+            cancellations,
+            true,
+            visited,
+          );
         }
     });
 
@@ -11155,9 +11235,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: Extract<OrchestrationV2InternalCommand, { type: "swarm.stop" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    cancellations: Ref.Ref<
+      Array<Parameters<EffectOutbox.EffectOutboxV2["Service"]["cancelUnsettled"]>[0]>
+    >,
   ) =>
     Effect.gen(function* () {
       yield* validateSwarmInvocation(command);
+      if (command.memberThreadId !== undefined && command.agentOwnerRunId !== undefined)
+        return yield* swarmRefusal(command, "Agent swarm Stop cannot select a member.");
       if (command.agentOwnerRunId !== undefined) {
         const owner = yield* projectionStore
           .getThreadRecords(command.threadId, ["runs"])
@@ -11182,7 +11267,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(mapDispatchError(command));
       if (group === undefined || group.ownerThreadId !== command.threadId)
         return yield* swarmRefusal(command, "Swarm Stop requires its owning thread.");
-      if (group.lifecycle.state === "closed") {
+      const selectedMembers =
+        command.memberThreadId === undefined
+          ? group.members
+          : group.members.filter((member) => member.threadId === command.memberThreadId);
+      if (selectedMembers.length === 0)
+        return yield* swarmRefusal(
+          command,
+          "Member Stop requires a member of this swarm's fixed roster.",
+        );
+      if (group.lifecycle.state === "closed" && command.memberThreadId === undefined) {
         yield* emit(
           events,
           command,
@@ -11204,11 +11298,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: {
           ...group,
-          lifecycle: { state: "closed", closedAt: now },
-          members: group.members.map((member) => ({
-            ...member,
-            admission: { state: "revoked", revokedAt: now },
-          })),
+          lifecycle:
+            command.memberThreadId === undefined
+              ? { state: "closed", closedAt: now }
+              : group.lifecycle,
+          members: group.members.map((member) =>
+            selectedMembers.some((selected) => selected.threadId === member.threadId)
+              ? {
+                  ...member,
+                  admission: { state: "revoked" as const, revokedAt: now },
+                }
+              : member,
+          ),
           updatedAt: now,
         },
       });
@@ -11217,8 +11318,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const ownerModes = yield* projectionStore
         .getThread(group.ownerThreadId)
         .pipe(mapDispatchError(command));
-      for (const member of group.members) {
-        const stop = planStoppedSubtree(command, member.threadId, events, effects, true, visited);
+      for (const member of selectedMembers) {
+        const stop = planStoppedSubtree(
+          command,
+          member.threadId,
+          events,
+          effects,
+          cancellations,
+          true,
+          visited,
+        );
         yield* captured === undefined
           ? stop
           : stop.pipe(
@@ -11228,21 +11337,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
             );
       }
-      const owner = yield* getProjectionWithPendingEvents(group.ownerThreadId, events).pipe(
-        mapDispatchError(command),
-      );
-      const selected = new Set(group.members.map((member) => member.threadId));
-      for (const task of owner.subagents)
-        if (task.childThreadId !== null && selected.has(task.childThreadId))
-          yield* dispatchDelegatedTaskCompletionDeliveryResolution(
-            {
-              type: "delegated_task.completion-delivery.dispose",
-              commandId: command.commandId,
-              parentThreadId: group.ownerThreadId,
-              taskId: task.id,
-            },
-            events,
-          );
     });
 
   const stopAffectedSwarms = (
@@ -11250,6 +11344,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     threadId: ThreadId,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    cancellations: Ref.Ref<
+      Array<Parameters<EffectOutbox.EffectOutboxV2["Service"]["cancelUnsettled"]>[0]>
+    >,
     includeRoot: boolean,
   ) =>
     Effect.gen(function* () {
@@ -11268,10 +11365,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             },
             events,
             effects,
+            cancellations,
           );
         else
           for (const member of group.members)
-            yield* planStoppedSubtree(command, member.threadId, events, effects);
+            yield* planStoppedSubtree(command, member.threadId, events, effects, cancellations);
       }
       let ancestor: ThreadId | null = threadId;
       const visited = new Set<ThreadId>();
@@ -11282,7 +11380,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           .pipe(mapDispatchError(command));
         if (group !== undefined) {
           if (ancestor === threadId) yield* closeSwarmAdmission(command, ancestor, events, false);
-          yield* planStoppedSubtree(command, threadId, events, effects, includeRoot);
+          yield* planStoppedSubtree(command, threadId, events, effects, cancellations, includeRoot);
           return true;
         }
         const thread: OrchestrationV2AppThread = yield* projectionStore
@@ -11302,8 +11400,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       readonly effects: ReadonlyArray<PendingOrchestrationEffectV2>;
       readonly cancelUnsettledEffects?: {
         readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+        readonly runIds?: ReadonlyArray<RunId>;
         readonly reason: string;
       };
+      readonly cancelCapturedEffects?: ReadonlyArray<
+        Parameters<EffectOutbox.EffectOutboxV2["Service"]["cancelUnsettled"]>[0]
+      >;
     },
     OrchestratorV2Error
   > {
@@ -11315,9 +11417,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
     const effects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+    const cancellations = yield* Ref.make<
+      Array<Parameters<EffectOutbox.EffectOutboxV2["Service"]["cancelUnsettled"]>[0]>
+    >([]);
     let cancelUnsettledEffects:
       | {
           readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+          readonly runIds?: ReadonlyArray<RunId>;
           readonly reason: string;
         }
       | undefined;
@@ -11481,7 +11587,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "run.interrupt":
         cancelUnsettledEffects = yield* dispatchRunInterrupt(command, events, effects);
         if (command.holdQueue === true) {
-          yield* stopAffectedSwarms(command, command.threadId, events, effects, false);
+          yield* stopAffectedSwarms(
+            command,
+            command.threadId,
+            events,
+            effects,
+            cancellations,
+            false,
+          );
           yield* Ref.update(effects, (existing) => [
             ...existing,
             {
@@ -11497,7 +11610,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         break;
       case "thread.stop":
-        if (!(yield* stopAffectedSwarms(command, command.threadId, events, effects, true)))
+        if (
+          !(yield* stopAffectedSwarms(
+            command,
+            command.threadId,
+            events,
+            effects,
+            cancellations,
+            true,
+          ))
+        )
           cancelUnsettledEffects = yield* dispatchThreadStop(command, events, effects);
         break;
       case "queued-message.promote-to-steer":
@@ -11591,7 +11713,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* dispatchSwarmSend(command, events, effects).pipe(mapDispatchError(command));
         break;
       case "swarm.stop":
-        yield* dispatchSwarmStop(command, events, effects);
+        yield* dispatchSwarmStop(command, events, effects, cancellations);
         break;
       case "delegated_task.request":
         yield* dispatchDelegatedTaskRequest(command, events, effects);
@@ -11615,6 +11737,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
+      cancelCapturedEffects: yield* Ref.get(cancellations),
       ...(cancelUnsettledEffects === undefined ? {} : { cancelUnsettledEffects }),
     };
   });
@@ -11832,6 +11955,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         acceptedAt,
         events: plan.events,
         effects: plan.effects,
+        ...(plan.cancelCapturedEffects === undefined
+          ? {}
+          : { cancelCapturedEffects: plan.cancelCapturedEffects }),
         ...(plan.cancelUnsettledEffects === undefined
           ? {}
           : { cancelUnsettledEffects: plan.cancelUnsettledEffects }),

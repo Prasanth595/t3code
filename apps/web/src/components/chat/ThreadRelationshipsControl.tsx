@@ -12,7 +12,10 @@ import {
   type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
-import { deriveThreadSwarmGroups } from "@t3tools/client-runtime/state/thread-swarms";
+import {
+  deriveThreadSwarmGroups,
+  type ThreadSwarmGroup,
+} from "@t3tools/client-runtime/state/thread-swarms";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -30,7 +33,6 @@ import {
 import {
   NodeId,
   CommandId,
-  type SwarmId,
   type EnvironmentId,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadShell,
@@ -444,16 +446,24 @@ export function ThreadRelationshipsPanel(props: {
       toastManager.add({ type: "error", title: "Could not stop workflow" });
     }
   };
-  const stopSwarm = async (swarmId: SwarmId) => {
+  const stopSwarm = async (group: ThreadSwarmGroup, memberThreadId?: ThreadId) => {
     if (stoppingId !== null || !supportsSwarms || !canOperateSwarm) return;
-    setStoppingId(swarmId);
+    setStoppingId(memberThreadId ?? group.swarm.id);
     const result = await stopSwarmCommand({
       environmentId: props.environmentId,
-      input: { threadId: props.threadId, swarmId, commandId: CommandId.make(randomUUID()) },
+      input: {
+        threadId: group.swarm.ownerThreadId,
+        swarmId: group.swarm.id,
+        ...(memberThreadId === undefined ? {} : { memberThreadId }),
+        commandId: CommandId.make(randomUUID()),
+      },
     });
     setStoppingId(null);
     if (result._tag === "Failure")
-      toastManager.add({ type: "error", title: "Could not stop swarm" });
+      toastManager.add({
+        type: "error",
+        title: memberThreadId === undefined ? "Could not stop swarm" : "Could not stop member",
+      });
   };
 
   const parentTitle =
@@ -505,21 +515,13 @@ export function ThreadRelationshipsPanel(props: {
               onOpenThread={openThread}
               onMessage={canOperateSwarm ? openThread : undefined}
               onStopMember={
-                canOperateSwarm
-                  ? (threadId) => {
-                      const member = group.members.find((row) => row.member.threadId === threadId);
-                      if (member)
-                        void stopSubagent(threadId, {
-                          id: member.member.taskId,
-                          origin: "app_owned",
-                          threadId: group.swarm.ownerThreadId,
-                        });
-                    }
+                supportsSwarms && canOperateSwarm
+                  ? (threadId) => void stopSwarm(group, threadId)
                   : undefined
               }
               onStop={
                 supportsSwarms && canOperateSwarm && group.swarm.lifecycle.state === "open"
-                  ? () => void stopSwarm(group.swarm.id)
+                  ? () => void stopSwarm(group)
                   : undefined
               }
               stoppingId={stoppingId}

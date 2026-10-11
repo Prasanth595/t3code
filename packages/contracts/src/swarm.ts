@@ -90,6 +90,7 @@ export type OrchestrationV2SwarmRunAdmission = typeof OrchestrationV2SwarmRunAdm
 export const OrchestrationV2StopSwarmInput = Schema.Struct({
   threadId: ThreadId,
   swarmId: SwarmId,
+  memberThreadId: Schema.optional(ThreadId),
   commandId: CommandId,
 });
 export type OrchestrationV2StopSwarmInput = typeof OrchestrationV2StopSwarmInput.Type;

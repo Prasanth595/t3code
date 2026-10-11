@@ -27,11 +27,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AndroidSheetHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
-import {
-  environmentThreadDetails,
-  environmentThreadShells,
-  threadEnvironment,
-} from "../../state/threads";
+import { environmentThreadDetails, environmentThreadShells } from "../../state/threads";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -207,24 +203,21 @@ function SwarmGroup(props: {
   const canOperate = useAtomValue(
     orchestrationEnvironment.stopSwarm.permissionAtom(props.target.environmentId),
   );
-  const stopGroup = useAtomCommand(orchestrationEnvironment.stopSwarm, "stop swarm");
-  const stopMember = useAtomCommand(threadEnvironment.interruptTurn, "stop swarm member");
+  const stopSwarm = useAtomCommand(orchestrationEnvironment.stopSwarm, "stop swarm");
   const { group } = props;
   const stop = async (threadId?: ThreadId) => {
-    if (stoppingId !== null || !canOperate || (threadId === undefined && !supported)) return;
+    if (stoppingId !== null || !canOperate || !supported) return;
     setStoppingId(threadId ?? group.swarm.id);
     try {
-      if (threadId)
-        await stopMember({ environmentId: props.target.environmentId, input: { threadId } });
-      else
-        await stopGroup({
-          environmentId: props.target.environmentId,
-          input: {
-            threadId: group.swarm.ownerThreadId,
-            swarmId: group.swarm.id,
-            commandId: CommandId.make(uuidv4()),
-          },
-        });
+      await stopSwarm({
+        environmentId: props.target.environmentId,
+        input: {
+          threadId: group.swarm.ownerThreadId,
+          swarmId: group.swarm.id,
+          ...(threadId === undefined ? {} : { memberThreadId: threadId }),
+          commandId: CommandId.make(uuidv4()),
+        },
+      });
     } finally {
       setStoppingId(null);
     }
@@ -331,7 +324,7 @@ function SwarmGroup(props: {
                       <Text className="font-t3-medium text-xs text-primary">Message</Text>
                     </Pressable>
                   ) : null}
-                  {member.canStop ? (
+                  {supported && member.canStop ? (
                     <Pressable
                       accessibilityRole="button"
                       accessibilityLabel={`Stop subagent ${member.title}`}

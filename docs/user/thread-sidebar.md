@@ -235,6 +235,8 @@ has read or answered the message. An idle swarm retains its member contexts.
 
 Open a member's conversation to inspect its work or send a follow-up. Stop the swarm
 to close peer messaging and stop its current work. Stopped groups remain inspectable.
+Stop an individual member to stop its subtree and revoke its peer access while
+the other members continue.
 Later human follow-ups do not reopen the group. Swarm members share the delegated
 workspace, so coordinate file changes as you would with ordinary subagents.
 

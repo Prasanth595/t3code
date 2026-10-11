@@ -28,6 +28,7 @@ import {
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -540,6 +541,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly awaitProviderAcceptance?: boolean;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly message: ProviderAdapter.ProviderAdapterV2TurnMessage;
@@ -1225,6 +1227,9 @@ export const layer: Layer.Layer<
             return true;
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
+          const providerAccepted = input.awaitProviderAcceptance
+            ? yield* Deferred.make<void, RunExecutionIngestError>()
+            : undefined;
           const providerEventFiber = yield* eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
@@ -1278,6 +1283,13 @@ export const layer: Layer.Layer<
                       : {}),
                   });
                   storedEventCount = storedEvents.length;
+                  if (
+                    providerAccepted !== undefined &&
+                    storedEventCount > 0 &&
+                    event.type === "provider_turn.updated" &&
+                    event.providerTurn.runAttemptId === input.attempt.id
+                  )
+                    yield* Deferred.succeed(providerAccepted, undefined);
                   if (
                     isRootProviderThreadUpdate &&
                     rootTerminalAlreadySeen &&
@@ -1379,6 +1391,18 @@ export const layer: Layer.Layer<
                 ),
               ),
             ),
+            Effect.ensuring(
+              providerAccepted === undefined
+                ? Effect.void
+                : Deferred.fail(
+                    providerAccepted,
+                    new RunExecutionIngestError({
+                      runId: input.run.id,
+                      cause:
+                        "Provider event ingestion ended before its accepted turn was persisted.",
+                    }),
+                  ),
+            ),
             Effect.ensuring(eventSubscription.close),
             Effect.forkDetach,
           );
@@ -1457,7 +1481,8 @@ export const layer: Layer.Layer<
                 }),
               ))
             : input.session.startTurn(turnInput);
-          yield* Effect.andThen(shouldStart, startTurn).pipe(
+          const accepted = yield* Effect.andThen(shouldStart, startTurn).pipe(
+            Effect.as(true),
             Effect.catchCause((cause) =>
               Effect.logError("orchestration V2 provider turn start failed", {
                 runId: input.run.id,
@@ -1499,6 +1524,7 @@ export const layer: Layer.Layer<
                     ),
                   ),
                 ),
+                Effect.as(false),
                 Effect.mapError(
                   (writeCause) =>
                     new RunExecutionStartError({
@@ -1510,6 +1536,7 @@ export const layer: Layer.Layer<
               ),
             ),
           );
+          if (accepted && providerAccepted !== undefined) yield* Deferred.await(providerAccepted);
         }),
     } satisfies RunExecutionServiceV2Shape);
   }),

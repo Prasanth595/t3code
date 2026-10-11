@@ -7,7 +7,11 @@ import {
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as ProjectionStore from "./ProjectionStore.ts";
-import { exceededDispatchModeLimit, minimumDispatchModes } from "./DispatchModeLimit.ts";
+import {
+  exceededDispatchModeLimit,
+  minimumDispatchModes,
+  type DispatchModes,
+} from "./DispatchModeLimit.ts";
 
 export class SwarmAdmissionLost extends Schema.TaggedError<SwarmAdmissionLost>()(
   "SwarmAdmissionLost",
@@ -25,6 +29,7 @@ export const swarmRunAllowed = (
   projections: ProjectionStore.ProjectionStoreV2["Service"],
   thread: OrchestrationV2AppThread,
   run: OrchestrationV2Run,
+  submittedModes?: DispatchModes,
 ) =>
   Effect.gen(function* () {
     const peer = run.swarmPeerDelivery;
@@ -54,20 +59,22 @@ export const swarmRunAllowed = (
     if (
       owner.archivedAt !== null ||
       owner.deletedAt !== null ||
-      thread.archivedAt !== null ||
-      thread.deletedAt !== null
+      currentRecipient.archivedAt !== null ||
+      currentRecipient.deletedAt !== null
     )
       return false;
+    const actual = submittedModes ?? currentRecipient;
+    if (exceededDispatchModeLimit(currentRecipient, actual) !== undefined) return false;
     if (peer === undefined) {
       if (run.swarmRunAdmission === undefined)
-        return exceededDispatchModeLimit(owner, currentRecipient) === undefined;
+        return exceededDispatchModeLimit(owner, actual) === undefined;
       const sender = yield* projections.getThread(run.swarmRunAdmission.senderThreadId);
       return (
         sender.archivedAt === null &&
         sender.deletedAt === null &&
         exceededDispatchModeLimit(
           minimumDispatchModes(run.swarmRunAdmission, sender, owner),
-          currentRecipient,
+          actual,
         ) === undefined
       );
     }
@@ -83,7 +90,7 @@ export const swarmRunAllowed = (
     return (
       sender.archivedAt === null &&
       sender.deletedAt === null &&
-      [owner, currentRecipient].every(
+      [owner, currentRecipient, actual].every(
         (target) => exceededDispatchModeLimit(ceiling, target) === undefined,
       )
     );

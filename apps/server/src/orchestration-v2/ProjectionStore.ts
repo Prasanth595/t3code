@@ -3820,6 +3820,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* () {
         const actualThreadIds = new Set<ThreadId>();
         const unreadable = new Set<ThreadId>();
+        const swarmOwners = new Map<SwarmId, ThreadId>();
+        const expectedMembers = new Map<
+          ThreadId,
+          { readonly swarmId: SwarmId; readonly ownerThreadId: ThreadId }
+        >();
         const forkChildren = new Map<ThreadId, Array<ThreadId>>();
         const tables: ReadonlyArray<{
           readonly name: string;
@@ -3853,6 +3858,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             name: "subagents",
             id: "subagent_id",
             decode: (payload) => decodeSubagentPayload(payload),
+          },
+          {
+            name: "swarms",
+            id: "swarm_id",
+            decode: (payload, entityId) =>
+              decodeSwarmPayload(payload).pipe(
+                Effect.tap((group) =>
+                  Effect.sync(() => {
+                    swarmOwners.set(group.id, group.ownerThreadId);
+                    if (group.id !== entityId) unreadable.add(group.ownerThreadId);
+                    for (const member of group.members) {
+                      const existing = expectedMembers.get(member.threadId);
+                      if (existing !== undefined && existing.swarmId !== group.id) {
+                        unreadable.add(existing.ownerThreadId);
+                        unreadable.add(group.ownerThreadId);
+                      }
+                      expectedMembers.set(member.threadId, {
+                        swarmId: group.id,
+                        ownerThreadId: group.ownerThreadId,
+                      });
+                    }
+                  }),
+                ),
+              ),
           },
           {
             name: "provider_sessions",
@@ -3918,7 +3947,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               readonly payload_json: string;
             }>`
               SELECT rowid AS row_id, ${sql(table.id)} AS entity_id,
-                ${sql(table.name === "context_transfers" ? "source_thread_id" : "thread_id")} AS thread_id,
+                ${sql(table.name === "context_transfers" ? "source_thread_id" : table.name === "swarms" ? "owner_thread_id" : "thread_id")} AS thread_id,
                 ${table.name === "context_transfers" ? sql`target_thread_id` : sql`NULL`} AS target_thread_id,
                 payload_json
               FROM ${sql(`orchestration_v2_projection_${table.name}`)}
@@ -3930,7 +3959,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               const decoded = yield* Effect.exit(
                 Effect.suspend(() => table.decode(row.payload_json, row.entity_id)),
               );
-              if (decoded._tag === "Success") continue;
+              if (decoded._tag === "Success") {
+                if (
+                  table.name === "swarms" &&
+                  row.thread_id !== null &&
+                  swarmOwners.get(SwarmId.make(row.entity_id)) !== row.thread_id
+                )
+                  unreadable.add(ThreadId.make(row.thread_id));
+                continue;
+              }
               if (table.name === "provider_sessions") {
                 const bindings = yield* sql<{ readonly thread_id: string }>`
                   SELECT thread_id FROM orchestration_v2_projection_provider_session_bindings
@@ -3960,6 +3997,32 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             afterRowId = rows[rows.length - 1]!.row_id;
             yield* Effect.yieldNow;
           }
+        }
+        let afterMemberThreadId = "";
+        while (true) {
+          const members = yield* sql<{ readonly thread_id: string; readonly swarm_id: string }>`
+            SELECT thread_id, swarm_id
+            FROM orchestration_v2_projection_swarm_members
+            WHERE thread_id > ${afterMemberThreadId} ORDER BY thread_id LIMIT ${pageSize}
+          `;
+          for (const row of members) {
+            const threadId = ThreadId.make(row.thread_id);
+            const expected = expectedMembers.get(threadId);
+            if (expected === undefined || expected.swarmId !== row.swarm_id) {
+              unreadable.add(threadId);
+              if (expected !== undefined) unreadable.add(expected.ownerThreadId);
+              const owner = swarmOwners.get(SwarmId.make(row.swarm_id));
+              if (owner !== undefined) unreadable.add(owner);
+            }
+            expectedMembers.delete(threadId);
+          }
+          if (members.length < pageSize) break;
+          afterMemberThreadId = members.at(-1)!.thread_id;
+          yield* Effect.yieldNow;
+        }
+        for (const [threadId, expected] of expectedMembers) {
+          unreadable.add(expected.ownerThreadId);
+          unreadable.add(threadId);
         }
         // A full fork projection also reads its source. Propagate decode failures
         // and missing sources through the same ancestry without loading history.

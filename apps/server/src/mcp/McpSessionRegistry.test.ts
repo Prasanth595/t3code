@@ -3,6 +3,9 @@ import { expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import { HttpServer } from "effect/http";
 import * as NetAddress from "effect/net/NetAddress";
 
@@ -32,6 +35,94 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       Effect.provideService(ServerEnvironment.ServerEnvironment, fakeEnvironment),
       Effect.provide(NodeServices.layer),
     );
+
+it.effect(
+  "a suspended thread lease preserves unrelated issuance and same-thread revocation fencing",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry(() => 1000);
+      const threadId = ThreadId.make("leased-A");
+      const request = { threadId, providerInstanceId: ProviderInstanceId.make("codex") };
+      const issued = yield* registry.issue(request);
+      const scope = yield* registry.resolve(
+        issued.config.authorizationHeader.replace("Bearer ", ""),
+      );
+      if (scope === undefined) return yield* Effect.die("Missing A credential");
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const leased = yield* registry
+        .withCurrentCredential(
+          scope,
+          Effect.gen(function* () {
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+            return "A committed";
+          }),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const revokeEntered = yield* Deferred.make<void>();
+      const revokeCompleted = yield* Deferred.make<void>();
+      const revoked = yield* Effect.gen(function* () {
+        yield* Deferred.succeed(revokeEntered, undefined);
+        yield* registry.revokeThread(threadId);
+        yield* Deferred.succeed(revokeCompleted, undefined);
+      }).pipe(Effect.forkChild);
+      yield* Deferred.await(revokeEntered);
+      const other = yield* registry.issue({ ...request, threadId: ThreadId.make("unrelated-B") });
+      const b = yield* registry.resolve(other.config.authorizationHeader.replace("Bearer ", ""));
+      expect(b?.thread.threadId).toBe("unrelated-B");
+      expect(yield* registry.isCurrentCredential(scope)).toBe(true);
+      expect(Option.isNone(yield* Deferred.poll(revokeCompleted))).toBe(true);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Fiber.join(leased)).toBe("A committed");
+      yield* Fiber.join(revoked);
+      expect(yield* registry.isCurrentCredential(scope)).toBe(false);
+      const stale = yield* Effect.exit(
+        registry.withCurrentCredential(scope, Effect.succeed("must refuse")),
+      );
+      expect(Exit.isFailure(stale)).toBe(true);
+      expect(
+        (yield* registry.resolve(other.config.authorizationHeader.replace("Bearer ", "")))?.thread
+          .threadId,
+      ).toBe("unrelated-B");
+    }),
+);
+
+it.effect("same-thread replacement waits for the captured credential lease", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1000);
+    const request = {
+      threadId: ThreadId.make("replace-A"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+    };
+    const issued = yield* registry.issue(request);
+    const scope = yield* registry.resolve(issued.config.authorizationHeader.replace("Bearer ", ""));
+    if (scope === undefined) return yield* Effect.die("Missing credential");
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const leased = yield* registry
+      .withCurrentCredential(
+        scope,
+        Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as("committed"),
+        ),
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    const replacement = yield* registry.issue(request).pipe(Effect.forkChild);
+    expect(yield* registry.isCurrentCredential(scope)).toBe(true);
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(leased)).toBe("committed");
+    const newer = yield* Fiber.join(replacement);
+    expect(yield* registry.isCurrentCredential(scope)).toBe(false);
+    expect(
+      (yield* registry.resolve(newer.config.authorizationHeader.replace("Bearer ", "")))?.thread
+        .providerSessionId,
+    ).toBe(newer.config.providerSessionId);
+  }),
+);
 
 it.effect(
   "scoped authority rejects replacement and expired credentials while generic resolution retains its policy",

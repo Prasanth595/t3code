@@ -43,6 +43,13 @@ export interface ThreadSwarmGroup {
   readonly summary: string;
 }
 
+function groupAttentionRank(group: ThreadSwarmGroup): number {
+  if (group.inputCount > 0) return 0;
+  if (group.workingCount > 0 || group.queuedCount > group.heldCount) return 1;
+  if (group.heldCount > 0) return 2;
+  return group.swarm.lifecycle.state === "open" ? 3 : 4;
+}
+
 function runtimeStatus(status: ThreadSummary["status"]): RuntimeSubagentStatus {
   switch (status) {
     case "preparing":
@@ -122,7 +129,7 @@ export function deriveThreadSwarmGroups(input: {
       tasks.set(task.childThreadId, task);
     }
   }
-  return swarms.map((swarm) => {
+  const groups = swarms.map((swarm) => {
     const members = swarm.members.map((member): ThreadSwarmMember => {
       const thread = threads.get(member.threadId) ?? null;
       const task = currentTask(
@@ -215,6 +222,13 @@ export function deriveThreadSwarmGroups(input: {
       summary,
     };
   });
+  return groups.sort(
+    (left, right) =>
+      groupAttentionRank(left) - groupAttentionRank(right) ||
+      DateTime.toEpochMillis(right.swarm.createdAt) -
+        DateTime.toEpochMillis(left.swarm.createdAt) ||
+      (left.swarm.id < right.swarm.id ? -1 : left.swarm.id > right.swarm.id ? 1 : 0),
+  );
 }
 
 export function resolveThreadAgentsPillSegment(input: {

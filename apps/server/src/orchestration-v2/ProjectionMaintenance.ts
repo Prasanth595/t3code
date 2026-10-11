@@ -136,6 +136,8 @@ export const layer: Layer.Layer<
           yield* sql`DELETE FROM orchestration_v2_projection_provider_session_bindings`;
           yield* sql`DELETE FROM orchestration_v2_projection_provider_sessions`;
           yield* sql`DELETE FROM orchestration_v2_projection_subagents`;
+          yield* sql`DELETE FROM orchestration_v2_projection_swarm_members`;
+          yield* sql`DELETE FROM orchestration_v2_projection_swarms`;
           yield* sql`DELETE FROM orchestration_v2_projection_nodes`;
           yield* sql`DELETE FROM orchestration_v2_projection_run_attempts`;
           yield* sql`DELETE FROM orchestration_v2_projection_runs`;

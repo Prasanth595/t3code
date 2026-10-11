@@ -46,6 +46,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -100,6 +101,7 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -114,6 +116,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
+    const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -1199,8 +1202,15 @@ export const layer: Layer.Layer<
                 });
               }),
           });
-          if (!(yield* isCurrentAttemptInStatus("running"))) return;
-          if (!(yield* swarmRunAllowed(projectionStore, projection.thread, run)))
+          if (
+            !(yield* swarmRunAllowed(
+              projectionStore,
+              projection.thread,
+              run,
+              turnInput.runtimePolicy,
+            )) ||
+            !(yield* isCurrentAttemptInStatus("running"))
+          )
             return yield* new SwarmAdmissionLost({ threadId: projection.thread.id, runId: run.id });
           const start = compact ? session.compactThread! : session.startTurn;
           const context = [delivery.context, restartNote]
@@ -1262,57 +1272,70 @@ export const layer: Layer.Layer<
         run.swarmPeerDelivery === undefined
           ? session
           : makeDeliverySession(session, startWithHandoffs);
-      yield* runExecution.startRootRun({
-        commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
-        appThread: projection.thread,
-        providerSessionId,
-        session: deliverySession,
-        run: runningRun,
-        rootNode: runningRootNode,
-        checkpointScope,
-        providerThread: runningProviderThread,
-        attempt: runningAttempt,
-        attemptId: attempt.id,
-        loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
-        relatedThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.childThreadId === null ? [] : [subagent.childThreadId],
-        ),
-        relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
-          subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
-        ),
-        providerTurnOrdinal:
-          Math.max(
-            0,
-            ...projection.providerTurns
-              .filter((turn) => turn.providerThreadId === providerThread.id)
-              .map((turn) => turn.ordinal),
-          ) + 1,
-        // Legacy accepted attempts have no native id. They count only before
-        // a replacement, while no accepted attempt records a native identity.
-        nativeThreadHasTurns:
-          nativeInputRunIds.size > 0 ||
-          (legacyInputRunIds.size > 0 &&
-            sameNativeThread &&
-            !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
-        shouldStartProviderTurn: runControls.shouldStartProviderTurn,
-        shouldFinalizeRun: runControls.shouldFinalizeRun,
-        hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
-        message: {
-          messageId: message.id,
-          text: userText,
-          attachments: message.attachments,
-          createdBy: message.createdBy,
-          creationSource: message.creationSource,
-          ...(message.scheduledTaskId === undefined
-            ? {}
-            : { scheduledTaskId: message.scheduledTaskId }),
-          ...(message.senderThreadId === undefined
-            ? {}
-            : { senderThreadId: message.senderThreadId }),
-        },
-        modelSelection: run.modelSelection,
-        runtimePolicy: resolvedRuntimePolicy,
+      const swarmId = run.swarmPeerDelivery?.swarmId ?? run.swarmId;
+      const scoped = swarmId !== undefined;
+      const accept = Effect.gen(function* () {
+        const submittedPolicy = scoped
+          ? yield* runtimePolicy.resolve({
+              thread: yield* projectionStore.getThread(input.threadId),
+              modelSelection: run.modelSelection,
+            })
+          : resolvedRuntimePolicy;
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
+          appThread: projection.thread,
+          providerSessionId,
+          session: deliverySession,
+          run: runningRun,
+          rootNode: runningRootNode,
+          checkpointScope,
+          providerThread: runningProviderThread,
+          attempt: runningAttempt,
+          attemptId: attempt.id,
+          loadInheritedBackgroundTurnItems: runControls.loadInheritedBackgroundTurnItems,
+          relatedThreadIds: routableSubagents.flatMap((subagent) =>
+            subagent.childThreadId === null ? [] : [subagent.childThreadId],
+          ),
+          relatedProviderThreadIds: routableSubagents.flatMap((subagent) =>
+            subagent.providerThreadId === null ? [] : [subagent.providerThreadId],
+          ),
+          providerTurnOrdinal:
+            Math.max(
+              0,
+              ...projection.providerTurns
+                .filter((turn) => turn.providerThreadId === providerThread.id)
+                .map((turn) => turn.ordinal),
+            ) + 1,
+          // Legacy accepted attempts have no native id. They count only before
+          // a replacement, while no accepted attempt records a native identity.
+          nativeThreadHasTurns:
+            nativeInputRunIds.size > 0 ||
+            (legacyInputRunIds.size > 0 &&
+              sameNativeThread &&
+              !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
+          shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+          shouldFinalizeRun: runControls.shouldFinalizeRun,
+          hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
+          message: {
+            messageId: message.id,
+            text: userText,
+            attachments: message.attachments,
+            createdBy: message.createdBy,
+            creationSource: message.creationSource,
+            ...(message.scheduledTaskId === undefined
+              ? {}
+              : { scheduledTaskId: message.scheduledTaskId }),
+            ...(message.senderThreadId === undefined
+              ? {}
+              : { senderThreadId: message.senderThreadId }),
+          },
+          modelSelection: run.modelSelection,
+          runtimePolicy: submittedPolicy,
+          awaitProviderAcceptance: scoped,
+        });
       });
+      const group = swarmId === undefined ? undefined : yield* projectionStore.getSwarm(swarmId);
+      yield* group === undefined ? accept : threadCommands.withLock(group.ownerThreadId, accept);
     });
 
     return ProviderTurnStartServiceV2.of({

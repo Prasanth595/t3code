@@ -286,6 +286,103 @@ describe("thread swarm groups", () => {
       message: group?.members[1]?.canMessage,
     }).toEqual({ working: 0, queued: 1, summary: "1 queued, 1 held", message: true });
   });
+
+  it("orders current attention before paginated history, with held queues ahead of idle groups", () => {
+    const group = (id: string, minute: number, closed = false) =>
+      swarm({
+        id: SwarmId.make(id),
+        createdAt: DateTime.makeUnsafe(`2026-06-20T00:${String(minute).padStart(2, "0")}:00Z`),
+        lifecycle: closed ? { state: "closed", closedAt: later } : { state: "open" },
+        members: swarm().members.map((member, index) => ({
+          ...member,
+          threadId: ThreadId.make(`${id}-${index}`),
+        })),
+      });
+    const history = Array.from({ length: 10 }, (_, index) =>
+      group(`history-${index}`, index, true),
+    );
+    const current = [
+      group("idle", 30),
+      group("held", 31, true),
+      group("work", 32, true),
+      group("queue", 33),
+      group("question", 34),
+      group("idle-older", 29),
+    ];
+    const child = ThreadId.make("question-descendant");
+    const threads = [...history, ...current].flatMap((row) =>
+      row.members.map((member) => shell(member.threadId)),
+    );
+    threads.push(
+      shell(ThreadId.make("held-0"), {
+        status: "queued",
+        queuedMessageCount: 2,
+        heldQueuedMessageCount: 2,
+      }),
+      shell(ThreadId.make("work-0"), { status: "running", activityRunStatus: "running" }),
+      shell(ThreadId.make("queue-0"), { status: "idle", queuedMessageCount: 1 }),
+      shell(child, {
+        lineage: {
+          rootThreadId: owner,
+          parentThreadId: ThreadId.make("question-0"),
+          relationshipToParent: "subagent",
+        },
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("latest-question"),
+          kind: "user_input",
+          createdAt: later,
+        },
+      }),
+    );
+    const groups = deriveThreadSwarmGroups({
+      ownerThreadId: owner,
+      swarms: [...history, ...current],
+      tasks: [],
+      threads: threads.toReversed(),
+    });
+    expect(groups.slice(0, 6).map((row) => row.swarm.id)).toEqual([
+      "question",
+      "queue",
+      "work",
+      "held",
+      "idle",
+      "idle-older",
+    ]);
+    expect(groups.slice(6, 18).map((row) => row.swarm.id)).toEqual([
+      "history-9",
+      "history-8",
+      "history-7",
+      "history-6",
+      "history-5",
+      "history-4",
+      "history-3",
+      "history-2",
+      "history-1",
+      "history-0",
+    ]);
+    expect(groups.find((row) => row.swarm.id === "held")?.members[0]).toMatchObject({
+      working: false,
+      queuedCount: 2,
+      heldCount: 2,
+      canStop: true,
+    });
+    expect(groups[0]?.members[0]?.inputThreads.map((row) => row.id)).toEqual([
+      "question-descendant",
+    ]);
+  });
+
+  it("breaks creation-time ties by stable ID independently of storage order", () => {
+    const tied = ["zeta", "beta", "alpha"].map((id) => swarm({ id: SwarmId.make(id) }));
+    const input = { ownerThreadId: owner, tasks: [], threads: [shell(a), shell(b)] };
+    expect(deriveThreadSwarmGroups({ ...input, swarms: tied }).map((row) => row.swarm.id)).toEqual([
+      "alpha",
+      "beta",
+      "zeta",
+    ]);
+    expect(
+      deriveThreadSwarmGroups({ ...input, swarms: tied.toReversed() }).map((row) => row.swarm.id),
+    ).toEqual(["alpha", "beta", "zeta"]);
+  });
 });
 
 describe("swarm projection compatibility", () => {

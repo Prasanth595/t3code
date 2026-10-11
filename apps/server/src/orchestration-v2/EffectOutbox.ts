@@ -219,6 +219,7 @@ export interface EffectOutboxV2Shape {
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+    readonly runIds?: ReadonlyArray<RunId>;
     readonly reason: string;
   }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
@@ -443,9 +444,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "list", cause }),
           ),
         ),
-      cancelUnsettled: ({ threadId, effectTypes, reason }) =>
+      cancelUnsettled: ({ threadId, effectTypes, runIds, reason }) =>
         Effect.gen(function* () {
-          if (effectTypes.length === 0) return [];
+          if (effectTypes.length === 0 || runIds?.length === 0) return [];
           const now = DateTime.formatIso(yield* DateTime.now);
           const rows = yield* sql<{ readonly effect_id: string }>`
             UPDATE orchestration_v2_effect_outbox
@@ -459,6 +460,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
             WHERE thread_id = ${threadId}
               AND status IN ('pending', 'running')
               AND effect_type IN ${sql.in(effectTypes)}
+              ${runIds === undefined ? sql`` : sql`AND json_extract(payload_json, '$.runId') IN ${sql.in(runIds)}`}
             RETURNING effect_id
           `;
           return rows.map(({ effect_id }) => effect_id);
