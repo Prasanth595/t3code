@@ -119,6 +119,25 @@ it("deduplicates successful reports and reports again after reconnect", async ()
   expect(state.report).toHaveBeenCalledTimes(2);
 });
 
+it("skips disconnected environments even when their server config is cached", async () => {
+  state.connected = [];
+  await mount();
+  await exhaustRetries();
+  expect(state.report).not.toHaveBeenCalled();
+});
+
+it("does not retry an interruption on a timer or cache it as a successful report", async () => {
+  state.report.mockResolvedValueOnce(Exit.interrupt());
+  await mount();
+  expect(vi.getTimerCount()).toBe(0);
+  await exhaustRetries();
+  expect(state.report).toHaveBeenCalledTimes(1);
+  state.report.mockResolvedValue(Exit.succeed(undefined));
+  state.connected = ["one"];
+  await refresh();
+  expect(state.report).toHaveBeenCalledTimes(2);
+});
+
 it("ignores a late completion from the first Strict Mode effect lifecycle", async () => {
   const pending = pendingReport();
   state.report.mockReturnValueOnce(pending.promise);
