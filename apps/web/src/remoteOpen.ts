@@ -1,3 +1,13 @@
+/**
+ * Remote open-in-editor: when this client is not on the environment's
+ * machine, "Open" must hand the OS a `vscode://vscode-remote/ssh-remote+…`
+ * deep link (local editor connects over SSH) instead of exec'ing an editor
+ * on the environment host.
+ *
+ * Host precedence: a desktop-SSH environment's configured target beats
+ * server-advertised names; among advertised names the tailnet MagicDNS name
+ * beats mDNS `<hostname>.local` (server sends them in that order).
+ */
 import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
@@ -19,6 +29,7 @@ import { environmentPresentations } from "~/state/presentation";
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
   readonly host: string;
+  readonly username?: string;
 }
 
 export type RemoteOpenState =
@@ -50,7 +61,9 @@ function parseHostname(url: string): string | null {
 
 export function resolveRemoteOpenState(input: {
   readonly target: ConnectionTarget | null;
-  readonly sshAlias: string | null;
+  /** Configured target for desktop-SSH environments; null elsewhere. */
+  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
+  /** Server-advertised hosts; undefined on servers that predate the feature. */
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
@@ -72,8 +85,20 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  if (input.sshAlias !== null && input.sshAlias.length > 0) {
-    return { mode: "remote-links", host: { kind: "ssh-alias", host: input.sshAlias } };
+  if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
+    const { alias } = input.sshTarget;
+    const userSeparator = alias.lastIndexOf("@");
+    const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
+    const username =
+      input.sshTarget.username ?? (userSeparator === -1 ? null : alias.slice(0, userSeparator));
+    return {
+      mode: "remote-links",
+      host: {
+        kind: "ssh-alias",
+        host,
+        ...(username === null ? {} : { username }),
+      },
+    };
   }
   const advertised = input.remoteOpenTargets?.[0];
   if (advertised !== undefined) {
@@ -102,8 +127,8 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
         target: entry.target,
-        sshAlias:
-          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target.alias : null,
+        sshTarget: profile !== null && profile._tag === "SshConnectionProfile"
+          ? { alias: profile.target.alias, username: profile.target.username } : null,
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
