@@ -100,6 +100,8 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
+  WsCoreRpcGroup,
+  WsPluginRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -544,6 +546,8 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation);
+const ServerWsPluginRpcGroup = WsPluginRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1184,6 +1188,24 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
+// The plugin RPCs' handlers; see `WsPluginRpcGroup` for why they are a layer of their own.
+const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
+  Effect.gen(function* () {
+    const pluginCatalog = yield* PluginCatalog.PluginCatalog;
+    return ServerWsPluginRpcGroup.of({
+      [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
+      [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
+      [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
+      [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
+      [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
+      [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
+      [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
+      [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
+      [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
+    });
+  }),
+);
+
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1191,7 +1213,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1228,7 +1250,6 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
-      const pluginCatalog = yield* PluginCatalog.PluginCatalog;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -1821,7 +1842,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsCoreRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2068,15 +2089,6 @@ const layerWsRpc = (
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.delete(input)),
           ),
-        [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
-        [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
-        [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
-        [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
-        [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
-        [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
-        [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
-        [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
-        [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
         [WS_METHODS.scheduledTasksRunNow]: (input) =>
           Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
             Effect.andThen(scheduledTasks.runNow(input)),
@@ -3151,7 +3163,7 @@ const layerWsRpc = (
       });
       return handlers;
     }),
-  );
+  ).pipe(Layer.merge(layerWsPluginRpc));
 
 // A defect in a handler's effect fails only its own request. RpcServer's default
 // sends a socket-level Defect frame instead, and the client ends every pending

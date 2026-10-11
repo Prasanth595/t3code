@@ -1967,7 +1967,7 @@ export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthori
   { error: EnvironmentAuthorizationError },
 ) {}
 
-export const WsRpcGroup = RpcGroup.make(
+export const WsCoreRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -2028,15 +2028,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
-  WsPluginsListRpc,
-  WsPluginsSubscribeRpc,
-  WsPluginsAddRpc,
-  WsPluginsRefreshRpc,
-  WsPluginsConsentRpc,
-  WsPluginsEnableRpc,
-  WsPluginsDisableRpc,
-  WsPluginsRemoveRpc,
-  WsPluginsResumeRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,
@@ -2172,3 +2163,22 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
 ).middleware(RpcScopeAuthorization);
+
+/**
+ * The plugin RPCs. The server builds their handlers in a layer of their own:
+ * one handler object for every RPC exceeds the type checker's instantiation
+ * limit and silently types the WebSocket layer as `any`.
+ */
+export const WsPluginRpcGroup = RpcGroup.make(
+  WsPluginsListRpc,
+  WsPluginsSubscribeRpc,
+  WsPluginsAddRpc,
+  WsPluginsRefreshRpc,
+  WsPluginsConsentRpc,
+  WsPluginsEnableRpc,
+  WsPluginsDisableRpc,
+  WsPluginsRemoveRpc,
+  WsPluginsResumeRpc,
+).middleware(RpcScopeAuthorization);
+
+export const WsRpcGroup = WsCoreRpcGroup.merge(WsPluginRpcGroup);
