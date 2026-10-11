@@ -505,46 +505,61 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
     ),
   );
 
+  /** The detail a run reports when ssh to the project's remote refuses with `refusal`. */
+  const failedRunDetail = (refusal: string) =>
+    Effect.gen(function* () {
+      const repositories = yield* makeRepositories;
+      yield* git(repositories.workspace, [
+        "remote",
+        "set-url",
+        "origin",
+        "git@github.com:acme/app.git",
+      ]);
+      yield* git(repositories.workspace, [
+        "config",
+        "core.sshCommand",
+        `sh -c 'echo "${refusal}" >&2; exit 255'`,
+      ]);
+      const stored = yield* Deferred.make<void>();
+      const context = yield* Layer.build(
+        makeLayer({
+          ...repositories,
+          stored,
+          generate: () => Effect.die("a guide must not be written without the change"),
+        }),
+      );
+      const service = Context.get(
+        context,
+        PullRequestReviewGuideService.PullRequestReviewGuideService,
+      );
+      yield* service.generate(reference);
+      return yield* service.get(reference).pipe(
+        Effect.flatMap((result) =>
+          result.run?._tag === "Failed"
+            ? Effect.succeed(result.run.detail)
+            : Effect.fail("still running" as const),
+        ),
+        Effect.retry(Schedule.spaced("20 millis")),
+      );
+    });
+
   it.effect("tells the reader what to fix when git does not trust the remote's host key", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const repositories = yield* makeRepositories;
-        // An SSH remote whose ssh refuses the way it does for a host missing from known_hosts.
-        yield* git(repositories.workspace, [
-          "remote",
-          "set-url",
-          "origin",
-          "git@github.com:acme/app.git",
-        ]);
-        yield* git(repositories.workspace, [
-          "config",
-          "core.sshCommand",
-          "sh -c 'echo Host key verification failed. >&2; exit 255'",
-        ]);
-        const stored = yield* Deferred.make<void>();
-        const context = yield* Layer.build(
-          makeLayer({
-            ...repositories,
-            stored,
-            generate: () => Effect.die("a guide must not be written without the change"),
-          }),
-        );
-        const service = Context.get(
-          context,
-          PullRequestReviewGuideService.PullRequestReviewGuideService,
-        );
-        yield* service.generate(reference);
-        const failed = yield* service.get(reference).pipe(
-          Effect.flatMap((result) =>
-            result.run?._tag === "Failed"
-              ? Effect.succeed(result.run.detail)
-              : Effect.fail("still running" as const),
-          ),
-          Effect.retry(Schedule.spaced("20 millis")),
-        );
         assert.strictEqual(
-          failed,
+          yield* failedRunDetail("Host key verification failed."),
           'Git does not trust the SSH host key of the project\'s "origin" remote. Run "git fetch origin" in the project once, then write the guide again.',
+        );
+      }),
+    ),
+  );
+
+  it.effect("tells the reader what to fix when the remote refuses git's credentials", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        assert.strictEqual(
+          yield* failedRunDetail("git@github.com: Permission denied (publickey)."),
+          'Git could not sign in to the project\'s "origin" remote. Run "git fetch origin" in the project once, then write the guide again.',
         );
       }),
     ),
