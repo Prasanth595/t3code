@@ -7866,9 +7866,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       "late",
     ],
     ["a slow saved-child lookup", "collabAgentToolCall", "none", false, "none", true],
+    [
+      "concurrent nested recovery",
+      "collabAgentToolCall",
+      "before-parent",
+      false,
+      "none",
+      false,
+      true,
+    ],
   ] as const)(
     "restores %s child status and conversation on a fresh adapter after restart",
-    ([_name, launchType, nestedStart, parentHandoff, reuseRoot = "none", slowLookup = false]) =>
+    ([
+      _name,
+      launchType,
+      nestedStart,
+      parentHandoff,
+      reuseRoot = "none",
+      slowLookup = false,
+      concurrentRecovery = false,
+    ]) =>
       Effect.scoped(
         Effect.gen(function* () {
           const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -7942,6 +7959,148 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     },
                   },
                 };
+          const nestedChildNativeThread = "native-new-nested-child-after-restart";
+          const nestedChildNativeTurn = "new-nested-child-turn-after-restart";
+          const nestedSpawnId = "nested-spawn-after-restart";
+          const nestedTurnStarted: CodexReplay.CodexAppServerReplayEntry = {
+            type: "emit_inbound",
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: nestedChildNativeThread,
+                turn: makeCodexReplayTurn({ id: nestedChildNativeTurn, status: "inProgress" }),
+              },
+            },
+          };
+          const makeNestedEntries = (
+            parentTurnId: string,
+            nestedTurnId: string,
+          ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> =>
+            nestedStart === "none"
+              ? []
+              : [
+                  ...(nestedStart === "after-parent" ? [nestedTurnStarted] : []),
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      method: "item/completed",
+                      params: {
+                        threadId: RESUME_CHILD_THREAD,
+                        turnId: parentTurnId,
+                        item: {
+                          type: "collabAgentToolCall",
+                          id: nestedSpawnId,
+                          tool: "spawnAgent",
+                          status: "completed",
+                          senderThreadId: RESUME_CHILD_THREAD,
+                          receiverThreadIds: [nestedChildNativeThread],
+                          prompt: "Nested child after restart",
+                          model: "gpt-5.4",
+                          agentsStates: {
+                            [nestedChildNativeThread]: { status: "running", message: null },
+                          },
+                        },
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      method: "item/completed",
+                      params: {
+                        threadId: nestedChildNativeThread,
+                        turnId: nestedTurnId,
+                        item: {
+                          type: "agentMessage",
+                          id: "nested-child-answer",
+                          text: "NESTED_CHILD_DONE",
+                          phase: "final_answer",
+                          memoryCitation: null,
+                        },
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    frame: {
+                      method: "turn/completed",
+                      params: {
+                        threadId: nestedChildNativeThread,
+                        turn: makeCodexReplayTurn({
+                          id: nestedTurnId,
+                          status: "completed",
+                        }),
+                      },
+                    },
+                  },
+                ];
+          const nestedEntries = makeNestedEntries(RESUME_CHILD_TURN_2, nestedChildNativeTurn);
+          const savedNestedEntries = makeNestedEntries(
+            RESUME_CHILD_TURN_1,
+            "nested-before-restart",
+          );
+          const grandchildNativeThread = "native-saved-grandchild";
+          const grandchildStarted: CodexReplay.CodexAppServerReplayEntry = {
+            type: "emit_inbound",
+            frame: {
+              method: "turn/started",
+              params: {
+                threadId: grandchildNativeThread,
+                turn: makeCodexReplayTurn({ id: "grandchild-after-restart", status: "inProgress" }),
+              },
+            },
+          };
+          const savedGrandchildEntries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> = [
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nestedChildNativeThread,
+                  turnId: "nested-before-restart",
+                  item: {
+                    type: "collabAgentToolCall",
+                    id: "saved-grandchild-spawn",
+                    tool: "spawnAgent",
+                    status: "completed",
+                    senderThreadId: nestedChildNativeThread,
+                    receiverThreadIds: [grandchildNativeThread],
+                    prompt: "Saved grandchild",
+                    model: "gpt-5.4",
+                    agentsStates: {
+                      [grandchildNativeThread]: { status: "running", message: null },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: grandchildNativeThread,
+                  turn: makeCodexReplayTurn({
+                    id: "grandchild-before-restart",
+                    status: "inProgress",
+                  }),
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: grandchildNativeThread,
+                  turn: makeCodexReplayTurn({
+                    id: "grandchild-before-restart",
+                    status: "completed",
+                  }),
+                },
+              },
+            },
+          ];
           const firstEntries = [
             ...codexReplayPreamble({
               nativeThreadId: RESUME_NATIVE_THREAD,
@@ -7950,6 +8109,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
             launchEntry,
             childTurnStarted(RESUME_CHILD_TURN_1),
+            ...(concurrentRecovery
+              ? [
+                  savedNestedEntries[0]!,
+                  {
+                    type: "emit_inbound" as const,
+                    frame: {
+                      method: "turn/started",
+                      params: {
+                        threadId: nestedChildNativeThread,
+                        turn: makeCodexReplayTurn({
+                          id: "nested-before-restart",
+                          status: "inProgress",
+                        }),
+                      },
+                    },
+                  },
+                  ...savedGrandchildEntries,
+                  ...savedNestedEntries.slice(1),
+                ]
+              : []),
             childAgentMessage({
               id: "before-restart-answer",
               text: "CODEX_FIRST_DONE",
@@ -8021,83 +8200,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           const resumed = yield* Deferred.make<void>();
           const lookupStarted = yield* Deferred.make<void>();
           const parentCompletionDispatched = yield* Deferred.make<void>();
+          const releaseParentRead = yield* Deferred.make<void>();
+          const competingRestore = yield* Deferred.make<void>();
+          let parentReadCount = 0;
           const newChildCompleted = yield* Deferred.make<void>();
           const nestedChildCompleted = yield* Deferred.make<void>();
           const newChildNativeThread = "native-new-child-after-restart";
           const newChildNativeTurn = "new-child-turn-after-restart";
           const unknownChildNativeThread = "native-unknown-child-after-restart";
-          const nestedChildNativeThread = "native-new-nested-child-after-restart";
-          const nestedChildNativeTurn = "new-nested-child-turn-after-restart";
-          const nestedSpawnId = "nested-spawn-after-restart";
-          const nestedTurnStarted: CodexReplay.CodexAppServerReplayEntry = {
-            type: "emit_inbound",
-            frame: {
-              method: "turn/started",
-              params: {
-                threadId: nestedChildNativeThread,
-                turn: makeCodexReplayTurn({ id: nestedChildNativeTurn, status: "inProgress" }),
-              },
-            },
-          };
-          const nestedEntries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> =
-            nestedStart === "none"
-              ? []
-              : [
-                  ...(nestedStart === "after-parent" ? [nestedTurnStarted] : []),
-                  {
-                    type: "emit_inbound",
-                    frame: {
-                      method: "item/completed",
-                      params: {
-                        threadId: RESUME_CHILD_THREAD,
-                        turnId: RESUME_CHILD_TURN_2,
-                        item: {
-                          type: "collabAgentToolCall",
-                          id: nestedSpawnId,
-                          tool: "spawnAgent",
-                          status: "completed",
-                          senderThreadId: RESUME_CHILD_THREAD,
-                          receiverThreadIds: [nestedChildNativeThread],
-                          prompt: "Nested child after restart",
-                          model: "gpt-5.4",
-                          agentsStates: {
-                            [nestedChildNativeThread]: { status: "running", message: null },
-                          },
-                        },
-                      },
-                    },
-                  },
-                  {
-                    type: "emit_inbound",
-                    frame: {
-                      method: "item/completed",
-                      params: {
-                        threadId: nestedChildNativeThread,
-                        turnId: nestedChildNativeTurn,
-                        item: {
-                          type: "agentMessage",
-                          id: "nested-child-answer",
-                          text: "NESTED_CHILD_DONE",
-                          phase: "final_answer",
-                          memoryCitation: null,
-                        },
-                      },
-                    },
-                  },
-                  {
-                    type: "emit_inbound",
-                    frame: {
-                      method: "turn/completed",
-                      params: {
-                        threadId: nestedChildNativeThread,
-                        turn: makeCodexReplayTurn({
-                          id: nestedChildNativeTurn,
-                          status: "completed",
-                        }),
-                      },
-                    },
-                  },
-                ];
           const idAllocator = yield* IdAllocator.IdAllocatorV2;
           const secondProviderThread = parentHandoff
             ? {
@@ -8160,7 +8270,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             },
             childTurnStarted(RESUME_CHILD_TURN_2),
-            ...nestedEntries,
+            ...(concurrentRecovery ? nestedEntries.slice(1) : nestedEntries),
             childAgentMessage({
               id: "after-restart-answer",
               text: "CODEX_RESUME_DONE",
@@ -8208,7 +8318,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               },
             },
           );
-          if (slowLookup)
+          if (concurrentRecovery) {
+            // A grandchild notification can restore its parent while root recovery
+            // is already restoring that same parent through a different async read.
+            const parentStarted = secondEntries.findIndex(
+              (entry) => entry.type === "emit_inbound" && entry.label === "turn/started",
+            );
+            secondEntries.splice(parentStarted, 0, grandchildStarted);
+          }
+          if (slowLookup || concurrentRecovery)
             secondEntries.push({
               type: "emit_inbound",
               frame: {
@@ -8329,6 +8447,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 ? Effect.void
                 : project(event).pipe(
                     Effect.andThen(
+                      concurrentRecovery &&
+                        event.type === "app_thread.created" &&
+                        event.appThread.id ===
+                          idAllocator.derive.threadFromProviderThread({
+                            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+                            nativeThreadId: nestedChildNativeThread,
+                          })
+                        ? Deferred.succeed(competingRestore, undefined)
+                        : Effect.void,
+                    ),
+                    Effect.andThen(
                       event.type === "subagent.updated" &&
                         event.subagent.status === "completed" &&
                         event.subagent.result === "CODEX_RESUME_DONE"
@@ -8349,6 +8478,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             secondProviderThread,
             true,
             (method, payload) => {
+              if (
+                concurrentRecovery &&
+                method === "turn/started" &&
+                Predicate.isObject(payload) &&
+                payload.threadId === grandchildNativeThread
+              )
+                return Deferred.await(lookupStarted);
               if (
                 !slowLookup ||
                 !Predicate.isObject(payload) ||
@@ -8403,24 +8539,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             providerTurnOrdinal: 2,
           };
           // No handoff, missed prompt or restart note triggers context delivery.
-          yield* startCodexTurnThroughService({
+          const start = startCodexTurnThroughService({
             turnInput,
-            runtime: slowLookup
-              ? {
-                  ...second.runtime,
-                  startTurn: (input) =>
-                    second.runtime.startTurn({
-                      ...input,
-                      readSubagentThread: (childThreadId) =>
-                        input.readSubagentThread!(childThreadId).pipe(
-                          Effect.tap(() => Deferred.succeed(lookupStarted, undefined)),
-                          Effect.tap(() => Deferred.await(parentCompletionDispatched)),
-                          // Let the reader handle the completion while the lookup is still in flight.
-                          Effect.tap(() => Effect.yieldNow),
-                        ),
-                    }),
-                }
-              : second.runtime,
+            runtime:
+              slowLookup || concurrentRecovery
+                ? {
+                    ...second.runtime,
+                    startTurn: (input) =>
+                      second.runtime.startTurn({
+                        ...input,
+                        readSubagentThread: (childThreadId) =>
+                          input.readSubagentThread!(childThreadId).pipe(
+                            Effect.tap(() => {
+                              if (!concurrentRecovery) return Effect.void;
+                              if (
+                                childThreadId !== original.childThreadId ||
+                                ++parentReadCount !== 1
+                              )
+                                return Effect.void;
+                              return Deferred.succeed(lookupStarted, undefined).pipe(
+                                Effect.andThen(Deferred.await(releaseParentRead)),
+                              );
+                            }),
+                            Effect.tap(() =>
+                              concurrentRecovery
+                                ? Effect.void
+                                : Deferred.succeed(lookupStarted, undefined),
+                            ),
+                            Effect.tap(() =>
+                              concurrentRecovery
+                                ? Effect.void
+                                : Deferred.await(parentCompletionDispatched),
+                            ),
+                            // Let the reader handle the completion while the lookup is still in flight.
+                            Effect.tap(() => Effect.yieldNow),
+                          ),
+                      }),
+                  }
+                : second.runtime,
             previousAttemptId: firstAttempt,
             startRootRun: (input) => {
               routing = RunExecutionService.makeProviderEventRoutingState({
@@ -8437,6 +8593,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 .pipe(Effect.orDie);
             },
           });
+          if (concurrentRecovery) {
+            const starting = yield* start.pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Deferred.await(competingRestore);
+            yield* Deferred.succeed(releaseParentRead, undefined);
+            yield* Fiber.join(starting);
+            yield* second.firstTerminal;
+            assert.isAtLeast(parentReadCount, 2);
+            const nestedId = idAllocator.derive.threadFromProviderThread({
+              driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+              nativeThreadId: nestedChildNativeThread,
+            });
+            assert.lengthOf(
+              second.events.filter(
+                (event) => event.type === "app_thread.created" && event.appThread.id === nestedId,
+              ),
+              1,
+            );
+            return;
+          }
+          yield* start;
           if (slowLookup) {
             yield* Deferred.await(resumed);
             yield* second.firstTerminal;

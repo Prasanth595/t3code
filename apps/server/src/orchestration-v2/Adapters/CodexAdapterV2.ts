@@ -2844,7 +2844,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const latestTurn = saved.latestProviderTurn;
           if (latestTurn !== null) {
             yield* Ref.update(nextProviderTurnOrdinals, (current) =>
-              new Map(current).set(String(providerThread.id), latestTurn.ordinal),
+              new Map(current).set(
+                String(providerThread.id),
+                Math.max(current.get(String(providerThread.id)) ?? 0, latestTurn.ordinal),
+              ),
             );
             const nativeTurnId = latestTurn.nativeTurnRef?.nativeId;
             if (nativeTurnId != null) {
@@ -2869,9 +2872,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               };
             }
           }
-          yield* Ref.update(subagentThreads, (current) =>
-            new Map(current).set(nativeThreadId, subagent),
-          );
+          // Root recovery and a child notification can finish their reads together.
+          // Keep the first registered context, including any turns it has already seen.
+          const registered = yield* Ref.modify(subagentThreads, (current) => {
+            const existing = current.get(nativeThreadId);
+            return existing === undefined
+              ? [subagent, new Map(current).set(nativeThreadId, subagent)]
+              : [existing, current];
+          });
+          if (registered !== subagent) return registered;
           // Reannounce the saved metadata so the current run adopts nested
           // child routes without recreating their titles, prompts or history.
           yield* emitProviderEvent({
