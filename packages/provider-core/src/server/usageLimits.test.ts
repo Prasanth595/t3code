@@ -80,7 +80,17 @@ describe("applyUsageLimitsUpdate", () => {
         replace: true,
       }),
     ).toEqual({ checkedAt: "2026-09-03T15:00:00.000Z", windows: [restarted] });
-    // The same whole state again publishes nothing new.
+    // The same report again publishes nothing new.
+    expect(
+      applyUsageLimitsUpdate({
+        previous: published,
+        checkedAt,
+        update: { windows: [session, weekly] },
+        replace: true,
+      }),
+    ).toBe(published);
+    // A later report with the same windows publishes its time, so this account's
+    // report still counts as the freshest when Limits merges environments.
     expect(
       applyUsageLimitsUpdate({
         previous: published,
@@ -88,7 +98,7 @@ describe("applyUsageLimitsUpdate", () => {
         update: { windows: [session, weekly] },
         replace: true,
       }),
-    ).toBe(published);
+    ).toEqual({ ...published, checkedAt: "2026-09-03T12:00:05.000Z" });
   });
 
   it("preserves reset credits when a streamed window update changes usage", () => {

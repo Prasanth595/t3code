@@ -78,8 +78,12 @@ export function applyUsageLimitsUpdate(input: {
     : new Map(published);
   // Codex sends this notification beside every token-usage tick, almost
   // always with unchanged numbers. Decide "nothing changed" per window on
-  // the way through so the no-op case never allocates a new snapshot.
-  let changed = replace && update.windows.length !== published.size;
+  // the way through so the no-op case never allocates a new snapshot. A
+  // whole-state report that only moves the time is still news: Limits picks
+  // the freshest report for an account across environments by `checkedAt`.
+  let changed =
+    replace &&
+    (update.windows.length !== published.size || input.checkedAt !== previous?.checkedAt);
   for (const window of update.windows) {
     const existing = published.get(window.id);
     const next: ServerProviderUsageWindow = {
