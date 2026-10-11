@@ -81,6 +81,7 @@ import {
   ProviderInteractionMode,
   ProviderDriverKind,
   resolveEnvironmentMachineKind,
+  resolveProjectProviderInstanceEnabled,
   RuntimeMode,
   TerminalOpenInput,
   type WorktreeSetupSnapshot,
@@ -607,10 +608,8 @@ import {
   supportsServerUpdateThreadContinuation,
 } from "../versionSkew";
 import { useAssetUrls } from "../assets/assetUrls";
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  recallableComposerPrompt,
-} from "./chat/composerPromptHistory";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import { recallableComposerPrompt } from "./chat/composerPromptHistory";
 import { observeResize } from "~/lib/observeResize";
 
 const EMPTY_PROVIDERS: ServerProvider[] = [];
@@ -3243,9 +3242,13 @@ export default function ChatView(props: ChatViewProps) {
   const providerInstanceEntries = useMemo(
     () =>
       sortProviderInstanceEntries(
-        applyProviderInstanceSettings(deriveProviderInstanceEntries(providerStatuses), settings),
+        applyProviderInstanceSettings(
+          deriveProviderInstanceEntries(providerStatuses),
+          settings,
+          activeProject?.id ?? null,
+        ),
       ),
-    [providerStatuses, settings],
+    [providerStatuses, settings, activeProject?.id],
   );
   const { selectedProviderEntry, requestedDriverKind } = useMemo(
     () =>
@@ -4361,7 +4364,14 @@ export default function ChatView(props: ChatViewProps) {
                     (activeProviderInstanceId === null ||
                       provider.instanceId === activeProviderInstanceId) &&
                     provider.driver === selectedProvider &&
-                    provider.enabled &&
+                    // The destination project may override the machine switch.
+                    (environment.serverConfig?.settings
+                      ? resolveProjectProviderInstanceEnabled(
+                          environment.serverConfig.settings,
+                          candidate.projectId,
+                          provider.instanceId,
+                        )
+                      : provider.enabled) &&
                     provider.installed &&
                     provider.status !== "error" &&
                     provider.auth.status !== "unauthenticated" &&
@@ -8735,11 +8745,13 @@ export default function ChatView(props: ChatViewProps) {
           interactionMode,
         });
         if (settingsResult._tag === "Failure") return settingsResult;
+        const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
         const turnResult = await startThreadTurn({
           environmentId,
           input: {
             threadId,
             manualContinuationOfRunId: resumableRunId,
+            ...(modelSelection ? { modelSelection } : {}),
             message: {
               messageId: newMessageId(),
               role: "user",
@@ -11248,7 +11260,9 @@ export default function ChatView(props: ChatViewProps) {
   );
   const threadPanelHeaderControl = (
     <div
-      className="absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
+      // Inset from the chat header's edge, not the window's: --workspace-controls-right also
+      // clears the native window buttons, which sit over the right panel, not this header.
+      className="absolute top-[var(--workspace-controls-top)] right-[calc(env(safe-area-inset-right)+0.75rem)] z-50 flex h-[var(--workspace-topbar-height)] items-center [-webkit-app-region:no-drag]"
       data-workspace-titlebar-controls
     >
       <PanelLayoutControls
@@ -11757,6 +11771,7 @@ export default function ChatView(props: ChatViewProps) {
                                 activeProjectDefaultModelSelection
                               }
                               activeThreadModelSelection={activeThread?.modelSelection}
+                              activeProjectId={activeProject?.id ?? null}
                               activeContextWindow={activeContextWindow}
                               activeTasksProgress={activeComposerTasksProgress}
                               activeTaskSteps={activeComposerTaskSteps}
