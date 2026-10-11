@@ -3491,7 +3491,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const wakeBuffers = yield* Ref.make(
           new Map<
             string,
-            { readonly messages: ReadonlyArray<SDKMessage>; readonly detail: string | null }
+            {
+              readonly messages: ReadonlyArray<SDKMessage>;
+              readonly detail: string | null;
+              readonly continuationGeneration?: number;
+            }
           >(),
         );
         // Background work that ended and has not been named by a wake offer yet,
@@ -3652,7 +3656,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return { kind: "command", label, outcome };
           }
         });
-        const requestedContinuations = yield* Ref.make(new Set<string>());
+        // Counts continuation offers per native thread, so a request the
+        // worker drops late cannot clear a newer offer's buffer.
+        const continuationGenerations = new Map<string, number>();
         // ExitPlanMode plans whose permission callback fired while the tool's
         // root frames were held for a prompt echo. Each projects when its
         // tool_use frame is handled, in whichever run that frame is routed
@@ -4017,14 +4023,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 return current;
               }
               const updated = new Map(current);
-              updated.delete(nativeThreadId);
-              return updated;
-            });
-            yield* Ref.update(requestedContinuations, (current) => {
-              if (!current.has(nativeThreadId)) {
-                return current;
-              }
-              const updated = new Set(current);
               updated.delete(nativeThreadId);
               return updated;
             });
@@ -6143,6 +6141,48 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
+        // The worker drops a continuation it will not start: the thread was
+        // archived, it now runs another provider, or the dispatch failed. No
+        // Claude turn will drain the buffer, so the subagents it reports end
+        // here, through the turn that settled last, and the next wake can
+        // request a continuation again. Claude's own session keeps the wake.
+        const dropBufferedWake = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+          generation: number,
+        ) {
+          // The offer marker and buffer share a Ref: a scheduler yield cannot
+          // let a stale drop remove messages belonging to a newer offer.
+          const buffered = yield* Ref.modify(wakeBuffers, (current) => {
+            const entry = current.get(nativeThreadId);
+            if (entry?.continuationGeneration !== generation) {
+              return [[] as ReadonlyArray<SDKMessage>, current] as const;
+            }
+            const updated = new Map(current);
+            updated.delete(nativeThreadId);
+            return [entry.messages, updated] as const;
+          });
+          const settled = settledTurnByNativeThread.get(nativeThreadId);
+          if (settled === undefined) return;
+          const subagents = yield* Ref.get(sessionSubagentsByTaskId);
+          for (const message of buffered) {
+            if (
+              message.type !== "system" ||
+              message.subtype !== "task_notification" ||
+              !subagents.has(message.task_id)
+            ) {
+              continue;
+            }
+            yield* updateClaudeSubagentNode({
+              context: settled,
+              taskId: message.task_id,
+              ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+              workflowFrame: message,
+              result: message.summary,
+              status: claudeTaskOutcome(message.status),
+            });
+          }
+        });
+
         const bufferWakeMessage = Effect.fnUntraced(function* (wakeInput: {
           readonly nativeThreadId: string;
           readonly message: SDKMessage;
@@ -6278,6 +6318,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const existing = current.get(wakeInput.nativeThreadId);
             const updated = new Map(current);
             updated.set(wakeInput.nativeThreadId, {
+              ...existing,
               messages: [...(existing?.messages ?? []), message],
               detail: notificationSummary ?? existing?.detail ?? null,
             });
@@ -6327,15 +6368,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             return;
           }
-          const shouldOffer = yield* Ref.modify(requestedContinuations, (current) => {
-            if (current.has(wakeInput.nativeThreadId)) {
-              return [false, current] as const;
+          const generation = yield* Ref.modify(wakeBuffers, (current) => {
+            const entry = current.get(wakeInput.nativeThreadId);
+            if (entry === undefined || entry.continuationGeneration !== undefined) {
+              return [undefined, current] as const;
             }
-            const updated = new Set(current);
-            updated.add(wakeInput.nativeThreadId);
-            return [true, updated] as const;
+            const generation = (continuationGenerations.get(wakeInput.nativeThreadId) ?? 0) + 1;
+            continuationGenerations.set(wakeInput.nativeThreadId, generation);
+            return [
+              generation,
+              new Map(current).set(wakeInput.nativeThreadId, {
+                ...entry,
+                continuationGeneration: generation,
+              }),
+            ] as const;
           });
-          if (!shouldOffer) {
+          if (generation === undefined) {
             return;
           }
           const detail =
@@ -6349,12 +6397,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
           });
+          const drop = dropBufferedWake(wakeInput.nativeThreadId, generation);
           yield* continuationRequests.offer({
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver: CLAUDE_PROVIDER,
             detail,
             ...(notification === null ? {} : { notification }),
+            clearIfCurrent: () => drop,
+            dispatchIfCurrent: (dispatch) =>
+              dispatch.pipe(
+                Effect.map(Option.some),
+                Effect.tapCause(() => drop),
+              ),
           });
         });
 
@@ -7196,12 +7251,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // Terminal usage totals arrive here, after the last snapshot.
                 workflowFrame: message,
                 result: message.summary,
-                status:
-                  message.status === "completed"
-                    ? "completed"
-                    : message.status === "stopped"
-                      ? "cancelled"
-                      : "failed",
+                status: claudeTaskOutcome(message.status),
               });
             }
             // Replay tombstone only needs to outlive buffering until this
@@ -8514,10 +8564,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 // Exit and interrupt cleanup can run during transcript reads.
                 // Keep pending outcomes visible until replay applies them.
                 const drained = (yield* Ref.get(wakeBuffers)).get(nativeThreadId)?.messages ?? [];
-                yield* Ref.update(requestedContinuations, (current) => {
-                  const updated = new Set(current);
-                  updated.delete(nativeThreadId);
-                  return updated;
+                yield* Ref.update(wakeBuffers, (current) => {
+                  const entry = current.get(nativeThreadId);
+                  if (entry === undefined) return current;
+                  const { continuationGeneration: _generation, ...buffered } = entry;
+                  return new Map(current).set(nativeThreadId, buffered);
                 });
                 if (drained.length === 0) {
                   // Spurious continuation (buffer already lost with a recycled
