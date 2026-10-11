@@ -1130,4 +1130,247 @@ describe("MuseAdapterV2", () => {
       assert.isTrue((yield* harness.adapter.getCapabilities()).planning.emitsTodoList);
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
+
+  it.effect("mirrors a native subagent into a child thread with its own transcript", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const rootSessionId = String(
+        fake.calls.find((call) => call.method === "session/start")!.params.sessionId,
+      );
+      fake.queueResponse("session/read", {
+        session: { sessionId: "child-session-1", modelId: MODEL, activeTurnId: null },
+        history: {
+          items: [
+            {
+              itemId: "child-tool",
+              kind: "toolCall",
+              revision: 1,
+              status: "completed",
+              turnId: "child-turn",
+              tool: "bash",
+              args: JSON.stringify({ command: "echo PROBEOK" }),
+              visibleOutput: "PROBEOK",
+            },
+          ] satisfies MuseItem[],
+        },
+      });
+      const subagentItem = (revision: number, extra: Record<string, unknown> = {}) => ({
+        itemId: "sub-1",
+        kind: "subagent",
+        revision,
+        status: "inProgress",
+        turnId: nativeId,
+        subagentId: "subagent-1",
+        objective: "Reply PROBEOK",
+        role: "general-purpose",
+        ...extra,
+      });
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: subagentItem(1, { controlStatus: "accepted" }),
+      });
+      const accepted = yield* harness.takeEvent("subagent.updated");
+      assert.isNull(accepted.subagent.childThreadId);
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: subagentItem(2, { controlStatus: "running", childSessionId: "child-session-1" }),
+      });
+      const created = yield* harness.takeEvent("app_thread.created");
+      assert.strictEqual(created.appThread.lineage.parentThreadId, THREAD_ID);
+      assert.strictEqual(created.appThread.lineage.relationshipToParent, "subagent");
+      const childThreadId = created.appThread.id;
+      const running = yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.childThreadId !== null,
+      );
+      assert.strictEqual(running.subagent.childThreadId, childThreadId);
+      assert.strictEqual(running.subagent.status, "running");
+      // The child's history lands in the child thread, not the parent's.
+      const childTool = yield* harness.takeEvent(
+        "turn_item.updated",
+        (event) =>
+          event.turnItem.threadId === childThreadId && event.turnItem.type === "command_execution",
+      );
+      if (childTool.turnItem.type !== "command_execution") return;
+      assert.strictEqual(childTool.turnItem.input, "echo PROBEOK");
+      // Live items from the child session follow the subscription.
+      yield* fake.emit("item/completed", {
+        sessionId: "child-session-1",
+        item: {
+          itemId: "child-message",
+          kind: "agentMessage",
+          revision: 1,
+          status: "completed",
+          turnId: "child-turn",
+          text: "PROBEOK done",
+        },
+      });
+      const childMessage = yield* harness.takeEvent(
+        "message.updated",
+        (event) => event.message.threadId === childThreadId && event.message.role === "assistant",
+      );
+      assert.strictEqual(childMessage.message.text, "PROBEOK done");
+      yield* fake.emit("item/updated", {
+        sessionId: rootSessionId,
+        turnId: nativeId,
+        item: subagentItem(3, {
+          controlStatus: "resultReady",
+          childSessionId: "child-session-1",
+          result: { summary: "PROBEOK done", text: "PROBEOK done" },
+        }),
+      });
+      const completed = yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.status === "completed",
+      );
+      assert.strictEqual(completed.subagent.result, "PROBEOK done");
+      yield* fake.emit("turn/completed", {
+        sessionId: rootSessionId,
+        turnId: nativeId,
+        terminal: "completed",
+      });
+      yield* harness.takeEvent("turn.terminal", (event) => event.status === "completed");
+      // The prompt opened the child thread, and the result was not duplicated there.
+      const childMessages = harness.allEvents.filter(
+        (event) => event.type === "message.updated" && event.message.threadId === childThreadId,
+      );
+      assert.isTrue(
+        childMessages.some(
+          (event) =>
+            event.type === "message.updated" &&
+            event.message.role === "user" &&
+            event.message.text === "Reply PROBEOK",
+        ),
+      );
+      assert.strictEqual(
+        new Set(
+          childMessages.flatMap((event) =>
+            event.type === "message.updated" && event.message.text === "PROBEOK done"
+              ? [event.message.id]
+              : [],
+          ),
+        ).size,
+        1,
+      );
+      assert.isTrue(
+        fake.calls.some(
+          (call) => call.method === "view/subscribe" && call.params.sessionId === "child-session-1",
+        ),
+      );
+      assert.isTrue(
+        fake.calls.some(
+          (call) => call.method === "session/read" && call.params.sessionId === "child-session-1",
+        ),
+      );
+      const capabilities = yield* harness.adapter.getCapabilities();
+      assert.isTrue(capabilities.subagents.supportsSubagents);
+      assert.isTrue(capabilities.subagents.emitsSubagentLifecycle);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps a prompt-and-result child thread when the child session cannot be read", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      // Current Muse hosts fold inline child sessions into the root log and
+      // cannot address them by id yet.
+      fake.queueResponse("view/subscribe", new Error("session child-session-1 was not found"));
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: {
+          itemId: "sub-1",
+          kind: "subagent",
+          revision: 1,
+          status: "inProgress",
+          turnId: nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "running",
+          childSessionId: "child-session-1",
+          objective: "Check the thing",
+          role: "general-purpose",
+        },
+      });
+      const created = yield* harness.takeEvent("app_thread.created");
+      const childThreadId = created.appThread.id;
+      // The child's approval is asked and settled in its own thread.
+      const childApproval = {
+        ...approval("child-run-1"),
+        subagentOrigin: { subagentId: "subagent-1", childSessionId: "child-session-1" },
+      };
+      yield* fake.emit("approval/requested", childApproval);
+      const asked = yield* harness.takeEvent("runtime_request.updated");
+      assert.strictEqual(asked.threadId, childThreadId);
+      yield* fake.takeCall("approval/decide");
+      yield* fake.emit("approval/resolved", childApproval);
+      const resolved = yield* harness.takeEvent(
+        "runtime_request.updated",
+        (event) => event.runtimeRequest.status === "resolved",
+      );
+      assert.strictEqual(resolved.threadId, childThreadId);
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: {
+          itemId: "sub-1",
+          kind: "subagent",
+          revision: 2,
+          status: "inProgress",
+          turnId: nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "resultReady",
+          childSessionId: "child-session-1",
+          objective: "Check the thing",
+          result: { summary: "All done" },
+        },
+      });
+      // The revision without a role keeps the title the child thread opened with.
+      const completed = yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.status === "completed",
+      );
+      assert.strictEqual(completed.subagent.title, created.appThread.title);
+      const result = yield* harness.takeEvent(
+        "message.updated",
+        (event) => event.message.threadId === childThreadId && event.message.role === "assistant",
+      );
+      assert.strictEqual(result.message.text, "All done");
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "completed");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps a workflow child's first label after later revisions drop it", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      const workflowItem = (revision: number, children: unknown) => ({
+        itemId: "wf-1",
+        kind: "workflow",
+        revision,
+        status: "inProgress",
+        turnId: nativeId,
+        entryId: "Probe workflow",
+        children,
+      });
+      yield* fake.emit("item/started", {
+        turnId: nativeId,
+        item: workflowItem(1, [{ childId: "c1", attempt: 1, status: "scheduled", label: "ping" }]),
+      });
+      const scheduled = yield* harness.takeEvent("subagent.updated");
+      assert.strictEqual(scheduled.subagent.title, "ping");
+      yield* fake.emit("item/updated", {
+        turnId: nativeId,
+        item: workflowItem(2, [{ childId: "c1", attempt: 1, status: "started" }]),
+      });
+      const started = yield* harness.takeEvent(
+        "subagent.updated",
+        (event) => event.subagent.status === "running",
+      );
+      assert.strictEqual(started.subagent.title, "ping");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
 });
