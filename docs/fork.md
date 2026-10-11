@@ -18,7 +18,16 @@ They replace the upstream Nightly app and keep its data.
 
 ## App icon
 
-The fork replaces `assets/nightly/nightly-macos-1024.png` with the Tick3d icon. The source is `assets/fork/tick3d-macos.svg`. To change it, edit the SVG and run `rsvg-convert -w 1024 -h 1024 assets/fork/tick3d-macos.svg -o assets/nightly/nightly-macos-1024.png`.
+The fork replaces the nightly icons with the Tick3d lightning icon. The source is `assets/fork/tick3d-macos.svg`. The desktop app, its notifications and the bundled web page use these files. The mobile app comes from upstream and keeps its icon. To change the icon, edit the SVG and run:
+
+```sh
+S=assets/fork/tick3d-macos.svg N=assets/nightly T=$(mktemp -d)
+rsvg-convert -w 1024 -h 1024 $S -o $N/nightly-macos-1024.png && cp $N/nightly-macos-1024.png $N/nightly-universal-1024.png
+rsvg-convert -w 180 -h 180 $S -o $N/nightly-web-apple-touch-180.png
+for s in 16 32; do rsvg-convert -w $s -h $s $S -o $N/nightly-web-favicon-${s}x${s}.png; done
+for s in 16 24 32 48 64 128 256; do rsvg-convert -w $s -h $s $S -o $T/$s.png; done
+magick $T/{16,24,32,48,64,128,256}.png $N/nightly-windows.ico && cp $N/nightly-windows.ico $N/nightly-web-favicon.ico
+```
 
 ## Versions
 
