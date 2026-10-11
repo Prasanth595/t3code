@@ -2468,7 +2468,21 @@ code {
     [data-button-variant="outline"],
     [data-button-variant="destructive"],
     [data-button-variant="destructive-outline"]
-  ):not(:disabled, :active, [data-pressed]) {
+  ):not(:disabled, :active, [data-pressed], [data-slot="group"] > *) {
+  box-shadow: var(--theme-shadow);
+}
+/* A button group, such as a split button, casts one shadow. Per-button
+   shadows would draw a bar between the halves. */
+:root[data-theme-shadow]
+  [data-slot="group"]:has(
+    > [data-slot="button"]:is(
+      [data-button-variant="default"],
+      [data-button-variant="outline"],
+      [data-button-variant="destructive"],
+      [data-button-variant="destructive-outline"]
+    )
+  ) {
+  border-radius: var(--control-radius);
   box-shadow: var(--theme-shadow);
 }
 
