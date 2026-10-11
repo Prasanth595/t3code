@@ -772,7 +772,7 @@ describe("ChatMarkdown file option chips", () => {
     const nestedLinkText = nestedLinkHtml.replace(/<[^>]+>/g, "");
 
     expect(malformedHtml).toContain(
-      '<li dir="auto">Bad :codex-file-citation{purpose=&quot;output&quot;}</li>',
+      '<li dir="ltr">Bad :codex-file-citation{purpose=&quot;output&quot;}</li>',
     );
     expect(nestedLinkText).toContain(
       "Bad :codex-file-citation{path=&quot;/tmp/project/report.xlsx&quot;}",
@@ -861,15 +861,45 @@ describe("ChatMarkdown heading levels", () => {
       />,
     );
 
-    expect(html).toContain('<h1 dir="auto" aria-level="4">Top</h1>');
-    expect(html).toContain('<h2 dir="auto" aria-level="5">Section</h2>');
-    expect(html).toContain('<h6 dir="auto" aria-level="6">Fine print</h6>');
+    expect(html).toContain('<h1 dir="ltr" aria-level="4">Top</h1>');
+    expect(html).toContain('<h2 dir="ltr" aria-level="5">Section</h2>');
+    expect(html).toContain('<h6 dir="ltr" aria-level="6">Fine print</h6>');
   });
 
   it("leaves heading levels alone when the markdown is not nested", () => {
     const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="# Top" />);
 
-    expect(html).toContain('<h1 dir="auto">Top</h1>');
+    expect(html).toContain('<h1 dir="ltr">Top</h1>');
+  });
+});
+
+describe("ChatMarkdown text direction", () => {
+  it("lays out a right-to-left block that opens with an English term right to left", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          "**Device hub**: מאפשר לנהל את כל המכשירים ממקום אחד.\n\n- `git status` يعرض حالة المستودع"
+        }
+      />,
+    );
+
+    expect(html).toContain('<p dir="rtl">');
+    expect(html).toContain('<li dir="rtl">');
+  });
+
+  it("does not let code decide a block's direction", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={"שלום `const someLongIdentifierName = value`"} />,
+    );
+
+    expect(html).toContain('<p dir="rtl">');
+  });
+
+  it("leaves blocks without letters to the browser", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="42" />);
+
+    expect(html).toContain('<p dir="auto">42</p>');
   });
 });
 

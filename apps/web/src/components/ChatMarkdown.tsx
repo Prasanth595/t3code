@@ -204,6 +204,7 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
+import { blockDirection } from "../lib/textDirection";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -1997,6 +1998,31 @@ function hastPlainTextDeep(node: unknown): string {
   return node.children.map(hastPlainTextDeep).join("");
 }
 
+// Code reads left to right whatever it sits in, and a nested list takes its own direction, so
+// neither gets a say in the direction of the block around it.
+const DIRECTION_NEUTRAL_TAGS = new Set(["code", "pre", "kbd", "ol", "ul"]);
+
+/** The prose of a block, for picking its direction: its words, minus code and nested lists. */
+function hastProseText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  if ("type" in node && node.type === "text" && "value" in node && typeof node.value === "string") {
+    return node.value;
+  }
+  if ("tagName" in node && typeof node.tagName === "string") {
+    if (DIRECTION_NEUTRAL_TAGS.has(node.tagName)) return "";
+  }
+  if (!("children" in node) || !Array.isArray(node.children)) return "";
+  return node.children.map(hastProseText).join("");
+}
+
+/**
+ * A block's `dir`: its dominant script, so a right-to-left sentence that opens with an English
+ * term still reads right to left. `auto` when it has no letters to go by.
+ */
+function hastBlockDirection(node: unknown): "ltr" | "rtl" | "auto" {
+  return blockDirection(hastProseText(node));
+}
+
 /**
  * Whether the link carries any words of its own. An anchor that is only an image — a badge, a
  * "Fix in Cursor" button — already shows its identity, and a favicon bolted on in front of it
@@ -2994,13 +3020,13 @@ const ChatMarkdownRendererContext = React.createContext<
 function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   const Tag = `h${level}` as const;
   return function MarkdownHeading({
-    node: _node,
+    node,
     ...props
   }: ComponentProps<typeof Tag> & ReactMarkdownExtraProps) {
     const { headingLevelOffset } = use(ChatMarkdownRendererContext);
     return (
       <Tag
-        dir="auto"
+        dir={hastBlockDirection(node)}
         {...props}
         aria-level={headingLevelOffset > 0 ? Math.min(level + headingLevelOffset, 6) : undefined}
       />
@@ -3026,10 +3052,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
     return <div {...props}>{children}</div>;
   },
-  p: function MarkdownParagraph({ node: _node, children, ...props }) {
+  p: function MarkdownParagraph({ node, children, ...props }) {
     const { skills } = use(ChatMarkdownRendererContext);
     return (
-      <p dir="auto" {...props}>
+      <p dir={hastBlockDirection(node)} {...props}>
         {renderSkillInlineMarkdownChildren(children, skills)}
       </p>
     );
@@ -3067,7 +3093,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const markerOffset =
       typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
     return (
-      <li dir="auto" {...props} data-task-marker-offset={markerOffset ?? undefined}>
+      <li
+        dir={hastBlockDirection(node)}
+        {...props}
+        data-task-marker-offset={markerOffset ?? undefined}
+      >
         {renderSkillInlineMarkdownChildren(children, skills)}
       </li>
     );
@@ -3517,11 +3547,11 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownTable {...props} />;
   },
   // Cells follow their own text; the stylesheet orders columns by the first header.
-  th: function MarkdownTableHeader({ node: _node, ...props }) {
-    return <th dir="auto" {...props} />;
+  th: function MarkdownTableHeader({ node, ...props }) {
+    return <th dir={hastBlockDirection(node)} {...props} />;
   },
-  td: function MarkdownTableCell({ node: _node, ...props }) {
-    return <td dir="auto" {...props} />;
+  td: function MarkdownTableCell({ node, ...props }) {
+    return <td dir={hastBlockDirection(node)} {...props} />;
   },
   details: function MarkdownDetailsRenderer({ node: _node, children, open: detailsOpen }) {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;

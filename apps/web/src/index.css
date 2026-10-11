@@ -2028,11 +2028,10 @@ code {
 }
 
 /* Right-to-left text. Paragraphs, headings, list items, and table cells
-   carry dir="auto" (the composer gets it from Tiptap), so each lays out in its
-   own script's direction. dir="auto" skips descendants that set their own dir,
-   so an item wrapping a <p> (composer tasks, loose Markdown lists) cannot see
-   its own text and may inherit a direction instead: when that paragraph
-   exists, it decides. Lists take their direction from their first item,
+   carry the dir of their dominant script (lib/textDirection; the composer sets
+   it per line), or dir="auto" when they have no letters. An item wrapping a <p>
+   (composer tasks, loose Markdown lists) may still disagree with it: when that
+   paragraph exists, it decides. Lists take their direction from their first item,
    quotes from their first block, alerts from their body, and tables from
    their first header, which moves markers, borders, and columns to the right
    for Arabic or Hebrew. Each ltr/rtl pair below is mutually exclusive. */
