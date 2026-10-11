@@ -779,6 +779,39 @@ it.effect.each([
   }),
 );
 
+it.effect("does not keep a decline for a host glab could not confirm", () =>
+  Effect.gen(function* () {
+    // glab lists the host, but its API call failed, so the record holds no account.
+    const unconfirmedGitLab = processOutput(
+      `git.example.internal
+  x git.example.internal: API call failed: GET https://git.example.internal/api/v4/user: dial tcp: i/o timeout
+  ✓ Git operations for git.example.internal configured to use https protocol.
+`,
+      { exitCode: ChildProcessSpawner.ExitCode(1) },
+    );
+    const outputs = [unconfirmedGitLab, signedInGitLab];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: ({ command }) =>
+          Effect.succeed(
+            command === "glab" ? (outputs.shift() ?? noGitLabLogin) : processOutput(""),
+          ),
+      },
+    });
+    const resolveKind = registry
+      .resolveHandle({
+        cwd: "/repo",
+        context: unknownRemote("https://git.example.internal/team/a.git"),
+      })
+      .pipe(Effect.map((handle) => handle.provider.kind));
+
+    assert.strictEqual(yield* resolveKind, "unknown");
+    assert.strictEqual(yield* resolveKind, "gitlab");
+    assert.strictEqual(outputs.length, 0);
+  }),
+);
+
 it.effect("keeps Forgejo mounts on one host apart", () =>
   Effect.gen(function* () {
     const logins: Array<string> = [];

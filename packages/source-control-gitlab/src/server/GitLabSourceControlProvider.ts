@@ -92,10 +92,15 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
   if (hosts.length === 0) {
     return NO_GITLAB_LOGIN_PATTERN.test(output) ? null : undefined;
   }
-  const authenticated = hosts.some((entry) => entry.account !== null && entry.host === host);
+  const records = hosts.filter((entry) => entry.host === host);
 
-  if (!authenticated) {
+  if (records.length === 0) {
     return null;
+  }
+  // A record for this host with no account (its API call failed or its token was rejected) means
+  // glab could not confirm this host either way.
+  if (!records.some((entry) => entry.account !== null)) {
+    return undefined;
   }
 
   return {
