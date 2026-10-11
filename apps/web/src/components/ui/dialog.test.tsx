@@ -41,19 +41,14 @@ function focusedLabel() {
   return document.activeElement?.textContent;
 }
 
-function renderAlert({
-  variant = "default",
-  disabled = false,
-}: { variant?: "default" | "destructive"; disabled?: boolean } = {}) {
+function renderAlert({ disabled = false }: { disabled?: boolean } = {}) {
   return render(
     <AlertDialog open>
       <AlertDialogPopup>
         <AlertDialogTitle>Install update?</AlertDialogTitle>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <AlertDialogAction variant={variant} disabled={disabled}>
-            Confirm
-          </AlertDialogAction>
+          <AlertDialogAction disabled={disabled}>Confirm</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>,
@@ -65,12 +60,6 @@ describe("dialog initial focus", () => {
     await renderAlert();
 
     expect(focusedLabel()).toBe("Confirm");
-  });
-
-  it("keeps focus on Cancel when the primary action is destructive", async () => {
-    await renderAlert({ variant: "destructive" });
-
-    expect(focusedLabel()).toBe("Cancel");
   });
 
   it("keeps focus on Cancel when the primary action is disabled", async () => {

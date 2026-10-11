@@ -3797,6 +3797,7 @@ export default function LegacySidebar() {
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
           getDesktopUpdateInstallConfirmationMessage(desktopUpdateState),
+          { initialFocus: "confirm" },
         );
       } catch (error) {
         setDesktopUpdateActionPending(false);

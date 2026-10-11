@@ -4,7 +4,7 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import { useRef } from "react";
 import { cn } from "~/lib/utils";
-import { Button } from "~/components/ui/button";
+import { Button, type ButtonVariant } from "~/components/ui/button";
 import {
   DIALOG_BACKDROP_CLASS,
   DIALOG_MEDIA_BACKDROP_CLASS,
@@ -21,7 +21,7 @@ const DIALOG_ACTION_SLOT = "dialog-action";
 
 /**
  * Focuses the dialog's primary action on open, so Enter and Space confirm it and Tab
- * reaches Cancel. Destructive actions aren't marked, so their dialogs keep focus on Cancel.
+ * reaches Cancel. Dialogs without one, such as destructive confirms, keep Base UI's default.
  */
 function useDialogActionInitialFocus() {
   const popupRef = useRef<HTMLDivElement>(null);
@@ -130,13 +130,22 @@ function DialogPopup({
   );
 }
 
+const DESTRUCTIVE_VARIANTS = [
+  "destructive",
+  "destructive-outline",
+  "ghost-destructive",
+] as const satisfies readonly ButtonVariant[];
+
+type DialogActionProps = Omit<React.ComponentProps<typeof Button>, "variant"> & {
+  variant?: Exclude<ButtonVariant, (typeof DESTRUCTIVE_VARIANTS)[number]>;
+};
+
 /**
- * The dialog's primary, highlighted button, focused when the dialog opens. Destructive
- * actions stay unfocused, so running one from the keyboard takes a deliberate Tab.
+ * Marks a non-destructive action for initial focus when the dialog opens.
+ * For destructive confirmations, use a plain Button and place Cancel first.
  */
-function DialogAction(props: React.ComponentProps<typeof Button>) {
-  const slot = props.variant?.startsWith("destructive") ? {} : { "data-slot": DIALOG_ACTION_SLOT };
-  return <Button {...slot} {...props} />;
+function DialogAction(props: DialogActionProps) {
+  return <Button data-slot={DIALOG_ACTION_SLOT} {...props} />;
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
