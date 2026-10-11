@@ -26,8 +26,9 @@ export type FloatingWorkingStatus =
   // A native /goal on an idle thread: paused, blocked, complete, or set.
   | { readonly kind: "goal"; readonly label: string; readonly accessibilityLabel: string }
   // A task whose thread the server has not created yet: the worktree may
-  // still be checking out, so there is no turn to time.
-  | { readonly kind: "preparing"; readonly label: string }
+  // still be checking out, so there is no turn to time. Tapping shows which
+  // step it is waiting on.
+  | { readonly kind: "preparing"; readonly label: string; readonly onPress?: () => void }
   | {
       readonly kind: "connection";
       readonly tone: "reconnecting" | "unavailable";

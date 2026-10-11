@@ -2,7 +2,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useNavigation } from "@react-navigation/native";
-import type { WorktreeSetupCardProps } from "./worktree-setup-card";
+import { PreparationProgressSheet, type WorktreeSetupCardProps } from "./worktree-setup-card";
+import { preparationPillLabel, preparationSteps } from "./preparation-progress";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -181,6 +182,9 @@ export interface ThreadDetailScreenProps {
         readonly kind: "preparing";
         readonly preparingWorktree: boolean;
         readonly serverOwned: boolean;
+        /** The server has the task; until then the outbox is still sending it. */
+        readonly sent: boolean;
+        readonly startedAt: string | null;
       }
     | { readonly kind: "failed"; readonly reason: string; readonly onEditTask: () => void }
     | null;
@@ -447,6 +451,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     },
     [handleOwnedInputFocusChange],
   );
+  const [preparationDetailsThreadKey, setPreparationDetailsThreadKey] = useState<string | null>(
+    null,
+  );
+  // Once the server's stages arrive, the setup card in the feed takes over.
+  const preparationDetailsOpen =
+    preparationDetailsThreadKey === selectedThreadKey &&
+    props.creationState?.kind === "preparing" &&
+    !props.worktreeSetup;
+  const preparationInput = (creation: { preparingWorktree: boolean; sent: boolean }) => ({
+    sent: creation.sent,
+    preparingWorktree: creation.preparingWorktree,
+    connected: props.connectionStateLabel === "connected",
+    environmentLabel: props.environmentLabel,
+  });
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
@@ -508,7 +526,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: preparationPillLabel(preparationInput(props.creationState)),
+        onPress: () => setPreparationDetailsThreadKey(selectedThreadKey),
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -1242,6 +1261,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
               <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+                {preparationDetailsOpen && props.creationState?.kind === "preparing" ? (
+                  <PreparationProgressSheet
+                    steps={preparationSteps(preparationInput(props.creationState))}
+                    startedAt={props.creationState.startedAt}
+                    onClose={() => setPreparationDetailsThreadKey(null)}
+                  />
+                ) : null}
                 <FloatingWorkingControl
                   colorScheme={isDarkMode ? "dark" : "light"}
                   status={floatingStatus}
