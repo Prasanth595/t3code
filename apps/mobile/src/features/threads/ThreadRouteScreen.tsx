@@ -941,7 +941,10 @@ function ThreadRouteContent(
       return awaitingBootstrapTurn
         ? {
             kind: "preparing",
-            preparingWorktree: true,
+            // Older servers record no strategy; their bootstrap runs only prepare worktrees.
+            preparingWorktree:
+              preparingRun?.workspacePreparation === undefined ||
+              preparingRun.workspacePreparation.type === "worktree",
             serverOwned: true,
             sent: true,
             startedAt: preparingRun ? DateTime.formatIso(preparingRun.requestedAt) : null,
