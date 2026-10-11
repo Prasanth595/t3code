@@ -2921,7 +2921,8 @@ export const make = Effect.gen(function* () {
                   Effect.map((providers) => ({
                     modelSelection: ServerSettings.resolveSourceControlWriterModelSelection(
                       settings,
-                      ServerSettings.filterProvidersForProject(settings, providers, projectId),
+                      providers,
+                      projectId,
                     ),
                     style: settings.sourceControlWritingStyle,
                   })),

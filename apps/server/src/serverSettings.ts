@@ -73,7 +73,6 @@ import {
 } from "./sourceControl/sourceControlHostSecrets.ts";
 
 export {
-  filterProvidersForProject,
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
 } from "@t3tools/shared/serverSettings";

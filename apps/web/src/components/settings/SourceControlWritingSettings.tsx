@@ -133,6 +133,7 @@ export function SourceControlWritingSettingsSection() {
       textGenerationModelSelection: resolveSourceControlWriterModelSelection(
         settings,
         projectEffectiveTextGenerationProviders,
+        target?.projectId ?? null,
       ),
     },
     projectEffectiveTextGenerationProviders,
