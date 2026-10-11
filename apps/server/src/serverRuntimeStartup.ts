@@ -292,6 +292,7 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
         modelSelection:
           resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
           threadModelSelection,
+        modelSelectionExplicit: true,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: resolveProjectSettings(settings, project.id, project).settings
           .defaultRuntimeMode,

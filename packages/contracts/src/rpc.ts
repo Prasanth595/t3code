@@ -216,6 +216,7 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
+import { AgentListError, AgentListInput, AgentSummary } from "./agentDefinition.ts";
 import {
   ProjectCreateNewInput,
   ProjectCreateNewResult,
@@ -371,6 +372,7 @@ import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
 
 export const WS_METHODS = {
   // Project registry methods
+  agentsList: "agents.list",
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
@@ -1227,6 +1229,12 @@ const WsProjectsListEntriesRpc = Rpc.make(WS_METHODS.projectsListEntries, {
   error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsAgentsListRpc = Rpc.make(WS_METHODS.agentsList, {
+  payload: AgentListInput,
+  success: Schema.Array(AgentSummary),
+  error: Schema.Union([AgentListError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
   success: ProjectReadFileResult,
@@ -1981,6 +1989,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectCloneRetryRpc,
   WsSubscribeProjectClonesRpc,
   WsProjectsListEntriesRpc,
+  WsAgentsListRpc,
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,

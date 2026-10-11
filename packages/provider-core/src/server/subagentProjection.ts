@@ -1,5 +1,6 @@
 import type {
   EventId,
+  AgentId,
   MessageId,
   ModelSelection,
   NodeId,
@@ -53,9 +54,13 @@ export function makeSubagentChildThread(input: {
   readonly now: DateTime.Utc;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  readonly targetAgentId?: AgentId | undefined;
 }): OrchestrationV2AppThread {
+  const parentThread = { ...input.parentThread };
+  delete parentThread.agentId;
   return {
-    ...input.parentThread,
+    ...parentThread,
+    ...(input.targetAgentId === undefined ? {} : { agentId: input.targetAgentId }),
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

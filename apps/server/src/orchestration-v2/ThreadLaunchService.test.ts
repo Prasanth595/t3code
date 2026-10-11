@@ -15,6 +15,8 @@ import {
   ComposerContextId,
   type ChatAttachment,
   CommandId,
+  AgentId,
+  type ModelSelection,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
   MessageId,
@@ -34,6 +36,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -108,9 +111,14 @@ interface HarnessOptions {
   readonly serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  readonly workspaceRoot?: string;
 }
 
 function makeHarness(options: HarnessOptions = {}) {
+  const configuredProject = {
+    ...project,
+    workspaceRoot: options.workspaceRoot ?? project.workspaceRoot,
+  };
   const layerDatabase = SqlitePersistence.layerMemory;
   const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([adapter]);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
@@ -145,6 +153,7 @@ function makeHarness(options: HarnessOptions = {}) {
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
   const layerExternalServices = Layer.mergeAll(
+    NodeServices.layer,
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
@@ -156,15 +165,16 @@ function makeHarness(options: HarnessOptions = {}) {
       getById: (id) =>
         Effect.succeed(
           id === projectId
-            ? Option.some(project)
+            ? Option.some(configuredProject)
             : id === otherProjectId
               ? Option.some(otherProject)
               : Option.none(),
         ),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(project)),
+      getByWorkspaceRoot: () => Effect.succeed(Option.some(configuredProject)),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),
       listShells: () => Effect.die("unused"),
+      listAgents: () => Effect.die("unused"),
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
@@ -210,16 +220,16 @@ function makeHarness(options: HarnessOptions = {}) {
           ? Option.some({
               projectId,
               title: project.title,
-              workspaceRoot: project.workspaceRoot,
-              defaultModelSelection: project.defaultModelSelection,
+              workspaceRoot: configuredProject.workspaceRoot,
+              defaultModelSelection: configuredProject.defaultModelSelection,
               defaultThreadEnvMode: null,
               autoPull: false,
               faviconPath: null,
               projectIcon: null,
               scripts: project.scripts,
-              createdAt: project.createdAt,
-              updatedAt: project.updatedAt,
-              deletedAt: project.deletedAt,
+              createdAt: configuredProject.createdAt,
+              updatedAt: configuredProject.updatedAt,
+              deletedAt: configuredProject.deletedAt,
             })
           : Option.none(),
       ),
@@ -252,13 +262,22 @@ function launchInput(input: {
   readonly thread: string;
   readonly message?: string;
   readonly workspace?: ThreadLaunch.ThreadLaunchWorkspaceStrategy;
+  readonly modelSelection?: ModelSelection;
+  readonly modelSelectionExplicit?: boolean;
+  readonly agentId?: AgentId | null;
+  readonly creationSource?: ThreadLaunch.ThreadLaunchInput["creationSource"];
+  readonly scheduledTaskId?: ScheduledTaskId;
 }) {
   return {
     commandId: CommandId.make(input.command),
     threadId: ThreadId.make(input.thread),
     projectId,
     title: "New thread",
-    modelSelection,
+    modelSelection: input.modelSelection ?? modelSelection,
+    ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+    ...(input.modelSelectionExplicit === undefined
+      ? {}
+      : { modelSelectionExplicit: input.modelSelectionExplicit }),
     runtimeMode: "full-access" as const,
     interactionMode: "default" as const,
     workspaceStrategy: input.workspace ?? { type: "root" as const },
@@ -267,12 +286,15 @@ function launchInput(input: {
       : {
           initialMessage: {
             messageId: MessageId.make(`${input.message}:id`),
+            ...(input.scheduledTaskId === undefined
+              ? {}
+              : { scheduledTaskId: input.scheduledTaskId }),
             text: input.message,
             attachments: [],
           },
         }),
     createdBy: "user" as const,
-    creationSource: "web" as const,
+    creationSource: input.creationSource ?? ("web" as const),
   };
 }
 
@@ -290,6 +312,223 @@ function waitUntil<E, R>(predicate: () => Effect.Effect<boolean, E, R>): Effect.
     assert.fail("Condition was not reached before timeout.");
   });
 }
+
+it.effect("applies the project default to new threads and preserves scheduled/mobile models", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-launch-" });
+    const agentId = AgentId.make("lead");
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "lead.md"),
+      "---\nid: lead\nname: Lead\ndescription: Coordinates work.\ntier: economy\n---\n\nCoordinate the task.",
+    );
+    const harness = makeHarness({
+      workspaceRoot,
+      providers: [
+        {
+          instanceId: modelSelection.instanceId,
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          version: "test",
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-10-10T00:00:00.000Z",
+          models: [{ slug: "gpt-6-luna", name: "GPT-6 Luna", isCustom: false, capabilities: null }],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      serverSettings: {
+        projectSettingsOverrides: {
+          [projectId]: { defaultAgentId: agentId },
+        },
+      },
+    });
+    return yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const result = yield* launches.launch(
+        launchInput({ command: "command:default-agent", thread: "thread:default-agent" }),
+      );
+      assert.equal(result.projection.thread.agentId, agentId);
+      assert.equal(result.projection.thread.modelSelection.model, "gpt-6-luna");
+
+      const scheduledModel = { instanceId: modelSelection.instanceId, model: "gpt-5.1-codex" };
+      const scheduled = yield* launches.launch(
+        launchInput({
+          command: "command:default-agent:scheduled",
+          thread: "thread:default-agent:scheduled",
+          message: "Run the scheduled review.",
+          modelSelection: scheduledModel,
+          modelSelectionExplicit: true,
+          creationSource: "server",
+          scheduledTaskId: ScheduledTaskId.make("scheduled-task:review"),
+        }),
+      );
+      assert.equal(scheduled.projection.thread.agentId, agentId);
+      assert.deepEqual(scheduled.projection.thread.modelSelection, scheduledModel);
+
+      for (const creationSource of ["mobile"] as const) {
+        const explicitLaunch = yield* launches.launch({
+          ...launchInput({
+            command: `command:default-agent:${creationSource}`,
+            thread: `thread:default-agent:${creationSource}`,
+            modelSelection: scheduledModel,
+            modelSelectionExplicit: true,
+          }),
+          creationSource,
+        });
+        assert.equal(explicitLaunch.projection.thread.agentId, agentId);
+        assert.deepEqual(explicitLaunch.projection.thread.modelSelection, scheduledModel);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("lets a new draft explicitly opt out of the project default agent", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-opt-out-" });
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "lead.md"),
+      "---\nid: lead\nname: Lead\ndescription: Coordinates work.\n---\n\nCoordinate the task.",
+    );
+    const harness = makeHarness({
+      workspaceRoot,
+      serverSettings: {
+        projectSettingsOverrides: {
+          [projectId]: { defaultAgentId: AgentId.make("lead") },
+        },
+      },
+    });
+
+    return yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const result = yield* launches.launch(
+        launchInput({
+          command: "command:agent-opt-out",
+          thread: "thread:agent-opt-out",
+          agentId: null,
+        }),
+      );
+      assert.isUndefined(result.projection.thread.agentId);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("does not attach a project default agent to an imported provider session", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-import-" });
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "lead.md"),
+      "---\nid: lead\nname: Lead\ndescription: Coordinates work.\n---\n\nCoordinate the task.",
+    );
+    const harness = makeHarness({
+      workspaceRoot,
+      serverSettings: {
+        projectSettingsOverrides: {
+          [projectId]: { defaultAgentId: AgentId.make("lead") },
+        },
+      },
+    });
+
+    return yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const result = yield* launches.launch({
+        ...launchInput({ command: "command:agent-import", thread: "thread:agent-import" }),
+        importedNativeThread: {
+          ref: {
+            driver: ProviderDriverKind.make("codex"),
+            nativeId: "native-imported-session",
+            strength: "strong",
+          },
+        },
+      });
+      assert.isUndefined(result.projection.thread.agentId);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("uses the custom agent model unless the composer explicitly selected one", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-model-" });
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "reasoner.md"),
+      "---\nid: reasoner\nname: Reasoner\ndescription: Reasons carefully.\ntier: reasoning\n---\n\nThink carefully.",
+    );
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "inheritor.md"),
+      "---\nid: inheritor\nname: Inheritor\ndescription: Inherits the selected model.\n---\n\nUse the selected model.",
+    );
+    const agentId = AgentId.make("reasoner");
+    const provider: ServerProvider = {
+      instanceId: modelSelection.instanceId,
+      driver: ProviderDriverKind.make("codex"),
+      enabled: true,
+      installed: true,
+      version: "test",
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-10T00:00:00.000Z",
+      models: [{ slug: "gpt-6-astra", name: "GPT 6 Astra", isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+    };
+    const harness = makeHarness({ workspaceRoot, providers: [provider] });
+
+    return yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const defaulted = yield* launches.launch(
+        launchInput({
+          command: "command:agent-model-default",
+          thread: "thread:agent-model-default",
+          agentId,
+        }),
+      );
+      assert.deepEqual(defaulted.projection.thread.modelSelection, {
+        instanceId: modelSelection.instanceId,
+        model: "gpt-6-astra",
+      });
+
+      const explicitModel = { instanceId: modelSelection.instanceId, model: "gpt-5.1-codex" };
+      const explicitlySelected = yield* launches.launch(
+        launchInput({
+          command: "command:agent-model-explicit",
+          thread: "thread:agent-model-explicit",
+          agentId,
+          modelSelection: explicitModel,
+          modelSelectionExplicit: true,
+        }),
+      );
+      assert.deepEqual(explicitlySelected.projection.thread.modelSelection, explicitModel);
+
+      const inheritedSelection = { instanceId: modelSelection.instanceId, model: "gpt-5.1-codex" };
+      const tierless = yield* launches.launch(
+        launchInput({
+          command: "command:agent-tierless-inherits-model",
+          thread: "thread:agent-tierless-inherits-model",
+          agentId: AgentId.make("inheritor"),
+          modelSelection: inheritedSelection,
+        }),
+      );
+      assert.deepEqual(tierless.projection.thread.modelSelection, inheritedSelection);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect.each(
   (["new", "existing"] as const).flatMap((target) =>
@@ -1764,6 +2003,63 @@ it.effect("replays a server-allocated launch", () =>
     }).pipe(Effect.provide(harness.layer));
   }),
 );
+
+it.effect("uses the persisted thread model when resuming after an accepted create", () => {
+  const harness = makeHarness({
+    providers: [
+      {
+        instanceId: modelSelection.instanceId,
+        driver: ProviderDriverKind.make("codex"),
+        enabled: true,
+        installed: true,
+        version: "test",
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-10T00:00:00.000Z",
+        models: [
+          { slug: "gpt-5.1-codex", name: "GPT-5.1 Codex", isCustom: false, capabilities: null },
+          { slug: "gpt-6-luna", name: "GPT-6 Luna", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+      },
+    ],
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const input = launchInput({
+      command: "command:launch:model-retry",
+      thread: "thread:launch:model-retry",
+      message: "Continue the accepted launch",
+    });
+    const persistedModelSelection = {
+      instanceId: modelSelection.instanceId,
+      model: "gpt-6-luna",
+    } as const;
+
+    // Simulate a crash after create committed but before the initial message did.
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId: input.commandId,
+      threadId: input.threadId,
+      projectId: input.projectId,
+      title: input.title,
+      modelSelection: persistedModelSelection,
+      agentId: AgentId.make("lead"),
+      runtimeMode: input.runtimeMode,
+      interactionMode: input.interactionMode,
+      branch: null,
+      worktreePath: null,
+      createdBy: input.createdBy,
+      creationSource: input.creationSource,
+    });
+
+    const resumed = yield* launches.launch(input);
+    assert.deepEqual(resumed.projection.thread.modelSelection, persistedModelSelection);
+    assert.deepEqual(resumed.projection.runs[0]?.modelSelection, persistedModelSelection);
+  }).pipe(Effect.provide(harness.layer));
+});
 
 it.effect("rejects a server-allocated launch replay with a mismatching thread id", () => {
   const harness = makeHarness();

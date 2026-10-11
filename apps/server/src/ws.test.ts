@@ -1,8 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
+  PlanId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -23,6 +25,7 @@ import {
   hasCompatibleOrchestrationProtocol,
   resolveAvailableEditorsForConfig,
   shouldUseBoundedThreadSnapshot,
+  threadLaunchInitialMessageFromRpc,
   withLateEditorConfig,
 } from "./ws.ts";
 
@@ -44,6 +47,20 @@ it("keeps full thread snapshot fallback unless the client opts into bounded hist
   assert.isFalse(shouldUseBoundedThreadSnapshot({}));
   assert.isFalse(shouldUseBoundedThreadSnapshot({ acceptBoundedSnapshot: false }));
   assert.isTrue(shouldUseBoundedThreadSnapshot({ acceptBoundedSnapshot: true }));
+});
+
+it("preserves a plan reference when the launch RPC reshapes its initial message", () => {
+  const sourcePlanRef = {
+    threadId: ThreadId.make("thread:plan-source"),
+    planId: PlanId.make("plan:implementation"),
+  };
+  const initialMessage = threadLaunchInitialMessageFromRpc({
+    text: "Implement the plan.",
+    attachments: [],
+    sourcePlanRef,
+  });
+
+  assert.deepEqual(initialMessage.sourcePlanRef, sourcePlanRef);
 });
 
 it.effect("does not block server config when editor discovery never resolves", () =>

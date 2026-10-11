@@ -581,6 +581,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
       McpHttpServer.layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
@@ -620,6 +621,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
       McpHttpServer.layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
         Layer.provide(ServerSettings.layerTest()),
         Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
@@ -695,6 +697,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
         McpHttpServer.layerOrchestratorToolkit.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provide(NodeCrypto.layer),
+          Layer.provide(NodeServices.layer),
           Layer.provide(
             Layer.mock(ThreadManagement.ThreadManagementService)({
               getThreadShell: () =>
@@ -799,6 +802,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
       McpHttpServer.layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpServer.McpServer.layer),
         Layer.provide(NodeCrypto.layer),
+        Layer.provide(NodeServices.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
             getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),

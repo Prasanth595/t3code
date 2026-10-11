@@ -634,6 +634,27 @@ describe("orchestration V2 contracts", () => {
     expect(event.payload.id).toBe(RunId.make("run-1"));
   });
 
+  it("validates custom agent ids on thread.create commands", () => {
+    const command = {
+      type: "thread.create",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: "command-create-agent",
+      threadId: "thread-create-agent",
+      projectId: "project-agent",
+      title: "Agent thread",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      agentId: "reviewer",
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+    };
+
+    expect(decodeOrchestrationV2Command(command)).toMatchObject({ agentId: "reviewer" });
+    expect(() => decodeOrchestrationV2Command({ ...command, agentId: "../outside" })).toThrow();
+  });
+
   it("decodes app-owned delegated task commands", () => {
     const command = decodeOrchestrationV2Command({
       type: "delegated_task.request",

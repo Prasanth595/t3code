@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   CheckpointScopeId,
   CommandId,
+  AgentId,
   EnvironmentId,
   MessageId,
   NodeId,
@@ -359,6 +360,113 @@ describe("V2 environment commands", () => {
           branch: "feature",
         },
       });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("carries the selected draft agent into the first-message launch", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+      const agentId = AgentId.make("reviewer");
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-draft-agent"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-draft-agent"),
+          role: "user",
+          text: "Review this project",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Review this project",
+            modelSelection: v2Projection.thread.modelSelection,
+            agentId,
+            modelSelectionExplicit: true,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({ agentId, modelSelectionExplicit: true });
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("carries an explicit no-agent choice so the server skips the project default", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-no-agent"),
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-no-agent"),
+          role: "user",
+          text: "Use the provider default persona",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Use the provider default persona",
+            modelSelection: v2Projection.thread.modelSelection,
+            agentId: null,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toHaveProperty("agentId", null);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
+  it.effect("preserves the mobile model selection when a project agent default applies", () =>
+    Effect.gen(function* () {
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const supervisor = yield* makeSupervisor({ commands: [], projects: [], launches });
+
+      yield* startThreadTurn({
+        commandId: CommandId.make("launch-mobile-model"),
+        creationSource: "mobile",
+        threadId: v2ThreadId,
+        message: {
+          messageId: MessageId.make("message-mobile-model"),
+          role: "user",
+          text: "Use the model I chose",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        bootstrap: {
+          createThread: {
+            projectId: ProjectId.make("project-1"),
+            title: "Use the model I chose",
+            modelSelection: v2Projection.thread.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-20T00:00:00.000Z",
+          },
+        },
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(launches[0]).toMatchObject({ modelSelectionExplicit: true });
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 

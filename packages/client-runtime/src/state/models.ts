@@ -2,6 +2,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
 import type {
   ThreadLinkedPullRequest,
+  AgentId,
   EnvironmentId,
   MessageId,
   OrchestrationProjectShell,
@@ -93,6 +94,7 @@ export interface EnvironmentThreadShell {
   readonly title: string;
   readonly providerInstanceId: ProviderInstanceId;
   readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
+  readonly agentId?: AgentId;
   readonly runtimeMode: OrchestrationV2ThreadShell["runtimeMode"];
   readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
   readonly branch: string | null;
@@ -236,6 +238,7 @@ export function presentThreadShell(
         : thread.title,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
+    ...(thread.agentId === undefined ? {} : { agentId: thread.agentId }),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,

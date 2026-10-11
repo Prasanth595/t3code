@@ -9,6 +9,8 @@ import {
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
   requiredScopesForProjectMutation,
+  isNullableProjectSettingsOverride,
+  ProjectSettingsOverrides,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -21,6 +23,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeProjectSettingsOverrides = Schema.decodeUnknownSync(ProjectSettingsOverrides);
 
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
@@ -47,6 +50,17 @@ describe("ServerSettings response streaming", () => {
       expect(() => decodeServerSettings(input)).toThrow();
       expect(() => decodeServerSettingsPatch(input)).toThrow();
     }
+  });
+});
+
+describe("ServerSettings default agent", () => {
+  it("defaults to no agent and keeps null as a stored project override", () => {
+    expect(decodeServerSettings({}).defaultAgentId).toBeNull();
+    expect(isNullableProjectSettingsOverride("defaultAgentId")).toBe(true);
+    expect(decodeProjectSettingsOverrides({ defaultAgentId: null }).defaultAgentId).toBeNull();
+    expect(decodeProjectSettingsOverrides({ defaultAgentId: "reviewer" }).defaultAgentId).toBe(
+      "reviewer",
+    );
   });
 });
 

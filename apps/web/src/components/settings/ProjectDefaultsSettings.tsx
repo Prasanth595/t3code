@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type AgentSummary,
   type ModelSelection,
   type ProviderInstanceId,
   type WorktreeSubmodules,
@@ -17,9 +18,13 @@ import {
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { useEnvironments } from "../../state/environments";
+import { useProjects } from "../../state/entities";
+import { agentRosterQuery } from "../../state/agents";
+import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
+import { AgentPicker } from "../chat/AgentPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
@@ -58,10 +63,23 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
   const { environments } = useEnvironments();
+  const projects = useProjects();
   const representative = target
     ? environments.find((environment) => environment.environmentId === target.environmentId)
     : undefined;
   const providers = representative?.serverConfig?.providers ?? EMPTY_SERVER_PROVIDERS;
+  const agentProjectId =
+    target?.projectId ??
+    projects.find((project) => project.environmentId === representative?.environmentId)?.id ??
+    null;
+  const agentRoster = useEnvironmentQuery(
+    representative && agentProjectId !== null
+      ? agentRosterQuery({
+          environmentId: representative.environmentId,
+          input: { projectId: agentProjectId },
+        })
+      : null,
+  );
   const selection = resolveDefaultProviderModelSelection(providers, settings.defaultModelSelection);
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
@@ -74,6 +92,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   );
   const activeEntry = entries.find((entry) => entry.instanceId === selection?.instanceId);
   const mixedModel = useScopedSettingsMixed(["defaultModelSelection"]);
+  const mixedAgent = useScopedSettingsMixed(["defaultAgentId"]);
+  const agentSource = useScopedSettingSource(["defaultAgentId"]);
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
@@ -202,6 +222,45 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       }
     />
   );
+  const agentRow = (
+    <SettingsRow
+      serverScoped
+      settingKeys={["defaultAgentId"]}
+      mixed={mixedAgent}
+      id="default-agent"
+      title="Agent"
+      description={
+        isProjectScope
+          ? "Default custom agent for new threads in this project."
+          : "Default custom agent for new threads. Projects can override it."
+      }
+      status={
+        unavailable || mixedAgent || agentSource === "project"
+          ? undefined
+          : settings.defaultAgentId === null
+            ? "Automatic"
+            : undefined
+      }
+      resetAction={
+        settings.defaultAgentId !== null ? (
+          <SettingResetButton
+            label="default agent"
+            onClick={() => updateSettings({ defaultAgentId: null })}
+          />
+        ) : null
+      }
+      control={
+        <AgentPicker
+          agents={(agentRoster.data ?? []) as ReadonlyArray<AgentSummary>}
+          selectedAgentId={settings.defaultAgentId}
+          onSelectAgent={(agentId) => updateSettings({ defaultAgentId: agentId ?? null })}
+          disabled={unavailable}
+          triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+        />
+      }
+    />
+  );
+
   const workspaceRow = (
     <SettingsRow
       serverScoped
@@ -270,11 +329,13 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
       {category === "project" ? (
         <>
           {modelRow}
+          {agentRow}
           {workspaceRow}
         </>
       ) : category === "general" ? (
         <>
           {modelRow}
+          {agentRow}
           <SettingsRow
             serverScoped
             settingKeys={["defaultRuntimeMode"]}

@@ -4,9 +4,14 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  AgentId,
   ChatAttachmentId,
   CommandId,
   EventId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -17,9 +22,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import { createPendingAttachmentId, resolveAttachmentPath } from "../attachmentStore.ts";
+import * as AgentService from "../agent/AgentService.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
@@ -27,9 +37,14 @@ import {
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
 
-const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-question-intake-",
-}).pipe(Layer.provideMerge(NodeServices.layer));
+const layerIntakeTest = Layer.mergeAll(
+  ServerConfig.layerTest(process.cwd(), { prefix: "t3-question-intake-" }).pipe(
+    Layer.provideMerge(NodeServices.layer),
+  ),
+  Layer.mock(ProjectService.ProjectService)({
+    getById: () => Effect.succeed(Option.none()),
+  }),
+);
 
 const layerFailingDispatch = (captured: OrchestrationV2ServerCommand[]) =>
   Layer.mock(ThreadManagementService.ThreadManagementService)({
@@ -762,5 +777,91 @@ it.effect("applies the image budget across all questions before dispatch", () =>
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") expect(String(result.cause)).toContain("80 MiB");
     expect(captured).toEqual([]);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("enforces a custom lead allowlist for direct delegated-task commands", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-delegation-policy-",
+    });
+    const filesystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* filesystem.makeDirectory(agentDirectory, { recursive: true });
+    yield* filesystem.writeFileString(
+      path.join(agentDirectory, "lead.md"),
+      "---\nid: lead\nname: Lead\ndescription: Coordinates work.\ncanDelegateTo: [reviewer]\n---\nCoordinate the task.",
+    );
+    yield* filesystem.writeFileString(
+      path.join(agentDirectory, "reviewer.md"),
+      "---\nid: reviewer\nname: Reviewer\ndescription: Reviews work.\n---\nReview the task.",
+    );
+    yield* filesystem.writeFileString(
+      path.join(agentDirectory, "researcher.md"),
+      "---\nid: researcher\nname: Researcher\ndescription: Researches work.\n---\nResearch the task.",
+    );
+    const definitions = yield* AgentService.listAgentDefinitions(workspaceRoot);
+    expect(definitions.map((agent) => agent.id)).toEqual([
+      AgentId.make("lead"),
+      AgentId.make("researcher"),
+      AgentId.make("reviewer"),
+    ]);
+    expect(definitions[0]?.canDelegateTo).toEqual([AgentId.make("reviewer")]);
+
+    const parentThreadId = ThreadId.make("thread:delegation-policy");
+    const projectId = ProjectId.make("project:delegation-policy");
+    const leadAgentId = AgentId.make("lead");
+    const dispatched: OrchestrationV2ServerCommand[] = [];
+    const layer = Layer.mergeAll(
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadShell: () =>
+          Effect.succeed({
+            id: parentThreadId,
+            projectId,
+            agentId: leadAgentId,
+          } as never),
+        dispatch: (command) => {
+          dispatched.push(command);
+          return Effect.succeed({ sequence: 1, storedEvents: [] });
+        },
+      }),
+      Layer.mock(ProjectService.ProjectService)({
+        getById: () => Effect.succeed(Option.some({ id: projectId, workspaceRoot } as never)),
+      }),
+    );
+    const parent = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.flatMap((threads) => threads.getThreadShell(parentThreadId)),
+      Effect.provide(layer),
+    );
+    expect(parent?.agentId).toBe(leadAgentId);
+
+    for (const targetAgentId of [undefined, AgentId.make("researcher")] as const) {
+      const result = yield* Effect.exit(
+        dispatchCommand({
+          type: "delegated_task.request",
+          commandId: CommandId.make(
+            targetAgentId === undefined ? "delegate-unnamed" : "delegate-unauthorized",
+          ),
+          parentThreadId,
+          parentRunId: RunId.make("run:delegation-policy"),
+          parentNodeId: NodeId.make("node:delegation-policy"),
+          task: "Review the change",
+          ...(targetAgentId === undefined ? {} : { targetAgentId }),
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdBy: "agent",
+          creationSource: "mcp",
+        }).pipe(Effect.provide(layer)),
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(String(result.cause)).toContain("canDelegateTo");
+      }
+    }
+
+    expect(dispatched).toEqual([]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

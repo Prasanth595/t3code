@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 
 import {
+  OrchestratorMcpCapabilitiesResult,
   OrchestratorMcpCreateThreadsInput,
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
@@ -12,6 +13,7 @@ import {
   OrchestratorMcpThreadWaitInput,
 } from "./orchestratorMcp.ts";
 
+const decodeCapabilitiesResult = Schema.decodeUnknownSync(OrchestratorMcpCapabilitiesResult);
 const decodeCreateThreadsInput = Schema.decodeUnknownSync(OrchestratorMcpCreateThreadsInput);
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
@@ -124,6 +126,53 @@ describe("orchestrator MCP contracts", () => {
     expect(request.threads).toHaveLength(2);
     expect(request.threads[0]?.prompt).toBeUndefined();
     expect(request.threads[1]?.target?.driverKind).toBe("claudeAgent");
+  });
+
+  it("accepts a delegation target named from the agent roster", () => {
+    const request = decodeDelegateTaskInput({
+      task: "Review the diff for correctness bugs.",
+      targetAgentId: "reviewer",
+    });
+
+    expect(request.targetAgentId).toBe("reviewer");
+    expect(() =>
+      decodeDelegateTaskInput({ task: "Review the change.", targetAgentId: "../outside" }),
+    ).toThrow();
+  });
+
+  it("decodes capabilities with and without the agent roster", () => {
+    const capabilities = {
+      parentThreadId: null,
+      inheritedProviderInstanceId: null,
+      inheritedModel: null,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      providers: [],
+      features: {
+        appOwnedSubagents: true,
+        asyncPolling: true,
+        cancellation: true,
+        batchThreadCreation: true,
+        threadManagement: true,
+        incrementalThreadRead: true,
+        scheduledTasks: true,
+        maxBatchThreads: 20,
+      },
+    };
+    const withRoster = decodeCapabilitiesResult({
+      ...capabilities,
+      agents: [
+        {
+          id: "reviewer",
+          name: "Reviewer",
+          description: "Reviews a diff for correctness bugs.",
+          tier: "economy",
+        },
+      ],
+    });
+
+    expect(decodeCapabilitiesResult(capabilities).agents).toBeUndefined();
+    expect(withRoster.agents?.[0]?.id).toBe("reviewer");
   });
 
   it("decodes project-scoped thread orchestration requests", () => {

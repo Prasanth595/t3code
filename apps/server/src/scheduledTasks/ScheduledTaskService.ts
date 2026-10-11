@@ -800,6 +800,7 @@ export const layer = Layer.effect(
                   projectId: active.projectId,
                   title: active.title,
                   modelSelection: active.modelSelection,
+                  modelSelectionExplicit: true,
                   runtimeMode: active.runtimeMode,
                   interactionMode: active.interactionMode,
                   workspaceStrategy: active.workspaceStrategy,

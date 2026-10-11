@@ -65,12 +65,19 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import {
+  listAgentDefinitions,
+  resolveModelForAgent,
+  summarizeAgentDefinition,
+} from "../agent/AgentService.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import {
   subagentResultForRun,
@@ -677,6 +684,39 @@ function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
     : `Act as the ${input.role} sub-agent for this task.\n\n${input.task}`;
 }
 
+/** Restrict explicit targets, otherwise keep all providers for tier fallback. */
+function providersForTarget(
+  providers: ReadonlyArray<ServerProvider>,
+  target: OrchestratorMcpTarget | undefined,
+): ReadonlyArray<ServerProvider> {
+  return providers.filter(
+    (provider) =>
+      (target?.providerInstanceId === undefined ||
+        provider.instanceId === target.providerInstanceId) &&
+      (target?.driverKind === undefined || provider.driver === target.driverKind),
+  );
+}
+
+/**
+ * The caller's target with an agent's model filled in. A provider or options
+ * the caller named still win over the agent's.
+ */
+function targetWithAgentModel(
+  target: OrchestratorMcpTarget | undefined,
+  selection: ModelSelection | undefined,
+): OrchestratorMcpTarget | undefined {
+  if (selection === undefined) {
+    return target;
+  }
+  const options = target?.options ?? selection.options;
+  return {
+    ...target,
+    providerInstanceId: target?.providerInstanceId ?? selection.instanceId,
+    model: selection.model,
+    ...(options === undefined ? {} : { options }),
+  };
+}
+
 function threadSettlement(
   thread: Pick<OrchestrationV2ThreadShell, "settledOverride" | "settledAt">,
 ): Pick<OrchestratorMcpThreadListItem, "settled" | "settledAt"> {
@@ -932,6 +972,8 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1024,6 +1066,31 @@ const make = Effect.gen(function* () {
       const parent = yield* loadProjection(threadScope.thread.threadId);
       return { scope: threadScope, parent } as const;
     });
+
+  /** Agent discovery reads files with the platform services this layer was built with. */
+  const provideAgentFiles = <A, E>(
+    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+  ) =>
+    effect.pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
+
+  /** Agent definitions are project configuration and survive thread worktree creation. */
+  const agentProjectRoot = Effect.fn("agentProjectRoot")(function* (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+  ) {
+    if (parent === undefined) {
+      return null;
+    }
+    const project = yield* requireProject(parent.thread.projectId);
+    return project.workspaceRoot;
+  });
+
+  /** The agent a delegation names. An unknown id fails before any child task is created. */
+  const loadAgentDefinitions = (
+    parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
+  ) => provideAgentFiles(agentProjectRoot(parent).pipe(Effect.flatMap(listAgentDefinitions)));
 
   /** A target project: the one passed, else the calling thread's. */
   const resolveProjectTarget = (
@@ -1858,6 +1925,19 @@ const make = Effect.gen(function* () {
           Effect.map((settings) => settings.providerModelPreferences ?? {}),
           Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
         );
+        const definitions = yield* loadAgentDefinitions(parent);
+        const leadAgent =
+          parent?.thread.agentId === undefined
+            ? undefined
+            : definitions.find((agent) => agent.id === parent.thread.agentId);
+        const allowedAgentIds = new Set(leadAgent?.canDelegateTo ?? []);
+        const agents = definitions
+          .filter((agent) =>
+            parent?.thread.agentId === undefined
+              ? true
+              : leadAgent !== undefined && allowedAgentIds.has(agent.id),
+          )
+          .map(summarizeAgentDefinition);
         return {
           parentThreadId: parent?.thread.id ?? null,
           inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
@@ -1896,6 +1976,7 @@ const make = Effect.gen(function* () {
               constraints: [...constraints],
             };
           }),
+          agents,
           features: {
             appOwnedSubagents: true,
             asyncPolling: true,
@@ -1924,10 +2005,58 @@ const make = Effect.gen(function* () {
             "Delegated tasks require an active run owned by this MCP provider session.",
           );
         }
+        const definitions = yield* loadAgentDefinitions(parent);
+        const leadAgent = parent.thread.agentId
+          ? definitions.find((candidate) => candidate.id === parent.thread.agentId)
+          : undefined;
+        if (parent.thread.agentId !== undefined && leadAgent === undefined) {
+          return yield* failure(
+            "invalid_request",
+            `Custom lead agent ${parent.thread.agentId} is no longer available; delegation is disabled.`,
+          );
+        }
+        if (
+          leadAgent !== undefined &&
+          (input.targetAgentId === undefined ||
+            !leadAgent.canDelegateTo.includes(input.targetAgentId))
+        ) {
+          return yield* failure(
+            "invalid_request",
+            `Custom lead agent ${leadAgent.id} may delegate only to agents listed in its canDelegateTo policy.`,
+          );
+        }
+        const agent =
+          input.targetAgentId === undefined
+            ? undefined
+            : definitions.find((candidate) => candidate.id === input.targetAgentId);
+        if (input.targetAgentId !== undefined && agent === undefined) {
+          return yield* failure(
+            "invalid_request",
+            `Agent ${input.targetAgentId} was not found in .agents, .github/agents, or AGENTS.md.`,
+          );
+        }
         const providers = yield* loadProviders;
+        const agentSelection =
+          agent === undefined || input.target?.model !== undefined
+            ? undefined
+            : resolveModelForAgent(
+                agent,
+                providersForTarget(providers, input.target),
+                parent.thread.modelSelection.instanceId,
+              );
+        if (
+          agent?.model !== undefined &&
+          input.target?.model === undefined &&
+          agentSelection === undefined
+        ) {
+          return yield* failure(
+            "invalid_request",
+            `Custom agent ${agent.id} names a fixed model that is unavailable on the selected target.`,
+          );
+        }
         const target = yield* resolveTargetRechecking({
           parent,
-          target: input.target,
+          target: targetWithAgentModel(input.target, agentSelection),
           providers,
         });
         const runtimeMode = yield* resolveRuntimeMode(
@@ -1955,6 +2084,7 @@ const make = Effect.gen(function* () {
             parentRunId: parentRun.id,
             parentNodeId: parentRun.rootNodeId,
             task: taskPrompt(input),
+            ...(input.targetAgentId === undefined ? {} : { targetAgentId: input.targetAgentId }),
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
             runtimeMode,
@@ -2608,4 +2738,6 @@ export const layer: Layer.Layer<
   | ProjectService.ProjectService
   | SecretRequests.SecretRequests
   | ServerSettings.ServerSettingsService
+  | FileSystem.FileSystem
+  | Path.Path
 > = Layer.effect(OrchestratorMcpService, make);

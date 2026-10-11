@@ -38,6 +38,8 @@ import type {
   ServerProvider,
   ThreadId,
   SnapShotSource,
+  AgentId,
+  AgentSummary,
 } from "@t3tools/contracts";
 import {
   AuthOrchestrationOperateScope,
@@ -261,6 +263,7 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { AgentPicker } from "./AgentPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -1495,6 +1498,7 @@ export interface ChatComposerHandle {
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
+    selectedModelSelectionExplicit: boolean;
     multipleModelSelections: ReadonlyArray<ModelSelection> | null;
     providerAvailable: boolean;
     selectedProvider: ProviderDriverKind;
@@ -1657,6 +1661,13 @@ export interface ChatComposerProps {
   }> | null;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
 
+  // Custom agents
+  agents?: ReadonlyArray<AgentSummary>;
+  selectedAgentId?: AgentId | null | undefined;
+  defaultAgentId?: AgentId | null;
+  onSelectAgent?: (agentId: AgentId | null | undefined) => void;
+  agentPickerDisabled?: boolean;
+
   // Callbacks
   onCompactContext: () => void;
   onSend: (
@@ -1807,6 +1818,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFileOpen,
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
+    agents,
+    selectedAgentId,
+    defaultAgentId,
+    onSelectAgent,
+    agentPickerDisabled = false,
   } = props;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const composerDraftTargetKey = composerTargetKey(composerDraftTarget);
@@ -5464,6 +5480,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     size: composerControlsCollapsed ? "xs" : "sm",
     hidden: composerControlsHidden || restingHiddenBlockCount > 1,
   });
+  const restingAgentPicker =
+    onSelectAgent && ((agents && agents.length > 0) || defaultAgentId || selectedAgentId) ? (
+      <>
+        <ComposerControlSeparator size={composerControlsCollapsed ? "xs" : "sm"} />
+        <AgentPicker
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          defaultAgentId={defaultAgentId}
+          onSelectAgent={onSelectAgent}
+          allowNone={!agentPickerDisabled}
+          size={composerControlsCollapsed ? "xs" : "sm"}
+          disabled={isSendBusy || agentPickerDisabled}
+          hidden={composerControlsHidden || restingHiddenBlockCount > 2}
+        />
+      </>
+    ) : null;
   const restingBlockDefs = [
     ...(providerTraitsPicker
       ? [
@@ -5475,6 +5507,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {restingProviderTraitsPicker}
               </>
             ),
+          },
+        ]
+      : []),
+    ...(restingAgentPicker
+      ? [
+          {
+            id: "agent",
+            content: restingAgentPicker,
           },
         ]
       : []),
@@ -6571,6 +6611,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
+        selectedModelSelectionExplicit: composerDraft.modelSelectionExplicit === true,
         multipleModelSelections:
           routeKind === "draft" && multipleModelSelections !== null
             ? multipleModelSelections.map((selection) =>

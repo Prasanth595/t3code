@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  AgentId,
   type ModelSelection,
   NodeId,
   RunId,
@@ -115,6 +116,44 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
     type: "node",
     nodeId: parentNodeId,
   });
+});
+
+it("does not inherit a custom agent for a provider-native child", () => {
+  const parentThread = { ...makeParentThread(), agentId: AgentId.make("lead") };
+  const child = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node-native-agent-child"),
+    activeProviderThreadId: null,
+    providerInstanceId: childProviderInstanceId,
+    modelSelection: childModelSelection,
+    title: "Native child",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+  });
+
+  assert.isUndefined(child.agentId);
+});
+
+it("applies a separately selected named agent to an app-owned child", () => {
+  const parentThread = { ...makeParentThread(), agentId: AgentId.make("lead") };
+  const targetAgentId = AgentId.make("reviewer");
+  const child = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node-named-agent-child"),
+    activeProviderThreadId: null,
+    providerInstanceId: childProviderInstanceId,
+    modelSelection: childModelSelection,
+    title: "Named child",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+    targetAgentId,
+  });
+
+  assert.equal(child.agentId, targetAgentId);
 });
 
 it("attributes native subagent prompts to their parent thread", () => {

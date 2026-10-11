@@ -106,6 +106,10 @@ access. Source Control contains automatic pull, the default pull request merge m
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 
+In **General → Agent**, choose the custom agent for new threads on an environment or override it
+for a project. Project values take precedence over the environment default. Agent files and
+per-thread selection are described in [Messages and context](./composer.md#custom-agents).
+
 The Project category, shown while a project is selected, holds the project's name, icon, actions,
 checkouts and removal. Actions belong to a project: editing them creates the project's own list
 on each selected environment, and reset returns to the environment's shared list. A project's

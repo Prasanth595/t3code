@@ -141,6 +141,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           projectId,
           title: input.title,
           modelSelection,
+          modelSelectionExplicit: true,
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },

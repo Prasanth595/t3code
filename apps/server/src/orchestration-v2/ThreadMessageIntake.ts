@@ -4,12 +4,15 @@ import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts"
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as AgentService from "../agent/AgentService.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as Option from "effect/Option";
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
@@ -50,9 +53,64 @@ const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")
   );
 });
 
+const validateDelegatedTaskAgent = Effect.fn("ThreadMessageIntake.validateDelegatedTaskAgent")(
+  function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
+  ) {
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const parent = yield* threads.getThreadShell(command.parentThreadId);
+    if (parent === null) return;
+
+    const projects = yield* ProjectService.ProjectService;
+    const project = yield* projects.getById(parent.projectId);
+    const definitions = yield* AgentService.listAgentDefinitions(
+      Option.getOrUndefined(project)?.workspaceRoot ?? null,
+    );
+    const leadAgent =
+      parent.agentId === undefined
+        ? undefined
+        : definitions.find((candidate) => candidate.id === parent.agentId);
+    const targetAgent =
+      command.targetAgentId === undefined
+        ? undefined
+        : definitions.find((candidate) => candidate.id === command.targetAgentId);
+    const reject = (cause: string) =>
+      Effect.fail(
+        new Orchestrator.OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        }),
+      );
+
+    if (parent.agentId !== undefined && leadAgent === undefined) {
+      return yield* reject(
+        `Custom lead agent ${parent.agentId} is no longer available; delegation is disabled.`,
+      );
+    }
+    if (
+      leadAgent !== undefined &&
+      (command.targetAgentId === undefined ||
+        !leadAgent.canDelegateTo.includes(command.targetAgentId))
+    ) {
+      return yield* reject(
+        `Custom lead agent ${leadAgent.id} may delegate only to agents listed in its canDelegateTo policy.`,
+      );
+    }
+    if (command.targetAgentId !== undefined && targetAgent === undefined) {
+      return yield* reject(
+        `Agent ${command.targetAgentId} was not found in .agents, .github/agents, or AGENTS.md.`,
+      );
+    }
+  },
+);
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   command: OrchestrationV2Command,
 ) {
+  if (command.type === "delegated_task.request") {
+    yield* validateDelegatedTaskAgent(command);
+  }
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;

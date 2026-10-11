@@ -4,6 +4,7 @@ import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
+  type AgentId,
   type ChatAttachment,
   type MessageId,
   type ModelSelection,
@@ -17,14 +18,17 @@ import {
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type PlanId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -48,6 +52,7 @@ import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import { getAgentDefinition, resolveModelForAgent } from "../agent/AgentService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
   | { readonly type: "root"; readonly branch?: string | undefined }
@@ -70,6 +75,7 @@ export interface ThreadLaunchInitialMessage {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+  readonly sourcePlanRef?: { readonly threadId: ThreadId; readonly planId: PlanId } | undefined;
 }
 
 export interface ThreadLaunchInput {
@@ -80,6 +86,9 @@ export interface ThreadLaunchInput {
   readonly title: string;
   readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
+  /** Omitted inherits the project default; null explicitly opts out. */
+  readonly agentId?: AgentId | null;
+  readonly modelSelectionExplicit?: boolean;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -203,6 +212,8 @@ const make = Effect.gen(function* () {
   const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
@@ -762,20 +773,88 @@ const make = Effect.gen(function* () {
           "update-thread",
         )("Reusing an existing thread requires a thread id.");
       }
-
       const launchReceipt = yield* readReceipt(input, input.commandId);
+      const acceptedCreateReceipt =
+        Option.isSome(launchReceipt) &&
+        launchReceipt.value.status === "accepted" &&
+        launchReceipt.value.commandType === "thread.create"
+          ? launchReceipt.value
+          : undefined;
+
+      // Imported native sessions retain their original provider persona. A
+      // project default applies to new T3-created threads, not imported ones.
+      let agentId =
+        input.importedNativeThread === undefined ? (input.agentId ?? undefined) : undefined;
+      let modelSelection = input.modelSelection;
+      if (input.reuseExistingThread !== true && Option.isNone(launchReceipt)) {
+        if (input.agentId === undefined && input.importedNativeThread === undefined) {
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError(mapError(input, "resolve-project")),
+          );
+          agentId =
+            resolveProjectSettings(settings, input.projectId).settings.defaultAgentId ?? undefined;
+        }
+        if (agentId !== undefined) {
+          const agentOption = yield* getAgentDefinition(agentId, project.workspaceRoot).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+          );
+          if (Option.isNone(agentOption)) {
+            if (input.agentId !== undefined) {
+              return yield* mapError(
+                input,
+                "resolve-project",
+              )(`Custom agent '${agentId}' was not found in the project workspace.`);
+            }
+            yield* Effect.logWarning(
+              "default custom agent was not found in the project workspace",
+              {
+                agentId,
+                projectId: input.projectId,
+              },
+            );
+            agentId = undefined;
+          } else {
+            const providers = yield* providerRegistry.getProviders;
+            const agent = agentOption.value;
+            const agentModelSelection = resolveModelForAgent(
+              agent,
+              providers,
+              input.modelSelection.instanceId,
+            );
+            if (
+              !input.modelSelectionExplicit &&
+              agent.model !== undefined &&
+              (agentModelSelection === undefined ||
+                !providers.some(
+                  (provider) =>
+                    provider.instanceId === agent.model?.instanceId &&
+                    provider.models.some((candidate) => candidate.slug === agent.model?.model),
+                ))
+            ) {
+              return yield* mapError(
+                input,
+                "resolve-project",
+              )(
+                `Custom agent '${agent.id}' names a model that is unavailable on this environment.`,
+              );
+            }
+            // Explicit caller selections win. Otherwise the agent controls the
+            // model only when its configured model or tier maps to an available provider.
+            if (!input.modelSelectionExplicit) {
+              modelSelection = agentModelSelection ?? modelSelection;
+            }
+          }
+        }
+      }
+
       return yield* Effect.gen(function* () {
         // A retried launch has no client-supplied id to replay against, so
         // recover the thread id its accepted create was recorded under before
         // allocating another one; a fresh id would only collide with the
         // recorded receipt.
         const reusableLaunchReceipt =
-          input.threadId === undefined &&
-          Option.isSome(launchReceipt) &&
-          launchReceipt.value.status === "accepted" &&
-          launchReceipt.value.commandType === "thread.create"
-            ? launchReceipt.value
-            : undefined;
+          input.threadId === undefined ? acceptedCreateReceipt : undefined;
         const candidateThreadId =
           input.threadId ??
           reusableLaunchReceipt?.threadId ??
@@ -783,7 +862,7 @@ const make = Effect.gen(function* () {
             .thread({ projectId: input.projectId })
             .pipe(Effect.mapError(mapError(input, "create-thread"))));
 
-        if (reusableLaunchReceipt !== undefined) {
+        if (acceptedCreateReceipt?.threadId === candidateThreadId) {
           const shell = yield* threads
             .getThreadShell(candidateThreadId)
             .pipe(Effect.mapError(mapError(input, "create-thread", candidateThreadId)));
@@ -797,6 +876,9 @@ const make = Effect.gen(function* () {
               candidateThreadId,
             )("Project identity changed.");
           }
+          // Once the create receipt is durable, a retry must dispatch its first
+          // message with the model that was actually saved on the thread.
+          modelSelection = shell.modelSelection;
         }
 
         if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
@@ -838,7 +920,8 @@ const make = Effect.gen(function* () {
                 threadId: candidateThreadId,
                 projectId: input.projectId,
                 title: input.title,
-                modelSelection: input.modelSelection,
+                modelSelection,
+                ...(agentId === undefined ? {} : { agentId }),
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
@@ -891,8 +974,11 @@ const make = Effect.gen(function* () {
                 : { senderThreadId: input.initialMessage.senderThreadId }),
               attachments: input.initialMessage.attachments,
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
+              ...(input.initialMessage.sourcePlanRef === undefined
+                ? {}
+                : { sourcePlanRef: input.initialMessage.sourcePlanRef }),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
-              modelSelection: input.modelSelection,
+              modelSelection,
               dispatchMode: { type: "defer_start", workspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,

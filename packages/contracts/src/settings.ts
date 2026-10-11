@@ -1,3 +1,4 @@
+import { AgentId } from "./agentDefinition.ts";
 import { SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -947,6 +948,7 @@ export type WorktreeCleanup = typeof WorktreeCleanup.Type;
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "worktreeCleanup",
   "defaultModelSelection",
+  "defaultAgentId",
   "defaultRuntimeMode",
   "defaultThreadEnvMode",
   "newWorktreesStartFromOrigin",
@@ -980,6 +982,7 @@ export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTIN
 export const ProjectSettingsOverrides = Schema.Struct({
   worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  defaultAgentId: Schema.optionalKey(Schema.NullOr(AgentId)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
@@ -1020,6 +1023,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
   }[ProjectScopedServerSettingKey]
 >([
   "defaultModelSelection",
+  "defaultAgentId",
   "sourceControlWriterModelSelection",
   "reviewGuideModelSelection",
   "pullRequestMergeMethod",
@@ -1122,6 +1126,8 @@ export const ServerSettings = Schema.Struct({
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /** Default agent for projects that do not override it. Null means none. */
+  defaultAgentId: Schema.NullOr(AgentId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   defaultRuntimeMode: RuntimeMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
@@ -1491,6 +1497,7 @@ export const ServerSettingsPatch = Schema.Struct({
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
+  defaultAgentId: Schema.optionalKey(Schema.NullOr(AgentId)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
    * Per-project entry replacement: each entry replaces that project's whole

@@ -1,6 +1,9 @@
 import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodePath from "@effect/platform-node/NodePath";
 import {
+  AgentId,
   CheckpointScopeId,
   MessageId,
   NodeId,
@@ -12,6 +15,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  ProviderTurnId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
@@ -22,6 +26,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -92,6 +97,7 @@ it("does not commit running state when inherited background routing cannot be re
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        NodePath.layer,
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
@@ -155,6 +161,13 @@ it("does not commit running state when inherited background routing cannot be re
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly agentId?: AgentId;
+  readonly projectWorkspaceRoot?: string;
+  readonly allowStart?: boolean;
+  readonly firstRunOrdinal?: number | null;
+  readonly runOrdinal?: number;
+  readonly threadWorktreePath?: string | null;
+  readonly existingProviderTurn?: boolean;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -187,7 +200,7 @@ function makeLocalCommandHarness(input: {
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
     id: runId,
     threadId,
-    ordinal: 2,
+    ordinal: input.runOrdinal ?? 2,
     providerInstanceId: newInstanceId,
     modelSelection: { instanceId: newInstanceId, model: "gpt-5.4" },
     providerThreadId,
@@ -211,8 +224,8 @@ function makeLocalCommandHarness(input: {
     nativeThreadRef: null,
     nativeConversationHeadRef: null,
     status: "not_loaded",
-    firstRunOrdinal: 2,
-    lastRunOrdinal: 2,
+    firstRunOrdinal: "firstRunOrdinal" in input ? input.firstRunOrdinal : 2,
+    lastRunOrdinal: input.runOrdinal ?? 2,
     handoffIds: [],
     forkedFrom: null,
     createdAt: now,
@@ -237,7 +250,8 @@ function makeLocalCommandHarness(input: {
       id: threadId,
       activeProviderThreadId: providerThreadId,
       branch: null,
-      worktreePath: null,
+      worktreePath: input.threadWorktreePath ?? null,
+      ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
       ...(input.previousNativeSession
@@ -331,7 +345,21 @@ function makeLocalCommandHarness(input: {
       },
     ],
     providerSessions: [],
-    providerTurns: [],
+    providerTurns: input.existingProviderTurn
+      ? [
+          {
+            id: ProviderTurnId.make("previous-provider-turn"),
+            providerThreadId,
+            nodeId: rootNodeId,
+            runAttemptId: null,
+            nativeTurnRef: null,
+            ordinal: 1,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        ]
+      : [],
     contextHandoffs: [],
     contextTransfers: [],
     turnItems: [],
@@ -414,7 +442,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.failReadsAfterRunning === true || input.allowStart === true
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -436,7 +464,7 @@ function makeLocalCommandHarness(input: {
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
+    input.failReadsAfterRunning === true || input.allowStart === true
       ? Effect.void
       : Effect.die("A local command must not start a native turn."),
   );
@@ -483,6 +511,10 @@ function makeLocalCommandHarness(input: {
           return { committed, storedEvents: [] };
         }),
   );
+  const filesystemLayer =
+    input.agentId === undefined
+      ? Layer.merge(NodePath.layer, FileSystem.layerNoop({}))
+      : NodeServices.layer;
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
@@ -491,9 +523,16 @@ function makeLocalCommandHarness(input: {
         }),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        FileSystem.layerNoop({}),
+        filesystemLayer,
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({
+                workspaceRoot: input.projectWorkspaceRoot ?? "/tmp/provider-turn-start-project",
+              } as never),
+            ),
+        }),
         Layer.mock(ProjectionStore.ProjectionStoreV2)({
           getTurnStartContext: () =>
             Effect.succeed({
@@ -552,6 +591,96 @@ function makeLocalCommandHarness(input: {
     }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect("loads custom agent instructions from the project root after worktree setup", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-turn-" });
+    const worktreePath = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-worktree-" });
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "reviewer.md"),
+      "---\nid: reviewer\nname: Reviewer\ndescription: Reviews changes.\n---\n\nCheck edge cases before concluding.",
+    );
+
+    const agentId = AgentId.make("reviewer");
+    const harness = makeLocalCommandHarness({
+      text: "Review this project.",
+      agentId,
+      projectWorkspaceRoot: workspaceRoot,
+      threadWorktreePath: worktreePath,
+      allowStart: true,
+    });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun).toHaveBeenCalledOnce();
+    expect(harness.startRootRun.mock.calls[0]?.[0]?.message.text).toContain(
+      "Check edge cases before concluding.",
+    );
+    expect(harness.startRootRun.mock.calls[0]?.[0]?.message.text).toContain("Review this project.");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+effectIt.effect("retries instructions after setup failed before any provider turn", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-turn-" });
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "reviewer.md"),
+      "---\nid: reviewer\nname: Reviewer\ndescription: Reviews changes.\n---\n\nCheck edge cases before concluding.",
+    );
+
+    const harness = makeLocalCommandHarness({
+      text: "Continue reviewing.",
+      agentId: AgentId.make("reviewer"),
+      projectWorkspaceRoot: workspaceRoot,
+      firstRunOrdinal: 1,
+      runOrdinal: 2,
+      allowStart: true,
+    });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun.mock.calls[0]?.[0]?.message.text).toContain(
+      "Check edge cases before concluding.",
+    );
+    expect(harness.startRootRun.mock.calls[0]?.[0]?.message.text).toContain("Continue reviewing.");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+effectIt.effect("does not repeat instructions on an existing provider thread", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agent-turn-" });
+    const agentDirectory = path.join(workspaceRoot, ".agents");
+    yield* fs.makeDirectory(agentDirectory, { recursive: true });
+    yield* fs.writeFileString(
+      path.join(agentDirectory, "reviewer.md"),
+      "---\nid: reviewer\nname: Reviewer\ndescription: Reviews changes.\n---\n\nCheck edge cases before concluding.",
+    );
+
+    const harness = makeLocalCommandHarness({
+      text: "Continue reviewing.",
+      agentId: AgentId.make("reviewer"),
+      projectWorkspaceRoot: workspaceRoot,
+      firstRunOrdinal: 1,
+      runOrdinal: 2,
+      existingProviderTurn: true,
+      allowStart: true,
+    });
+
+    yield* harness.start;
+
+    expect(harness.startRootRun.mock.calls[0]?.[0]?.message.text).toBe("Continue reviewing.");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>
   Effect.gen(function* () {

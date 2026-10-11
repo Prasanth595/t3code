@@ -58,6 +58,7 @@ import {
   type ChatFileAttachment,
   CommandId,
   DEFAULT_MODEL,
+  type AgentId,
   isProviderNativeSubagentThread,
   type ChatAttachment as ContractChatAttachment,
   EnvironmentAuthorizationError,
@@ -435,6 +436,7 @@ import {
   waitForThreadShell,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
+import { agentRosterQuery } from "../state/agents";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
@@ -1588,6 +1590,10 @@ export default function ChatView(props: ChatViewProps) {
   );
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
+  const [selectedDraftAgentId, setSelectedDraftAgentId] = useState<AgentId | null | undefined>(
+    undefined,
+  );
+  useEffect(() => setSelectedDraftAgentId(undefined), [draftId]);
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
   const routeThreadRef = useMemo(
@@ -2595,6 +2601,18 @@ export default function ChatView(props: ChatViewProps) {
     runProjectCloneAction,
   ]);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
+  const activeProjectDefaultAgentId = activeProjectSettings.settings.defaultAgentId;
+  const agentRoster = useEnvironmentQuery(
+    activeProject
+      ? agentRosterQuery({
+          environmentId: activeProject.environmentId,
+          input: {
+            projectId: activeProject.id,
+            ...(isServerThread && activeThread ? { threadId: activeThread.id } : {}),
+          },
+        })
+      : null,
+  );
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
   }, [activeProjectRef, handleNewThread]);
@@ -8906,6 +8924,7 @@ export default function ChatView(props: ChatViewProps) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      selectedModelSelectionExplicit: ctxSelectedModelSelectionExplicit,
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
@@ -9601,6 +9620,10 @@ export default function ChatView(props: ChatViewProps) {
                       projectId: activeProject.id,
                       title,
                       modelSelection: target.selection,
+                      ...(selectedDraftAgentId === undefined
+                        ? {}
+                        : { agentId: selectedDraftAgentId }),
+                      modelSelectionExplicit: true,
                       runtimeMode,
                       interactionMode: target.interactionMode,
                       branch: activeThreadBranch,
@@ -9941,6 +9964,10 @@ export default function ChatView(props: ChatViewProps) {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
+                      ...(selectedDraftAgentId === undefined
+                        ? {}
+                        : { agentId: selectedDraftAgentId }),
+                      modelSelectionExplicit: ctxSelectedModelSelectionExplicit,
                       runtimeMode,
                       interactionMode: sendInteractionMode,
                       branch: activeThreadBranch,
@@ -10625,47 +10652,43 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
-    const createResult = await createThread({
+    const startResult = await startThreadTurn({
       environmentId,
       input: {
         threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: outgoingImplementationPrompt,
+          attachments: [],
+        },
+        modelSelection: ctxSelectedModelSelection,
+        titleSeed: nextThreadTitle,
         runtimeMode: defaultRuntimeMode,
         interactionMode: "default",
-        branch: activeThreadBranch,
-        worktreePath: activeThread.worktreePath,
+        sourceProposedPlan: {
+          threadId: activeThread.id,
+          planId: activeProposedPlan.id,
+        },
+        bootstrap: {
+          createThread: {
+            projectId: activeProject.id,
+            title: nextThreadTitle,
+            modelSelection: nextThreadModelSelection,
+            agentId: activeThread.agentId ?? null,
+            modelSelectionExplicit: true,
+            runtimeMode: defaultRuntimeMode,
+            interactionMode: "default",
+            branch: activeThreadBranch,
+            worktreePath: activeThread.worktreePath,
+            createdAt,
+          },
+        },
         createdAt,
       },
     });
     let failure: AtomCommandResult<unknown, unknown> | null =
-      createResult._tag === "Failure" ? createResult : null;
-
-    if (failure === null) {
-      const startResult = await startThreadTurn({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: outgoingImplementationPrompt,
-            attachments: [],
-          },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: nextThreadTitle,
-          runtimeMode: defaultRuntimeMode,
-          interactionMode: "default",
-          sourceProposedPlan: {
-            threadId: activeThread.id,
-            planId: activeProposedPlan.id,
-          },
-          createdAt,
-        },
-      });
-      failure = startResult._tag === "Failure" ? startResult : null;
-    }
+      startResult._tag === "Failure" ? startResult : null;
 
     if (failure === null) {
       const startedResult = await settlePromise(() =>
@@ -10722,7 +10745,6 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
-    createThread,
     deleteThread,
     isConnecting,
     isSendBusy,
@@ -11641,6 +11663,15 @@ export default function ChatView(props: ChatViewProps) {
                           {!composerMounted ? null : (
                             <ChatComposer
                               canOperateThread={canOperateThread}
+                              agents={agentRoster.data ?? []}
+                              selectedAgentId={
+                                isServerThread
+                                  ? (activeThreadShell?.agentId ?? null)
+                                  : selectedDraftAgentId
+                              }
+                              defaultAgentId={isServerThread ? null : activeProjectDefaultAgentId}
+                              onSelectAgent={setSelectedDraftAgentId}
+                              agentPickerDisabled={isServerThread}
                               reportedModelSelection={reportedModelSelection}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={

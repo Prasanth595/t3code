@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
+  AgentId,
   CommandId,
   EnvironmentId,
   NodeId,
@@ -17,7 +18,10 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 
 import {
@@ -843,6 +847,8 @@ describe("OrchestratorMcpService provider resolution", () => {
       readonly model: string;
       readonly options?: ReadonlyArray<{ readonly id: string; readonly value: unknown }>;
     } = { instanceId: codexInstanceId, model: "gpt-5.4" },
+    worktreePath?: string | null,
+    agentId?: AgentId,
   ): OrchestrationV2ThreadProjection =>
     ({
       thread: {
@@ -852,8 +858,10 @@ describe("OrchestratorMcpService provider resolution", () => {
         createdBy: "user",
         creationSource: "web",
         modelSelection,
+        ...(agentId === undefined ? {} : { agentId }),
         runtimeMode: "full-access",
         interactionMode: "default",
+        worktreePath,
       },
       runs: [
         {
@@ -868,6 +876,11 @@ describe("OrchestratorMcpService provider resolution", () => {
       contextTransfers: [],
       subagents,
     }) as unknown as OrchestrationV2ThreadProjection;
+
+  const projectServiceLayer = (workspaceRoot = "/t3-mcp-empty-workspace") =>
+    Layer.mock(ProjectService.ProjectService)({
+      getById: () => Effect.succeed(Option.some({ workspaceRoot } as never)),
+    });
 
   const childProjection = {
     thread: { id: childThreadId },
@@ -947,7 +960,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             antigravityInstanceId,
             disabledAntigravityInstanceId,
           ]),
-          Layer.mock(ProjectService.ProjectService)({}),
+          projectServiceLayer(),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
@@ -1054,7 +1067,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           },
         ]),
         adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectServiceLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1140,7 +1153,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             ]),
           }),
           adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({}),
+          projectServiceLayer(),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
@@ -1238,7 +1251,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectServiceLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1287,7 +1300,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           forkShadow,
         ]),
         adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectServiceLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1396,7 +1409,7 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
         adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
+        projectServiceLayer(),
         Layer.mock(SecretRequests.SecretRequests)({}),
       );
 
@@ -1554,7 +1567,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               }),
             ]),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
-            Layer.mock(ProjectService.ProjectService)({}),
+            projectServiceLayer(),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
@@ -1912,4 +1925,273 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
     );
   });
+  const economyReviewerFile = [
+    "---",
+    "id: economy-reviewer",
+    "name: Economy reviewer",
+    "description: Reviews small diffs cheaply.",
+    "tier: economy",
+    "---",
+    "",
+    "Only report concrete defects.",
+  ].join("\n");
+
+  it.effect("delegates to a named agent with its tier model and preserved task", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-agent-project-" });
+      const preparedWorktree = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-mcp-agent-worktree-",
+      });
+      yield* fs.makeDirectory(path.join(projectRoot, ".agents"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(projectRoot, ".agents", "economy-reviewer.agent.md"),
+        economyReviewerFile,
+      );
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Summarize the diff.",
+        title: null,
+        model: "gpt-6-luna",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      let delegated = false;
+      const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(delegated ? [task] : [], undefined, preparedWorktree)
+                : childProjection,
+            ),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  delegated = true;
+                }),
+              ),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-6-luna",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        projectServiceLayer(projectRoot),
+        ServerSettings.layerTest(),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          targetAgentId: AgentId.make("economy-reviewer"),
+          mode: "async",
+          clientRequestId: "delegate-agent-1",
+        });
+        const [command] = yield* Ref.get(dispatched);
+        const request = command as {
+          type: string;
+          task: string;
+          targetAgentId?: AgentId;
+          modelSelection: unknown;
+        };
+        assert.equal(request.type, "delegated_task.request");
+        assert.equal(request.task, "Summarize the diff.");
+        assert.equal(request.targetAgentId, AgentId.make("economy-reviewer"));
+        assert.deepEqual(request.modelSelection, {
+          instanceId: codexInstanceId,
+          model: "gpt-6-luna",
+        });
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("refuses a targetAgentId that no agent definition provides", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const worktree = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-no-agent-" });
+      const dispatched = yield* Ref.make(0);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(parentProjection([], undefined, worktree)),
+          dispatch: () => Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        projectServiceLayer(),
+        ServerSettings.layerTest(),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const error = yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            targetAgentId: AgentId.make("missing-agent"),
+            mode: "async",
+          })
+          .pipe(Effect.flip);
+        assert.equal(error.code, "invalid_request");
+        assert.isTrue(error.message.includes("missing-agent"));
+        assert.equal(yield* Ref.get(dispatched), 0);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("requires a custom lead to name an allowed child agent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const projectRoot = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-mcp-agent-policy-project-",
+      });
+      const preparedWorktree = yield* fs.makeTempDirectoryScoped({
+        prefix: "t3-mcp-agent-policy-worktree-",
+      });
+      const agentDirectory = path.join(projectRoot, ".agents");
+      yield* fs.makeDirectory(agentDirectory, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(agentDirectory, "lead.md"),
+        "---\nid: lead\nname: Lead\ndescription: Delegates reviews.\ncanDelegateTo:\n  - economy-reviewer\n---\n\nDelegate only reviews.",
+      );
+      yield* fs.writeFileString(
+        path.join(agentDirectory, "economy-reviewer.md"),
+        economyReviewerFile,
+      );
+      yield* fs.writeFileString(
+        path.join(agentDirectory, "outsider.md"),
+        "---\nid: outsider\nname: Outsider\ndescription: Not allowed.\n---\n\nDo work.",
+      );
+      const leadAgentId = AgentId.make("lead");
+      const dispatched = yield* Ref.make(0);
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            Effect.succeed(parentProjection([], undefined, preparedWorktree, leadAgentId)),
+          dispatch: () => Ref.update(dispatched, (count) => count + 1).pipe(Effect.as({} as never)),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        projectServiceLayer(projectRoot),
+        ServerSettings.layerTest(),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const unnamed = yield* service
+          .delegateTask(scope, { task: "Review", mode: "async" })
+          .pipe(Effect.flip);
+        assert.equal(unnamed.code, "invalid_request");
+        assert.isTrue(unnamed.message.includes("canDelegateTo"));
+
+        const unauthorized = yield* service
+          .delegateTask(scope, {
+            task: "Review",
+            targetAgentId: AgentId.make("outsider"),
+            mode: "async",
+          })
+          .pipe(Effect.flip);
+        assert.equal(unauthorized.code, "invalid_request");
+        assert.isTrue(unauthorized.message.includes("canDelegateTo"));
+        assert.equal(yield* Ref.get(dispatched), 0);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("advertises a root thread's agents from the project's workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-root-agents-" });
+      yield* fs.makeDirectory(path.join(workspaceRoot, ".github", "agents"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workspaceRoot, ".github", "agents", "economy-reviewer.agent.md"),
+        economyReviewerFile,
+      );
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(parentProjection([], undefined, null)),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () => Effect.succeed(Option.some({ workspaceRoot } as never)),
+        }),
+        ServerSettings.layerTest(),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const capabilities = yield* service.capabilities(scope);
+        assert.deepEqual(capabilities.agents, [
+          {
+            id: AgentId.make("economy-reviewer"),
+            name: "Economy reviewer",
+            description: "Reviews small diffs cheaply.",
+            tier: "economy",
+          },
+        ]);
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 });
