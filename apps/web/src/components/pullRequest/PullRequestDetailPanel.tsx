@@ -1119,10 +1119,11 @@ export function PullRequestDetailPanel({
     projectRef: ReturnType<typeof scopeProjectRef>,
     task: ThreadTask | null,
     opened?: { draftId: DraftId },
+    options?: { environmentSelection: "manual" },
   ): Promise<{ draftId: DraftId } | null> => {
     const session =
       opened ??
-      (await newThread(projectRef).then(
+      (await newThread(projectRef, options).then(
         (result) => result,
         () => null,
       ));
@@ -1153,7 +1154,13 @@ export function PullRequestDetailPanel({
     }
     setHandoff(kind);
     const projectRef = scopeProjectRef(actingEnvironmentId, acting?.projectId ?? detail.projectId);
-    const opened = await openThreadWithTask(projectRef, task);
+    const pickedEnvironment = acting !== null && actingScope?.pullRequestKey === pullRequestKey;
+    const opened = await openThreadWithTask(
+      projectRef,
+      task,
+      undefined,
+      pickedEnvironment ? { environmentSelection: "manual" } : undefined,
+    );
     setHandoff(null);
     if (opened === null) {
       toastManager.add({

@@ -300,7 +300,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                         ? "Mixed"
                         : settings.defaultEnvironmentId === null
                           ? "Automatic"
-                          : (environments.find(
+                          : (projectEnvironments.find(
                               (entry) => entry.environmentId === settings.defaultEnvironmentId,
                             )?.label ?? "Unavailable")}
                     </SelectValue>
