@@ -2035,8 +2035,8 @@ const make = Effect.gen(function* () {
             `Agent ${input.targetAgentId} was not found in .agents, .github/agents, or AGENTS.md.`,
           );
         }
-        const providers = yield* loadProviders;
-        const agentSelection =
+        let providers = yield* loadProviders;
+        let agentSelection =
           agent === undefined || input.target?.model !== undefined
             ? undefined
             : resolveModelForAgent(
@@ -2044,6 +2044,18 @@ const make = Effect.gen(function* () {
                 providersForTarget(providers, input.target),
                 parent.thread.modelSelection.instanceId,
               );
+        if (
+          agent?.model !== undefined &&
+          input.target?.model === undefined &&
+          agentSelection === undefined
+        ) {
+          providers = yield* providerRegistry.refreshInstance(agent.model.instanceId);
+          agentSelection = resolveModelForAgent(
+            agent,
+            providersForTarget(providers, input.target),
+            parent.thread.modelSelection.instanceId,
+          );
+        }
         if (
           agent?.model !== undefined &&
           input.target?.model === undefined &&

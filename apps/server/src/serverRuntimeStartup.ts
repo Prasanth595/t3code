@@ -285,17 +285,15 @@ const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
     if (existingThread === undefined) {
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const settings = yield* serverSettings.getSettings;
+      const projectSettings = resolveProjectSettings(settings, project.id, project).settings;
       const launched = yield* threadLaunch.launch({
         commandId: CommandId.make(yield* randomUUID),
         projectId: project.id,
         title: "New thread",
-        modelSelection:
-          resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection ??
-          threadModelSelection,
-        modelSelectionExplicit: true,
+        modelSelection: projectSettings.defaultModelSelection ?? threadModelSelection,
+        modelSelectionExplicit: projectSettings.defaultModelSelection !== null,
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-        runtimeMode: resolveProjectSettings(settings, project.id, project).settings
-          .defaultRuntimeMode,
+        runtimeMode: projectSettings.defaultRuntimeMode,
         workspaceStrategy: { type: "root" },
         createdBy: "system",
         creationSource: "server",

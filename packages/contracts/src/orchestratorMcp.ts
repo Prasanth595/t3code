@@ -192,7 +192,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
       "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
-  runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
+  runtimeMode: Schema.optional(
+    OrchestratorMcpRuntimeMode.annotate({
+      description:
+        "Inherits parent mode by default. When orchestrator_capabilities lists runtime modes for the target provider, an explicit non-inherit runtimeMode must be one of those modes; an inherited mode uses the broadest listed mode that does not exceed the parent mode, falling back to approval-required if no such mode qualifies.",
+    }),
+  ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;

@@ -1,5 +1,10 @@
+import { useMemo } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type AgentId,
   type AgentSummary,
   type ModelSelection,
   type ProviderInstanceId,
@@ -151,6 +156,57 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     updateSettings({ defaultModelSelection: value });
   };
 
+  const targetRostersAtom = useMemo(
+    () =>
+      Atom.make((get) =>
+        targets.map((candidate) => {
+          const candidateProjectId =
+            candidate.projectId ??
+            projects.find((project) => project.environmentId === candidate.environmentId)?.id ??
+            null;
+          if (!candidateProjectId) {
+            return {
+              candidate,
+              agents: [] as ReadonlyArray<AgentSummary>,
+            };
+          }
+          const queryAtom = agentRosterQuery({
+            environmentId: candidate.environmentId,
+            input: { projectId: candidateProjectId },
+          });
+          const result = get(queryAtom);
+          const agents = Option.getOrElse(
+            AsyncResult.value(result),
+            () => [] as readonly AgentSummary[],
+          );
+          return {
+            candidate,
+            agents,
+          };
+        }),
+      ),
+    [targets, projects],
+  );
+  const targetRosters = useAtomValue(targetRostersAtom);
+
+  function agentDisabledReason(agentId: AgentId): string | null {
+    for (const targetRoster of targetRosters) {
+      if (!targetRoster.agents.some((agent) => agent.id === agentId)) {
+        return `This agent is unavailable on ${targetRoster.candidate.label ?? "a selected target"}. Select that target to choose its agent separately.`;
+      }
+    }
+    return null;
+  }
+
+  const setAgent = (value: AgentId | null) => {
+    const reason = value ? agentDisabledReason(value) : null;
+    if (reason) {
+      toastManager.add({ type: "error", title: "Default agent not saved", description: reason });
+      return;
+    }
+    updateSettings({ defaultAgentId: value });
+  };
+
   const modelRow = (
     <SettingsRow
       serverScoped
@@ -238,22 +294,30 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         unavailable || mixedAgent || agentSource === "project"
           ? undefined
           : settings.defaultAgentId === null
-            ? "Automatic"
+            ? isProjectScope
+              ? "No custom agent"
+              : "Automatic"
             : undefined
       }
       resetAction={
         settings.defaultAgentId !== null ? (
-          <SettingResetButton
-            label="default agent"
-            onClick={() => updateSettings({ defaultAgentId: null })}
-          />
+          <SettingResetButton label="default agent" onClick={() => setAgent(null)} />
         ) : null
       }
       control={
         <AgentPicker
           agents={(agentRoster.data ?? []) as ReadonlyArray<AgentSummary>}
           selectedAgentId={settings.defaultAgentId}
-          onSelectAgent={(agentId) => updateSettings({ defaultAgentId: agentId ?? null })}
+          onSelectAgent={(agentId) => setAgent(agentId ?? null)}
+          allowNone
+          allowDefault={false}
+          noneLabel={isProjectScope ? "No custom agent" : "Automatic"}
+          noneDescription={
+            isProjectScope
+              ? "New threads in this project do not use a custom agent by default."
+              : "New threads do not use a custom agent by default."
+          }
+          getAgentDisabledReason={agentDisabledReason}
           disabled={unavailable}
           triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
         />

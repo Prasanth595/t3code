@@ -263,7 +263,7 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { AgentPicker } from "./AgentPicker";
+import { AgentPicker, AgentPickerMenuContent } from "./AgentPicker";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -5475,13 +5475,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const iconOnlyBlockCount = composerControlsCollapsed
     ? restingControlsIconOnlyBlockCount
     : expandedControlsLayout.iconOnlyBlockCount;
+  const hasAgentPicker = Boolean(
+    onSelectAgent && ((agents && agents.length > 0) || defaultAgentId || selectedAgentId),
+  );
+  const restingBlockIds: Array<"traits" | "agent" | "mode"> = [
+    ...(providerTraitsPicker ? (["traits"] as const) : []),
+    ...(hasAgentPicker ? (["agent"] as const) : []),
+    "mode",
+  ];
+  const hiddenRestingBlockIds = restingBlockIds.slice(
+    restingBlockIds.length - restingHiddenBlockCount,
+  );
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: composerControlsHidden || hiddenRestingBlockIds.includes("traits"),
   });
   const restingAgentPicker =
-    onSelectAgent && ((agents && agents.length > 0) || defaultAgentId || selectedAgentId) ? (
+    hasAgentPicker && onSelectAgent ? (
       <>
         <ComposerControlSeparator size={composerControlsCollapsed ? "xs" : "sm"} />
         <AgentPicker
@@ -5492,7 +5503,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           allowNone={!agentPickerDisabled}
           size={composerControlsCollapsed ? "xs" : "sm"}
           disabled={isSendBusy || agentPickerDisabled}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 2}
+          hidden={composerControlsHidden || hiddenRestingBlockIds.includes("agent")}
         />
       </>
     ) : null;
@@ -5527,16 +5538,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           runtimeMode={compatibleRuntimeMode}
           runtimeModeOptions={compatibleRuntimeModeOptions}
           size={composerControlsCollapsed ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          hidden={composerControlsHidden || hiddenRestingBlockIds.includes("mode")}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
     },
   ];
-  const hiddenRestingBlockIds = restingBlockDefs
-    .slice(restingBlockDefs.length - restingHiddenBlockCount)
-    .map((def) => def.id);
   const composerControls = showProviderUnavailable ? (
     <ComposerControl
       type="button"
@@ -5694,6 +5702,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             showInteractionModeToggle={planModeUiEnabled && hiddenRestingBlockIds.includes("mode")}
             traitsMenuContent={
               hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+            }
+            agentMenuContent={
+              hiddenRestingBlockIds.includes("agent") && onSelectAgent ? (
+                <AgentPickerMenuContent
+                  agents={agents}
+                  selectedAgentId={selectedAgentId}
+                  defaultAgentId={defaultAgentId}
+                  onSelectAgent={onSelectAgent}
+                  allowNone={!agentPickerDisabled}
+                />
+              ) : undefined
             }
             onToggleInteractionMode={toggleInteractionMode}
             onRuntimeModeChange={handleRuntimeModeChange}

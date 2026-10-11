@@ -130,13 +130,75 @@ it("distinguishes inheriting the project default from explicitly choosing no age
 
   expect(label()).toBe("Code Reviewer (Default)");
   act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
-  choose("none");
+  choose("control:none");
   expect(label()).toBe("No custom agent");
   act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
-  expect(renderer.root.findByProps({ "data-value": "none" }).props["aria-checked"]).toBe(true);
+  expect(renderer.root.findByProps({ "data-value": "control:none" }).props["aria-checked"]).toBe(
+    true,
+  );
 
-  choose("default");
+  choose("control:default");
   expect(label()).toBe("Code Reviewer (Default)");
   act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
-  expect(renderer.root.findByProps({ "data-value": "default" }).props["aria-checked"]).toBe(true);
+  expect(renderer.root.findByProps({ "data-value": "control:default" }).props["aria-checked"]).toBe(
+    true,
+  );
+});
+
+it("does not collide custom agents whose id is 'default' or 'none' with control options", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const collisionAgents: ReadonlyArray<AgentSummary> = [
+    {
+      id: AgentId.make("default"),
+      name: "Default Named Agent",
+      description: "Default description",
+    },
+    {
+      id: AgentId.make("none"),
+      name: "None Named Agent",
+      description: "None description",
+    },
+  ];
+
+  function CollisionHarness() {
+    const [selectedAgentId, setSelectedAgentId] = useState<AgentId | null | undefined>(undefined);
+    return (
+      <AgentPicker
+        agents={collisionAgents}
+        selectedAgentId={selectedAgentId}
+        onSelectAgent={setSelectedAgentId}
+        allowNone
+      />
+    );
+  }
+
+  act(() => {
+    renderer = create(<CollisionHarness />);
+  });
+  const label = () =>
+    renderer.root.findByProps({ "data-composer-control-label": true }).children.join("");
+  const choose = (value: string) => {
+    const item = renderer.root.findByProps({ "data-value": value });
+    act(() => item.props.onClick());
+  };
+
+  // Select agent with id "default"
+  act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
+  choose("agent:default");
+  expect(label()).toBe("Default Named Agent");
+
+  // Select agent with id "none"
+  act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
+  choose("agent:none");
+  expect(label()).toBe("None Named Agent");
+
+  // Select control:none
+  act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
+  choose("control:none");
+  expect(label()).toBe("No custom agent");
+
+  // Select control:default
+  act(() => renderer.root.findByProps({ "aria-label": "Select custom agent" }).props.onClick());
+  choose("control:default");
+  expect(label()).toBe("Agent");
 });

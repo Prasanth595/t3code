@@ -22,6 +22,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   }>;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
+  agentMenuContent?: ReactNode;
   size?: "sm" | "xs";
   /**
    * The resting strip keeps this menu mounted out of flow while every block
@@ -56,6 +57,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}
+            <MenuDivider />
+          </>
+        ) : null}
+        {props.agentMenuContent ? (
+          <>
+            {props.agentMenuContent}
             <MenuDivider />
           </>
         ) : null}

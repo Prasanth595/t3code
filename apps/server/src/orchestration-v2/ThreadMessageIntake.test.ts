@@ -865,3 +865,49 @@ it.effect("enforces a custom lead allowlist for direct delegated-task commands",
     expect(dispatched).toEqual([]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );
+
+it.effect("skips agent delegation validation if command receipt was already accepted", () =>
+  Effect.gen(function* () {
+    const parentThreadId = ThreadId.make("thread:delegation-replay");
+    const commandId = CommandId.make("delegate-replay");
+    const dispatched: OrchestrationV2ServerCommand[] = [];
+    const layer = Layer.mergeAll(
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getCommandReceipt: () =>
+          Effect.succeed({
+            commandId,
+            threadId: parentThreadId,
+            commandType: "delegated_task.request",
+            acceptedAt: NOW,
+            resultSequence: 1,
+            status: "accepted",
+            error: null,
+          }),
+        dispatch: (command) => {
+          dispatched.push(command);
+          return Effect.succeed({ sequence: 1, storedEvents: [] });
+        },
+      }),
+    );
+
+    const result = yield* Effect.exit(
+      dispatchCommand({
+        type: "delegated_task.request",
+        commandId,
+        parentThreadId,
+        parentRunId: RunId.make("run:delegation-replay"),
+        parentNodeId: NodeId.make("node:delegation-replay"),
+        task: "Review the change",
+        targetAgentId: AgentId.make("non-existent-agent"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test-model" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result._tag).toBe("Success");
+    expect(dispatched.length).toBe(1);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);

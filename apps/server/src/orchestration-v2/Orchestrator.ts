@@ -84,7 +84,7 @@ import {
 } from "./CheckpointRestoreSafety.ts";
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
-import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
+import { CommandReceiptStoreV2, type CommandReceiptV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
@@ -358,6 +358,9 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly getCommandReceipt: (
+    commandId: CommandId,
+  ) => Effect.Effect<CommandReceiptV2 | null, OrchestratorDispatchError>;
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamStoredEventsFrom: (input?: {
     readonly threadId?: ThreadId;
@@ -11384,6 +11387,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       eventSink
         .latestSequence({ threadId })
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
+    getCommandReceipt: (commandId) =>
+      commandReceipts.getByCommandId(commandId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId,
+              commandType: "unknown",
+              cause,
+            }),
+        ),
+      ),
     streamStoredEvents: eventSink.stream().pipe(
       Stream.mapError(
         (cause) =>
@@ -11527,6 +11542,14 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
       Effect.fail(
         new OrchestratorProjectionError({
           threadId,
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getCommandReceipt: (commandId) =>
+      Effect.fail(
+        new OrchestratorDispatchError({
+          commandId,
+          commandType: "unknown",
           cause: "Orchestration V2 live runtime is not configured.",
         }),
       ),

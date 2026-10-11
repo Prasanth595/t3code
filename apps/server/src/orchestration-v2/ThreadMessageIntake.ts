@@ -58,6 +58,12 @@ const validateDelegatedTaskAgent = Effect.fn("ThreadMessageIntake.validateDelega
     command: Extract<OrchestrationV2Command, { readonly type: "delegated_task.request" }>,
   ) {
     const threads = yield* ThreadManagement.ThreadManagementService;
+    const existingReceipt = yield* threads
+      .getCommandReceipt(command.commandId)
+      .pipe(Effect.catchCause(() => Effect.succeed(null)));
+    if (existingReceipt !== null && existingReceipt.status === "accepted") {
+      return;
+    }
     const parent = yield* threads.getThreadShell(command.parentThreadId);
     if (parent === null) return;
 
