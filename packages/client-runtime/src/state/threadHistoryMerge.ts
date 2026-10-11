@@ -1,7 +1,6 @@
 import type {
   OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
-  OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
 
@@ -73,19 +72,20 @@ export function mergeOlderHistoryIntoProjection(
     return projection;
   }
 
-  const existingKeys = new Set(projection.visibleTurnItems.map(projectedItemKey));
-  const turnItemById = new Map<string, OrchestrationV2TurnItem>();
-  for (const item of projection.turnItems) {
-    turnItemById.set(String(item.id), item);
-  }
-  const prepended: OrchestrationV2ProjectedTurnItem[] = [];
+  const currentByKey = new Map(
+    projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
+  );
+  const turnItemById = new Map(projection.turnItems.map((item) => [String(item.id), item]));
+  const pageKeys = new Set<string>();
+  const page: OrchestrationV2ProjectedTurnItem[] = [];
   for (const pageRow of olderItems) {
-    let row = pageRow;
-    const key = projectedItemKey(row);
-    if (existingKeys.has(key)) {
-      continue;
-    }
-    if (row.visibility === "local" || row.sourceThreadId === projection.thread.id) {
+    const key = projectedItemKey(pageRow);
+    if (pageKeys.has(key)) continue;
+    let row = currentByKey.get(key) ?? pageRow;
+    if (
+      !currentByKey.has(key) &&
+      (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
+    ) {
       const currentItem = turnItemById.get(String(row.sourceItemId));
       if (currentItem !== undefined) {
         // The bounded snapshot keeps interrupt requests and still-running
@@ -100,33 +100,35 @@ export function mergeOlderHistoryIntoProjection(
             attempts: projection.attempts,
             items: projection.turnItems,
           })
-        ) {
+        )
           continue;
-        }
         row = { ...row, item: currentItem };
       }
     }
-    existingKeys.add(key);
-    prepended.push(row);
+    pageKeys.add(key);
+    page.push(row);
+    if (
+      (row.visibility === "local" || row.sourceThreadId === projection.thread.id) &&
+      !turnItemById.has(String(row.sourceItemId))
+    )
+      turnItemById.set(String(row.sourceItemId), row.item);
   }
-  if (prepended.length === 0) {
+  if (page.length === 0) return projection;
+  // Server page order fills gaps between rows from a partial conversation load.
+  // Existing rows supply live values; rows outside this range keep their order.
+  const visible = [
+    ...page,
+    ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
+  ];
+  if (
+    visible.length === projection.visibleTurnItems.length &&
+    visible.every((row, index) => row === projection.visibleTurnItems[index])
+  )
     return projection;
-  }
-
-  const visibleTurnItems = renumberVisible([...prepended, ...projection.visibleTurnItems]);
-
-  for (const row of prepended) {
-    if (row.visibility === "local" || row.sourceThreadId === projection.thread.id) {
-      if (!turnItemById.has(String(row.sourceItemId))) {
-        turnItemById.set(String(row.sourceItemId), row.item);
-      }
-    }
-  }
-
   return {
     ...projection,
     turnItems: [...turnItemById.values()],
-    visibleTurnItems,
+    visibleTurnItems: renumberVisible(visible),
   };
 }
 
