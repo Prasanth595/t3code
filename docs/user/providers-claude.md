@@ -80,8 +80,8 @@ tool, which refuses skills reserved for manual invocation.
 
 Claude 5 models track their work with Claude Code's task tools, which are off by
 default. To have Claude keep a task list and show it in T3 Code, add
-`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` to the **Environment** section of the Claude
-instance in **Settings > Providers**.
+`CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
+**Environment** section in **Settings > Providers**.
 
 ## OpenRouter
 
