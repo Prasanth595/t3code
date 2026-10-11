@@ -191,6 +191,7 @@ function composerProps(
     providerCatalogKnown: true,
     activeProjectDefaultModelSelection: null,
     activeThreadModelSelection: modelSelection,
+    activeProjectId: projectId,
     activeContextWindow: null,
     compactThreadUnavailable: true,
     compactDisabled: true,
