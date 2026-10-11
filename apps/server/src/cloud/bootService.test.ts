@@ -87,20 +87,17 @@ const launchdServiceTarget = "gui/501/com.t3tools.t3code.service";
 const launchdNotLoadedMessage =
   'Could not find service "com.t3tools.t3code.service" in domain for user gui: 501';
 
-const processResult = (input?: {
-  readonly code?: number | null;
-  readonly stdout?: string;
-  readonly stderr?: string;
-  readonly timedOut?: boolean;
-}): ProcessRunner.ProcessRunOutput => ({
+const processResult = (
+  input?: Partial<Omit<ProcessRunner.ProcessRunOutput, "code">> & { readonly code?: number | null },
+): ProcessRunner.ProcessRunOutput => ({
   stdout: input?.stdout ?? "",
   stderr: input?.stderr ?? "",
   code: input?.code === null ? null : ChildProcessSpawner.ExitCode(input?.code ?? 0),
   timedOut: input?.timedOut ?? false,
-  stdoutTruncated: false,
-  stderrTruncated: false,
-  stdoutInvalidUtf8: false,
-  stderrInvalidUtf8: false,
+  stdoutTruncated: input?.stdoutTruncated ?? false,
+  stderrTruncated: input?.stderrTruncated ?? false,
+  stdoutInvalidUtf8: input?.stdoutInvalidUtf8 ?? false,
+  stderrInvalidUtf8: input?.stderrInvalidUtf8 ?? false,
 });
 
 it("recognizes only confirmed launchd not-loaded responses", () => {
@@ -980,6 +977,125 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       expect(commands).not.toContain(`launchctl enable ${launchdServiceTarget}`);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each(["install", "restart", "uninstall"] as const)(
+    "preserves a probe timeout after an idempotent bootout during $0",
+    (operation) =>
+      Effect.gen(function* () {
+        const { service, commands, control, fs } = yield* makeHarness("darwin");
+        const plan = yield* service.install();
+        commands.length = 0;
+        control.fixtures.set(`launchctl bootout ${launchdServiceTarget}`, () =>
+          processResult({ code: 3, stderr: "Boot-out failed: 3: No such process\n" }),
+        );
+        control.fixtures.set(`launchctl print ${launchdServiceTarget}`, () =>
+          processResult({ code: null, timedOut: true }),
+        );
+
+        const action =
+          operation === "install"
+            ? service.install().pipe(Effect.asVoid)
+            : service[operation].pipe(Effect.asVoid);
+        const error = yield* action.pipe(Effect.flip);
+
+        expect(error).toMatchObject({
+          _tag: "BootServiceCommandError",
+          step: "checking whether the launch agent stopped",
+          timedOut: true,
+        });
+        expect(error.message).toContain("timed out");
+        expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
+          `launchctl bootout ${launchdServiceTarget}`,
+          `launchctl print ${launchdServiceTarget}`,
+        ]);
+        expect(yield* fs.exists(plan.unitPath)).toBe(true);
+      }),
+  );
+
+  it.effect.each([
+    {
+      name: "permission denied",
+      result: processResult({ code: 1, stderr: "Operation not permitted" }),
+    },
+    { name: "empty failure", result: processResult({ code: 113 }) },
+    {
+      name: "wrong label",
+      result: processResult({
+        code: 113,
+        stderr: launchdNotLoadedMessage.replace(".service", ".other"),
+      }),
+    },
+    {
+      name: "missing GUI domain",
+      result: processResult({ code: 125, stderr: "Could not find domain for user gui: 501" }),
+    },
+    {
+      name: "extra error",
+      result: processResult({
+        code: 113,
+        stderr: `${launchdNotLoadedMessage}\nOperation not permitted`,
+      }),
+    },
+    { name: "signal exit", result: processResult({ code: null, stderr: launchdNotLoadedMessage }) },
+    {
+      name: "truncated stderr",
+      result: processResult({ code: 113, stderr: launchdNotLoadedMessage, stderrTruncated: true }),
+    },
+    {
+      name: "truncated stdout",
+      result: processResult({ code: 113, stderr: launchdNotLoadedMessage, stdoutTruncated: true }),
+    },
+    {
+      name: "invalid stderr",
+      result: processResult({
+        code: 113,
+        stderr: launchdNotLoadedMessage,
+        stderrInvalidUtf8: true,
+      }),
+    },
+    {
+      name: "invalid stdout",
+      result: processResult({
+        code: 113,
+        stderr: launchdNotLoadedMessage,
+        stdoutInvalidUtf8: true,
+      }),
+    },
+  ])("fails closed on $name during absence verification", ({ result }) =>
+    Effect.gen(function* () {
+      const { service, commands, control, fs } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      commands.length = 0;
+      control.fixtures.set(`launchctl print ${launchdServiceTarget}`, () => result);
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "BootServiceCommandError",
+        step: "checking whether the launch agent stopped",
+      });
+      expect(commands.filter((command) => command.startsWith("launchctl "))).toEqual([
+        `launchctl bootout ${launchdServiceTarget}`,
+        `launchctl print ${launchdServiceTarget}`,
+      ]);
+      expect(yield* fs.exists(plan.unitPath)).toBe(true);
+    }),
+  );
+
+  it.effect("keeps the plist when uninstall cannot confirm absence", () =>
+    Effect.gen(function* () {
+      const { service, commands, control, fs } = yield* makeHarness("darwin");
+      const plan = yield* service.install();
+      commands.length = 0;
+      control.fixtures.set(`launchctl print ${launchdServiceTarget}`, () =>
+        processResult({ code: 1, stderr: "Operation not permitted" }),
+      );
+
+      expect((yield* service.uninstall.pipe(Effect.flip))._tag).toBe("BootServiceCommandError");
+      expect(yield* fs.exists(plan.unitPath)).toBe(true);
+      expect(commands).not.toContain(`launchctl bootstrap gui/501 ${plan.unitPath}`);
+    }),
   );
 
   it.effect("shares one stop timeout across bootout and absence verification", () =>

@@ -224,7 +224,18 @@ export type BootServiceStep = BootServiceStepBase &
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
 const LAUNCHD_STOP_POLL_INTERVAL = Duration.millis(100);
 
-function launchdOutputLines(result: ProcessRunner.ProcessRunOutput): ReadonlyArray<string> {
+function launchdFailureLines(result: ProcessRunner.ProcessRunOutput): ReadonlyArray<string> {
+  if (
+    result.code === null ||
+    result.code === 0 ||
+    result.timedOut ||
+    result.stdoutTruncated ||
+    result.stderrTruncated ||
+    result.stdoutInvalidUtf8 ||
+    result.stderrInvalidUtf8
+  ) {
+    return [];
+  }
   return `${result.stdout}\n${result.stderr}`
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -235,8 +246,7 @@ export function isConfirmedLaunchdNotLoaded(
   result: ProcessRunner.ProcessRunOutput,
   notLoadedMessages: ReadonlyArray<string>,
 ): boolean {
-  if (result.code === 0 || result.timedOut) return false;
-  const lines = launchdOutputLines(result);
+  const lines = launchdFailureLines(result);
   return (
     (lines.length === 1 && notLoadedMessages.includes(lines[0] ?? "")) ||
     (lines.length === 2 &&
@@ -248,8 +258,7 @@ export function isConfirmedLaunchdNotLoaded(
 export function isConfirmedLaunchdBootoutNotLoaded(
   result: ProcessRunner.ProcessRunOutput,
 ): boolean {
-  if (result.code === 0 || result.timedOut) return false;
-  const lines = launchdOutputLines(result);
+  const lines = launchdFailureLines(result);
   return lines.length === 1 && lines[0] === "Boot-out failed: 3: No such process";
 }
 
@@ -727,7 +736,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         })
         .pipe(Effect.mapError((cause) => new BootServiceCommandError({ step: entry.step, cause })));
       const bootoutError =
-        bootoutResult.code === 0
+        bootoutResult.code === 0 && !bootoutResult.timedOut
           ? undefined
           : new BootServiceCommandError({
               step: entry.step,
@@ -761,8 +770,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             ),
           );
         if (isConfirmedLaunchdNotLoaded(printResult, entry.verifyAbsent.notLoadedMessages)) return;
-        if (bootoutError !== undefined) return yield* bootoutError;
-        if (printResult.code !== 0) {
+        if (printResult.code !== 0 || printResult.timedOut) {
           return yield* new BootServiceCommandError({
             step: "checking whether the launch agent stopped",
             exitCode: printResult.code === null ? undefined : Number(printResult.code),
@@ -771,6 +779,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
             timedOut: printResult.timedOut,
           });
         }
+        if (bootoutError !== undefined) return yield* bootoutError;
         yield* Effect.sleep(LAUNCHD_STOP_POLL_INTERVAL);
       }
     }).pipe(
