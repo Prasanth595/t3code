@@ -15,10 +15,11 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 
 import "~/index.css";
 
-const { newThread, prepareThread, refresh } = vi.hoisted(() => ({
+const { newThread, prepareThread, refresh, update } = vi.hoisted(() => ({
   newThread: vi.fn(),
   prepareThread: vi.fn(),
   refresh: vi.fn(),
+  update: vi.fn(),
 }));
 
 vi.mock(import("~/state/session"), async (original) => ({
@@ -44,7 +45,7 @@ vi.mock(import("~/lib/sourceControlActions"), async (original) => ({
 }));
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: ((command: unknown) => (command === "update" ? update : vi.fn())) as never,
 }));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
@@ -56,6 +57,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       detail: (() => "detail") as never,
       activity: (() => "activity") as never,
+      update: "update" as never,
       reviewGuide: (() => "review-guide") as never,
       generateReviewGuide: {
         ...actual.pullRequestEnvironment.generateReviewGuide,
@@ -248,6 +250,7 @@ beforeEach(() => {
     _tag: "Success",
     value: { branch: "feature", worktreePath: "/workspace/pr" },
   });
+  update.mockReset().mockResolvedValue({ _tag: "Success", value: undefined });
 });
 afterEach(async () => {
   for (const root of roots.splice(0)) await act(async () => root.unmount());
@@ -278,6 +281,36 @@ const unrelatedThread = {
 };
 
 const tab = (name: string) => page.getByRole("button", { name, exact: true });
+
+it.each([
+  { isComposing: true, keyCode: 13 },
+  { isComposing: false, keyCode: 229 },
+])("does not save the PR title during IME composition (%j)", async ({ isComposing, keyCode }) => {
+  await render();
+  await page.getByRole("button", { name: "Edit title" }).click();
+  const titleInput = page.getByRole("textbox", { name: "Pull request title" });
+  const title = "日本語のタイトル";
+  await titleInput.fill(title);
+  const pressEnter = (init: KeyboardEventInit) =>
+    act(async () => {
+      titleInput
+        .element()
+        .dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, ...init }),
+        );
+    });
+
+  await pressEnter({ isComposing, keyCode });
+  expect(update).not.toHaveBeenCalled();
+  await expect.element(titleInput).toHaveValue(title);
+
+  await pressEnter({ keyCode: 13 });
+  expect(update).toHaveBeenCalledExactlyOnceWith({
+    environmentId: threadRef.environmentId,
+    input: { ...surface, title },
+  });
+  await expect.element(titleInput).not.toBeInTheDocument();
+});
 
 async function runAction(action: string) {
   if (action === "Add to agent") {
