@@ -353,12 +353,14 @@ export function UsageProviderChart({
     hoverPositionRef.current = null;
     setHoverIndex(null);
   };
-  const finishBrush = () => {
+  const finishBrush = (event: React.PointerEvent<HTMLDivElement>) => {
     if (brush === null) return;
     setBrush(null);
-    const sinceDay = days[Math.min(brush.start, brush.end)];
-    const untilDay = days[Math.max(brush.start, brush.end)];
-    if (brush.start !== brush.end && sinceDay && untilDay) onZoom?.(sinceDay, untilDay);
+    // The release can land on a day no pointermove reported.
+    const end = locate(event)?.index ?? brush.end;
+    const sinceDay = days[Math.min(brush.start, end)];
+    const untilDay = days[Math.max(brush.start, end)];
+    if (brush.start !== end && sinceDay && untilDay) onZoom?.(sinceDay, untilDay);
   };
 
   const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];

@@ -1213,6 +1213,12 @@ function dayToDate(day: string): Date {
   return new Date(year, month - 1, dayOfMonth);
 }
 
+/** A calendar date as its local `YYYY-MM-DD` usage day. */
+function dateToDay(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
 /** From/To day pickers; choosing either bound selects a custom daily range. */
 function UsageRangeFields({
   className,
@@ -1236,7 +1242,7 @@ function UsageRangeFields({
         value={since}
         locked={disabled}
         limit={{ after: until }}
-        onSelect={(date) => onChange(date.toLocaleDateString("en-CA"), untilDay)}
+        onSelect={(date) => onChange(dateToDay(date), untilDay)}
       />
       to
       <UsageDayPicker
@@ -1244,7 +1250,7 @@ function UsageRangeFields({
         value={until}
         locked={disabled}
         limit={{ before: since }}
-        onSelect={(date) => onChange(sinceDay, date.toLocaleDateString("en-CA"))}
+        onSelect={(date) => onChange(sinceDay, dateToDay(date))}
       />
     </div>
   );
