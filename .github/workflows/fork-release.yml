@@ -137,14 +137,15 @@ jobs:
             echo "released=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Same version scheme as upstream nightlies: <base>-nightly.<UTC date>.<run number>.
-      # The date and the run number only grow, so each fork release is newer than the last.
+      # <base>-nightly.<UTC date>.<run number x 10000>. The date and the run number
+      # only grow. The gap of 10000 leaves room for local builds between two CI
+      # releases (scripts/fork-desktop-mac.sh). The app needs one integer here.
       - id: version
         name: Resolve release version
         run: |
           node scripts/resolve-nightly-release.ts \
             --date "$(date -u +%Y%m%d)" \
-            --run-number "${{ github.run_number }}" \
+            --run-number "$(( ${{ github.run_number }} * 10000 ))" \
             --sha "${{ steps.push.outputs.sha }}" \
             --github-output
 

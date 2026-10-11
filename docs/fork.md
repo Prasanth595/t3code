@@ -34,7 +34,7 @@ magick $T/{16,24,32,48,64,128,256}.png $N/nightly-windows.ico && cp $N/nightly-w
 ## Versions
 
 The version is `<upstream base version>-nightly.<UTC date>.<build number>`, for example `0.0.46-nightly.20261010.3`.
-CI uses the workflow run number as the build number. A local build adds the time to the newest CI run number: `<UTC date>.<run number>.<HHMMSS>`, for example `0.0.46-nightly.20261011.14.161502`. Thus a local build is newer than the CI release it follows, and older than the next CI release.
+The build number is one integer, because the build and the app read the update channel from `-nightly.<date>.<number>`. CI uses the workflow run number times 10000, for example `0.0.46-nightly.20261011.180000`. A local build adds the minute of the UTC day (1 to 1440) to the newest CI number, for example `0.0.46-nightly.20261011.180845`. Thus a local build is newer than the CI release it follows, and older than the next CI release.
 
 ## macOS signing
 
