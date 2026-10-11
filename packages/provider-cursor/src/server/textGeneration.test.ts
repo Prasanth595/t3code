@@ -19,6 +19,8 @@ const cursorSdkMock = vi.hoisted(() => ({
   send: vi.fn<(prompt: string) => Promise<unknown>>(),
   close: vi.fn(),
   cancel: vi.fn(async () => {}),
+  storeOpen: vi.fn<(options: unknown) => Promise<unknown>>(),
+  storeDispose: vi.fn(async () => {}),
   prompt: vi.fn<(prompt: string, options: unknown) => Promise<RunResult>>(async () => ({
     id: "run-cursor-text-generation-test",
     status: "finished",
@@ -30,6 +32,7 @@ const cursorSdkMock = vi.hoisted(() => ({
 vi.mock("./sdk.ts", () => ({
   Agent: { create: cursorSdkMock.create },
   createAgentPlatform: vi.fn(),
+  SqliteLocalAgentStore: { open: cursorSdkMock.storeOpen },
 }));
 
 let hasCustomPolicy = false;
@@ -62,6 +65,9 @@ beforeEach(() => {
   });
   cursorSdkMock.close.mockClear();
   cursorSdkMock.cancel.mockClear();
+  cursorSdkMock.storeDispose.mockClear();
+  cursorSdkMock.storeOpen.mockReset();
+  cursorSdkMock.storeOpen.mockResolvedValue({ dispose: cursorSdkMock.storeDispose });
   cursorSdkMock.prompt.mockReset();
   cursorSdkMock.prompt.mockResolvedValue({
     id: "run-cursor-text-generation-test",
@@ -139,12 +145,44 @@ describe("CursorTextGeneration", () => {
         },
         local: {
           cwd: "/isolated-text-generation",
+          store: { dispose: cursorSdkMock.storeDispose },
           autoReview: false,
           sandboxOptions: { enabled: true },
           settingSources: [],
           enableAgentRetries: true,
         },
       });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("disposes the agent store after the agent, whether the run succeeds or fails", () =>
+    Effect.gen(function* () {
+      const textGeneration = yield* makeCursorTextGeneration(cursorSettings, {
+        CURSOR_API_KEY: "test-cursor-key",
+      });
+      const input = {
+        cwd: process.cwd(),
+        branch: "feature/cursor-store",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: createModelSelection(ProviderInstanceId.make("cursor"), "composer-2"),
+      };
+
+      yield* textGeneration.generateCommitMessage(input);
+      expect(cursorSdkMock.storeOpen).toHaveBeenCalledWith(
+        expect.objectContaining({ workspaceRef: "/isolated-text-generation" }),
+      );
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledTimes(1);
+      expect(cursorSdkMock.close.mock.invocationCallOrder[0]).toBeLessThan(
+        cursorSdkMock.storeDispose.mock.invocationCallOrder[0]!,
+      );
+
+      cursorSdkMock.prompt.mockResolvedValueOnce({
+        id: "run-cursor-text-generation-test",
+        status: "error",
+      });
+      yield* Effect.flip(textGeneration.generateCommitMessage(input));
+      expect(cursorSdkMock.storeDispose).toHaveBeenCalledTimes(2);
     }).pipe(Effect.provide(layerTest)),
   );
 
@@ -175,6 +213,7 @@ describe("CursorTextGeneration", () => {
       expect(cursorSdkMock.create.mock.calls[1]?.[0]).toMatchObject({
         local: {
           cwd: "/isolated-text-generation",
+          store: { dispose: cursorSdkMock.storeDispose },
           autoReview: false,
           sandboxOptions: { enabled: false },
           settingSources: [],
