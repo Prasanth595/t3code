@@ -32,7 +32,11 @@ that project only, in either direction: a provider off on the machine can be use
 and one on everywhere can be kept out of another. That project's model pickers follow the switch,
 and no new, queued, or follow-up turn in that project can start on a provider it turned off, even
 a wake from a delegated task. A turn already running when the switch flips finishes on its own.
-Reset returns the project to the machine's setting. Every other provider setting stays per machine.
+A delegated task's result is recorded in its parent thread regardless of its wake being turned
+away this way; the parent picks it up on its next turn against an enabled provider instead of
+getting a push notification for it. An adapter's own buffered follow-up has nothing to attach to
+once its instance is off, so it is dropped rather than queued. Reset returns the project to the
+machine's setting. Every other provider setting stays per machine.
 
 On mobile, open **Settings** and use the filter in its header to choose connected environments
 and a project. The filter stays available in server-setting pages. With **All projects** selected,

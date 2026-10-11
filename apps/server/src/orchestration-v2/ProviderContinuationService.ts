@@ -145,10 +145,15 @@ export const layer = Layer.effectDiscard(
             })
             .pipe(
               // The project turned the target instance off between the cohort
-              // read above and this dispatch. The cohort's delivery stays open
-              // in the run record rather than retrying: the next event that
-              // re-offers it (a sibling completion, a restart) gets a fresh
-              // chance once an enabled instance can serve it.
+              // read above and this dispatch. The finalize that claimed this
+              // delivery already wrote the children's results to the parent's
+              // history unconditionally, so nothing is lost: acknowledge each
+              // task administratively (observedByRunId: null, the same shape
+              // task_status uses when no run observed it) to consume this
+              // delivery instead of leaving it open to retry. The parent's
+              // next turn against an enabled instance reads those results from
+              // history the same way any turn does; nothing here re-offers
+              // this generation.
               Effect.catchTags({
                 ThreadManagementProviderInstanceDisabledError: (error) =>
                   Effect.logInfo(
@@ -159,6 +164,29 @@ export const layer = Layer.effectDiscard(
                       instanceId: error.instanceId,
                     },
                   ).pipe(
+                    Effect.andThen(
+                      Effect.forEach(
+                        delivery.taskIds,
+                        (taskId) =>
+                          ids.allocate
+                            .command({
+                              fixtureName: "delegated-completion",
+                              commandName: "acknowledge-disabled",
+                            })
+                            .pipe(
+                              Effect.flatMap((ackCommandId) =>
+                                threads.dispatch({
+                                  type: "delegated_task.completion-delivery.acknowledge",
+                                  commandId: ackCommandId,
+                                  parentThreadId: request.threadId,
+                                  taskId,
+                                  observedByRunId: null,
+                                }),
+                              ),
+                            ),
+                        { discard: true },
+                      ),
+                    ),
                     Effect.andThen(
                       request.clearIfCurrent !== undefined
                         ? request.clearIfCurrent()

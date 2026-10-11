@@ -532,24 +532,31 @@ describe("ProviderContinuationService", () => {
   });
 
   it.effect(
-    "a project-disabled instance refuses a delegated-completion wake exactly once, with no retry",
+    "a project-disabled instance refuses a delegated-completion wake exactly once, acknowledges it, and never retries",
     () => {
       return Effect.gen(function* () {
         const attempts = yield* Ref.make(0);
         const cleared = yield* Ref.make(false);
+        const acknowledged = yield* Queue.unbounded<unknown>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(delegatedProjection()),
-          dispatch: () =>
-            Ref.update(attempts, (count) => count + 1).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-                    projectId: ProjectId.make("project-provider-continuation-disabled"),
-                    instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
-                  }) as never,
+          dispatch: (command) => {
+            if ((command as { type: string }).type === "message.dispatch") {
+              return Ref.update(attempts, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                      projectId: ProjectId.make("project-provider-continuation-disabled"),
+                      instanceId: ProviderInstanceId.make(
+                        "instance-provider-continuation-disabled",
+                      ),
+                    }) as never,
+                  ),
                 ),
-              ),
-            ),
+              );
+            }
+            return Queue.offer(acknowledged, command).pipe(Effect.as({} as never));
+          },
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
           Layer.provide(
@@ -576,11 +583,28 @@ describe("ProviderContinuationService", () => {
           assert.equal(yield* Ref.get(attempts), 1);
           assert.isTrue(yield* Ref.get(cleared));
 
+          // The refused delivery is acknowledged administratively, task by
+          // task, so the cohort's delivery is consumed instead of left open.
+          const acknowledgements = (yield* Queue.takeAll(acknowledged)) as ReadonlyArray<{
+            type: string;
+            taskId: string;
+            observedByRunId: string | null;
+          }>;
+          assert.deepEqual(
+            acknowledgements.map((command) => command.taskId),
+            ["node-provider-continuation-first", "node-provider-continuation-second"],
+          );
+          for (const command of acknowledgements) {
+            assert.equal(command.type, "delegated_task.completion-delivery.acknowledge");
+            assert.isNull(command.observedByRunId);
+          }
+
           // A refusal is terminal: no backoff timer is pending behind it,
           // so no further dispatch attempt can ever land.
           yield* TestClock.adjust("1 hour");
           yield* Effect.yieldNow;
           assert.equal(yield* Ref.get(attempts), 1);
+          assert.equal(yield* Queue.size(acknowledged), 0);
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,
