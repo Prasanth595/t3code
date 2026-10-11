@@ -15,7 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -185,7 +185,7 @@ it.effect("checkpoint capture skips untracked files over the size cap", () =>
       "at-cap.bin\nfile.txt\nlink.bin\n",
     );
     assert.match((yield* git(["ls-tree", checkpointRef, "--", "link.bin"])).stdout, /^120000 /);
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 // Marks every untracked listing incomplete, as Git output past the limit or with a non-UTF-8 path is.
@@ -222,7 +222,7 @@ it.effect("checkpoint capture keeps an over-cap file staged in the real index", 
       (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
       "file.txt\nstaged.bin\n",
     );
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint capture stages everything when the untracked listing is truncated", () =>
@@ -243,7 +243,7 @@ it.effect("checkpoint capture stages everything when the untracked listing is tr
       (yield* git(["ls-tree", "-r", "--name-only", checkpointRef])).stdout,
       "file.txt\nover.bin\n",
     );
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each([
@@ -284,7 +284,7 @@ it.effect.each([
       assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "file.txt")), "edited\n");
       assert.isTrue(yield* fileSystem.exists(path.join(cwd, "over.bin")));
       assert.isTrue(yield* fileSystem.exists(path.join(cwd, "under.txt")));
-    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect.each([{ workspace: "." }, { workspace: "nested" }])(
@@ -317,12 +317,12 @@ it.effect.each([{ workspace: "." }, { workspace: "nested" }])(
       assert.strictEqual(yield* fileSystem.readFileString(overCap), "x".repeat(1025));
       assert.strictEqual(yield* fileSystem.readFileString(laterOverCap), "y".repeat(1025));
       assert.isFalse(yield* fileSystem.exists(laterUnderCap));
-    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 // Windows ignores POSIX directory modes and root bypasses them, so neither can deny the lstat.
 it.effect.skipIf(
-  HostProcessPlatform.defaultValue() === "win32" || globalThis.process.getuid?.() === 0,
+  HostProcess.Platform.defaultValue() === "win32" || HostProcess.UserId.defaultValue() === 0,
 )("checkpoint restore refuses a file it cannot classify before changing files", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -356,7 +356,7 @@ it.effect.skipIf(
       yield* fileSystem.readFileString(path.join(locked, "big.bin")),
       "x".repeat(1025),
     );
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint restore keeps an over-cap file the restored .gitignore exposes", () =>
@@ -384,7 +384,7 @@ it.effect("checkpoint restore keeps an over-cap file the restored .gitignore exp
       yield* fileSystem.readFileString(path.join(cwd, "big.bin")),
       "x".repeat(1025),
     );
-  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
 it.effect("checkpoint recovery discovers nested HEAD independently of inherited GIT_DIR", () =>
