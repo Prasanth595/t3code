@@ -2,6 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   EnvironmentId,
   ProjectId,
+  SourceControlProviderKind,
   ThreadId,
   type PullRequestDetailView,
   type ScopedThreadRef,
@@ -67,7 +68,12 @@ vi.mock("~/lib/sourceControlActions", () => ({
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
 vi.mock("~/state/pullRequests", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/state/pullRequests")>()),
-  pullRequestEnvironment: { detail: () => "detail", activity: () => "activity" },
+  pullRequestEnvironment: {
+    detail: () => "detail",
+    activity: () => "activity",
+    reviewGuide: () => "review-guide",
+    generateReviewGuide: { permissionAtom: () => "generate-review-guide" },
+  },
   usePullRequestTurnRefresh: () => 0,
   useSharedPullRequestSummary: () => null,
 }));
@@ -139,6 +145,9 @@ vi.mock("~/components/pullRequest/PullRequestSummaryTab", () => ({
   PullRequestSummaryTab: () => null,
 }));
 vi.mock("~/components/pullRequest/PullRequestCodeTab", () => ({ default: () => null }));
+vi.mock("~/components/pullRequest/PullRequestGuideTab", () => ({
+  PullRequestGuideTab: () => null,
+}));
 vi.mock("./PullRequestSidePanel", async (importOriginal) => {
   await bodyImport.promise;
   return importOriginal();
@@ -148,7 +157,7 @@ import { RegisteredSidePanel } from "../bundledPanels";
 import { PanelHostContext, type PanelHost } from "../panelHost";
 
 const detail: PullRequestDetailView = {
-  provider: "github",
+  provider: SourceControlProviderKind.make("github"),
   projectId: ProjectId.make("project"),
   projectTitle: "Project",
   workspaceRoot: "/workspace",
