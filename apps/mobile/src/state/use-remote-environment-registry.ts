@@ -14,6 +14,7 @@ import { appAtomRegistry } from "./atom-registry";
 import type { ConnectedEnvironmentSummary, EnvironmentRuntimeState } from "./remote-runtime-types";
 import { environmentSession } from "./session";
 import { environmentCatalog } from "../connection/catalog";
+import { presentRemoveEnvironmentConfirm } from "./remove-environment-confirm";
 import { createRemoteEnvironmentProjectionAtoms } from "./remote-environment-projections";
 import { serverEnvironment } from "./server";
 
@@ -154,41 +155,16 @@ export function useRemoteConnections() {
   );
 
   const onRemoveEnvironmentPress = useCallback(
-    (environmentId: EnvironmentId) => {
-      const environment = connectedEnvironments.find(
-        (candidate) => candidate.environmentId === environmentId,
-      );
-      if (!environment) {
-        return;
-      }
-      const remove = {
-        text: "Remove",
-        style: "destructive",
-        onPress: () => {
-          void controller.removeEnvironment(environmentId);
-        },
-      } as const;
-      if (environment.isRelayManaged) {
-        Dialog.alert(
-          "Remove from this device?",
-          `Forget ${environment.environmentLabel} and its cached threads on this device.\n\nIt stays on your T3 Connect account and keeps its host space. Deregister it under T3 Account → T3 Connect to free it.`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Open T3 Account",
-              onPress: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
-            },
-            remove,
-          ],
-        );
-        return;
-      }
-      Dialog.alert(
-        "Remove from this device?",
-        `Forget ${environment.environmentLabel} and its cached threads on this device. Switch it off instead to keep it saved.`,
-        [{ text: "Cancel", style: "cancel" }, remove],
-      );
-    },
+    (environmentId: EnvironmentId) =>
+      presentRemoveEnvironmentConfirm({
+        environmentId,
+        environment: connectedEnvironments.find(
+          (candidate) => candidate.environmentId === environmentId,
+        ),
+        remove: controller.removeEnvironment,
+        openAccount: () => navigation.navigate("SettingsSheet", { screen: "SettingsAuth" }),
+        alert: Dialog.alert,
+      }),
     [connectedEnvironments, controller, navigation],
   );
 
