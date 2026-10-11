@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import { Atom } from "effect/unstable/reactivity";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { PixelRatio } from "react-native";
 import { resolveProjectIconGlyph } from "../../lib/projectIcon";
 import { projectFaviconUrlAtom } from "../../state/assets";
@@ -12,13 +12,26 @@ const FOLDER_ICON: HomeListFilterMenuIcon = { type: "sfSymbol", name: "folder.fi
 
 // UIKit builds the menu synchronously, so the favicon has to be handed over as
 // bytes (a data URI) instead of a URL the native image loader would fetch later.
-const faviconDataUris = new Map<string, string | null>();
-const pendingFavicons = new Map<string, Promise<void>>();
+// Loaded favicons live in a module-level store shared by every filter menu.
+let faviconDataUris: ReadonlyMap<string, string | null> = new Map();
+const pendingFavicons = new Set<string>();
+const listeners = new Set<() => void>();
 
-function loadFaviconDataUri(url: string): Promise<void> {
-  const pending = pendingFavicons.get(url);
-  if (pending) return pending;
-  const request = fetch(url)
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function getSnapshot() {
+  return faviconDataUris;
+}
+
+function loadFaviconDataUri(url: string) {
+  if (pendingFavicons.has(url)) return;
+  pendingFavicons.add(url);
+  void fetch(url)
     .then((response) => (response.ok ? response.blob() : null))
     .then(
       (blob) =>
@@ -34,11 +47,10 @@ function loadFaviconDataUri(url: string): Promise<void> {
     )
     .catch(() => null)
     .then((dataUri) => {
-      faviconDataUris.set(url, dataUri);
       pendingFavicons.delete(url);
+      faviconDataUris = new Map(faviconDataUris).set(url, dataUri);
+      for (const listener of listeners) listener();
     });
-  pendingFavicons.set(url, request);
-  return request;
 }
 
 export function useProjectFilterMenuIcons<T extends HomeListFilterMenuProject>(
@@ -70,31 +82,11 @@ export function useProjectFilterMenuIcons<T extends HomeListFilterMenuProject>(
     ),
   );
 
-  const [dataUris, setDataUris] = useState<ReadonlyMap<string, string | null>>(
-    () => new Map(faviconDataUris),
-  );
+  const dataUris = useSyncExternalStore(subscribe, getSnapshot);
   useEffect(() => {
-    let active = true;
-    const refresh = () => {
-      if (active) setDataUris(new Map(faviconDataUris));
-    };
-    const cached: string[] = [];
     for (const url of faviconUrls) {
-      if (!url) continue;
-      if (faviconDataUris.has(url)) {
-        cached.push(url);
-        continue;
-      }
-      void loadFaviconDataUri(url).then(refresh);
+      if (url && !getSnapshot().has(url)) loadFaviconDataUri(url);
     }
-    if (cached.length > 0) {
-      setDataUris((previous) =>
-        cached.every((url) => previous.has(url)) ? previous : new Map(faviconDataUris),
-      );
-    }
-    return () => {
-      active = false;
-    };
   }, [faviconUrls]);
 
   return useMemo(
