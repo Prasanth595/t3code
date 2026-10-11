@@ -294,8 +294,8 @@ Git deployments remain disabled in `apps/marketing/vercel.ts`.
 ## Android APK mirror
 
 `.github/workflows/mobile-android-apk.yml` checks Google Play hourly and publishes the newest
-build on the `alpha` track to the rolling `android-nightly` prerelease, for nightly users who
-can't join the Play testing group. Those v2-preview builds are the only Android builds that can
+build on the `v2` closed testing track to the rolling `android-nightly` prerelease, for nightly
+users who can't join the Play testing group. Those v2-preview builds are the only Android builds that can
 connect to a nightly server. The APK is the universal APK Play generates and signs from the
 uploaded bundle, so no signing key lives in GitHub. The job skips itself until
 `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` holds a Play service account key with the "Release to
