@@ -451,6 +451,21 @@ export function boundedTimelineEncodedBytes(input: {
   return total;
 }
 
+function projectionExceedsEncodedBudget(
+  projection: OrchestrationV2ThreadProjection,
+  budget: number,
+): boolean {
+  let bytes = bytesOfJson({ ...projection, turnItems: [], visibleTurnItems: [] });
+  if (bytes > budget) return true;
+  // The empty arrays already include brackets. Stop once complete turns exceed
+  // the budget, without serializing the remaining timeline or one giant object.
+  for (const items of [projection.turnItems, projection.visibleTurnItems]) {
+    bytes += bytesOfJson(items) - 2;
+    if (bytes > budget) return true;
+  }
+  return false;
+}
+
 /**
  * Builds a partial thread projection with full control-plane arrays and a
  * bounded recent timeline window plus matching local turnItems.
@@ -570,6 +585,7 @@ export function buildBoundedThreadProjection(input: {
     // Adding timeline rows and historical summaries cannot shrink control state.
     // Avoid serializing the whole timeline when control state already exceeds the cap.
     payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
+      controlBytes > policy.maxEncodedBytes ||
+      projectionExceedsEncodedBudget(projection, policy.maxEncodedBytes),
   };
 }

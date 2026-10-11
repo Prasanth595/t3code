@@ -1,6 +1,7 @@
 import type { ThreadId } from "@t3tools/contracts";
 import { boundedSnapshotProjection } from "@t3tools/shared/orchestrationV2BoundedSnapshot";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -78,8 +79,8 @@ export const layer: Layer.Layer<
     const remoteAuthorization = yield* Effect.serviceOption(
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
-    return ThreadSnapshotLoader.ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId) => {
+    const load = (prepared: PreparedConnection, threadId: ThreadId) =>
+      Effect.suspend(() => {
         const loadFullFallback = ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
           prepared,
           threadId,
@@ -169,7 +170,47 @@ export const layer: Layer.Layer<
             ),
           ),
         );
-      },
+      });
+    // Intent can run before navigation. Keep at most four recent requests and
+    // consume each once; a replacement prepared connection cannot reuse them.
+    const prefetched: Array<{
+      prepared: PreparedConnection;
+      threadId: ThreadId;
+      expiresAt: number;
+      snapshot: Effect.Effect<ThreadSnapshotLoader.ThreadSnapshotLoadResult>;
+    }> = [];
+    let prefetching = 0;
+    const findPrefetched = (prepared: PreparedConnection, threadId: ThreadId, now: number) => {
+      for (let index = prefetched.length - 1; index >= 0; index--) {
+        if (prefetched[index]!.expiresAt <= now) prefetched.splice(index, 1);
+      }
+      return prefetched.findIndex(
+        (entry) => entry.prepared === prepared && entry.threadId === threadId,
+      );
+    };
+    return ThreadSnapshotLoader.ThreadSnapshotLoader.of({
+      load: (prepared, threadId) =>
+        Effect.gen(function* () {
+          const index = findPrefetched(prepared, threadId, yield* Clock.currentTimeMillis);
+          const entry = index < 0 ? undefined : prefetched.splice(index, 1)[0];
+          return yield* entry?.snapshot ?? load(prepared, threadId);
+        }),
+      prefetch: (prepared, threadId) =>
+        Effect.gen(function* () {
+          const now = yield* Clock.currentTimeMillis;
+          if (findPrefetched(prepared, threadId, now) >= 0 || prefetching >= 2) return;
+          const snapshot = yield* Effect.cached(load(prepared, threadId));
+          prefetched.push({ prepared, threadId, expiresAt: now + 10_000, snapshot });
+          if (prefetched.length > 4) prefetched.shift();
+          prefetching++;
+          yield* snapshot.pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                prefetching--;
+              }),
+            ),
+          );
+        }).pipe(Effect.asVoid),
     });
   }),
 );

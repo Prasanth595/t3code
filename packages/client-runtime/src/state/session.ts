@@ -1,4 +1,5 @@
 import type { AuthSessionState, EnvironmentId, ServerConfig } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -15,6 +16,21 @@ import * as ManagedRelay from "../relay/managedRelay.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
+import { environmentEndpointUrl } from "../environment/endpoint.ts";
+import {
+  RemoteEnvironmentAuthTimeoutError,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
+
+/** Platforms can reuse the primary auth bootstrap read for the same HTTP credential. */
+export class PrimaryEnvironmentSessionReader extends Context.Service<
+  PrimaryEnvironmentSessionReader,
+  {
+    readonly read: (
+      prepared: PreparedConnection,
+    ) => Effect.Effect<Option.Option<AuthSessionState>, RemoteEnvironmentRequestError>;
+  }
+>()("@t3tools/client-runtime/state/session/PrimaryEnvironmentSessionReader") {}
 
 /** @public Required to name the error in consumers' inferred session results. */
 export class SessionHttpClientUnavailable extends Data.TaggedError(
@@ -54,6 +70,23 @@ export const fetchEnvironmentSessionState = Effect.fn(
   >;
   readonly timeoutMs?: number;
 }) {
+  const primaryReader = yield* Effect.serviceOption(PrimaryEnvironmentSessionReader);
+  if (input.prepared.target._tag === "PrimaryConnectionTarget" && Option.isSome(primaryReader)) {
+    const timeoutMs = input.timeoutMs ?? DEFAULT_SESSION_STATE_TIMEOUT_MS;
+    const shared = yield* primaryReader.value.read(input.prepared).pipe(
+      Effect.timeoutOrElse({
+        duration: timeoutMs,
+        orElse: () =>
+          Effect.fail(
+            new RemoteEnvironmentAuthTimeoutError(
+              environmentEndpointUrl(input.prepared.httpBaseUrl, "/api/auth/session"),
+              timeoutMs,
+            ),
+          ),
+      }),
+    );
+    if (Option.isSome(shared)) return shared.value;
+  }
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
     group: "auth",

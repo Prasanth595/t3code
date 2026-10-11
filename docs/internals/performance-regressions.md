@@ -49,6 +49,21 @@ These are neither compressed WebSocket captures nor measurements of server RSS, 
 fixtures exclude unrelated settings calls and subscription events. Payload budgets belong in
 these tests so regressions fail locally.
 
+## Cold load
+
+Over HTTP/1.1 a browser opens six connections per origin, so a remote first visit costs one round
+trip per six JS requests. The production build ([coldBoot.ts](../../apps/web/vite/coldBoot.ts))
+groups startup modules into a few chunks and modulepreloads the thread route. A new static import
+from the root or thread route into a lazy panel (settings, diff, terminal, preview) puts that panel
+back on the critical path; keep such imports dynamic.
+
+Nothing that shows a thread waits on another round trip it does not need. `index.html` starts the
+session and environment-descriptor reads before the bundle evaluates, and the app consumes each
+response once. Bounded thread and shell HTTP hydration start when credentials are prepared,
+alongside the socket handshake, and disk caches render before the environment registers.
+Persisted thread caches are trimmed to the cold-open window only when the server returned a
+history cursor; full snapshots from servers without paging stay complete.
+
 ## Event store and startup
 
 Sequence cursors must seek an index rather than scan retained history. The application sequence

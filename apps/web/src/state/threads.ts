@@ -22,6 +22,7 @@ export const threadEnvironment = createThreadEnvironmentAtoms(
   environmentSnapshotAtom,
 );
 const environmentThreads = createEnvironmentThreadStateAtoms(connectionAtomRuntime);
+export const prefetchEnvironmentThread = environmentThreads.prefetch;
 export const environmentThreadDetails = createEnvironmentThreadDetailAtoms(
   environmentThreads.stateAtom,
 );

@@ -6,10 +6,14 @@ import type {
   AuthPairingCredentialResult,
   ServerAuthSessionMethod,
   AuthSessionId,
-  AuthSessionState,
 } from "@t3tools/contracts";
-import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import {
+  AuthSessionState,
+  EnvironmentHttpCommonError,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+} from "@t3tools/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { HttpClientError } from "effect/http";
@@ -21,6 +25,11 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { resolvePrimaryEnvironmentHttpUrl } from "./target";
+import {
+  discardEarlyPrimarySession,
+  takeEarlyPrimaryHttp,
+} from "../../connection/earlyPrimaryHttp";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -144,6 +153,21 @@ let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
 let explicitPairingRequested = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
+let sessionReadGeneration = 0;
+let sessionRead: { readonly key: string; readonly promise: Promise<AuthSessionState> } | null =
+  null;
+let recentSession: {
+  readonly key: string;
+  readonly value: AuthSessionState;
+  readonly readAt: number;
+} | null = null;
+
+function invalidateSessionRead(): void {
+  discardEarlyPrimarySession();
+  sessionReadGeneration++;
+  sessionRead = null;
+  recentSession = null;
+}
 
 export function peekPairingTokenFromUrl(): string | null {
   return getPairingTokenFromUrl(new URL(window.location.href));
@@ -178,9 +202,35 @@ function getDesktopBootstrapCredential(): string | null {
     : null;
 }
 
-export async function fetchSessionState(): Promise<AuthSessionState> {
-  return retryTransientBootstrap(async () => {
+export function fetchSessionState(): Promise<AuthSessionState> {
+  return readSessionState(false);
+}
+
+async function readSessionState(fresh: boolean): Promise<AuthSessionState> {
+  const key = resolvePrimaryEnvironmentHttpUrl("/");
+  if (
+    !fresh &&
+    recentSession?.key === key &&
+    Date.now() - recentSession.readAt < 1_000 &&
+    (recentSession.value.expiresAt === undefined ||
+      DateTime.toEpochMillis(recentSession.value.expiresAt) > Date.now())
+  ) {
+    return recentSession.value;
+  }
+  if (sessionRead?.key === key) return sessionRead.promise;
+  const generation = sessionReadGeneration;
+  const promise = retryTransientBootstrap(async () => {
     try {
+      const earlyResponse = await takeEarlyPrimaryHttp("/api/auth/session");
+      if (earlyResponse !== undefined && earlyResponse !== null) {
+        try {
+          return await Effect.runPromise(
+            Schema.decodeUnknownEffect(Schema.toCodecJson(AuthSessionState))(earlyResponse),
+          );
+        } catch {
+          // An invalid speculative response must not replace normal auth handling.
+        }
+      }
       return await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
           Effect.flatMap((client) => client.auth.session({ headers: {} })),
@@ -192,7 +242,19 @@ export async function fetchSessionState(): Promise<AuthSessionState> {
         cause: error,
       });
     }
-  });
+  })
+    .then((value) => {
+      // Never cache an unauthenticated response or an earlier pairing grant.
+      if (sessionReadGeneration === generation) {
+        recentSession = value.authenticated ? { key, value, readAt: Date.now() } : null;
+      }
+      return value;
+    })
+    .finally(() => {
+      if (sessionRead?.promise === promise) sessionRead = null;
+    });
+  sessionRead = { key, promise };
+  return promise;
 }
 
 function readHttpApiStatus(error: unknown): number | null {
@@ -221,6 +283,7 @@ function readEnvironmentHttpErrorStatus(error: EnvironmentHttpCommonErrorType): 
 }
 
 async function exchangeBootstrapCredential(credential: string): Promise<AuthBrowserSessionResult> {
+  invalidateSessionRead();
   return retryTransientBootstrap(async () => {
     try {
       return await runPrimaryHttp(
@@ -244,14 +307,14 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
         cause: error,
       });
     }
-  });
+  }).finally(invalidateSessionRead);
 }
 
 async function waitForAuthenticatedSessionAfterBootstrap(): Promise<AuthSessionState> {
   const startedAt = Date.now();
 
   while (true) {
-    const session = await fetchSessionState();
+    const session = await readSessionState(true);
     if (session.authenticated) {
       return session;
     }
@@ -397,6 +460,7 @@ export async function revokeServerPairingLink(id: string): Promise<void> {
 }
 
 export async function revokeServerClientSession(sessionId: AuthSessionId): Promise<void> {
+  invalidateSessionRead();
   try {
     await runPrimaryHttp(
       PrimaryEnvironmentHttpClient.pipe(
@@ -411,6 +475,8 @@ export async function revokeServerClientSession(sessionId: AuthSessionId): Promi
       sessionId,
       cause: error,
     });
+  } finally {
+    invalidateSessionRead();
   }
 }
 
@@ -482,6 +548,7 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 }
 
 export function __resetServerAuthBootstrapForTests() {
+  invalidateSessionRead();
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
   explicitPairingRequested = false;

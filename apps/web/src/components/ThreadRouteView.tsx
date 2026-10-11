@@ -1,7 +1,9 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { useAtomMount } from "@effect/atom-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
+import { Atom } from "effect/reactivity";
 
 import ChatView from "./ChatView";
 import { resolveDraftPromotionNavigationTarget, threadHasStarted } from "./ChatView.logic";
@@ -17,11 +19,14 @@ import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { useEnvironmentThreadRefs, useThreadRefs, useThreadShell } from "../state/entities";
 import { useEnvironmentQuery } from "../state/query";
 import { environmentShell } from "../state/shell";
+import { environmentThreadDetails } from "../state/threads";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRenderState,
   type ThreadRouteTarget,
 } from "../threadRoutes";
+
+const EMPTY_THREAD_DETAIL_ATOM = Atom.make(null);
 
 /**
  * The single chat surface behind both `/draft/$draftId` and
@@ -55,6 +60,13 @@ export function ThreadRouteView({ target }: { target: ThreadRouteTarget }) {
   const serverThreadRef: ScopedThreadRef | null =
     target.kind === "server" ? target.threadRef : (draftSession?.promotedTo ?? inferredThreadRef);
   const serverThread = useThreadShell(serverThreadRef);
+  // Mount detail before shell membership mounts ChatView. Its HTTP hydration
+  // can overlap shell loading and the socket's initial configuration.
+  useAtomMount(
+    serverThreadRef === null
+      ? EMPTY_THREAD_DETAIL_ATOM
+      : environmentThreadDetails.stateAtom(serverThreadRef),
+  );
   const backgroundSubmissionPending = useBackgroundDraftSubmissionPending(
     target.kind === "draft" ? serverThreadRef : null,
   );

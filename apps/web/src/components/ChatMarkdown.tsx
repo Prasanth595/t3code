@@ -1139,6 +1139,10 @@ interface UncachedShikiCodeBlockProps {
   preserveLines: boolean;
 }
 
+type HighlightedCode =
+  | string
+  | ReturnType<Awaited<ReturnType<typeof getSyntaxHighlighterPromise>>["codeToHast"]>;
+
 function UncachedShikiCodeBlock({
   code,
   language,
@@ -1147,41 +1151,122 @@ function UncachedShikiCodeBlock({
   isStreaming,
   preserveLines,
 }: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
-  const incrementalHighlight = useMemo(
-    () =>
-      preserveLines ? createIncrementalHighlightedDocument(highlighter, language, themeName) : null,
-    [highlighter, preserveLines, language, themeName],
+  const documentRef = useRef<{
+    language: string;
+    themeName: DiffThemeName;
+    preserveLines: boolean;
+    highlight: (code: string) => HighlightedCode;
+  } | null>(null);
+  const [result, setResult] = useState<
+    | { input: UncachedShikiCodeBlockProps; highlighted: HighlightedCode }
+    | { input: UncachedShikiCodeBlockProps; error: unknown }
+    | null
+  >(null);
+  const input = useMemo(
+    () => ({ code, language, themeName, cacheKey, isStreaming, preserveLines }),
+    [code, language, themeName, cacheKey, isStreaming, preserveLines],
   );
-  const highlighted = useMemo(() => {
-    try {
-      if (incrementalHighlight) return incrementalHighlight(code);
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: language, theme: themeName })
-        : highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      // Log highlighting failures for debugging while falling back to plain text
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      // If highlighting fails for this language, render as plain text
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
-        : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  }, [code, highlighter, incrementalHighlight, language, preserveLines, themeName]);
-
+  const latestInputRef = useRef(input);
+  const requestHighlightRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (!isStreaming) {
-      const highlightedHtml = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
-      highlightedCodeCache.set(
-        cacheKey,
-        highlightedHtml,
-        estimateHighlightedSize(highlightedHtml, code),
-      );
-    }
-  }, [cacheKey, code, highlighted, isStreaming]);
+    latestInputRef.current = input;
+    requestHighlightRef.current?.();
+  }, [input]);
+  useEffect(() => {
+    let cancelled = false;
+    let busy = true;
+    let completedInput: UncachedShikiCodeBlockProps | null = null;
+    let firstFrame: number | undefined;
+    let secondFrame: number | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const highlight = async () => {
+      const input = latestInputRef.current;
+      const { code, language, themeName, cacheKey, isStreaming, preserveLines } = input;
+      try {
+        const highlighter = await getSyntaxHighlighterPromise(language);
+        if (cancelled) return;
+        let document = documentRef.current;
+        if (
+          document?.language !== language ||
+          document.themeName !== themeName ||
+          document.preserveLines !== preserveLines
+        ) {
+          document = {
+            language,
+            themeName,
+            preserveLines,
+            highlight: preserveLines
+              ? createIncrementalHighlightedDocument(highlighter, language, themeName)
+              : (value) => highlighter.codeToHtml(value, { lang: language, theme: themeName }),
+          };
+          documentRef.current = document;
+        }
+        let highlighted: HighlightedCode;
+        try {
+          highlighted = document.highlight(code);
+        } catch (error) {
+          console.warn(
+            `Code highlighting failed for language "${language}", falling back to plain text.`,
+            error instanceof Error ? error.message : error,
+          );
+          highlighted = preserveLines
+            ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
+            : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
+        }
+        if (!isStreaming) {
+          const html = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
+          highlightedCodeCache.set(cacheKey, html, estimateHighlightedSize(html, code));
+        }
+        setResult({ input, highlighted });
+      } catch (error) {
+        if (!cancelled) setResult({ input, error });
+      } finally {
+        completedInput = input;
+        busy = false;
+        // Finish scheduled work even if more text arrives. Then coalesce
+        // any intervening updates into one pass over the newest input.
+        if (!cancelled && latestInputRef.current !== input) requestHighlight();
+      }
+    };
+    const schedule = () => {
+      timer = setTimeout(() => void highlight(), 0);
+    };
+    const requestHighlight = () => {
+      if (cancelled || busy || latestInputRef.current === completedInput) return;
+      busy = true;
+      schedule();
+    };
+    requestHighlightRef.current = requestHighlight;
+    // A state update inside rAF can pull tokenization into the paint's
+    // render/commit. Run the first highlighter work in a later task instead.
+    firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(schedule);
+    });
+    return () => {
+      cancelled = true;
+      requestHighlightRef.current = null;
+      if (firstFrame !== undefined) cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, []);
+
+  const matchingResult =
+    result?.input.code === code &&
+    result.input.language === language &&
+    result.input.themeName === themeName &&
+    result.input.preserveLines === preserveLines
+      ? result
+      : null;
+  if (matchingResult && "error" in matchingResult) throw matchingResult.error;
+  if (!matchingResult) {
+    return (
+      <pre>
+        <code>{code}</code>
+      </pre>
+    );
+  }
+  const { highlighted } = matchingResult;
 
   return typeof highlighted === "string" ? (
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />
@@ -3346,15 +3431,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
         resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
         fallback={<pre {...props}>{children}</pre>}
       >
-        {/* Reserve the block's height but stay hidden until Shiki has colored
-           it, so plain text never flashes before the highlighted version. */}
-        <Suspense
-          fallback={
-            <pre {...props} className="invisible" aria-hidden>
-              {children}
-            </pre>
-          }
-        >
+        <Suspense fallback={<pre {...props}>{children}</pre>}>
           <SuspenseShikiCodeBlock
             className={codeBlock.className}
             code={codeBlock.code}

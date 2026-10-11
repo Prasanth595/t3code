@@ -71,6 +71,20 @@ const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 
+// Platform discovery just read this public descriptor to identify the primary.
+// Consume it once during startup; retries and later reconnects read the host again.
+const bootstrapDescriptors = new WeakMap<
+  PrimaryConnectionTarget,
+  { readonly descriptor: ExecutionEnvironmentDescriptor; readonly fetchedAt: number }
+>();
+
+export function rememberPrimaryConnectionDescriptor(
+  target: PrimaryConnectionTarget,
+  descriptor: ExecutionEnvironmentDescriptor,
+): void {
+  bootstrapDescriptors.set(target, { descriptor, fetchedAt: Date.now() });
+}
+
 function primarySocketUrl(
   target: PrimaryConnectionTarget,
   clientMetadata: AuthClientPresentationMetadata | undefined,
@@ -288,12 +302,18 @@ export const make = Effect.gen(function* () {
           return ssh({ ...entry, target });
       }
     })();
-    const descriptor = yield* fetchRemoteEnvironmentDescriptor({
-      httpBaseUrl: prepared.httpBaseUrl,
-    }).pipe(
-      Effect.mapError(mapRemoteEnvironmentError),
-      Effect.provideService(HttpClient.HttpClient, httpClient),
-    );
+    const bootstrap =
+      target._tag === "PrimaryConnectionTarget" ? bootstrapDescriptors.get(target) : undefined;
+    if (target._tag === "PrimaryConnectionTarget") bootstrapDescriptors.delete(target);
+    const descriptor =
+      bootstrap !== undefined && Date.now() - bootstrap.fetchedAt < 5_000
+        ? bootstrap.descriptor
+        : yield* fetchRemoteEnvironmentDescriptor({
+            httpBaseUrl: prepared.httpBaseUrl,
+          }).pipe(
+            Effect.mapError(mapRemoteEnvironmentError),
+            Effect.provideService(HttpClient.HttpClient, httpClient),
+          );
     if (descriptor.environmentId !== target.environmentId) {
       return yield* environmentMismatchError({
         expected: target.environmentId,

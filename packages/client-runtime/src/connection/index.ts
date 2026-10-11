@@ -9,6 +9,7 @@ export * from "./model.ts";
 export * as ConnectionOnboarding from "./onboarding.ts";
 export * from "./presentation.ts";
 export * as ProfileStore from "./profileStore.ts";
+export { rememberPrimaryConnectionDescriptor } from "./resolver.ts";
 export * from "./routes.ts";
 export { type RouteCheck } from "./driver.ts";
 export * as EnvironmentRegistry from "./registry.ts";

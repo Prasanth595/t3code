@@ -2,6 +2,56 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="t3-primary-http-url" content="%VITE_HTTP_URL%" />
+    <meta name="t3-primary-ws-url" content="%VITE_WS_URL%" />
+    <meta name="t3-hosted-app-url" content="%VITE_HOSTED_APP_URL%" />
+    <meta name="t3-hosted-app-channel" content="%VITE_HOSTED_APP_CHANNEL%" />
+    <script>
+      (() => {
+        // Cookie reads only: desktop and hosted clients resolve other credentials.
+        if (window.desktopBridge || !/^https?:$/.test(location.protocol)) return;
+        const configured = (name) => {
+          const value = document.querySelector(`meta[name="${name}"]`).content.trim();
+          return value.startsWith("%") ? "" : value;
+        };
+        try {
+          const http = configured("t3-primary-http-url");
+          const ws = configured("t3-primary-ws-url");
+          const backend = http || ws;
+          if (backend) {
+            const url = new URL(backend, location.origin);
+            if (url.protocol === "ws:") url.protocol = "http:";
+            if (url.protocol === "wss:") url.protocol = "https:";
+            if (url.origin !== location.origin) return;
+          } else {
+            const channel = configured("t3-hosted-app-channel").toLowerCase();
+            const hosted = configured("t3-hosted-app-url") || "https://app.t3.codes";
+            if (
+              channel === "latest" ||
+              channel === "nightly" ||
+              new URL(hosted).origin === location.origin
+            )
+              return;
+          }
+          const responses = {};
+          for (const path of ["/api/auth/session", "/.well-known/t3/environment"]) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 10000);
+            responses[path] = fetch(path, {
+              credentials: "include",
+              headers: { accept: "application/json" },
+              signal: controller.signal,
+            })
+              .then((response) => (response.ok ? response.json() : null))
+              .catch(() => null)
+              .finally(() => clearTimeout(timer));
+          }
+          window.__t3EarlyPrimaryHttp = { origin: location.origin, responses };
+        } catch {
+          // The app owns fallback requests and error handling.
+        }
+      })();
+    </script>
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"

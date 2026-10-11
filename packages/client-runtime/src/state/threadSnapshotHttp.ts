@@ -91,5 +91,7 @@ export class ThreadSnapshotLoader extends Context.Service<
       prepared: PreparedConnection,
       threadId: ThreadId,
     ) => Effect.Effect<ThreadSnapshotLoadResult>;
+    /** Warm a bounded snapshot without subscribing to the thread. */
+    readonly prefetch?: (prepared: PreparedConnection, threadId: ThreadId) => Effect.Effect<void>;
   }
 >()("@t3tools/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}

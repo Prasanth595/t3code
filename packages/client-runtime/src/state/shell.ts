@@ -20,7 +20,7 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import * as EnvironmentRegistry from "../connection/registry.ts";
-import { connectionProjectionPhase } from "../connection/model.ts";
+import { connectionProjectionPhase, type PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -67,23 +67,27 @@ function withoutDeferredPullRequests(value: DeferredShellSnapshot): Orchestratio
 
 const SHELL_SYNCHRONIZATION_ERROR_MESSAGE = "Could not synchronize environment data.";
 
-export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* () {
+export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")(function* (
+  cachedSeed?: Option.Option<DeferredShellSnapshot>,
+) {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
   const cache = yield* Persistence.EnvironmentCacheStore;
   const snapshotLoader = yield* ShellSnapshotLoader.ShellSnapshotLoader;
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
-  const cached = yield* cache.loadShell(environmentId).pipe(
-    Effect.catch((error) =>
-      Effect.logWarning("Could not load cached environment shell.").pipe(
-        Effect.annotateLogs({
-          environmentId,
-          ...safeErrorLogAttributes(error),
-        }),
-        Effect.as(Option.none<DeferredShellSnapshot>()),
+  const cached =
+    cachedSeed ??
+    (yield* cache.loadShell(environmentId).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not load cached environment shell.").pipe(
+          Effect.annotateLogs({
+            environmentId,
+            ...safeErrorLogAttributes(error),
+          }),
+          Effect.as(Option.none<DeferredShellSnapshot>()),
+        ),
       ),
-    ),
-  );
+    ));
   const cachedSnapshot = Option.map(cached, withoutDeferredPullRequests);
   const state = yield* SubscriptionRef.make<EnvironmentShellState>({
     snapshot: cachedSnapshot,
@@ -328,6 +332,29 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       service.changes.pipe(Stream.filter(ConnectionWakeups.shouldResubscribeAfterWakeup)),
   });
 
+  const preparedConnection = SubscriptionRef.get(supervisor.prepared).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: Effect.succeed,
+        onNone: () =>
+          SubscriptionRef.changes(supervisor.prepared).pipe(
+            Stream.filter(Option.isSome),
+            Stream.map((value) => value.value),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          ),
+      }),
+    ),
+  );
+  // HTTP shell hydration needs credentials, not the socket's initial config.
+  // Start alongside thread hydration, but apply/join under the subscription owner.
+  let initialPrepared: PreparedConnection | undefined;
+  let initialHydration: Fiber.Fiber<Option.Option<DeferredShellSnapshot>> | undefined =
+    yield* Effect.gen(function* () {
+      initialPrepared = yield* preparedConnection;
+      return yield* snapshotLoader.load(initialPrepared);
+    }).pipe(Effect.forkScoped);
+
   yield* setSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
@@ -348,21 +375,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         let canResume = hasAuthoritativeSnapshot;
         let current = yield* SubscriptionRef.get(state);
         if (!hasAuthoritativeSnapshot || Option.isNone(current.snapshot)) {
-          const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
-            Effect.flatMap(
-              Option.match({
-                onSome: Effect.succeed,
-                onNone: () =>
-                  SubscriptionRef.changes(supervisor.prepared).pipe(
-                    Stream.filter(Option.isSome),
-                    Stream.map((value) => value.value),
-                    Stream.runHead,
-                    Effect.map(Option.getOrThrow),
-                  ),
-              }),
-            ),
-          );
-          const httpSnapshot = yield* snapshotLoader.load(prepared);
+          const prepared = yield* preparedConnection;
+          const hydration = initialHydration;
+          initialHydration = undefined;
+          // A replacement route or credential must never apply the earlier load.
+          if (hydration !== undefined && initialPrepared !== prepared) {
+            yield* Fiber.interrupt(hydration);
+          }
+          const httpSnapshot =
+            hydration !== undefined && initialPrepared === prepared
+              ? yield* Fiber.join(hydration)
+              : yield* snapshotLoader.load(prepared);
           if (Option.isSome(httpSnapshot)) {
             yield* cancelActiveFill;
             const previous = yield* SubscriptionRef.get(state);
@@ -428,9 +451,38 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 });
 
 function shellStateChanges(environmentId: EnvironmentId) {
-  return followStreamInEnvironment(
-    environmentId,
-    Stream.unwrap(makeEnvironmentShellState().pipe(Effect.map(SubscriptionRef.changes))),
+  return Stream.unwrap(
+    Effect.gen(function* () {
+      // Local display does not require platform discovery to register this environment.
+      const cache = yield* Persistence.EnvironmentCacheStore;
+      const cached = yield* cache.loadShell(environmentId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not load cached environment shell.", {
+            environmentId,
+            ...safeErrorLogAttributes(error),
+          }).pipe(Effect.as(Option.none<DeferredShellSnapshot>())),
+        ),
+      );
+      const snapshot = Option.map(cached, withoutDeferredPullRequests);
+      let seed: Option.Option<DeferredShellSnapshot> | undefined = cached;
+      return Stream.concat(
+        Stream.succeed<EnvironmentShellState>({
+          snapshot,
+          status: shellStatusForSnapshot(snapshot),
+          error: Option.none(),
+        }),
+        followStreamInEnvironment(
+          environmentId,
+          Stream.unwrap(
+            Effect.suspend(() => {
+              const initial = seed;
+              seed = undefined;
+              return makeEnvironmentShellState(initial).pipe(Effect.map(SubscriptionRef.changes));
+            }),
+          ),
+        ),
+      );
+    }),
   );
 }
 

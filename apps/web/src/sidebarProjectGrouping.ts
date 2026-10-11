@@ -1,5 +1,9 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
-import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
+import {
+  buildProjectGroups,
+  type ProjectGroup,
+  type ProjectGroupingSettings,
+} from "./logicalProject";
 import type { Project } from "./types";
 
 export type EnvironmentPresence = "local-only" | "remote-only" | "mixed";
@@ -45,17 +49,54 @@ export interface SidebarProjectPickerEntry {
   isPreferred: boolean;
 }
 
+// Environment labels and other settings can arrive independently of projects.
+// Reuse the grouping pass across those renders and the chat's physical-key map.
+const projectGroupsBySource = new WeakMap<
+  ReadonlyArray<Project>,
+  {
+    mode: ProjectGroupingSettings["sidebarProjectGroupingMode"];
+    overrides: ProjectGroupingSettings["sidebarProjectGroupingOverrides"];
+    primaryEnvironmentId: EnvironmentId | null;
+    groups: ReadonlyArray<ProjectGroup<Project>>;
+  }
+>();
+
+function groupedProjects(input: {
+  projects: ReadonlyArray<Project>;
+  settings: ProjectGroupingSettings;
+  primaryEnvironmentId: EnvironmentId | null;
+}) {
+  const { sidebarProjectGroupingMode: mode, sidebarProjectGroupingOverrides: overrides } =
+    input.settings;
+  const previous = projectGroupsBySource.get(input.projects);
+  if (
+    previous?.mode === mode &&
+    previous.overrides === overrides &&
+    previous.primaryEnvironmentId === input.primaryEnvironmentId
+  ) {
+    return previous.groups;
+  }
+  const groups = buildProjectGroups({
+    projects: input.projects,
+    settings: input.settings,
+    preferredEnvironmentId: input.primaryEnvironmentId,
+  });
+  projectGroupsBySource.set(input.projects, {
+    mode,
+    overrides,
+    primaryEnvironmentId: input.primaryEnvironmentId,
+    groups,
+  });
+  return groups;
+}
+
 export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
   primaryEnvironmentId: EnvironmentId | null;
 }): Map<string, string> {
   const mapping = new Map<string, string>();
-  const groups = buildProjectGroups({
-    projects: input.projects,
-    settings: input.settings,
-    preferredEnvironmentId: input.primaryEnvironmentId,
-  });
+  const groups = groupedProjects(input);
   for (const group of groups) {
     for (const member of group.members) {
       mapping.set(member.physicalProjectKey, group.key);
@@ -76,11 +117,7 @@ export function buildSidebarProjectSnapshots(input: {
   isDesktopLocalEnvironment?: (environmentId: EnvironmentId) => boolean;
   isWslEnvironment?: (environmentId: EnvironmentId) => boolean;
 }): SidebarProjectSnapshot[] {
-  return buildProjectGroups({
-    projects: input.projects,
-    settings: input.settings,
-    preferredEnvironmentId: input.primaryEnvironmentId,
-  }).map((group): SidebarProjectSnapshot => {
+  return groupedProjects(input).map((group): SidebarProjectSnapshot => {
     const members = group.members.map(
       ({ physicalProjectKey, project }): SidebarProjectGroupMember => ({
         ...project,

@@ -23,7 +23,7 @@ import { Atom } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
-import { connectionProjectionPhase } from "../connection/model.ts";
+import { connectionProjectionPhase, type PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
@@ -33,7 +33,7 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 import { THREAD_SNAPSHOT_IDLE_TTL_MS } from "./threadRetention.ts";
-import { followStreamInEnvironment } from "./runtime.ts";
+import { createEnvironmentCommand, followStreamInEnvironment } from "./runtime.ts";
 import * as ThreadHistoryController from "./threadHistoryController.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import {
@@ -45,6 +45,7 @@ import {
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
+import { boundThreadSnapshotForCache } from "./threadCache.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   type EnvironmentThreadState,
@@ -91,11 +92,11 @@ function snapshotToPersist(
   snapshotSequence: number,
   projection: OrchestrationV2ThreadProjection,
   history: ThreadHistoryMeta,
-  acceptsBoundedSnapshots: boolean,
+  supportsHistoryPaging: boolean,
 ): OrchestrationV2ThreadDetailSnapshot {
   // A complete bounded snapshot still proves paging support. Retain that evidence
   // so a thread that grows while closed can resume with a bounded fallback.
-  if (acceptsBoundedSnapshots || history.hasMoreHistory || history.historyCursor !== null) {
+  if (supportsHistoryPaging) {
     return {
       snapshotSequence,
       projection,
@@ -125,7 +126,7 @@ interface ThreadResumeSnapshot {
   readonly state: EnvironmentThreadState;
   readonly sequence: number;
   readonly persisted: boolean;
-  readonly acceptsBoundedSnapshots?: boolean;
+  readonly supportsHistoryPaging?: boolean;
 }
 
 interface ThreadResumeCache {
@@ -215,10 +216,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }),
       };
   const state = yield* SubscriptionRef.make(initialState);
-  // Paging support belongs to the client, even when the initial HTTP request
-  // fails. A bounded socket reset retains a cursor so history can be retried.
+  // Client capability opts into bounded socket resets even when HTTP fails.
+  // Persistence separately requires paging metadata confirmed by the server.
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
   const acceptsBoundedSocketSnapshots = yield* Ref.make(canLoadHistory);
+  const supportsHistoryPaging = yield* Ref.make(
+    retained?.supportsHistoryPaging ??
+      Option.exists(cached, (snapshot) => snapshot.historyCursor !== undefined),
+  );
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
   const initialSequence =
@@ -229,7 +234,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     state: initialState,
     sequence: initialSequence,
     persisted: retained?.persisted ?? Option.isSome(cached),
-    acceptsBoundedSnapshots: canLoadHistory,
+    supportsHistoryPaging: yield* Ref.get(supportsHistoryPaging),
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
   const awaitingCompletion = yield* Ref.make(false);
@@ -242,7 +247,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     committed = {
       state: current,
       sequence,
-      acceptsBoundedSnapshots: yield* Ref.get(acceptsBoundedSocketSnapshots),
+      supportsHistoryPaging: yield* Ref.get(supportsHistoryPaging),
       persisted:
         committed.persisted &&
         matchesThreadSnapshot(committed, Option.getOrNull(current.data), sequence, current.history),
@@ -267,7 +272,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       )
     )
       return;
-    yield* cache.saveThread(environmentId, snapshot).pipe(
+    const persistedSnapshot = boundThreadSnapshotForCache(snapshot);
+    yield* cache.saveThread(environmentId, persistedSnapshot).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           if (
@@ -307,7 +313,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   snapshotSequence,
                   projection,
                   current.history,
-                  committed.acceptsBoundedSnapshots === true,
+                  committed.supportsHistoryPaging === true,
                 ),
               )
             : Effect.void,
@@ -364,6 +370,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
        * (bounded HTTP). Wins over resetHistory when both are supplied.
        */
       readonly history?: ThreadHistoryMeta;
+      /** HTTP hydration remains cached or synchronizing until socket catch-up. */
+      readonly status?: EnvironmentThreadStatus;
     },
   ) {
     const waiting = yield* Ref.get(awaitingCompletion);
@@ -383,9 +391,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         // Buffered values from a failed attempt can arrive after its error.
         status: Option.isSome(previous.error)
           ? ("cached" as const)
-          : waiting
-            ? ("synchronizing" as const)
-            : ("live" as const),
+          : (options?.status ?? (waiting ? ("synchronizing" as const) : ("live" as const))),
         error: previous.error,
         history,
       };
@@ -401,7 +407,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           snapshotSequence,
           thread,
           next.history,
-          yield* Ref.get(acceptsBoundedSocketSnapshots),
+          yield* Ref.get(supportsHistoryPaging),
         ),
       );
     }
@@ -562,7 +568,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           snapshotSequence,
           result.projection,
           result.history,
-          yield* Ref.get(acceptsBoundedSocketSnapshots),
+          yield* Ref.get(supportsHistoryPaging),
         ),
       );
     }
@@ -583,6 +589,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
     if (item.kind === "snapshot") {
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
+      yield* Ref.set(supportsHistoryPaging, item.historyCursor !== undefined);
       const hasProgressiveHistory =
         item.historyCursor !== undefined ||
         item.hasMoreHistory !== undefined ||
@@ -792,6 +799,103 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
+  const preparedConnection = SubscriptionRef.get(supervisor.prepared).pipe(
+    Effect.flatMap(
+      Option.match({
+        onSome: Effect.succeed,
+        onNone: () =>
+          SubscriptionRef.changes(supervisor.prepared).pipe(
+            Stream.filter(Option.isSome),
+            Stream.map((value) => value.value),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          ),
+      }),
+    ),
+  );
+  // HTTP needs prepared credentials, not the socket or its initial config.
+  // The first subscription joins this same load before choosing its replay cursor.
+  const hydrate = (prepared: PreparedConnection) =>
+    Effect.gen(function* () {
+      const httpResult = yield* snapshotLoader.load(prepared, threadId);
+      return yield* applyLock.withPermits(1)(
+        Effect.gen(function* () {
+          // A replaced route/credential or thread scope cannot publish its response.
+          if (
+            Option.getOrNull(yield* SubscriptionRef.get(supervisor.prepared)) !== prepared ||
+            (resumeCache !== undefined && resumeCache.owner !== owner)
+          )
+            return false;
+          switch (httpResult._tag) {
+            case "present": {
+              yield* Ref.set(
+                supportsHistoryPaging,
+                httpResult.history?.historyCursor !== undefined,
+              );
+              // Projection and history metadata commit together before cursor resume.
+              yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
+              const history: ThreadHistoryMeta =
+                httpResult.history !== undefined
+                  ? {
+                      historyCursor: httpResult.history.historyCursor,
+                      hasMoreHistory: httpResult.history.hasMoreHistory,
+                      loading: false,
+                      error: null,
+                      expanded: false,
+                      latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
+                    }
+                  : EMPTY_THREAD_HISTORY_META;
+              const connectionState = yield* SubscriptionRef.get(supervisor.state);
+              yield* setThread(httpResult.snapshot.projection, {
+                history,
+                status:
+                  connectionProjectionPhase(connectionState) === "disconnected"
+                    ? "cached"
+                    : "synchronizing",
+              });
+              yield* remember;
+              break;
+            }
+            case "missing": {
+              // Definitive HTTP 404: clear stale cache without opening a subscription.
+              yield* setDeleted();
+              break;
+            }
+            case "unavailable": {
+              // Transient HTTP failure: fall through to the socket path.
+              break;
+            }
+          }
+          return true;
+        }),
+      );
+    });
+  let initialPrepared: PreparedConnection | undefined;
+  let initialHydration = Option.isNone(initialState.data)
+    ? yield* SubscriptionRef.changes(supervisor.prepared).pipe(
+        Stream.changesWith(
+          (previous, current) => Option.getOrNull(previous) === Option.getOrNull(current),
+        ),
+        // Replacement interrupts the old HTTP load before starting the new one.
+        Stream.switchMap(
+          Option.match({
+            onNone: () => Stream.empty,
+            onSome: (prepared) =>
+              Stream.fromEffect(
+                Effect.suspend(() => {
+                  initialPrepared = prepared;
+                  return hydrate(prepared);
+                }),
+              ),
+          }),
+        ),
+        Stream.filter((applied) => applied),
+        Stream.runHead,
+        Effect.asVoid,
+        Effect.forkScoped,
+      )
+    : undefined;
+
   yield* markSynchronizing;
   yield* Effect.forkScoped(
     subscribeDynamic(
@@ -813,64 +917,21 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         yield* markSynchronizing;
         yield* Ref.set(resumingLive, false);
 
-        if (Option.isNone(current.data)) {
-          const prepared = yield* SubscriptionRef.get(supervisor.prepared).pipe(
-            Effect.flatMap(
-              Option.match({
-                onSome: Effect.succeed,
-                onNone: () =>
-                  SubscriptionRef.changes(supervisor.prepared).pipe(
-                    Stream.filter(Option.isSome),
-                    Stream.map((value) => value.value),
-                    Stream.runHead,
-                    Effect.map(Option.getOrThrow),
-                  ),
-              }),
-            ),
-          );
-          const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
-            yield* snapshotLoader.load(prepared, threadId);
-          switch (httpResult._tag) {
-            case "present": {
-              if (canLoadHistory && httpResult.history !== undefined) {
-                yield* Ref.set(acceptsBoundedSocketSnapshots, true);
-              }
-              // Atomic projection + progressive meta so a settled bounded window
-              // never persists as a complete full-timeline cache entry. Socket
-              // snapshots still go through applyItem (resetHistory).
-              yield* applyLock.withPermits(1)(
-                Effect.gen(function* () {
-                  yield* SubscriptionRef.set(lastSequence, httpResult.snapshot.snapshotSequence);
-                  const history: ThreadHistoryMeta =
-                    httpResult.history !== undefined
-                      ? {
-                          historyCursor: httpResult.history.historyCursor,
-                          hasMoreHistory: httpResult.history.hasMoreHistory,
-                          loading: false,
-                          error: null,
-                          expanded: false,
-                          latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
-                        }
-                      : EMPTY_THREAD_HISTORY_META;
-                  yield* setThread(httpResult.snapshot.projection, { history });
-                  yield* remember;
-                }),
-              );
-              current = yield* SubscriptionRef.get(state);
-              break;
-            }
-            case "missing": {
-              // Definitive HTTP 404: clear any stale cache and do not open or
-              // retry a socket subscription for this attempt.
-              yield* setDeleted();
-              return yield* Effect.never;
-            }
-            case "unavailable": {
-              // Transient HTTP failure: fall through to the socket path.
-              break;
-            }
-          }
+        const prepared = yield* preparedConnection;
+        if (initialHydration !== undefined && initialPrepared !== prepared) {
+          yield* Fiber.interrupt(initialHydration);
+          initialHydration = undefined;
+          yield* hydrate(prepared);
+        } else if (initialHydration !== undefined) {
+          yield* Fiber.join(initialHydration);
+          initialHydration = undefined;
+        } else if (Option.isNone(current.data)) {
+          yield* hydrate(prepared);
         }
+        if (Option.getOrNull(yield* SubscriptionRef.get(supervisor.prepared)) !== prepared)
+          return yield* Effect.never;
+        current = yield* SubscriptionRef.get(state);
+        if (current.status === "deleted") return yield* Effect.never;
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
         const canResume = Option.isSome(current.data);
@@ -947,7 +1008,47 @@ export function createEnvironmentThreadStateAtoms<R, E>(
           const resume = get.once(resumeAtom);
           const live = threadStateChanges(environmentId, threadId, resume);
           return resume.snapshot === undefined
-            ? live
+            ? Stream.concat(
+                Stream.unwrap(
+                  Effect.gen(function* () {
+                    // Decode only this opened thread, without waiting for discovery/auth/socket.
+                    const cache = yield* Persistence.EnvironmentCacheStore;
+                    const cached = yield* cache.loadThread(environmentId, threadId).pipe(
+                      Effect.catch((error) =>
+                        Effect.logWarning("Could not load cached thread.", {
+                          environmentId,
+                          threadId,
+                          error: error.message,
+                        }).pipe(Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>())),
+                      ),
+                    );
+                    const data = Option.map(cached, (snapshot) => snapshot.projection);
+                    const state: EnvironmentThreadState = {
+                      data,
+                      status: statusWithoutLiveData(data),
+                      error: Option.none(),
+                      history: Option.match(cached, {
+                        onNone: () => EMPTY_THREAD_HISTORY_META,
+                        onSome: historyMetaFromCachedSnapshot,
+                      }),
+                    };
+                    resume.snapshot = {
+                      state,
+                      sequence: Option.match(cached, {
+                        onNone: () => 0,
+                        onSome: (snapshot) => snapshot.snapshotSequence,
+                      }),
+                      persisted: Option.isSome(cached),
+                      supportsHistoryPaging: Option.exists(
+                        cached,
+                        (snapshot) => snapshot.historyCursor !== undefined,
+                      ),
+                    };
+                    return Stream.succeed(state);
+                  }),
+                ),
+                live,
+              )
             : Stream.concat(Stream.succeed(cachedThreadState(resume.snapshot.state)), live);
         },
         {
@@ -960,6 +1061,25 @@ export function createEnvironmentThreadStateAtoms<R, E>(
   return {
     stateAtom: (environmentId: EnvironmentIdType, threadId: ThreadIdType) =>
       family(threadKey({ environmentId, threadId })),
+    prefetch: createEnvironmentCommand(runtime, {
+      label: "environment-thread:prefetch",
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) => threadKey({ environmentId, threadId: input }),
+      },
+      execute: (threadId: ThreadIdType, registry, environmentId) =>
+        Effect.gen(function* () {
+          const retained = registry.get(resumeFamily(threadKey({ environmentId, threadId })));
+          if (retained.snapshot !== undefined && Option.isSome(retained.snapshot.state.data))
+            return;
+          const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+          const prepared = yield* SubscriptionRef.get(supervisor.prepared);
+          if (Option.isNone(prepared)) return;
+          // Intent must not decode disk histories for threads the user has not opened.
+          const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
+          yield* loader.prefetch?.(prepared.value, threadId) ?? Effect.void;
+        }),
+    }),
   };
 }
 
@@ -977,3 +1097,4 @@ export * from "./threadFeedback.ts";
 export * from "./threadDetail.ts";
 export * from "./threadShell.ts";
 export * from "./threadState.ts";
+export * from "./threadCache.ts";

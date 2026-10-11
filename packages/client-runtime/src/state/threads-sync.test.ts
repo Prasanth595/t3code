@@ -536,9 +536,6 @@ describe("EnvironmentThreads", () => {
         {
           projection: BASE_PROJECTION,
           snapshotSequence: CACHED_SNAPSHOT_SEQUENCE,
-          historyCursor: null,
-          hasMoreHistory: false,
-          latestLocalTurnOrdinal: null,
         },
       ]);
     }),
@@ -1423,8 +1420,8 @@ describe("EnvironmentThreads", () => {
       yield* Effect.yieldNow;
       const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
       expect(saved?.projection.thread.title).toBe("Full socket snapshot");
-      expect(saved?.historyCursor).toBeNull();
-      expect(saved?.hasMoreHistory).toBe(false);
+      expect(saved?.historyCursor).toBeUndefined();
+      expect(saved?.hasMoreHistory).toBeUndefined();
     }),
   );
 

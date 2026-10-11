@@ -350,20 +350,42 @@ describe("ChatMarkdown streaming", () => {
     const highlighter = await getSyntaxHighlighterPromise("typescript");
     const highlight = vi.spyOn(highlighter, "codeToHast");
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"],
+    });
     let renderer: ReactTestRenderer | undefined;
     const text = "```typescript\nconst completed = 1;\nconst current = 2;";
     try {
       await act(async () => {
         renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
       });
+      expect(highlight).not.toHaveBeenCalled();
+      expect(renderer!.root.findByType("pre").findByType("code").children).toEqual([
+        "const completed = 1;\nconst current = 2;\n",
+      ]);
+      await act(async () => vi.advanceTimersToNextFrame());
+      expect(highlight).not.toHaveBeenCalled();
+      const continuedText = `${text}\nconst newest = 3;`;
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={continuedText} isStreaming />);
+      });
+      expect(renderer!.root.findByType("pre").findByType("code").children).toEqual([
+        "const completed = 1;\nconst current = 2;\nconst newest = 3;\n",
+      ]);
+      await act(async () => vi.advanceTimersToNextFrame());
+      expect(highlight).not.toHaveBeenCalled();
+      await act(async () => vi.advanceTimersToNextTimerAsync());
       expect(highlight).toHaveBeenCalled();
       highlight.mockClear();
       await act(async () => {
-        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={text + "\n```"} />);
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={continuedText + "\n```"} />);
       });
+      await act(async () => vi.advanceTimersToNextTimerAsync());
+      expect(highlight).toHaveBeenCalled();
       expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
     } finally {
       await act(async () => renderer?.unmount());
+      vi.useRealTimers();
       vi.unstubAllGlobals();
       vi.restoreAllMocks();
     }
@@ -380,6 +402,9 @@ describe("ChatMarkdown streaming", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.useFakeTimers({
+      toFake: ["requestAnimationFrame", "cancelAnimationFrame", "setTimeout", "clearTimeout"],
+    });
     let renderer: ReactTestRenderer | undefined;
 
     try {
@@ -388,6 +413,9 @@ describe("ChatMarkdown streaming", () => {
           <ChatMarkdown cwd="/tmp/project" text={"```text\ninitial\n```"} isStreaming />,
         );
       });
+      await act(async () => vi.advanceTimersToNextFrame());
+      await act(async () => vi.advanceTimersToNextFrame());
+      await act(async () => vi.advanceTimersToNextTimerAsync());
       const mounted = renderer!;
       const codeBlock = mounted.root.findByProps({ "data-language": "text" });
       const initialWrap = codeBlock.props["data-wrap"] === "true";
@@ -403,11 +431,15 @@ describe("ChatMarkdown streaming", () => {
           <ChatMarkdown cwd="/tmp/project" text={"```text\nrecovered\n```"} isStreaming />,
         );
       });
+      await act(async () => vi.advanceTimersToNextFrame());
+      await act(async () => vi.advanceTimersToNextFrame());
+      await act(async () => vi.advanceTimersToNextTimerAsync());
       expect(mounted.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(1);
       expect(mounted.root.findByProps({ "data-language": "text" })).toBe(codeBlock);
       expect(codeBlock.props["data-wrap"]).toBe(String(!initialWrap));
     } finally {
       await act(async () => renderer?.unmount());
+      vi.useRealTimers();
       vi.unstubAllGlobals();
       vi.restoreAllMocks();
     }
@@ -419,7 +451,9 @@ describe("ChatMarkdown streaming", () => {
     const writeText = vi.fn(async (_text: string) => {});
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame"],
+    });
     let renderer: ReactTestRenderer | undefined;
     const text = [
       "```text",
@@ -439,6 +473,9 @@ describe("ChatMarkdown streaming", () => {
       await act(async () => {
         renderer = create(<ChatMarkdown cwd="/tmp/project" text={text} isStreaming />);
       });
+      await act(async () => vi.advanceTimersToNextFrame());
+      await act(async () => vi.advanceTimersToNextFrame());
+      await act(async () => vi.advanceTimersToNextTimerAsync());
       const mounted = renderer!;
       const codeBlock = mounted.root.findByProps({ "data-language": "text" });
       const initialWrap = codeBlock.props["data-wrap"] === "true";
@@ -481,6 +518,10 @@ describe("ChatMarkdown streaming", () => {
           />,
         );
       });
+      expect(mounted.root.findByType("pre").findByType("code").children).toEqual([
+        "Updated code block\n",
+      ]);
+      await act(async () => vi.advanceTimersToNextTimerAsync());
       const copyUpdated = codeButton(mounted, "Copied");
       await act(async () => {
         copyUpdated.onClick?.({} as Parameters<NonNullable<typeof copyUpdated.onClick>>[0]);

@@ -16,18 +16,24 @@ import {
   type PlatformConnectionRegistration,
   PrimaryConnectionRegistration,
   PrimaryConnectionTarget,
+  rememberPrimaryConnectionDescriptor,
   Wakeups,
 } from "@t3tools/client-runtime/connection";
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
-import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
+import {
+  EnvironmentRpcRequestObserver,
+  RemoteEnvironmentAuthFetchError,
+} from "@t3tools/client-runtime/rpc";
+import { PrimaryEnvironmentSessionReader } from "@t3tools/client-runtime/state/session";
 import {
   AuthStandardClientScopes,
   type DesktopBridge,
   type DesktopEnvironmentBootstrap,
   type DesktopSshEnvironmentTarget,
   type EnvironmentId,
+  ExecutionEnvironmentDescriptor,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -37,14 +43,17 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { FetchHttpClient } from "effect/http";
 
 import { APP_VERSION } from "../branding";
+import { fetchSessionState } from "../environments/primary/auth";
 import { readDesktopPrimaryBearerToken } from "../environments/primary/desktopAuth";
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import {
   readPrimaryEnvironmentTarget,
+  resolvePrimaryEnvironmentHttpUrl,
   type PrimaryEnvironmentTarget,
 } from "../environments/primary/target";
 import { clearComposerDraftsEnvironment } from "../composerDraftStore";
@@ -59,6 +68,7 @@ import {
 } from "./desktopLocal";
 import * as ConnectionStorage from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
+import { takeEarlyPrimaryHttp } from "./earlyPrimaryHttp";
 
 let nextObservedRpcRequestId = 0;
 
@@ -337,6 +347,29 @@ const layerCapabilities = Layer.effectContext(
       Context.add(ClientCapabilities.RelayDeviceIdentity, identity),
       Context.add(ClientCapabilities.ClientPresentation, presentation),
       Context.add(ClientCapabilities.SshEnvironmentGateway, ssh),
+      Context.add(PrimaryEnvironmentSessionReader, {
+        read: (prepared) =>
+          Effect.gen(function* () {
+            // Only the same-origin browser cookie is shared with auth bootstrap.
+            // Bearer, relay, and desktop credentials retain the runtime HTTP path.
+            if (
+              prepared.httpAuthorization !== null ||
+              window.desktopBridge !== undefined ||
+              new URL(prepared.httpBaseUrl).origin !== window.location.origin ||
+              new URL(prepared.httpBaseUrl).href !== resolvePrimaryEnvironmentHttpUrl("/")
+            ) {
+              return Option.none();
+            }
+            return yield* Effect.tryPromise({
+              try: () => fetchSessionState(),
+              catch: (cause) =>
+                new RemoteEnvironmentAuthFetchError({
+                  message: "Could not read the primary environment session.",
+                  cause,
+                }),
+            }).pipe(Effect.asSome);
+          }),
+      }),
     );
   }),
 );
@@ -344,19 +377,30 @@ const layerCapabilities = Layer.effectContext(
 const loadPrimaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadPrimaryConnectionRegistration",
 )(function* (resolved: PrimaryEnvironmentTarget) {
-  const descriptor = yield* fetchRemoteEnvironmentDescriptor({
+  const fetchDescriptor = fetchRemoteEnvironmentDescriptor({
     httpBaseUrl: resolved.target.httpBaseUrl,
   }).pipe(
     Effect.provide(PrimaryEnvironmentHttpLayer.layer),
     Effect.mapError(mapRemoteEnvironmentError),
   );
+  const earlyResponse = yield* Effect.promise(async () =>
+    takeEarlyPrimaryHttp("/.well-known/t3/environment"),
+  );
+  const descriptor =
+    earlyResponse === undefined || earlyResponse === null
+      ? yield* fetchDescriptor
+      : yield* Schema.decodeUnknownEffect(ExecutionEnvironmentDescriptor)(earlyResponse).pipe(
+          Effect.catch(() => fetchDescriptor),
+        );
+  const target = new PrimaryConnectionTarget({
+    environmentId: descriptor.environmentId,
+    label: descriptor.label,
+    httpBaseUrl: resolved.target.httpBaseUrl,
+    wsBaseUrl: resolved.target.wsBaseUrl,
+  });
+  rememberPrimaryConnectionDescriptor(target, descriptor);
   return new PrimaryConnectionRegistration({
-    target: new PrimaryConnectionTarget({
-      environmentId: descriptor.environmentId,
-      label: descriptor.label,
-      httpBaseUrl: resolved.target.httpBaseUrl,
-      wsBaseUrl: resolved.target.wsBaseUrl,
-    }),
+    target,
   });
 });
 

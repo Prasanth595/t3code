@@ -1,6 +1,6 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import { Atom } from "effect/reactivity";
 import { useEffect, useState } from "react";
 
@@ -29,13 +29,15 @@ import { environmentProjects } from "../../state/projects";
 import { primaryServerConfigAtom, primaryServerWelcomeAtom } from "../../state/server";
 import { environmentShell } from "../../state/shell";
 import { environmentThreadShells } from "../../state/threads";
+import { resolveThreadRouteRef } from "../../threadRoutes";
 import { Button } from "../ui/button";
 
 /**
  * Holds back authenticated and hosted app trees until the first-run decision
  * is known, so a fresh install never flashes the main screen before the wizard.
- * Nothing renders while pending — no shell, no EventRouter (whose welcome
- * payload would otherwise navigate into a thread), no dialogs.
+ * Explicit thread links bypass this decision so their cached rows and detail
+ * hydration do not wait for live workspace evidence. Landing pages stay blank
+ * while pending, including EventRouter's automatic welcome navigation.
  *
  * Decision order: a set `onboardingCompletedAt` resolves to the app as soon as
  * settings hydrate (the common case, no server round-trip). A `null` flag also
@@ -81,6 +83,7 @@ export function FirstRunGate({
 }) {
   const navigate = useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  const threadRef = useParams({ strict: false, select: resolveThreadRouteRef });
   const hydrationStatus = useClientSettingsHydrationStatus();
   const hydrated = hydrationStatus === "ready";
   const completeOnboarding = useCompleteOnboarding();
@@ -183,11 +186,14 @@ export function FirstRunGate({
   }, [decision, enabled, hydrated]);
 
   useEffect(() => {
-    if (decision === "wizard" && pathname !== "/welcome") {
+    if (decision === "wizard" && pathname !== "/welcome" && threadRef === null) {
       void navigate({ to: "/welcome", replace: true });
     }
-  }, [decision, navigate, pathname]);
+  }, [decision, navigate, pathname, threadRef]);
 
+  // An explicit thread link takes precedence over automatic first-run navigation.
+  // Mount its detail even before live workspace evidence or settings arrives.
+  if (threadRef !== null) return children;
   if (settingsReadFailed) {
     return <FirstRunRecovery reason="settings" retrying={hydrationStatus === "retrying"} />;
   }

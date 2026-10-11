@@ -85,8 +85,10 @@ import {
   XIcon,
 } from "lucide-react";
 import {
+  cloneElement,
   memo,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -97,7 +99,10 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type ReactElement,
+  type ComponentProps,
 } from "react";
+import { shallow } from "zustand/vanilla/shallow";
 import { useParams, useRouter } from "@tanstack/react-router";
 
 import { useRightPanelStore } from "../rightPanelStore";
@@ -124,7 +129,7 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
-import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
+import { getProjectOrderKey } from "../logicalProject";
 import {
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
@@ -158,7 +163,8 @@ import {
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
-import { threadEnvironment } from "../state/threads";
+import { prefetchEnvironmentThread, threadEnvironment } from "../state/threads";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -644,35 +650,48 @@ type SortableThreadRowBag = Pick<
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
 >;
 
-function SortableThreadRow(props: {
-  id: string;
-  disabled: boolean;
-  contextDrag: boolean;
-  environmentId: EnvironmentId;
-  children: (bag: SortableThreadRowBag) => ReactNode;
-}) {
-  const canOperateThread = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
-  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
-    id: props.id,
-    disabled: { draggable: props.disabled || !canOperateThread },
-    animateLayoutChanges: animateSidebarLayoutChanges,
-  });
-  // dnd-kit memoizes each field but not the bag, so the memoized row would
-  // rerender on every shell update without this.
-  const bag = useMemo(
-    () => ({
-      listeners,
-      setNodeRef,
-      transform: props.contextDrag ? null : transform,
-      // The lifted row normally follows the pointer without a transition.
-      // When it becomes a context ghost, glide its sidebar copy back home.
-      transition: props.contextDrag && isDragging ? "transform 150ms ease-out" : transition,
-      isDragging: isDragging && !props.contextDrag,
-    }),
-    [listeners, setNodeRef, transform, transition, isDragging, props.contextDrag],
-  );
-  return props.children(bag);
-}
+const SortableThreadRow = memo(
+  function SortableThreadRow(props: {
+    id: string;
+    disabled: boolean;
+    contextDrag: boolean;
+    environmentId: EnvironmentId;
+    children: ReactElement<ComponentProps<typeof SidebarThreadRow>>;
+  }) {
+    const canOperateThread = useEnvironmentScope(
+      props.environmentId,
+      AuthOrchestrationOperateScope,
+    );
+    const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+      id: props.id,
+      disabled: { draggable: props.disabled || !canOperateThread },
+      animateLayoutChanges: animateSidebarLayoutChanges,
+    });
+    // dnd-kit memoizes each field but not the bag, so the memoized row would
+    // rerender on every shell update without this.
+    const bag = useMemo(
+      () => ({
+        listeners,
+        setNodeRef,
+        transform: props.contextDrag ? null : transform,
+        // The lifted row normally follows the pointer without a transition.
+        // When it becomes a context ghost, glide its sidebar copy back home.
+        transition: props.contextDrag && isDragging ? "transform 150ms ease-out" : transition,
+        isDragging: isDragging && !props.contextDrag,
+      }),
+      [listeners, setNodeRef, transform, transition, isDragging, props.contextDrag],
+    );
+    return cloneElement(props.children, { sortable: bag });
+  },
+  (before, after) =>
+    before.id === after.id &&
+    before.disabled === after.disabled &&
+    before.contextDrag === after.contextDrag &&
+    before.environmentId === after.environmentId &&
+    before.children.key === after.children.key &&
+    before.children.type === after.children.type &&
+    shallow(before.children.props, after.children.props),
+);
 
 // Unsent work shares one look: the new-thread draft rows and thread rows
 // with unsent composer text both use this tint and pen so they read alike.
@@ -1205,6 +1224,31 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
+  const prefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cancelPrefetch = useCallback(() => {
+    if (prefetchTimer.current !== null) clearTimeout(prefetchTimer.current);
+    prefetchTimer.current = null;
+  }, []);
+  const prefetch = useCallback(() => {
+    cancelPrefetch();
+    if (props.isActive || isRenaming) return;
+    void prefetchEnvironmentThread.run(appAtomRegistry, {
+      environmentId: threadRef.environmentId,
+      input: threadRef.threadId,
+    });
+  }, [cancelPrefetch, isRenaming, props.isActive, threadRef]);
+  const schedulePrefetch = useCallback(() => {
+    cancelPrefetch();
+    prefetchTimer.current = setTimeout(prefetch, 80);
+  }, [cancelPrefetch, prefetch]);
+  const prefetchOnPointerDown = useCallback(
+    (event: ReactPointerEvent) => {
+      if (event.button !== 0 || (event.target as HTMLElement).closest("button, a, input")) return;
+      prefetch();
+    },
+    [prefetch],
+  );
+  useEffect(() => cancelPrefetch, [cancelPrefetch, schedulePrefetch]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   useEffect(() => {
     if (!canOperateThread && isRenaming) onCancelRename();
@@ -1813,6 +1857,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                onMouseEnter={schedulePrefetch}
+                onMouseLeave={cancelPrefetch}
+                onFocus={prefetch}
+                onPointerDown={prefetchOnPointerDown}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1978,6 +2026,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              onMouseEnter={schedulePrefetch}
+              onMouseLeave={cancelPrefetch}
+              onFocus={prefetch}
+              onPointerDown={prefetchOnPointerDown}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -2383,9 +2435,13 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
-  const projects = useProjects();
+  // Shell bursts should not make every sidebar row part of the timeline's
+  // urgent render. Route selection still updates immediately below.
+  const liveProjects = useProjects();
+  const projects = useDeferredValue(liveProjects);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
-  const threads = useThreadShells();
+  const liveThreads = useThreadShells();
+  const threads = useDeferredValue(liveThreads);
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2394,7 +2450,14 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
-  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const sidebarProjectGroupingMode = useClientSettings((s) => s.sidebarProjectGroupingMode);
+  const sidebarProjectGroupingOverrides = useClientSettings(
+    (s) => s.sidebarProjectGroupingOverrides,
+  );
+  const projectGroupingSettings = useMemo(
+    () => ({ sidebarProjectGroupingMode, sidebarProjectGroupingOverrides }),
+    [sidebarProjectGroupingMode, sidebarProjectGroupingOverrides],
+  );
   const {
     settleThread,
     unsettleThread,
@@ -2474,7 +2537,8 @@ export default function Sidebar() {
     [],
   );
   const environments = useEnvironmentIdentities();
-  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
+  const liveServerConfigs = useAtomValue(environmentServerConfigsAtom);
+  const serverConfigs = useDeferredValue(liveServerConfigs);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
@@ -3126,16 +3190,24 @@ export default function Sidebar() {
   const snoozedThreadKeysRef = useRef(snoozedThreadKeys);
   snoozedThreadKeysRef.current = snoozedThreadKeys;
 
+  const jumpLabels = useMemo(() => {
+    const labels: Array<string | undefined> = [];
+    for (let index = 0; ; index++) {
+      const command = threadJumpCommandForIndex(index);
+      if (!command) break;
+      labels.push(shortcutLabelForCommand(keybindings, command));
+    }
+    return labels;
+  }, [keybindings]);
   const jumpLabelByKey = useMemo(() => {
     const mapping = new Map<string, string>();
-    for (const [index, threadKey] of orderedThreadKeys.entries()) {
-      const jumpCommand = threadJumpCommandForIndex(index);
-      if (!jumpCommand) break;
-      const label = shortcutLabelForCommand(keybindings, jumpCommand);
+    for (const [index, label] of jumpLabels.entries()) {
+      const threadKey = orderedThreadKeys[index];
+      if (!threadKey) break;
       if (label) mapping.set(threadKey, label);
     }
     return mapping;
-  }, [keybindings, orderedThreadKeys]);
+  }, [jumpLabels, orderedThreadKeys]);
   const { showThreadJumpHints: showJumpHints, updateThreadJumpHintsVisibility } =
     useThreadJumpHintVisibility();
 
@@ -3448,11 +3520,12 @@ export default function Sidebar() {
     [],
   );
   const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
+  const listMotionInitializedRef = useRef(false);
   const attachListMotionRef = useCallback((node: HTMLUListElement | null) => {
     threadListRef.current = node;
     listMotionRef.current?.dispose();
     listMotionRef.current = node === null ? null : createSidebarListMotion(node);
-    listMotionRef.current?.update(false);
+    listMotionInitializedRef.current = false;
   }, []);
 
   // Hold the chosen section and order until every key write arrives. This
@@ -3855,6 +3928,23 @@ export default function Sidebar() {
     // Later thread actions can animate while writes settle.
     // Draft navigation can reveal a frozen row without changing the draft count.
     void sidebarListOrderKey;
+    if (!listMotionInitializedRef.current) {
+      if (!sidebarListHasRows) return;
+      const motion = listMotionRef.current;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // The first baseline cannot animate anything. Measure it after paint
+      // instead of forcing layout in the timeline's first commit.
+      const frame = requestAnimationFrame(() => {
+        timer = setTimeout(() => {
+          motion?.update(false);
+          listMotionInitializedRef.current = true;
+        }, 0);
+      });
+      return () => {
+        cancelAnimationFrame(frame);
+        if (timer !== undefined) clearTimeout(timer);
+      };
+    }
     listMotionRef.current?.update(!listMotionPaused && sidebarListHasRows);
   }, [
     listMotionPaused,
@@ -4920,19 +5010,20 @@ export default function Sidebar() {
   // longer matches ⌘1..9, so the overlay hides for chords like ⌘⇧4.
   const shortcutModifiers = useShortcutModifierState();
   const terminalFocused = useTerminalFocus();
-  const shouldShowJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
-    shortcutModifiers,
-    keybindings,
-    {
-      platform: navigator.platform,
-      context: {
-        terminalFocus: terminalFocused,
-        terminalOpen: routeTerminalOpen,
-        modelPickerOpen: isModelPickerOpen(),
-        isWeb: !isElectron,
-        isDesktop: isElectron,
-      },
-    },
+  const modelPickerOpen = isModelPickerOpen();
+  const shouldShowJumpHintsNow = useMemo(
+    () =>
+      shouldShowThreadJumpHintsForModifiers(shortcutModifiers, keybindings, {
+        platform: navigator.platform,
+        context: {
+          terminalFocus: terminalFocused,
+          terminalOpen: routeTerminalOpen,
+          modelPickerOpen,
+          isWeb: !isElectron,
+          isDesktop: isElectron,
+        },
+      }),
+    [shortcutModifiers, keybindings, terminalFocused, routeTerminalOpen, modelPickerOpen],
   );
   useEffect(() => {
     updateThreadJumpHintsVisibility(shouldShowJumpHintsNow);
@@ -4971,10 +5062,16 @@ export default function Sidebar() {
   // setups both commands create directly, so chat.newLocal is a valid
   // fallback. The second tooltip line (multi-project only) advertises
   // shift+click and its keyboard twin chat.newLocal for direct create.
+  const [newThreadPickerShortcutLabel, newThreadInProjectShortcutLabel] = useMemo(
+    () => [
+      shortcutLabelForCommand(keybindings, "chat.new"),
+      shortcutLabelForCommand(keybindings, "chat.newLocal"),
+    ],
+    [keybindings],
+  );
   const newThreadShortcutLabel =
-    shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
-  const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+    newThreadPickerShortcutLabel ??
+    (projectGroups.length <= 1 ? newThreadInProjectShortcutLabel : undefined);
   return (
     <>
       <ThreadContextDragGhost />
@@ -5251,7 +5348,6 @@ export default function Sidebar() {
                       const renderThreadRowInner = (
                         thread: EnvironmentThreadShell,
                         section: SidebarSection,
-                        sortable?: SortableThreadRowBag,
                       ) => {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
@@ -5292,7 +5388,6 @@ export default function Sidebar() {
                                 .threadPinning === true
                             }
                             isPinned={thread.pinnedAt != null}
-                            sortable={sortable}
                             dropVerb={
                               dragState?.activeKey === threadKey
                                 ? resolveSidebarDropVerb(dragState.activeSection, dragTargetSection)
@@ -5387,7 +5482,7 @@ export default function Sidebar() {
                               optimisticDrop !== null
                             }
                           >
-                            {(bag) => renderThreadRowInner(thread, section, bag)}
+                            {renderThreadRowInner(thread, section)}
                           </SortableThreadRow>
                         );
                       };
@@ -5546,7 +5641,9 @@ export default function Sidebar() {
               </DndContext>
             </TooltipProvider>
           ) : null}
+          {/* Thread links can mount before live snapshots; don't claim an empty workspace yet. */}
           {!isSearchingThreads &&
+          allProjectSnapshotsReady &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +

@@ -17,6 +17,7 @@ import {
   Persistence,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
+import { THREAD_CACHE_MAX_BYTES } from "@t3tools/client-runtime/state/threads";
 import {
   ConnectionTransientError,
   ConnectionBlockedError,
@@ -47,6 +48,7 @@ const THREAD_STORE_NAME = "thread";
 const SERVER_CONFIG_STORE_NAME = "server-config";
 const VCS_REFS_STORE_NAME = "vcs-refs";
 const CATALOG_KEY = "document";
+const cacheEncoder = new TextEncoder();
 const StoredShellSnapshot = StoredOrchestrationShellSnapshot;
 const StoredShellSnapshotJson = Schema.fromJsonString(StoredShellSnapshot);
 const StoredThreadSnapshot = StoredOrchestrationThreadSnapshot;
@@ -75,6 +77,18 @@ const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJs
 const encodeStoredServerConfig = Schema.encodeEffect(StoredServerConfigJson);
 const decodeStoredVcsRefs = Schema.decodeUnknownEffect(StoredVcsRefsJson);
 const encodeStoredVcsRefs = Schema.encodeEffect(StoredVcsRefsJson);
+
+/** Leave the IndexedDB callback before decoding a bounded cached projection. */
+function decodeCachedProjection<A, E, R>(decode: Effect.Effect<A, E, R>) {
+  return Effect.gen(function* () {
+    // Leave the IndexedDB callback before synchronous schema work or its render.
+    yield* Effect.callback<void>((resume) => {
+      const timer = setTimeout(() => resume(Effect.void), 0);
+      return Effect.sync(() => clearTimeout(timer));
+    });
+    return yield* decode;
+  });
+}
 
 function catalogError(operation: string, cause: unknown) {
   return new ConnectionTransientError({
@@ -712,13 +726,18 @@ export const layer = Layer.effectContext(
     const cacheStore = Persistence.EnvironmentCacheStore.of({
       loadShell: (environmentId) =>
         readDatabaseValue(database, SHELL_STORE_NAME, environmentId).pipe(
-          Effect.tap(() => Effect.promise(() => projectFaviconCache.hydrate())),
+          Effect.tap(() =>
+            Effect.sync(() => {
+              // Icons hydrate independently; their resolver joins this promise.
+              void projectFaviconCache.hydrate();
+            }),
+          ),
           Effect.flatMap((raw) => {
             if (typeof raw !== "string") {
               return Effect.succeedNone;
             }
             return decodeOrDiscardOrchestrationCache(
-              decodeStoredShellSnapshot(raw).pipe(
+              decodeCachedProjection(decodeStoredShellSnapshot(raw)).pipe(
                 Effect.mapError((cause) => persistenceError("load-shell", cause)),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId
@@ -752,7 +771,7 @@ export const layer = Layer.effectContext(
             if (typeof raw !== "string") {
               return Effect.succeedNone;
             }
-            return decodeStoredServerConfig(raw).pipe(
+            return decodeCachedProjection(decodeStoredServerConfig(raw)).pipe(
               Effect.mapError((cause) => persistenceError("load-server-config", cause)),
               Effect.map((stored) =>
                 stored.environmentId === environmentId ? Option.some(stored.config) : Option.none(),
@@ -790,8 +809,19 @@ export const layer = Layer.effectContext(
             if (typeof raw !== "string") {
               return Effect.succeedNone;
             }
+            // Reject legacy monolithic histories before JSON/schema decoding.
+            if (
+              raw.length > THREAD_CACHE_MAX_BYTES ||
+              cacheEncoder.encode(raw).length > THREAD_CACHE_MAX_BYTES
+            ) {
+              return removeDatabaseValue(
+                database,
+                THREAD_STORE_NAME,
+                threadCacheKey(environmentId, threadId),
+              ).pipe(Effect.as(Option.none()));
+            }
             return decodeOrDiscardOrchestrationCache(
-              decodeStoredThreadSnapshot(raw).pipe(
+              decodeCachedProjection(decodeStoredThreadSnapshot(raw)).pipe(
                 Effect.mapError((cause) => persistenceError("load-thread", cause)),
                 Effect.map((stored) =>
                   stored.environmentId === environmentId && stored.threadId === threadId
@@ -816,6 +846,9 @@ export const layer = Layer.effectContext(
             threadId: snapshot.projection.thread.id,
             snapshot,
           }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
+          // Control records or one oversized row can exceed the HTTP target.
+          // Such snapshots use HTTP next time instead of growing the disk cache.
+          if (cacheEncoder.encode(encoded).length > THREAD_CACHE_MAX_BYTES) return;
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,
