@@ -828,6 +828,7 @@ describe("ProviderInstanceRegistry — all drivers slice", () => {
               offer: () => Effect.void,
               setModel: () => Effect.void,
               setPermissionMode: () => Effect.void,
+              stopTask: () => Effect.void,
               interrupt: Effect.void,
               close: Effect.void,
             }),
