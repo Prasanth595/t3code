@@ -371,7 +371,7 @@ export function ComposerContextSheet(props: {
             <Text className="text-foreground">Open attachment</Text>
           </Pressable>
         ) : null}
-        {props.onOpenPullRequest ? (
+        {props.onOpenPullRequest && !pullRequestUrl ? (
           <Pressable
             accessibilityRole="button"
             onPress={props.onOpenPullRequest}

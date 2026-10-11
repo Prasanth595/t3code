@@ -43,7 +43,10 @@ export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdown
   if (names.length === 0) return null;
   names.sort((a, b) => b.length - a.length);
   const alternatives = names.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return new RegExp(`(?<![A-Za-z0-9_$-])\\$(?:${alternatives.join("|")})(?![A-Za-z0-9_-])`);
+  return new RegExp(
+    `(?<![A-Za-z0-9_\\p{Sc}-])\\p{Sc}(?:${alternatives.join("|")})(?![A-Za-z0-9_-])`,
+    "u",
+  );
 }
 
 export function enrichedSkillDisplayName(skill: SelectableMarkdownSkill) {
@@ -55,4 +58,12 @@ export function enrichedSkillDisplayName(skill: SelectableMarkdownSkill) {
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ")
   );
+}
+
+export function enrichedSkillReference(
+  url: string,
+  skills?: ReadonlyArray<SelectableMarkdownSkill>,
+) {
+  const match = /^\p{Sc}(.+)$/u.exec(url);
+  return match ? skills?.find((skill) => skill.name === match[1]) : undefined;
 }

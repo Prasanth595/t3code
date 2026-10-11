@@ -147,6 +147,7 @@ T3SourceTextOutsideTapCoordinatorForWindow(UIWindow *window) {
     _textView.editable = NO;
     _textView.textContainerInset = UIEdgeInsetsZero;
     _textView.textContainer.lineFragmentPadding = 0;
+    _textView.textContainer.lineBreakMode = NSLineBreakByTruncatingTail;
     _textView.textContainer.widthTracksTextView = NO;
     _textView.textContainer.heightTracksTextView = NO;
     _textView.delegate = self;

@@ -13,6 +13,7 @@ import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillDisplayName,
+  enrichedSkillReference,
 } from "../lib/enrichedLinkPresentation";
 
 function presentation(
@@ -23,9 +24,7 @@ function presentation(
   if (custom) return custom;
   const context = enrichedContextLinkPresentation(url);
   if (context) return { color: context.color, icon: markdownFileIconSource(context.icon) };
-  const skill = url.startsWith("$")
-    ? props.skills?.find((candidate) => `$${candidate.name}` === url)
-    : undefined;
+  const skill = enrichedSkillReference(url, props.skills);
   if (skill)
     return {
       color: props.textStyle.skillTextColor,

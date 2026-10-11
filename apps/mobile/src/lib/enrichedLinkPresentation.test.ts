@@ -4,6 +4,7 @@ import {
   enrichedContextLinkPresentation,
   enrichedLinkVariantPattern,
   enrichedSkillLinkRegex,
+  enrichedSkillReference,
   ENRICHED_INLINE_FILE_LINK_REGEX,
 } from "./enrichedLinkPresentation";
 
@@ -40,6 +41,19 @@ describe("Enriched link presentation", () => {
     expect(regex?.exec("prefix$check next")).toBeNull();
     expect(enrichedSkillLinkRegex([])).toBeNull();
   });
+  it.each(["$", "€", "£", "¥", "₹", "₩", "₿", "𑿝"])(
+    "recognizes and presents known skills with %s while rejecting adjacent tokens",
+    (sigil) => {
+      const skills = [{ name: "check", displayName: "Check" }];
+      const regex = enrichedSkillLinkRegex(skills)!;
+      expect(regex.exec(`Try ${sigil}check now`)?.[0]).toBe(`${sigil}check`);
+      expect(enrichedSkillReference(`${sigil}check`, skills)).toBe(skills[0]);
+      expect(regex.test(`prefix${sigil}check`)).toBe(false);
+      expect(regex.test(`${sigil}check-extra`)).toBe(false);
+      expect(regex.test(`${sigil}unknown`)).toBe(false);
+      expect(regex.test(`${sigil}${sigil}check`)).toBe(false);
+    },
+  );
   it("matches only the complete URL, including literal regex metacharacters", () => {
     const url = "file:///workspace/app[1].tsx?line=3+4";
     const pattern = new RegExp(enrichedLinkVariantPattern(url));
