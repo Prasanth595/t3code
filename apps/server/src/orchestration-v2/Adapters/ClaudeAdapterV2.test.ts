@@ -3476,6 +3476,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     },
     { name: "the reset expires", updates: [], expires: true, expectedResetAt: null },
     {
+      name: "an expired window does not hide another future reset",
+      updates: [{ status: "rejected", rateLimitType: "seven_day", resetsAt: limitResetsAt + 3600 }],
+      expires: true,
+      expectedResetAt: "2026-10-04T15:00:00.000Z",
+    },
+    {
+      name: "an unknown window still blocks a future reset after another expires",
+      updates: [
+        { status: "rejected", rateLimitType: "seven_day", resetsAt: limitResetsAt + 3600 },
+        { status: "rejected", rateLimitType: "seven_day_sonnet" },
+      ],
+      expires: true,
+      expectedResetAt: null,
+    },
+    {
       name: "the earlier window cannot be identified",
       updates: [],
       unidentifiedWindow: true,

@@ -7601,17 +7601,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
+            const completedAtMillis = DateTime.toEpochMillis(completedAt);
             const resetTimes = Array.from(
               (yield* Ref.get(rateLimitResetTimesByNativeThread)).get(liveQuery.nativeThreadId) ??
                 [],
+            ).filter(
+              ([, time]) =>
+                time === null || DateTime.toEpochMillis(DateTime.makeUnsafe(time)) > completedAtMillis,
             );
             const resetAt =
               resetTimes.length > 0 &&
               resetTimes.every(
                 ([limitType, time]) =>
                   time !== null &&
-                  DateTime.toEpochMillis(DateTime.makeUnsafe(time)) >
-                    DateTime.toEpochMillis(completedAt) &&
                   (limitType !== "unknown" || context.rejectedRateLimitTypes.has(limitType)),
               )
                 ? resetTimes.reduce((latest, [, time]) => (time! > latest ? time! : latest), "")
