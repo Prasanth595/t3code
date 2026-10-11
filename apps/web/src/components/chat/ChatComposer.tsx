@@ -3519,6 +3519,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         promptRef.current = prompt;
         const { cursor, trigger } = composerStateAtPromptEnd(
           prompt,
+          false,
           settings.skillTriggerCharacter,
         );
         setComposerCursor(cursor);
