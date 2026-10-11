@@ -7402,8 +7402,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);
             // Subagents share the session's task list (their TaskUpdate and
             // TaskCreate write to the parent's store), so their task tools
-            // update the parent turn's list too.
-            if (!isClaudeToolResultError(toolResult)) {
+            // update the parent turn's list too. Failed or never-run calls
+            // changed nothing.
+            if (toolNonExecutionKind === undefined && !isClaudeToolResultError(toolResult)) {
               const taskLists = yield* Ref.get(taskListsByNativeThread);
               const taskList = applyClaudeTaskTool(
                 taskLists.get(liveQuery.nativeThreadId) ?? new Map(),

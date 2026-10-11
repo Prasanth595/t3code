@@ -3958,7 +3958,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   function taskToolFrames(
     tool: TaskToolCall,
     nextUuid: () => string,
-    options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
+    options?: {
+      parentToolUseId?: string;
+      isError?: boolean;
+      extraToolResult?: boolean;
+      nonExecutionKind?: string;
+    },
   ): ReadonlyArray<SDKMessage> {
     const uuid = nextUuid();
     const toolUseId = `tool-${uuid}`;
@@ -4006,6 +4011,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         },
         // Like real Claude, subagent results carry only the text, no `tool_use_result`.
         ...(parentToolUseId === null ? { tool_use_result: tool.output } : {}),
+        ...(options?.nonExecutionKind === undefined
+          ? {}
+          : {
+              tool_result_meta: [{ id: toolUseId, non_execution_kind: options.nonExecutionKind }],
+            }),
         parent_tool_use_id: parentToolUseId,
         uuid: nextUuid(),
         session_id: WAKE_NATIVE_SESSION,
@@ -4034,7 +4044,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
     const call = Effect.fnUntraced(function* (
       tool: TaskToolCall,
-      options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
+      options?: Parameters<typeof taskToolFrames>[2],
     ) {
       for (const frame of taskToolFrames(tool, nextUuid, options)) {
         yield* harness.offerAndWait(frame);
@@ -4342,6 +4352,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.call(updateTask({ taskId: "2", status: "in_progress" }), {
         ...child,
         isError: true,
+      });
+      // A cancelled call never ran, even without `is_error`.
+      yield* harness.call(updateTask({ taskId: "2", status: "completed" }), {
+        ...child,
+        nonExecutionKind: "cancelled",
       });
       yield* harness.finishTurn();
       const plans = harness.plans();
