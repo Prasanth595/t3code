@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import {
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
@@ -11,7 +12,12 @@ import type {
   PullRequestListEntry,
   PullRequestRef,
   PullRequestSummary,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import {
+  threadPullRequestKeyOf,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useLayoutEffect, useMemo } from "react";
@@ -24,6 +30,7 @@ import {
   type MergedPullRequestList,
 } from "../components/pullRequest/pullRequestList.logic";
 import { formatEnvironmentQueryError } from "./query";
+import { environmentThreadShells } from "./threads";
 
 export const pullRequestEnvironment = createPullRequestEnvironmentAtoms(connectionAtomRuntime);
 export const linkedPullRequestDetailAtom = createLinkedPullRequestSummaryAtomFamily(
@@ -149,6 +156,57 @@ function observePullRequestSummary(
   });
 }
 
+export function threadPullRequestLinkToSummary(
+  link: ThreadPullRequestLink,
+  reference: PullRequestRef,
+): PullRequestSummary | null {
+  if (link.snapshot === null) return null;
+  return {
+    ...link.snapshot,
+    provider: (
+      sourceControlClients.findByChangeRequestUrl(link.url) ?? sourceControlClients.get(undefined)
+    ).kind,
+    projectId: reference.projectId,
+    repository: link.repository,
+    number: link.number,
+    url: link.url,
+    updatedAt: link.snapshot.updatedAt ?? link.snapshot.syncedAt,
+  };
+}
+
+// Index once per shell update, rather than scanning every thread for each PR control.
+const linkedPullRequestSnapshotsAtom = Atom.make((get) => {
+  const links = new Map<string, ThreadPullRequestLink>();
+  for (const thread of get(environmentThreadShells.threadShellsAtom)) {
+    for (const link of visibleThreadPullRequests(thread.pullRequests)) {
+      if (link.snapshot === null) continue;
+      const key = `${thread.environmentId}:${threadPullRequestKeyOf(link)}`;
+      const previous = links.get(key);
+      if (previous === undefined || link.snapshot.syncedAt > (previous.snapshot?.syncedAt ?? "")) {
+        links.set(key, link);
+      }
+    }
+  }
+  return links;
+});
+
+const linkedPullRequestSummaryAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const target = JSON.parse(key) as {
+      environmentId: EnvironmentId;
+      reference: PullRequestRef;
+    } | null;
+    if (target === null) return null;
+    const { environmentId, reference } = target;
+    const host = reference.host;
+    if (host === undefined) return null;
+    const link = get(linkedPullRequestSnapshotsAtom).get(
+      `${environmentId}:${threadPullRequestKeyOf({ ...reference, host })}`,
+    );
+    return link === undefined ? null : threadPullRequestLinkToSummary(link, reference);
+  }).pipe(Atom.setIdleTTL(5 * 60_000)),
+);
+
 export function useSharedPullRequestSummary(
   environmentId: EnvironmentId | null,
   reference: PullRequestRef | null,
@@ -161,17 +219,24 @@ export function useSharedPullRequestSummary(
       : pullRequestSummaryKey(environmentId, reference);
   const atom = observedPullRequestSummaryAtom(key);
   const observed = useAtomValue(atom);
+  const linked = useAtomValue(
+    linkedPullRequestSummaryAtom(
+      JSON.stringify(
+        environmentId === null || reference === null ? null : { environmentId, reference },
+      ),
+    ),
+  );
   useLayoutEffect(() => {
     if (environmentId === null || reference === null || current === null || observedAt === null)
       return;
     observePullRequestSummary(environmentId, reference, current, observedAt);
   }, [current, environmentId, reference, observedAt]);
-  return (
+  const summary =
     newestPullRequestObservation(
       observed,
       current === null || observedAt === null ? null : { summary: current, observedAt },
-    )?.summary ?? current
-  );
+    )?.summary ?? current;
+  return newestPullRequestSummary(summary, linked);
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,

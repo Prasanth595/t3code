@@ -104,12 +104,14 @@ export function useLinkedThreadPullRequest(
   // Stable per link: the shared summary effect keys on this object, and a sidebar row must not
   // touch the cache on every render.
   const reference = useMemo(() => {
+    const projectId = linkedPullRequest?.projectId ?? branchPullRequest?.projectId;
+    if (current !== null && projectId !== undefined) return { ...current, projectId };
     if (fallback == null) return null;
     const host = parseChangeRequestUrl(fallback.url)?.host;
     return { ...fallback, ...(host === undefined ? {} : { host }) };
-  }, [fallback]);
+  }, [current, linkedPullRequest?.projectId, branchPullRequest?.projectId, fallback]);
   const queried = useEnvironmentQuery(
-    !enabled || environmentId === null || reference === null
+    !enabled || current !== null || environmentId === null || reference === null
       ? null
       : linkedPullRequestDetailAtom({ environmentId, input: reference }),
   );
@@ -121,9 +123,10 @@ export function useLinkedThreadPullRequest(
   );
 
   return useMemo(() => {
-    if (current !== null) return linkedPullRequestSnapshotStatus(current);
     return detail === null
-      ? null
+      ? current === null
+        ? null
+        : linkedPullRequestSnapshotStatus(current)
       : {
           pr: pullRequestDetailToVcsStatus(detail),
           sourceControlProvider: { kind: detail.provider, name: detail.provider, baseUrl: "" },

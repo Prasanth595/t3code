@@ -5128,11 +5128,11 @@ it.effect("reuses an observed merged state for strict settlement reads", () =>
   }),
 );
 
-it.effect("announces state a detail read sees first or newly", () =>
+it.effect("announces changed overview fields a detail read sees", () =>
   Effect.gen(function* () {
     let detail = {
+      ...hostedChangeRequest("body"),
       state: "open" as "open" | "closed" | "merged",
-      updatedAt: "2026-07-02T00:00:00Z",
     };
     let summaryState: "open" | "merged" = "open";
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
@@ -5140,7 +5140,7 @@ it.effect("announces state a detail read sees first or newly", () =>
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakeProvider(SourceControlProviderKind.make("github"), {
-          getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("body"), ...detail }),
+          getChangeRequest: () => Effect.succeed(detail),
           getChangeRequestSummary: () =>
             Effect.succeed({
               ...changeRequest(1, "2026-07-04T00:00:00Z"),
@@ -5159,28 +5159,40 @@ it.effect("announces state a detail read sees first or newly", () =>
       yield* Effect.yieldNow;
     });
 
-    // First sight announces; the same state again, even from a fresh read, does not.
+    // First sight announces; unchanged fields, even from a fresh read, do not.
     yield* readDetail;
     yield* readDetail;
     assert.deepStrictEqual(announced, ["github.com/acme/web#1"]);
 
-    detail = { state: "closed", updatedAt: "2026-07-03T00:00:00Z" };
+    // Draft and title changes announce even when lifecycle and host update time stay equal.
+    detail = { ...detail, isDraft: true };
     yield* readDetail;
     assert.strictEqual(announced.length, 2);
+    yield* readDetail;
+    assert.strictEqual(announced.length, 2);
+    detail = { ...detail, title: "Updated title" };
+    yield* readDetail;
+    assert.strictEqual(announced.length, 3);
+    yield* readDetail;
+    assert.strictEqual(announced.length, 3);
+
+    detail = { ...detail, state: "closed", updatedAt: "2026-07-03T00:00:00Z" };
+    yield* readDetail;
+    assert.strictEqual(announced.length, 4);
 
     // A summary seeing the merge first does not hide it from the detail read after.
     summaryState = "merged";
     yield* service.summary(reference, { recoverTransientFailure: false });
     yield* Effect.yieldNow;
-    assert.strictEqual(announced.length, 2);
-    detail = { state: "merged", updatedAt: "2026-07-04T00:00:00Z" };
+    assert.strictEqual(announced.length, 4);
+    detail = { ...detail, state: "merged", updatedAt: "2026-07-04T00:00:00Z" };
     yield* readDetail;
-    assert.strictEqual(announced.length, 3);
+    assert.strictEqual(announced.length, 5);
 
     // A detail read older than the merge cannot announce a reopen.
-    detail = { state: "open", updatedAt: "2026-07-03T00:00:00Z" };
+    detail = { ...detail, state: "open", updatedAt: "2026-07-03T00:00:00Z" };
     yield* readDetail;
-    assert.strictEqual(announced.length, 3);
+    assert.strictEqual(announced.length, 5);
   }),
 );
 

@@ -239,8 +239,8 @@ export class PullRequestService extends Context.Service<
       Scope.Scope
     >;
     /**
-     * Pull requests a detail read saw for the first time or in a new state (opened, closed,
-     * merged), so thread links can catch up before the next sync sweep. Best effort.
+     * Pull requests a detail read saw for the first time or with changed overview fields,
+     * so thread links can catch up before the next sync sweep. Best effort.
      */
     readonly subscribeStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
@@ -3132,30 +3132,42 @@ export const make = Effect.gen(function* () {
   });
   const shouldReplaceHeldSummary = (key: string, next: PullRequestSummary) =>
     supersedesReading(lastGoodSummary.peek(key), next);
-  // The newest state a detail read found per pull request, whatever cache epoch or credential
+  // The newest overview a detail read found per pull request, whatever cache epoch or credential
   // it read under. Summary reads stay out: they would hide a change from the detail read after.
-  const detailStates = new Map<string, PullRequestReading>();
+  const detailReadings = new Map<string, PullRequestSummary>();
   /**
-   * Announces a pull request a detail read sees first or in a new state, so a client showing a
-   * fresh merge brings the thread's link and its settlement along, rather than leaving them to
-   * the next sync sweep.
+   * Announces changed link fields a detail read already knows, so thread badges and actions
+   * follow the open detail without waiting for the next sync sweep. Read timestamps alone
+   * do not announce unchanged host data.
    */
   const noteDetailReading = (ref: PullRequestRef, next: PullRequestSummary) =>
     Effect.suspend(() => {
       const scope = refScope(ref);
-      const current = detailStates.get(scope);
+      const current = detailReadings.get(scope);
       if (!supersedesReading(current, next)) return Effect.void;
-      detailStates.delete(scope);
-      if (detailStates.size >= REF_EPOCH_CAPACITY) {
-        const oldest = detailStates.keys().next().value;
-        if (oldest !== undefined) detailStates.delete(oldest);
+      detailReadings.delete(scope);
+      if (detailReadings.size >= REF_EPOCH_CAPACITY) {
+        const oldest = detailReadings.keys().next().value;
+        if (oldest !== undefined) detailReadings.delete(oldest);
       }
-      detailStates.set(scope, {
-        state: next.state,
-        updatedAt: next.updatedAt,
-        observedAt: next.observedAt,
-      });
-      return current?.state !== next.state && ref.host !== undefined
+      detailReadings.set(scope, next);
+      const changed =
+        current === undefined ||
+        current.state !== next.state ||
+        current.title !== next.title ||
+        current.headBranch !== next.headBranch ||
+        current.baseBranch !== next.baseBranch ||
+        current.isDraft !== next.isDraft ||
+        current.updatedAt !== next.updatedAt ||
+        (current.closedAt ?? null) !== (next.closedAt ?? null) ||
+        (current.mergedAt ?? null) !== (next.mergedAt ?? null) ||
+        (current.author?.login ?? null) !== (next.author?.login ?? null) ||
+        (current.author?.avatarUrl ?? null) !== (next.author?.avatarUrl ?? null) ||
+        current.additions !== next.additions ||
+        current.deletions !== next.deletions ||
+        current.changedFiles !== next.changedFiles ||
+        current.mergeability !== next.mergeability;
+      return changed && ref.host !== undefined
         ? PubSub.publish(stateChanges, {
             host: ref.host,
             repository: ref.repository,
@@ -3163,7 +3175,7 @@ export const make = Effect.gen(function* () {
           })
         : Effect.void;
     });
-  // The last state each routed read reported, kept apart from `detailStates`: an unverified report
+  // The last state each routed read reported, kept apart from `detailReadings`: an unverified report
   // must never outrank a reading this environment made itself.
   const reportedStates = new Map<
     string,
