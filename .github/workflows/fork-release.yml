@@ -386,9 +386,12 @@ jobs:
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      actions: read
     steps:
       - name: Call agent webhook
         env:
+          GH_TOKEN: ${{ github.token }}
           WEBHOOK_URL: ${{ secrets.T3_AGENT_WEBHOOK_URL }}
           CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
@@ -399,6 +402,15 @@ jobs:
           set -euo pipefail
           if [[ -z "$WEBHOOK_URL" ]]; then
             echo "T3_AGENT_WEBHOOK_URL is not set. No agent is notified."
+            exit 0
+          fi
+          # A repair agent's push to main starts a run that cannot pass notify_agent=false.
+          # So a failure right after a failure does not start another agent: the agent
+          # that the first failure started watches this run and reports it.
+          previous="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fork-release.yml --status completed --limit 5 \
+            --json databaseId,conclusion --jq "[.[] | select(.databaseId != ${GITHUB_RUN_ID}) | select(.conclusion != \"cancelled\" and .conclusion != \"skipped\")][0].conclusion // empty")"
+          if [[ "$previous" == "failure" ]]; then
+            echo "The previous run failed too. No new agent is notified."
             exit 0
           fi
           jq -n \

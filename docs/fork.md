@@ -8,7 +8,7 @@ The installed app updates itself from the fork releases through the built-in upd
 - `.github/workflows/fork-release.yml` runs on each push to main, every day for upstream changes, and on manual dispatch. One run runs at a time.
 - The workflow rebases the branch onto `pingdotgg/t3code` main and keeps the fork commits on top.
 - If the rebase or the typecheck fails, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
-- If any job fails, the `notify_agent` job posts the run to `T3_AGENT_WEBHOOK_URL`. That URL is a webhook scheduled task on a T3 server, which starts a repair agent. A manual run with `notify_agent=false` does not post. The agent uses that input on its own retries, so a failed retry does not start a loop.
+- If any job fails, the `notify_agent` job posts the run to `T3_AGENT_WEBHOOK_URL`. That URL is a webhook scheduled task on a T3 server, which starts a repair agent. A manual run with `notify_agent=false` does not post. A failed run right after a failed run does not post either, because the agent that the first failure started watches the next run. Thus an agent push to main that fails again does not start a loop.
 - Otherwise it pushes the branch. If main moved during the run, it rebases the new main and pushes again.
 - If the commit already has a release, the run stops there. The sync push itself starts such a run.
 - It builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done. The Mac release does not wait for Windows, and a Windows failure does not block it.
