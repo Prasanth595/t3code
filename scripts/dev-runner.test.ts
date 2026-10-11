@@ -1060,8 +1060,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
                 captured = spawned.options?.env;
                 return Effect.succeed(mockProcess(0));
               }
-              // tailscale: answer `status --json` with a valid tailnet name,
-              // succeed the `serve`/`off` calls.
+              // Node status supplies the tailnet name; Serve status is empty.
+              // Mutating `serve`/`off` calls succeed without output.
               return Effect.succeed(
                 ChildProcessSpawner.makeHandle({
                   pid: ChildProcessSpawner.ProcessId(2),
@@ -1073,7 +1073,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
                   stdout: spawned.args.includes("status")
                     ? Stream.make(
                         new TextEncoder().encode(
-                          JSON.stringify({ Self: { DNSName: "host.example.ts.net." } }),
+                          JSON.stringify(
+                            spawned.args[0] === "status"
+                              ? { Self: { DNSName: "host.example.ts.net." } }
+                              : {},
+                          ),
                         ),
                       )
                     : Stream.empty,
