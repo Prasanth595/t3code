@@ -216,6 +216,12 @@ export interface AcpAdapterV2ExtensionContext {
 export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
+  /**
+   * Rewrites user text for the session on `threadId` before ACP instructions
+   * wrap it. A leading `/name` has to stay the first token; the wrapper would
+   * otherwise bury it.
+   */
+  readonly rewriteUserPrompt?: (text: string, threadId: ThreadId) => string;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: NonNullable<
@@ -224,9 +230,17 @@ export interface AcpAdapterV2Flavor {
   readonly normalizeSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
+  /**
+   * Receives each `available_commands_update` for the session on `threadId`.
+   * One flavor serves every session of the adapter, so per-session state must
+   * be keyed by `threadId` and released in `onSessionClosed`.
+   */
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+    threadId: ThreadId,
   ) => Effect.Effect<void>;
+  /** Runs when the session on `threadId` closes, to drop per-session flavor state. */
+  readonly onSessionClosed?: (threadId: ThreadId) => Effect.Effect<void>;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
@@ -1483,6 +1497,11 @@ function shouldPersistToolUpdate(
   return persist;
 }
 
+/**
+ * ACP session adapter for one provider instance. A flavor may rewrite that
+ * session's user prompt before instructions wrap it, record the commands the
+ * session advertises, and drop that state when the session closes.
+ */
 export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   options: AcpAdapterV2Options,
 ) {
@@ -2203,6 +2222,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ? Effect.void
             : Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore),
         );
+        yield* Effect.addFinalizer(() => flavor.onSessionClosed?.(input.threadId) ?? Effect.void);
 
         const resolveItemOrdinal = (context: ActiveAcpTurn, nativeItemId: string) =>
           Effect.sync(() => {
@@ -5486,8 +5506,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   );
             if (notification.update.sessionUpdate === "available_commands_update") {
               yield* (
-                flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
-                  Effect.void
+                flavor.onAvailableCommandsUpdate?.(
+                  notification.update.availableCommands,
+                  input.threadId,
+                ) ?? Effect.void
               );
             }
             if (
@@ -6793,7 +6815,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
           const messageText = providerMessageTextWithAttachmentPaths({
-            text: turnInput.message.text,
+            text:
+              flavor.rewriteUserPrompt?.(turnInput.message.text, input.threadId) ??
+              turnInput.message.text,
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
