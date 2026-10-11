@@ -81,6 +81,19 @@ const summary: UsageSummary = {
     bucket({}),
     bucket({ provider: "codex", model: "claude-opus-5-5" }),
     bucket({ provider: "codex", model: "gpt-6-1-sol", records: 1 }),
+    // Requests with no tokens or cost still count toward their family.
+    bucket({
+      model: "my-local-model",
+      records: 3,
+      costUsd: 0,
+      totals: {
+        uncachedInputTokens: 0,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+      },
+    }),
   ],
   sources: (["claude", "codex"] as const).map((provider) => ({
     fingerprint: {
@@ -166,6 +179,8 @@ describe("UsagePage grouping", () => {
     expect(text).toContain("4 requests");
     expect(text).toContain("OpenAI");
     expect(text).toContain("1 request");
+    expect(text).toContain("Other / unknown");
+    expect(text).toContain("3 requests");
     expect(text).not.toContain("3 sessions");
   });
 });
