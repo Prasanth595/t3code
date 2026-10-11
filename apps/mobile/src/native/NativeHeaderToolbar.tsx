@@ -13,7 +13,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import type { ColorValue } from "react-native";
+import type { ColorValue, ImageURISource } from "react-native";
 
 function useNativeStackNavigation(): NativeStackNavigationProp<ParamListBase> | null {
   return useNavigation<NativeStackNavigationProp<ParamListBase>>();
@@ -34,15 +34,23 @@ function labelFromChildren(children: ReactNode): string {
 type NativeStackHeaderIcon = NonNullable<
   Extract<NativeStackHeaderItem, { type: "button" }>["icon"]
 >;
+/** Menu action icon prop: an SF Symbol name, or any native icon such as a sized image source. */
+type NativeHeaderToolbarIconProp =
+  | string
+  | { readonly type: "sfSymbol"; readonly name: string }
+  | { readonly type: "imageSource"; readonly imageSource: ImageURISource };
 type NativeStackOptionsWithToolbar = NativeStackNavigationOptions & {
   unstable_headerToolbarItems?: () => NativeStackHeaderItem[];
 };
 
 function iconFromProp(icon: unknown): NativeStackHeaderIcon | undefined {
-  if (typeof icon !== "string") {
-    return undefined;
+  if (typeof icon === "string") {
+    return { type: "sfSymbol", name: icon as never };
   }
-  return { type: "sfSymbol", name: icon as never };
+  if (typeof icon === "object" && icon !== null && "type" in icon) {
+    return icon as NativeStackHeaderIcon;
+  }
+  return undefined;
 }
 
 type ToolbarElementProps = Record<string, unknown> & { readonly children?: ReactNode };
@@ -254,7 +262,7 @@ function NativeHeaderToolbarMenuAction(_props: {
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly discoverabilityLabel?: string;
-  readonly icon?: string;
+  readonly icon?: NativeHeaderToolbarIconProp;
   readonly isOn?: boolean;
   readonly onPress?: () => void;
   readonly subtitle?: string;

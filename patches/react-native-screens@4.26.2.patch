@@ -2224,3 +2224,26 @@ index 9c3ab4c3653ee1769addda8a6464cdf49695a601..6f242ad2bbd7152ea9f873ef7754ad47
    | HeaderBarButtonItemSpacing;
  
  /**
+diff --git a/ios/helpers/image/RNSImageLoadingHelper.mm b/ios/helpers/image/RNSImageLoadingHelper.mm
+--- a/ios/helpers/image/RNSImageLoadingHelper.mm
++++ b/ios/helpers/image/RNSImageLoadingHelper.mm
+@@ -13,6 +13,19 @@
+   RCTImageSource *imageSource = [RCTConvert RCTImageSource:jsonImageSource];
+   RCTAssert(imageSource != nil, @"[RNScreens] Expected nonnil image source");
+ 
++  // Inline `data:` sources decode synchronously so UIKit menus, which are built
++  // before the async image loader finishes, can show them on the first open.
++  if ([imageSource.request.URL.scheme isEqualToString:@"data"]) {
++    UIImage *image = [UIImage imageWithData:[NSData dataWithContentsOfURL:imageSource.request.URL]];
++    if (image != nil && imageSource.size.width > 0 && image.size.width > 0) {
++      image = [UIImage imageWithCGImage:image.CGImage
++                                  scale:image.scale * image.size.width / imageSource.size.width
++                            orientation:image.imageOrientation];
++    }
++    imageLoadingCompletionBlock([RNSImageLoadingHelper handleRenderingModeForImage:image isTemplate:isTemplate]);
++    return;
++  }
++
+ #if !defined(NDEBUG) // We're in debug mode here
+   if (imageSource.packagerAsset) {
+     // We use `+ [RCTConvert UIImage:]` only in debug mode, because it is deprecated, however

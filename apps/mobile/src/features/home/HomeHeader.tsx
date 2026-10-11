@@ -10,6 +10,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 import type { HomeHeaderProps } from "./HomeHeader.types";
+import { useProjectFilterMenuIcons } from "./useProjectFilterMenuIcons";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -26,7 +27,8 @@ export function HomeHeader(props: HomeHeaderProps) {
     return searchBarRef.current !== null;
   }, []);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
-  const filterMenu = buildHomeListFilterMenu(props);
+  const projects = useProjectFilterMenuIcons(props.projects);
+  const filterMenu = buildHomeListFilterMenu({ ...props, projects });
 
   return (
     <>
@@ -118,7 +120,7 @@ export function HomeHeader(props: HomeHeaderProps) {
               ))}
             </NativeHeaderToolbar.Menu>
 
-            {props.projects.length > 0 ? (
+            {projects.length > 0 ? (
               <NativeHeaderToolbar.Menu title="Project">
                 <NativeHeaderToolbar.Label>Project</NativeHeaderToolbar.Label>
                 <NativeHeaderToolbar.MenuAction
@@ -128,9 +130,10 @@ export function HomeHeader(props: HomeHeaderProps) {
                 >
                   <NativeHeaderToolbar.Label>All projects</NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
-                {props.projects.map((project) => (
+                {projects.map((project) => (
                   <NativeHeaderToolbar.MenuAction
                     key={project.key}
+                    icon={project.icon}
                     isOn={props.selectedProjectKey === project.key}
                     onPress={() => props.onProjectChange(project.key)}
                   >

@@ -42,6 +42,7 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
+import { useProjectFilterMenuIcons } from "../home/useProjectFilterMenuIcons";
 import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
@@ -891,17 +892,18 @@ function ThreadNavigationSidebarPane(
   const filterIcon = filterCustomized
     ? "line.3.horizontal.decrease.circle.fill"
     : "line.3.horizontal.decrease.circle";
+  const projectFilterMenuOptions = useProjectFilterMenuIcons(projectFilterOptions);
   const filterMenu = useMemo(
     () =>
       buildHomeListFilterMenu({
         environments,
-        projects: projectFilterOptions,
+        projects: projectFilterMenuOptions,
         selectedEnvironmentId: options.selectedEnvironmentId,
         selectedProjectKey,
         onEnvironmentChange: setSelectedEnvironmentId,
         onProjectChange: setSelectedProjectKey,
       }),
-    [environments, options, projectFilterOptions, selectedProjectKey, setSelectedEnvironmentId],
+    [environments, options, projectFilterMenuOptions, selectedProjectKey, setSelectedEnvironmentId],
   );
   const nativeHeaderItems = useMemo(
     () =>
