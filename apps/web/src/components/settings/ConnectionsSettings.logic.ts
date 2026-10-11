@@ -107,3 +107,19 @@ export async function applyWslEnableSelection(input: {
   }
   return await bridge.setWslBackendEnabled(true);
 }
+
+/**
+ * Fork: network endpoints show only while the backend is network accessible,
+ * but the desktop tunnel endpoint (id `tunnel:`) also shows on a loopback-only
+ * backend, because tunnel pairing keeps the server on loopback.
+ */
+export function selectVisibleNetworkEndpoints(input: {
+  readonly endpoints: ReadonlyArray<AdvertisedEndpoint>;
+  readonly isNetworkAccessible: boolean;
+}): ReadonlyArray<AdvertisedEndpoint> {
+  return input.endpoints.filter(
+    (endpoint) =>
+      !endpoint.id.startsWith("tailscale-magicdns:") &&
+      (input.isNetworkAccessible || endpoint.id.startsWith("tunnel:")),
+  );
+}

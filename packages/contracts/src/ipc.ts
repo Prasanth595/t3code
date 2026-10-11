@@ -508,6 +508,10 @@ export interface DesktopServerExposureState {
   tunnelPairingUrl: string | null;
   // Fork: comma-joined https origins sent as T3CODE_TRUSTED_BROWSER_ORIGINS.
   trustedBrowserOrigins: string | null;
+  // Fork: Cloudflare Access login, sent as T3CODE_CLOUDFLARE_ACCESS_*.
+  cloudflareAccessTeamDomain: string | null;
+  cloudflareAccessAud: string | null;
+  cloudflareAccessSubjects: string | null;
 }
 
 export const DesktopServerExposureStateSchema = Schema.Struct({
@@ -519,6 +523,9 @@ export const DesktopServerExposureStateSchema = Schema.Struct({
   tunnelPairingEnabled: Schema.Boolean,
   tunnelPairingUrl: Schema.NullOr(Schema.String),
   trustedBrowserOrigins: Schema.NullOr(Schema.String),
+  cloudflareAccessTeamDomain: Schema.NullOr(Schema.String),
+  cloudflareAccessAud: Schema.NullOr(Schema.String),
+  cloudflareAccessSubjects: Schema.NullOr(Schema.String),
 });
 
 export interface PickFolderOptions {
@@ -1203,6 +1210,10 @@ export interface DesktopBridge {
     readonly url: string | null;
     // Comma or newline separated https origins; null or blank clears them.
     readonly trustedBrowserOrigins: string | null;
+    // Cloudflare Access login; null or blank clears a value.
+    readonly cloudflareAccessTeamDomain: string | null;
+    readonly cloudflareAccessAud: string | null;
+    readonly cloudflareAccessSubjects: string | null;
   }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   getWslState: () => Promise<DesktopWslState>;

@@ -47,6 +47,7 @@ const layerServerExposure = Layer.succeed(DesktopServerExposure.DesktopServerExp
     tailscaleServePort: 8443,
     tunnelPairingUrl: Option.none(),
     trustedBrowserOrigins: Option.none(),
+    cloudflareAccess: Option.none(),
   }),
   configureFromSettings: () => Effect.die("unexpected configureFromSettings"),
   setMode: () => Effect.die("unexpected setMode"),

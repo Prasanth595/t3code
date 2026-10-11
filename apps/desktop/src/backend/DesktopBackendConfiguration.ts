@@ -96,6 +96,9 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "T3CODE_TAILSCALE_SERVE_PORT",
   "T3CODE_TUNNEL_PAIRING_URL",
   "T3CODE_TRUSTED_BROWSER_ORIGINS",
+  "T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN",
+  "T3CODE_CLOUDFLARE_ACCESS_AUD",
+  "T3CODE_CLOUDFLARE_ACCESS_SUBJECTS",
 ] as const;
 
 // Env vars that the WSL backend needs but Windows process.env won't forward
@@ -582,6 +585,14 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       ...Option.match(backendExposure.trustedBrowserOrigins, {
         onNone: () => ({}),
         onSome: (trustedBrowserOrigins) => ({ trustedBrowserOrigins }),
+      }),
+      ...Option.match(backendExposure.cloudflareAccess, {
+        onNone: () => ({}),
+        onSome: (access) => ({
+          cloudflareAccessTeamDomain: access.teamDomain,
+          cloudflareAccessAud: access.aud,
+          cloudflareAccessSubjects: access.subjects,
+        }),
       }),
       desktopTelemetryFd: 4,
       desktopTelemetryControlFd: 5,

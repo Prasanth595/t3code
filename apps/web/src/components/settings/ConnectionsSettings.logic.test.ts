@@ -6,8 +6,10 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
+  selectVisibleNetworkEndpoints,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+import { resolveDesktopPairingUrl } from "./pairingUrls";
 
 describe("togglePairingScopeSelection", () => {
   it.each([
@@ -230,5 +232,35 @@ describe("canRevokeOtherClients", () => {
     expect(canRevokeOtherClients([])).toBe(false);
     expect(canRevokeOtherClients([{ current: true }])).toBe(false);
     expect(canRevokeOtherClients([{ current: true }, { current: false }])).toBe(true);
+  });
+});
+
+describe("selectVisibleNetworkEndpoints", () => {
+  const loopback = makeEndpoint({ id: "desktop-loopback:3773", reachability: "loopback" });
+  const tunnel = makeEndpoint({
+    id: "tunnel:https://t3-mac.example.com",
+    httpBaseUrl: "https://t3-mac.example.com",
+  });
+
+  it("keeps the tunnel endpoint on a loopback-only backend", () => {
+    const visible = selectVisibleNetworkEndpoints({
+      endpoints: [loopback, tunnel],
+      isNetworkAccessible: false,
+    });
+    expect(visible).toEqual([tunnel]);
+    // The copied link then opens the tunnel page, never t3code://app.
+    expect(resolveDesktopPairingUrl(tunnel.httpBaseUrl, "TOKEN")).toBe(
+      "https://t3-mac.example.com/pair#token=TOKEN",
+    );
+  });
+
+  it("keeps every non-Tailscale-HTTPS endpoint on a network-accessible backend", () => {
+    const magicDns = makeEndpoint({ id: "tailscale-magicdns:https://mac.ts.net" });
+    expect(
+      selectVisibleNetworkEndpoints({
+        endpoints: [loopback, tunnel, magicDns],
+        isNetworkAccessible: true,
+      }),
+    ).toEqual([loopback, tunnel]);
   });
 });

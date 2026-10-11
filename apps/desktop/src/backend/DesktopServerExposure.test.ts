@@ -203,6 +203,9 @@ describe("DesktopServerExposure", () => {
           tunnelPairingEnabled: false,
           tunnelPairingUrl: null,
           trustedBrowserOrigins: null,
+          cloudflareAccessTeamDomain: null,
+          cloudflareAccessAud: null,
+          cloudflareAccessSubjects: null,
         });
 
         const backendConfig = yield* serverExposure.backendConfig;
@@ -261,6 +264,9 @@ describe("DesktopServerExposure", () => {
             enabled: true,
             url: "http://t3.example.com",
             trustedBrowserOrigins: null,
+            cloudflareAccessTeamDomain: null,
+            cloudflareAccessAud: null,
+            cloudflareAccessSubjects: null,
           })
           .pipe(Effect.flip);
         assert.equal(invalid._tag, "DesktopTunnelPairingInvalidUrlError");
@@ -269,6 +275,9 @@ describe("DesktopServerExposure", () => {
           enabled: true,
           url: "https://t3.example.com/",
           trustedBrowserOrigins: null,
+          cloudflareAccessTeamDomain: null,
+          cloudflareAccessAud: null,
+          cloudflareAccessSubjects: null,
         });
         assert.equal(enabled.requiresRelaunch, true);
         assert.equal(enabled.state.tunnelPairingUrl, "https://t3.example.com");
@@ -280,14 +289,19 @@ describe("DesktopServerExposure", () => {
           "https://t3.example.com",
         );
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-        assert.isTrue(
-          endpoints.some((endpoint) => endpoint.httpBaseUrl.startsWith("https://t3.example.com")),
-        );
+        const tunnelEndpoint = endpoints.find((endpoint) => endpoint.id.startsWith("tunnel:"));
+        assert.equal(tunnelEndpoint?.httpBaseUrl.startsWith("https://t3.example.com"), true);
+        assert.equal(tunnelEndpoint?.isDefault, true);
+        // A pairing link must open this server's own page, not the hosted app.
+        assert.notEqual(tunnelEndpoint?.compatibility.hostedHttpsApp, "compatible");
 
         const disabled = yield* serverExposure.setTunnelPairing({
           enabled: false,
           url: "https://t3.example.com",
           trustedBrowserOrigins: null,
+          cloudflareAccessTeamDomain: null,
+          cloudflareAccessAud: null,
+          cloudflareAccessSubjects: null,
         });
         assert.equal(disabled.requiresRelaunch, true);
         assert.isTrue(Option.isNone((yield* serverExposure.backendConfig).tunnelPairingUrl));
@@ -299,6 +313,9 @@ describe("DesktopServerExposure", () => {
             enabled: true,
             url: "https://t3.example.com",
             trustedBrowserOrigins: "https://t3-vps.example.com, http://t3-win.example.com",
+            cloudflareAccessTeamDomain: null,
+            cloudflareAccessAud: null,
+            cloudflareAccessSubjects: null,
           })
           .pipe(Effect.flip);
         assert.equal(badOrigins._tag, "DesktopTunnelPairingInvalidUrlError");
@@ -307,12 +324,43 @@ describe("DesktopServerExposure", () => {
           enabled: true,
           url: "https://t3.example.com",
           trustedBrowserOrigins: "https://t3-vps.example.com/\nhttps://t3-win.example.com",
+          cloudflareAccessTeamDomain: null,
+          cloudflareAccessAud: null,
+          cloudflareAccessSubjects: null,
         });
         assert.equal(trusted.requiresRelaunch, true);
         assert.equal(
           Option.getOrNull((yield* serverExposure.backendConfig).trustedBrowserOrigins),
           "https://t3-vps.example.com,https://t3-win.example.com",
         );
+
+        const access = {
+          enabled: true,
+          url: "https://t3.example.com",
+          trustedBrowserOrigins: null,
+          cloudflareAccessTeamDomain: "team.cloudflareaccess.com",
+          cloudflareAccessAud: " aud-tag ",
+          cloudflareAccessSubjects: null,
+        };
+        const badTeam = yield* serverExposure
+          .setTunnelPairing({ ...access, cloudflareAccessTeamDomain: "https://team.example.com" })
+          .pipe(Effect.flip);
+        assert.equal(badTeam._tag, "DesktopTunnelPairingInvalidUrlError");
+        // A partial set is saved but never reaches the backend.
+        yield* serverExposure.setTunnelPairing(access);
+        assert.isTrue(Option.isNone((yield* serverExposure.backendConfig).cloudflareAccess));
+        const full = yield* serverExposure.setTunnelPairing({
+          ...access,
+          cloudflareAccessSubjects: "dev@example.com",
+        });
+        assert.equal(full.requiresRelaunch, true);
+        assert.deepEqual(Option.getOrNull((yield* serverExposure.backendConfig).cloudflareAccess), {
+          teamDomain: "team.cloudflareaccess.com",
+          aud: "aud-tag",
+          subjects: "dev@example.com",
+        });
+        yield* serverExposure.setTunnelPairing({ ...access, enabled: false });
+        assert.isTrue(Option.isNone((yield* serverExposure.backendConfig).cloudflareAccess));
       }),
     ),
   );

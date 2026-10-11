@@ -15,6 +15,9 @@ const serverExposureState: DesktopServerExposureState = {
   tunnelPairingEnabled: false,
   tunnelPairingUrl: null,
   trustedBrowserOrigins: null,
+  cloudflareAccessTeamDomain: null,
+  cloudflareAccessAud: null,
+  cloudflareAccessSubjects: null,
 };
 
 const advertisedEndpoints: ReadonlyArray<AdvertisedEndpoint> = [];

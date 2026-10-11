@@ -73,6 +73,7 @@ import {
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
+  selectVisibleNetworkEndpoints,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
 import {
@@ -2097,6 +2098,32 @@ function CloudRemoteEnvironmentRows({
   ) : null;
 }
 
+type CloudflareAccessField =
+  | "cloudflareAccessTeamDomain"
+  | "cloudflareAccessAud"
+  | "cloudflareAccessSubjects";
+const CLOUDFLARE_ACCESS_FIELDS: ReadonlyArray<{
+  readonly field: CloudflareAccessField;
+  readonly label: string;
+  readonly placeholder: string;
+}> = [
+  {
+    field: "cloudflareAccessTeamDomain",
+    label: "Cloudflare Access team domain",
+    placeholder: "Access team domain, for example team.cloudflareaccess.com",
+  },
+  {
+    field: "cloudflareAccessAud",
+    label: "Cloudflare Access audience tag",
+    placeholder: "Access application audience (AUD) tag",
+  },
+  {
+    field: "cloudflareAccessSubjects",
+    label: "Cloudflare Access allowed emails and service tokens",
+    placeholder: "Allowed emails or service token client IDs, comma separated",
+  },
+];
+
 export function ConnectionsSettings() {
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -2263,6 +2290,9 @@ export function ConnectionsSettings() {
   // Fork: null until the user edits the field; the saved URL shows until then.
   const [tunnelPairingUrlInput, setTunnelPairingUrlInput] = useState<string | null>(null);
   const [trustedOriginsInput, setTrustedOriginsInput] = useState<string | null>(null);
+  const [cloudflareAccessInputs, setCloudflareAccessInputs] = useState<
+    Partial<Record<CloudflareAccessField, string>>
+  >({});
   const [isUpdatingWslBackend, setIsUpdatingWslBackend] = useState(false);
   const [desktopWslMutationError, setDesktopWslMutationError] = useState<string | null>(null);
   // Pending WSL setting change waiting on user confirmation. Set when
@@ -2534,6 +2564,9 @@ export function ConnectionsSettings() {
       readonly enabled: boolean;
       readonly url: string | null;
       readonly trustedBrowserOrigins: string | null;
+      readonly cloudflareAccessTeamDomain: string | null;
+      readonly cloudflareAccessAud: string | null;
+      readonly cloudflareAccessSubjects: string | null;
     }) => {
       if (
         !desktopBridge ||
@@ -2548,6 +2581,7 @@ export function ConnectionsSettings() {
         refreshDesktopNetworkAccessState();
         setTunnelPairingUrlInput(null);
         setTrustedOriginsInput(null);
+        setCloudflareAccessInputs({});
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
         setDesktopServerExposureMutationError(message);
@@ -2995,9 +3029,10 @@ export function ConnectionsSettings() {
   );
   const visibleDesktopNetworkAdvertisedEndpoints = useMemo(
     () =>
-      isLocalBackendNetworkAccessible
-        ? desktopAdvertisedEndpoints.filter((endpoint) => !isTailscaleHttpsEndpoint(endpoint))
-        : [],
+      selectVisibleNetworkEndpoints({
+        endpoints: desktopAdvertisedEndpoints,
+        isNetworkAccessible: isLocalBackendNetworkAccessible,
+      }),
     [desktopAdvertisedEndpoints, isLocalBackendNetworkAccessible],
   );
   const visibleDesktopAdvertisedEndpoints = useMemo(
@@ -3707,12 +3742,23 @@ export function ConnectionsSettings() {
   const tunnelPairingUrlValue = tunnelPairingUrlInput ?? savedTunnelPairingUrl ?? "";
   const savedTrustedOrigins = desktopServerExposureState?.trustedBrowserOrigins ?? null;
   const trustedOriginsValue = trustedOriginsInput ?? savedTrustedOrigins ?? "";
+  const savedCloudflareAccess = (field: CloudflareAccessField) =>
+    desktopServerExposureState?.[field] ?? "";
+  const cloudflareAccessValue = (field: CloudflareAccessField) =>
+    cloudflareAccessInputs[field] ?? savedCloudflareAccess(field);
   const tunnelPairingTextInput = () => {
     const url = tunnelPairingUrlValue.trim();
     const origins = trustedOriginsValue.trim();
+    const accessValue = (field: CloudflareAccessField) => {
+      const value = cloudflareAccessValue(field).trim();
+      return value.length > 0 ? value : null;
+    };
     return {
       url: url.length > 0 ? url : null,
       trustedBrowserOrigins: origins.length > 0 ? origins : null,
+      cloudflareAccessTeamDomain: accessValue("cloudflareAccessTeamDomain"),
+      cloudflareAccessAud: accessValue("cloudflareAccessAud"),
+      cloudflareAccessSubjects: accessValue("cloudflareAccessSubjects"),
     };
   };
   const renderTunnelPairingRow = () => (
@@ -3762,6 +3808,32 @@ export function ConnectionsSettings() {
           <span className="mt-1 block">
             Trusted web origins: T3 Code pages on these https origins (comma or newline separated)
             may call this server with their cookies, for example behind Cloudflare Access.
+          </span>
+          {CLOUDFLARE_ACCESS_FIELDS.map(({ field, label, placeholder }) => (
+            <Input
+              key={field}
+              className="mt-2 max-w-sm"
+              value={cloudflareAccessValue(field)}
+              onChange={(event) =>
+                setCloudflareAccessInputs((inputs) => ({ ...inputs, [field]: event.target.value }))
+              }
+              onBlur={() => {
+                if (cloudflareAccessValue(field).trim() === savedCloudflareAccess(field)) return;
+                void handleTunnelPairingChange({
+                  enabled: desktopServerExposureState?.tunnelPairingEnabled ?? false,
+                  ...tunnelPairingTextInput(),
+                });
+              }}
+              placeholder={placeholder}
+              aria-label={label}
+              disabled={isUpdatingTunnelPairing}
+              spellCheck={false}
+            />
+          ))}
+          <span className="mt-1 block">
+            Cloudflare Access login: with all three set, a request that passed Cloudflare Access as
+            a listed email or service token is logged in without a pairing link. Use it only when
+            the tunnel is the one way to reach this server.
           </span>
         </>
       }
