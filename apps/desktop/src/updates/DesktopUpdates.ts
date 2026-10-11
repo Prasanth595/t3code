@@ -66,7 +66,16 @@ const UpdateInfo = Schema.Struct({
   // fail the decode and block the update state transition. The shape is
   // validated defensively in normalizeDesktopUpdateReleaseNotes.
   releaseNotes: Schema.optional(Schema.Unknown),
+  files: Schema.optional(Schema.Unknown),
 });
+
+// Only the sha512s are read, to recognize a download an earlier launch finished.
+const ReleaseFiles = Schema.Array(Schema.Struct({ sha512: Schema.String }));
+
+// electron-updater's pending/update-info.json.
+const CachedDownloadInfo = Schema.fromJsonString(
+  Schema.Struct({ fileName: Schema.String, sha512: Schema.String }),
+);
 
 const DownloadProgressInfo = Schema.Struct({
   percent: Schema.Number,
@@ -74,6 +83,8 @@ const DownloadProgressInfo = Schema.Struct({
 const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
 const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
 const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
+const decodeReleaseFiles = Schema.decodeUnknownOption(ReleaseFiles);
+const decodeCachedDownloadInfo = Schema.decodeUnknownEffect(CachedDownloadInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -386,6 +397,15 @@ export const make = Effect.gen(function* () {
         finished ? PubSub.publish(finishedUpdateActions, action).pipe(Effect.asVoid) : Effect.void,
       ),
     );
+
+  const awaitIdleUpdateAction = Effect.scoped(
+    Effect.gen(function* () {
+      const completions = yield* PubSub.subscribe(finishedUpdateActions);
+      while (Option.isSome(yield* activeUpdateAction)) {
+        yield* PubSub.take(completions);
+      }
+    }),
+  );
 
   const applyAutoUpdaterChannel = Effect.fn("desktop.updates.applyAutoUpdaterChannel")(function* (
     channel: DesktopUpdateChannel,
@@ -734,6 +754,53 @@ export const make = Effect.gen(function* () {
     );
   }).pipe(Effect.withSpan("desktop.updates.startPollers"));
 
+  // The package type this install's updater downloads. A cache left by another
+  // install type (an AppImage next to a .deb) would be discarded and replaced
+  // with a fresh network download, so it must not count as a match.
+  const updatePackageExtension =
+    environment.platform === "darwin"
+      ? ".zip"
+      : environment.platform === "win32"
+        ? ".exe"
+        : isDebPackage
+          ? ".deb"
+          : ".AppImage";
+
+  const cachedDownloadSha512 = Effect.gen(function* () {
+    const pendingDirectory = yield* electronUpdater.pendingDownloadDirectory;
+    if (Option.isNone(pendingDirectory)) return Option.none<string>();
+    const info = yield* fileSystem
+      .readFileString(environment.path.join(pendingDirectory.value, "update-info.json"))
+      .pipe(Effect.flatMap(decodeCachedDownloadInfo));
+    if (!info.fileName.endsWith(updatePackageExtension)) return Option.none<string>();
+    const fileExists = yield* fileSystem.exists(
+      environment.path.join(pendingDirectory.value, info.fileName),
+    );
+    return fileExists ? Option.some(info.sha512) : Option.none<string>();
+  }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+  // Update state lives in memory, but electron-updater keeps a finished download
+  // on disk across launches. When the release a check finds is the cached one,
+  // pick it back up so the restart prompt returns without another click. A newer
+  // release does not match and waits for the user like any other.
+  const resumeCachedDownload = Effect.fn("desktop.updates.resumeCachedDownload")(function* (
+    version: string,
+    files: unknown,
+  ) {
+    const cachedSha512 = yield* cachedDownloadSha512;
+    if (Option.isNone(cachedSha512)) return;
+    const releaseFiles = Option.getOrElse(decodeReleaseFiles(files), () => []);
+    if (!releaseFiles.some((file) => file.sha512 === cachedSha512.value)) return;
+
+    // update-available arrives while its check still holds the action reservation.
+    yield* awaitIdleUpdateAction;
+    if (yield* Ref.get(desktopState.quitting)) return;
+    const state = yield* Ref.get(updateStateRef);
+    if (state.status !== "available" || state.availableVersion !== version) return;
+    yield* logUpdaterInfo("reusing update downloaded by an earlier launch", { version });
+    yield* downloadAvailableUpdate;
+  });
+
   const handleUpdateAvailable = Effect.fn("desktop.updates.handleUpdateAvailable")(function* (
     raw: unknown,
   ) {
@@ -773,6 +840,9 @@ export const make = Effect.gen(function* () {
             releaseNoteGroups: releaseNotes.length,
             omittedReleaseCount,
           });
+          if (state.downloadedVersion !== info.version) {
+            yield* resumeCachedDownload(info.version, info.files);
+          }
         }),
       ),
       Effect.catchCause((cause) => {
