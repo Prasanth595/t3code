@@ -56,7 +56,6 @@ import {
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentMachineKind,
-  type EnvironmentId,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
