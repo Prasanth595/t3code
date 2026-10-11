@@ -5,6 +5,7 @@ import {
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
+import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
@@ -28,8 +29,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
-import { ASSET_ROUTE_PREFIX, resolveAsset } from "./assets/AssetAccess.ts";
-import * as McpAppDocument from "./assets/McpAppDocument.ts";
+import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
 import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
@@ -180,17 +180,17 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     !asset.download &&
     headers["Content-Type"] === "text/html; charset=utf-8"
   ) {
-    const mcpAppDocument = yield* McpAppDocument.McpAppDocument;
-    const document = yield* mcpAppDocument.read(asset.path);
-    if (document._tag === "TooLarge") {
-      return HttpServerResponse.text("MCP App is too large to preview.", { status: 413 });
+    const bytes = yield* readMcpAppHtml(asset.path);
+    if (bytes === null) {
+      return HttpServerResponse.text("MCP app is too large to preview.", { status: 413 });
     }
-    // The served bytes differ from the saved capture: do not reuse its file
-    // length or validators. HEAD reports the transformed document's length.
-    const response = HttpServerResponse.text(document.html, { headers });
+    const body = new TextEncoder().encode(
+      injectMcpAppCookieBootstrap(injectMcpAppThemeBootstrap(new TextDecoder().decode(bytes))),
+    );
+    headers["Content-Length"] = String(body.byteLength);
     return method === "HEAD"
-      ? HttpServerResponse.empty({ status: 200, headers: response.headers })
-      : response;
+      ? HttpServerResponse.empty({ status: 200, headers })
+      : HttpServerResponse.uint8Array(body, { headers });
   }
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;

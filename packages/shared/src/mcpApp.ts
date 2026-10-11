@@ -216,6 +216,40 @@ export function injectMcpAppCsp(html: string, csp: McpAppCsp | undefined): strin
 }
 
 /**
+ * Installed before vendor scripts so apps that omit their own theme handling
+ * still give their document canvas and native controls the host's appearance.
+ * The bridge uses an opaque origin, so authenticate messages by parent window.
+ */
+export function injectMcpAppThemeBootstrap(html: string): string {
+  const script = `<script>
+(() => {
+  window.addEventListener("message", (event) => {
+    if (event.source !== window.parent) return;
+    const message = event.data;
+    if (!message || message.jsonrpc !== "2.0") return;
+    const theme = message.method === "ui/notifications/host-context-changed"
+      ? message.params?.theme
+      : message.id !== undefined && message.method === undefined
+        ? message.result?.hostContext?.theme
+        : undefined;
+    if (theme === "light" || theme === "dark") {
+      document.documentElement.style.colorScheme = theme;
+    }
+  });
+})();
+</script>`;
+  // Snapshots start with our doctype and CSP meta. Keep that policy ahead of
+  // the bootstrap, rather than letting an injected script precede it.
+  const prefix =
+    /^\uFEFF?\s*<!doctype[^>]*>\s*(?:<meta\s+http-equiv="Content-Security-Policy"[^>]*>)?/i.exec(
+      html,
+    );
+  return prefix
+    ? `${prefix[0]}${script}${html.slice(prefix[0].length)}`
+    : `<!doctype html>${script}${html}`;
+}
+
+/**
  * Analytics libraries often read cookies during startup. An opaque document
  * has none, but browsers throw instead of returning an empty cookie string.
  * Keep the sandbox and make that document-local case behave like no cookies.
