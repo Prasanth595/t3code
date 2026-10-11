@@ -329,15 +329,17 @@ export function planScopedSettingsPatch(
                 // so complete the patch from the target's effective value.
                 const effective = resolveProjectSettings(settings, projectId).settings;
                 const next: Record<string, unknown> = { ...current };
-                for (const [key, value] of Object.entries(
-                  supportedServerPatch(environment, serverPatch),
-                )) {
-                  if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
+                const environmentPatch = supportedServerPatch(environment, serverPatch);
+                for (const [key, value] of Object.entries(environmentPatch)) {
+                  if (
+                    key === "worktreeCleanup" &&
+                    environmentPatch.worktreeCleanup?.mode === "custom"
+                  ) {
                     next[key] = {
                       mode: "custom",
                       rules: {
                         ...resolveWorktreeCleanup(settings, projectId),
-                        ...serverPatch.worktreeCleanup.rules,
+                        ...environmentPatch.worktreeCleanup.rules,
                       },
                     };
                     continue;
