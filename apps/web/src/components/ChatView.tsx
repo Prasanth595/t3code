@@ -2264,6 +2264,10 @@ export default function ChatView(props: ChatViewProps) {
       ? null
       : visibleThreadError;
 
+  // Only the server's own failure can be explained; local client errors have no server record.
+  const bannerShowsServerError =
+    localServerError === null && visibleThreadError === serverRuntime?.lastError;
+
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
     readonly messageId: MessageId | null;
@@ -11483,9 +11487,14 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={timelineThreadError}
-                errorClass={
-                  localServerError === null && visibleThreadError === serverRuntime?.lastError
-                    ? (serverRuntime?.lastErrorClass ?? null)
+                errorClass={bannerShowsServerError ? (serverRuntime?.lastErrorClass ?? null) : null}
+                explainTarget={
+                  bannerShowsServerError && isServerThread && activeThreadRef !== null
+                    ? {
+                        environmentId: activeThreadRef.environmentId,
+                        threadId: activeThreadRef.threadId,
+                        runId: serverLatestRun?.runId ?? null,
+                      }
                     : null
                 }
                 onDismiss={() => {
