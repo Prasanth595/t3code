@@ -2264,10 +2264,23 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              // Computed before resolving the target so a retry of an
+              // already accepted thread creation can be recognized:
+              // dispatching under the same command id only replays the
+              // recorded result, so candidate selection must not refuse it
+              // over the project's current settings.
+              const commandId = stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "create-thread",
+                index,
+              });
+              const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
               const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
                 providers,
+                skipProjectEnablementFilter: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
@@ -2283,11 +2296,7 @@ const make = Effect.gen(function* () {
                 requestKey: key,
                 index,
               });
-              yield* assertTargetEnabledForProject(
-                parent,
-                stableCommandId({ scope, requestKey: key, operation: "create-thread", index }),
-                target,
-              );
+              yield* assertTargetEnabledForProject(parent, commandId, target);
               const title = threadTitle({
                 parentTitle: parent.thread.title,
                 prompt: request.prompt,
@@ -2299,12 +2308,7 @@ const make = Effect.gen(function* () {
                   type: "thread.create",
                   createdBy: "agent",
                   creationSource: "mcp",
-                  commandId: stableCommandId({
-                    scope,
-                    requestKey: key,
-                    operation: "create-thread",
-                    index,
-                  }),
+                  commandId,
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
