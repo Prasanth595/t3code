@@ -194,6 +194,29 @@ describe("workspace command discovery retry", () => {
     vi.unstubAllGlobals();
   });
 
+  it("expands a slash query typed on a non-Latin layout before matching", async () => {
+    let labels: ReadonlyArray<string> = [];
+    function MenuProbe() {
+      // `ьщвуд` is `model` typed while a Russian layout was active.
+      const menu = useComposerCommandMenu({
+        draftMessage: "/ьщвуд",
+        ownerKey: null,
+        environmentId,
+        projectCwd: "/project-a",
+        selectedProviderStatus: provider,
+        hasThread: true,
+        hasCompactableConversation: false,
+        onChangeDraftMessage: () => {},
+      });
+      labels = menu.items.map((item) => item.label);
+      return null;
+    }
+    await act(async () => {
+      root.render(createElement(MenuProbe));
+    });
+    expect(labels).toContain("/model");
+  });
+
   it("retries partial commands after the cooldown without editing the draft", async () => {
     const recovered = {
       ...provider,
