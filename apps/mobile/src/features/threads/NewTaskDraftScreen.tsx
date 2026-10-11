@@ -1053,7 +1053,13 @@ export function NewTaskDraftScreen(props: {
           : undefined,
     });
     const rejectedCount =
-      result.attachments.length > 0 ? flow.appendAttachments(result.attachments, insertion) : 0;
+      result.attachments.length > 0
+        ? flow.appendAttachments(
+            result.attachments,
+            insertion,
+            insertion !== undefined && insertion.start !== insertion.end,
+          )
+        : 0;
     const problems = [
       ...(result.error ? [result.error] : []),
       ...(rejectedCount > 0
@@ -1110,7 +1116,11 @@ export function NewTaskDraftScreen(props: {
               : flow.attachments.length,
         });
         if (images.length > 0) {
-          flow.appendAttachments(images, insertion);
+          flow.appendAttachments(
+            images,
+            insertion,
+            insertion !== undefined && insertion.start !== insertion.end,
+          );
         }
       } catch (error) {
         console.error("[native paste] error converting images", error);

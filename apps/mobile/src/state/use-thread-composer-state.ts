@@ -138,6 +138,7 @@ export function appendReviewCommentToDraft(input: {
     // it must not push the draft over the send limit. Overflow is released.
     const rejectedCount = appendComposerDraftAttachments(threadKey, input.attachments, {
       appendReference: true,
+      appendImageReference: false,
     });
     if (rejectedCount > 0) {
       setPendingConnectionError(
@@ -789,6 +790,7 @@ export function useThreadComposerState() {
     });
     const rejectedCount = appendComposerDraftAttachments(threadKey, result.attachments, {
       appendReference: true,
+      appendImageReference: insertion.start !== insertion.end,
       insertion,
     });
     const problems = [
@@ -850,6 +852,7 @@ export function useThreadComposerState() {
     });
     const rejectedPasteCount = appendComposerDraftAttachments(threadKey, result.images, {
       appendReference: true,
+      appendImageReference: insertion.start !== insertion.end,
       insertion,
     });
     if (result.text) {
@@ -948,7 +951,11 @@ export function useThreadComposerState() {
           existingCount: countComposerDraftAttachmentsAfterSelection(threadKey, insertion),
         });
         if (images.length > 0) {
-          appendComposerDraftAttachments(threadKey, images, { appendReference: true, insertion });
+          appendComposerDraftAttachments(threadKey, images, {
+            appendReference: true,
+            appendImageReference: insertion.start !== insertion.end,
+            insertion,
+          });
         }
       } catch (error) {
         console.error("[native paste] error converting images", {

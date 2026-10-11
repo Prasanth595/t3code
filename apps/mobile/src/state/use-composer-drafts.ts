@@ -43,7 +43,11 @@ import {
   registerComposerAttachmentUnusedHandler,
   retainComposerAttachmentFileForPreview,
 } from "../lib/composerAttachmentPreviewRetention";
-import type { DraftComposerAttachment, FileBackedComposerAttachment } from "../lib/composerImages";
+import {
+  isComposerImageAttachment,
+  type DraftComposerAttachment,
+  type FileBackedComposerAttachment,
+} from "../lib/composerImages";
 import { SerializedAsyncQueue } from "../lib/serialized-async-queue";
 import { appAtomRegistry } from "./atom-registry";
 import {
@@ -1349,6 +1353,7 @@ export function appendComposerDraftAttachments(
   options?: {
     readonly allowOverflow?: boolean;
     readonly appendReference?: boolean;
+    readonly appendImageReference?: boolean;
     readonly insertion?: ComposerDraftInsertion;
     readonly maxAttachments?: number;
   },
@@ -1360,9 +1365,16 @@ export function appendComposerDraftAttachments(
   let removed: ReadonlyArray<DraftComposerAttachment> = [];
   updateComposerDrafts((current) => {
     const existing = normalizeDraft(current[draftKey]);
-    const retained = options?.appendReference
-      ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
-      : existing;
+    const referencedAttachments = options?.appendReference
+      ? attachments.filter(
+          (attachment) =>
+            options.appendImageReference !== false || !isComposerImageAttachment(attachment),
+        )
+      : [];
+    const retained =
+      referencedAttachments.length > 0
+        ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
+        : existing;
     const remaining = options?.allowOverflow
       ? attachments.length
       : Math.max(
@@ -1372,17 +1384,34 @@ export function appendComposerDraftAttachments(
             options?.maxAttachments ?? PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
           ) - retained.attachments.length,
         );
-    const contextCapacity = options?.appendReference
-      ? Math.max(0, COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0))
-      : attachments.length;
-    const accepted = attachments.slice(0, Math.min(remaining, contextCapacity));
-    rejected = attachments.slice(accepted.length);
+    let contextRemaining = Math.max(
+      0,
+      COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0),
+    );
+    const accepted: DraftComposerAttachment[] = [];
+    rejected = [];
+    for (const attachment of attachments) {
+      const needsReference =
+        options?.appendReference === true &&
+        (options.appendImageReference !== false || !isComposerImageAttachment(attachment));
+      if (accepted.length >= remaining || (needsReference && contextRemaining === 0)) {
+        rejected.push(attachment);
+        continue;
+      }
+      accepted.push(attachment);
+      if (needsReference) contextRemaining -= 1;
+    }
     if (accepted.length === 0) {
       return current;
     }
     let draft = { ...existing, attachments: [...existing.attachments, ...accepted] };
-    if (options?.appendReference) {
-      const records = accepted.map((attachment) => attachmentContextRecord(attachment));
+    const acceptedReferences = accepted.filter(
+      (attachment) =>
+        options?.appendReference === true &&
+        (options.appendImageReference !== false || !isComposerImageAttachment(attachment)),
+    );
+    if (acceptedReferences.length > 0) {
+      const records = acceptedReferences.map((attachment) => attachmentContextRecord(attachment));
       const inserted = draftWithInsertedContext(
         draftKey,
         draft,

@@ -715,12 +715,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     (
       nextAttachments: ReadonlyArray<DraftComposerAttachment>,
       insertion?: ComposerDraftInsertion,
+      appendImageReference = false,
     ): number => {
       if (!selectedProjectDraftKey) {
         return 0;
       }
       return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments, {
         appendReference: true,
+        appendImageReference,
         insertion,
       });
     },
