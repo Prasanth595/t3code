@@ -76,6 +76,7 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
+import { pickPrimaryRemote } from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
@@ -328,6 +329,68 @@ export function parseRepositoryNameWithOwnerFromRemoteUrl(
   return (
     provider?.repositoryNameFromRemoteUrl?.(trimmed) ??
     SourceControlProvider.repositoryPathFromRemoteUrl(trimmed)
+  );
+}
+
+/** The key of the repository a pull request URL belongs to, or null for a shape this cannot read. */
+function pullRequestBaseRepositoryKey(url: string): string | null {
+  // `pullRequestRepositoryKey` does not read Forgejo's and GitCafe's `/pulls/`.
+  const link = parseChangeRequestUrl(url);
+  const key =
+    pullRequestRepositoryKey(url) ??
+    (link === null ? null : normalizeGitRemoteUrl(`https://${link.host}/${link.repository}`));
+  return key === null ? null : canonicalRepositoryKey(key);
+}
+
+/** A repository key's host and the path below it. */
+function splitRepositoryKey(key: string): { readonly host: string; readonly path: string } {
+  const slash = key.indexOf("/");
+  return { host: key.slice(0, slash), path: key.slice(slash + 1) };
+}
+
+/**
+ * Whether a remote names the repository at `repositoryKey`. A dotless SSH host is an
+ * `~/.ssh/config` alias such as `git@github-work:`, which stands for a host it does not name, so
+ * only its path is compared. Any other host must match.
+ */
+function namesRepository(remoteUrl: string, remoteKey: string, repositoryKey: string): boolean {
+  if (remoteKey === repositoryKey) return true;
+  const remote = splitRepositoryKey(remoteKey);
+  return (
+    isSshRemoteUrl(remoteUrl) &&
+    !remote.host.includes(".") &&
+    remote.path === splitRepositoryKey(repositoryKey).path
+  );
+}
+
+/**
+ * Whether a checkout whose identity remote is at `remoteUrl` holds the pull request's repository
+ * or the fork its head comes from. Only a definite mismatch answers no: no remote, a local or
+ * relative path, or a pull request URL this cannot read is no evidence either way.
+ */
+export function isPullRequestCheckout(
+  remoteUrl: string | null,
+  pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
+): boolean {
+  const baseKey = pullRequestBaseRepositoryKey(pullRequest.url);
+  if (
+    baseKey === null ||
+    remoteUrl === null ||
+    parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl) === null
+  ) {
+    return true;
+  }
+  const remoteKey = canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl));
+  // Forks live on their base's host.
+  const head = resolveHeadRepositoryNameWithOwner(pullRequest);
+  return (
+    namesRepository(remoteUrl, remoteKey, baseKey) ||
+    (head !== null &&
+      namesRepository(
+        remoteUrl,
+        remoteKey,
+        `${splitRepositoryKey(baseKey).host}/${head.toLowerCase()}`,
+      ))
   );
 }
 
@@ -2540,6 +2603,24 @@ export const make = Effect.gen(function* () {
     return { pullRequest };
   });
 
+  // The URL of the remote a checkout's identity is read from, as configured: the first of a
+  // remote's URLs, the one fetch uses, before `insteadOf` rewrites it.
+  const readCheckoutRemoteUrl = Effect.fn("readCheckoutRemoteUrl")(function* (cwd: string) {
+    const { stdout } = yield* gitCore.execute({
+      operation: "GitManager.readCheckoutRemoteUrl",
+      cwd,
+      args: ["config", "--get-regexp", "^remote\\..+\\.url$"],
+      allowNonZeroExit: true,
+      timeoutMs: 5_000,
+    });
+    const urls = new Map<string, string>();
+    for (const line of stdout.split("\n")) {
+      const [, name = "", url = ""] = /^remote\.(.+)\.url\s+(.+)$/.exec(line.trim()) ?? [];
+      if (name.length > 0 && url.length > 0 && !urls.has(name)) urls.set(name, url);
+    }
+    return pickPrimaryRemote(urls)?.remoteUrl ?? null;
+  });
+
   const preparePullRequestThread: GitManager["Service"]["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -2571,6 +2652,23 @@ export const make = Effect.gen(function* () {
         reference: normalizedReference,
       });
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
+      const pullRequestWithRemoteInfo = {
+        ...pullRequest,
+        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+      } as const;
+      // A pull request can be read through any project on its host, so the checkout asked to
+      // hold it is not necessarily a checkout of its repository. Fetching into it anyway pulls
+      // an unrelated history in, runs its setup and hands the task to the wrong project.
+      const remoteUrl = yield* readCheckoutRemoteUrl(input.cwd);
+      if (!isPullRequestCheckout(remoteUrl, pullRequestWithRemoteInfo)) {
+        const baseKey = pullRequestBaseRepositoryKey(pullRequest.url);
+        const repository = baseKey === null ? pullRequest.url : splitRepositoryKey(baseKey).path;
+        return yield* new GitManagerError({
+          operation: "preparePullRequestThread",
+          cwd: input.cwd,
+          detail: `This project is not a checkout of ${repository}. Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.`,
+        });
+      }
 
       if (input.mode === "local") {
         yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
@@ -2609,10 +2707,6 @@ export const make = Effect.gen(function* () {
         );
       });
 
-      const pullRequestWithRemoteInfo = {
-        ...pullRequest,
-        ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-      } as const;
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
 
