@@ -3045,7 +3045,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           if (status === "failed") {
             assert.equal(harness.terminalEvents()[0]?.failure?.message, error.message);
           }
-        }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
       ),
   );
 
