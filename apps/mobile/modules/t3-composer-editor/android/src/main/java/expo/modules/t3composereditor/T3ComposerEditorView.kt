@@ -9,6 +9,8 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
 import android.text.InputType
 import android.text.InputFilter
@@ -721,7 +723,9 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     copyExecutor.execute {
       val file = copyCommittedImage(contentInfo.contentUri, extension)
       if (granted) contentInfo.releasePermission()
-      if (file != null) post { listener(listOf(Uri.fromFile(file).toString())) }
+      if (file != null) {
+        Handler(Looper.getMainLooper()).post { listener(listOf(Uri.fromFile(file).toString())) }
+      }
     }
     return true
   }
