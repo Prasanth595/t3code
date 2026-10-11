@@ -9,6 +9,7 @@ import {
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   extractModelConfigId,
+  isAllowedSessionConfigOptionValue,
   mergeToolCallState,
   parsePermissionRequest,
   parseSessionModeState,
@@ -1720,5 +1721,44 @@ describe("embeddedTerminalIdsFromSessionUpdate", () => {
         },
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("isAllowedSessionConfigOptionValue", () => {
+  const modelOption = {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: "paid/model-a",
+    options: [
+      { value: "paid/model-a", name: "Model A" },
+      { value: "paid/model-b", name: "Model B" },
+    ],
+  } as const;
+
+  it("allows advertised values without a passthrough set", () => {
+    expect(isAllowedSessionConfigOptionValue(modelOption, "paid/model-a", undefined)).toBe(true);
+    expect(isAllowedSessionConfigOptionValue(modelOption, "paid/model-a", new Set())).toBe(true);
+  });
+
+  it("rejects unadvertised values without a passthrough set", () => {
+    expect(isAllowedSessionConfigOptionValue(modelOption, "free/custom-model", undefined)).toBe(
+      false,
+    );
+    expect(isAllowedSessionConfigOptionValue(modelOption, "free/custom-model", new Set())).toBe(
+      false,
+    );
+  });
+
+  it("lets configured custom ids through even when the agent never advertises them", () => {
+    const passthrough = new Set(["free/custom-model"]);
+    expect(isAllowedSessionConfigOptionValue(modelOption, "free/custom-model", passthrough)).toBe(
+      true,
+    );
+    expect(isAllowedSessionConfigOptionValue(modelOption, "paid/model-a", passthrough)).toBe(true);
+    expect(isAllowedSessionConfigOptionValue(modelOption, "nope/elsewhere", passthrough)).toBe(
+      false,
+    );
   });
 });

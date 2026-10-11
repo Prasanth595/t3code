@@ -9,6 +9,7 @@ import {
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
+import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -168,6 +169,13 @@ function makeAcpRegistryRuntime(
                   env: { ...resolved.spawn.env, ...processEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
+          // Custom model ids never appear in the agent-advertised choices the
+          // session runtime allowlists against. Let them through so the agent
+          // validates them (e.g. Cline accepts `cline-free/*`, which its
+          // discovery never advertises).
+          passthroughConfigValues: new Set(
+            readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
+          ),
         }),
       );
       return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(

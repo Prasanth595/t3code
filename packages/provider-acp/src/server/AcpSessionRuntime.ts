@@ -37,6 +37,7 @@ import {
   decideToolCallUpdateEmission,
   extractModelConfigId,
   findSessionConfigOption,
+  isAllowedSessionConfigOptionValue,
   mergeToolCallState,
   toolCallProgressLength,
   parseSessionModeState,
@@ -155,6 +156,13 @@ export interface AcpSessionRuntimeOptions {
   readonly onTermination?: (error: EffectAcpErrors.AcpError) => Effect.Effect<void>;
   readonly onOutgoingResponseFailure?: EffectAcpClient.AcpClientOptions["onOutgoingResponseFailure"];
   readonly onOutgoingResponse?: EffectAcpClient.AcpClientOptions["onOutgoingResponse"];
+  /**
+   * Config values the provider instance explicitly configured (custom model
+   * ids). They bypass the advertised-choices allowlist in
+   * `validateConfigOptionValue` and are sent to the agent, which validates
+   * them. Keeps the guard for everything else.
+   */
+  readonly passthroughConfigValues?: ReadonlySet<string>;
 }
 
 export interface AcpSessionRequestLogEvent {
@@ -1967,7 +1975,9 @@ export const make = (
           });
         }
         const allowedValues = collectSessionConfigOptionValues(configOption);
-        if (allowedValues.includes(value)) {
+        if (
+          isAllowedSessionConfigOptionValue(configOption, value, options.passthroughConfigValues)
+        ) {
           return;
         }
         return yield* new EffectAcpErrors.AcpRequestError({

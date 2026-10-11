@@ -425,6 +425,24 @@ export function collectSessionConfigOptionValues(
   );
 }
 
+/**
+ * Whether a select config value may be sent to the agent. Values the provider
+ * instance explicitly configured (custom models) bypass the advertised-choices
+ * allowlist: they are provider-owned, so the agent validates them. This keeps
+ * the guard for everything else while allowing ids the discovery never
+ * advertises but the agent accepts (e.g. Cline's `cline-free/*` free tier).
+ */
+export function isAllowedSessionConfigOptionValue(
+  configOption: EffectAcpSchema.SessionConfigOption,
+  value: string,
+  passthroughValues: ReadonlySet<string> | undefined,
+): boolean {
+  if (passthroughValues?.has(value)) {
+    return true;
+  }
+  return collectSessionConfigOptionValues(configOption).includes(value);
+}
+
 export function parseSessionModeState(
   sessionResponse: AcpSessionSetupResponse,
 ): AcpSessionModeState | undefined {
