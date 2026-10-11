@@ -3416,7 +3416,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : [],
       );
       assert.deepEqual(reportedContext, [2]);
-    }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
   );
 
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
