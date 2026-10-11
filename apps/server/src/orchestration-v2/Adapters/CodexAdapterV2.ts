@@ -2734,6 +2734,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const restoreSubagentThread = Effect.fnUntraced(function* (
           childThreadId: ThreadId,
           rootContext: ActiveCodexTurnContext,
+          savedThreads: Map<ThreadId, ProviderAdapter.ProviderAdapterV2SubagentThread | null>,
           restoring: ReadonlySet<ThreadId> = new Set(),
         ): Effect.fn.Return<
           CodexSubagentThreadContext | undefined,
@@ -2741,7 +2742,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         > {
           if (restoring.has(childThreadId) || rootContext.input.readSubagentThread === undefined)
             return;
-          const saved = yield* rootContext.input.readSubagentThread(childThreadId).pipe(
+          let saved = savedThreads.get(childThreadId);
+          if (saved === undefined) {
+            saved = yield* rootContext.input.readSubagentThread(childThreadId).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("orchestration-v2.codex-subagent-restore-read-failed", {
                 childThreadId,
@@ -2749,6 +2752,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               }).pipe(Effect.as(null)),
             ),
           );
+            savedThreads.set(childThreadId, saved);
+          }
           if (
             saved === null ||
             saved.subagent.driver !== CODEX_PROVIDER ||
@@ -2781,6 +2786,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const parent = yield* restoreSubagentThread(
               saved.subagent.threadId,
               rootContext,
+              savedThreads,
               new Set([...restoring, childThreadId]),
             );
             if (
@@ -2894,6 +2900,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeThreadId: input.nativeThreadId,
               });
               const pendingRoots = Array.from((yield* Ref.get(pendingRootTurns)).values());
+              // Reuse projection reads only within this notification, including missing children.
+              const savedThreads = new Map<ThreadId, ProviderAdapter.ProviderAdapterV2SubagentThread | null>();
               for (const rootContext of latestRootTurns.values()) {
                 // The next root must own recovered children, even if their
                 // notifications arrive before its turn/start reply.
@@ -2905,7 +2913,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   )
                 )
                   continue;
-                subagent = yield* restoreSubagentThread(childThreadId, rootContext);
+                subagent = yield* restoreSubagentThread(childThreadId, rootContext, savedThreads);
                 if (subagent !== undefined) break;
               }
             }
