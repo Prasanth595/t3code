@@ -108,6 +108,8 @@ import {
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
+import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
+import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
   codexFeedbackMessage,
   parseCodexFeedbackCommand,
@@ -1721,11 +1723,14 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
-  // Latest provider-reported context usage (#8144): the newest report wins;
-  // stale turns keep the meter alive between turns.
+  // Keep usage between turns, but never carry another native context across a handoff.
   const activeThreadLiveTokenUsage = useMemo(
-    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
-    [serverProjection?.providerTurns],
+    () =>
+      latestProviderTurnTokenUsage(
+        serverProjection?.providerTurns ?? [],
+        serverProjection?.thread.activeProviderThreadId,
+      ),
+    [serverProjection?.providerTurns, serverProjection?.thread.activeProviderThreadId],
   );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);
@@ -1801,6 +1806,12 @@ export default function ChatView(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerSelectedModelSelection = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return draft?.activeProvider
+      ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
+      : null;
+  });
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -7720,6 +7731,20 @@ export default function ChatView(props: ChatViewProps) {
       item.type === "user_message" &&
       (item.text.trim().toLowerCase() !== "/compact" || item.attachments.length > 0),
   );
+  const pendingHandoff = useMemo(
+    () =>
+      resolvePendingHandoff(
+        serverProjection,
+        composerSelectedModelSelection ?? activeThread?.modelSelection,
+        providerStatuses,
+      ),
+    [
+      serverProjection,
+      composerSelectedModelSelection,
+      activeThread?.modelSelection,
+      providerStatuses,
+    ],
+  );
   const compactThreadUnavailable =
     !canOperateThread ||
     !activeThread ||
@@ -7727,6 +7752,7 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
+    pendingHandoff !== null ||
     isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
@@ -7742,9 +7768,11 @@ export default function ChatView(props: ChatViewProps) {
       ? "This connection cannot change threads."
       : !activeProject
         ? "Choose a project before compacting"
-        : !manualCompactionProviderAvailable
-          ? "Compaction is unavailable for this provider"
-          : "Compacting is unavailable right now"
+        : pendingHandoff !== null
+          ? "Context handoff replaces compaction"
+          : !manualCompactionProviderAvailable
+            ? "Compaction is unavailable for this provider"
+            : "Compacting is unavailable right now"
     : null;
   // Tokens a stale Claude session would re-read on its next turn. While set,
   // the composer shows a Compact chip and Enter compacts first; turning the
@@ -9329,6 +9357,8 @@ export default function ChatView(props: ChatViewProps) {
     // rejected.
     const compactBeforeSend =
       resumeCompactionTokens !== null &&
+      resolvePendingHandoff(serverProjection, ctxSelectedModelSelection, providerStatuses) ===
+        null &&
       !keepFullHistory &&
       messageTextForSend.toLowerCase() !== "/compact";
     const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;
@@ -11481,7 +11511,22 @@ export default function ChatView(props: ChatViewProps) {
                 {...(draftId ? { onWorktreeSetupWorkLocally } : {})}
                 {...(onOpenWorktreeSetupTerminal ? { onOpenWorktreeSetupTerminal } : {})}
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
-                footer={paintOnlyDisplayedTimeline ? null : threadStatusLine}
+                footer={
+                  paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
+                    threadStatusLine
+                  ) : (
+                    <>
+                      <div className="chat-content-lane">
+                        <HandoffRow
+                          endpoints={pendingHandoff}
+                          providers={providerStatuses}
+                          pending
+                        />
+                      </div>
+                      {threadStatusLine}
+                    </>
+                  )
+                }
                 listRef={legendListRef}
                 timelineEntries={displayedTimeline.entries}
                 providerStatuses={

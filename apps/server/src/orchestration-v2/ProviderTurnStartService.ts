@@ -837,6 +837,36 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
+      const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
+      if (
+        message.attachments.length === 0 &&
+        message.text.trim().toLowerCase() === "/compact" &&
+        effectiveHandoffs.some(
+          (handoff) =>
+            nativeThreadId === undefined ||
+            handoff.delivery?.nativeThreadId !== nativeThreadId ||
+            handoff.delivery.status === "pending",
+        )
+      ) {
+        yield* settleRunBeforeStart({
+          signal: "handoff-replaces-compaction",
+          status: "failed",
+          now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Context handoff replaces compaction",
+            failure: makeProviderFailure({
+              class: "validation_error",
+              message:
+                "Context handoff replaces compaction. Send a message to the selected provider, or switch back to compact the current conversation.",
+            }),
+          },
+          providerThreadUpdate: { ...runningProviderThread, status: "idle" },
+        });
+        return;
+      }
       const runningRun: OrchestrationV2Run = {
         ...run,
         status: "running",
@@ -1094,6 +1124,16 @@ export const layer: Layer.Layer<
         compact = false,
       ) =>
         Effect.gen(function* () {
+          if (compact && missedItems.length > 0) {
+            return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+              driver: session.driver,
+              threadId: projection.thread.id,
+              providerThreadId: providerThread.id,
+              runId: run.id,
+              cause:
+                "Context handoff replaces compaction. Send a message to the selected provider, or switch back to compact the current conversation.",
+            });
+          }
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =

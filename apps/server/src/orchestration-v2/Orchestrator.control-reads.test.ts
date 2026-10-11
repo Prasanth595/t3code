@@ -334,6 +334,140 @@ it.effect("implements a proposed plan that the command projection leaves out", (
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("compacts the original conversation after a selected provider never started", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:compact-after-rejected-handoff");
+    const sourceThreadId = ProviderThreadId.make("provider-thread:compact-source");
+    const destinationThreadId = ProviderThreadId.make("provider-thread:rejected-destination");
+    const destinationInstanceId = ProviderInstanceId.make("claudeAgent");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-compact-after-rejected-handoff"),
+      threadId,
+      projectId: ProjectId.make("project:compact-after-rejected-handoff"),
+      title: "Compact after rejected handoff",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    for (const [ordinal, providerThreadId, providerInstanceId] of [
+      [1, sourceThreadId, instanceId],
+      [2, destinationThreadId, destinationInstanceId],
+    ] as const) {
+      yield* projections.apply({
+        id: EventId.make(`compact-after-rejected-handoff:provider:${ordinal}`),
+        type: "provider-thread.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver: adapter.driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: {
+            driver: adapter.driver,
+            nativeId: `compact-native-${ordinal}`,
+            strength: "strong",
+          },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: ordinal,
+          lastRunOrdinal: ordinal,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`compact-after-rejected-handoff:run:${ordinal}`),
+        type: "run.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: RunId.make(`run:compact-after-rejected-handoff:${ordinal}`),
+          threadId,
+          ordinal,
+          providerInstanceId,
+          modelSelection: { ...modelSelection, instanceId: providerInstanceId },
+          providerThreadId,
+          userMessageId: MessageId.make(`message:compact-after-rejected-handoff:${ordinal}`),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: ordinal === 1 ? "completed" : "failed",
+          requestedAt: now,
+          startedAt: ordinal === 1 ? now : null,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projections.apply({
+        id: EventId.make(`compact-after-rejected-handoff:message:${ordinal}`),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: MessageId.make(`message:compact-after-rejected-handoff:${ordinal}`),
+          threadId,
+          runId: RunId.make(`run:compact-after-rejected-handoff:${ordinal}`),
+          nodeId: null,
+          role: "user",
+          text: ordinal === 1 ? "Earlier conversation" : "/compact",
+          attachments: [],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    const before = yield* projections.getThreadProjection(threadId);
+    assert.equal(before.thread.activeProviderThreadId, destinationThreadId);
+    yield* projections.apply({
+      id: EventId.make("compact-after-rejected-handoff:selected-destination"),
+      type: "thread.provider-switched",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...before.thread,
+        providerInstanceId: destinationInstanceId,
+        modelSelection: { ...modelSelection, instanceId: destinationInstanceId },
+      },
+    });
+
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("compact-original-after-rejected-handoff"),
+      threadId,
+      messageId: MessageId.make("compact-original-after-rejected-handoff"),
+      text: "/compact",
+      attachments: [],
+      modelSelection,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    const after = yield* projections.getThreadProjection(threadId);
+    assert.equal(after.runs.at(-1)?.providerThreadId, sourceThreadId);
+    assert.equal(after.runs.at(-1)?.contextHandoffId, null);
+    assert.equal(after.thread.activeProviderThreadId, sourceThreadId);
+    assert.lengthOf(after.contextHandoffs, 0);
+    assert.isFalse(after.turnItems.some((item) => item.type === "handoff"));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 // Stop's settle follow-up runs after the provider interrupt returns, possibly
 // long after the Stop (retries) or again (an effect replayed after a crash).
 // A later run's background work is not that Stop's to end.

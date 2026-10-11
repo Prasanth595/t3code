@@ -2,6 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextHandoffId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -12,6 +13,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   ProjectId,
   type OrchestrationV2ThreadProjection,
   OrchestrationV2DomainEvent,
@@ -166,6 +168,9 @@ function makeLocalCommandHarness(input: {
    * fallback succeeds, then reading history for its handoff fails.
    */
   readonly historyReadFailureAfterFallback?: unknown;
+  readonly pendingHandoff?: boolean;
+  readonly resumeFallback?: boolean;
+  readonly missedTurn?: boolean;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -232,6 +237,21 @@ function makeLocalCommandHarness(input: {
     createdAt: now,
     updatedAt: now,
   };
+  const handoff: OrchestrationV2ThreadProjection["contextHandoffs"][number] = {
+    id: ContextHandoffId.make("pending-context-handoff"),
+    threadId,
+    targetRunId: runId,
+    fromProviderThreadIds: [oldProviderThreadId],
+    toProviderThreadId: providerThreadId,
+    coveredRunOrdinals: { from: 1, to: 1 },
+    strategy: "full_thread_summary",
+    status: "ready",
+    summaryMessageId: null,
+    summaryText: "Earlier conversation context.",
+    createdByProviderInstanceId: oldInstanceId,
+    createdAt: now,
+    updatedAt: now,
+  };
   let projection: OrchestrationV2ThreadProjection = {
     thread: {
       id: threadId,
@@ -240,6 +260,9 @@ function makeLocalCommandHarness(input: {
       worktreePath: null,
     } as OrchestrationV2ThreadProjection["thread"],
     runs: [
+      ...(input.missedTurn
+        ? [{ ...run, id: RunId.make("missed-turn"), ordinal: 1, status: "failed" as const }]
+        : []),
       ...(input.previousNativeSession
         ? [
             {
@@ -332,9 +355,35 @@ function makeLocalCommandHarness(input: {
     ],
     providerSessions: [],
     providerTurns: [],
-    contextHandoffs: [],
+    contextHandoffs: input.pendingHandoff ? [handoff] : [],
     contextTransfers: [],
-    turnItems: [],
+    turnItems: input.missedTurn
+      ? [
+          {
+            id: TurnItemId.make("missed-message"),
+            threadId,
+            runId: RunId.make("missed-turn"),
+            nodeId: null,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 100,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("missed-message"),
+            inputIntent: "turn_start",
+            text: "Earlier message that never reached the provider",
+            attachments: [],
+          },
+        ]
+      : [],
     visibleTurnItems: [],
     runtimeRequests: [],
     subagents: [],
@@ -342,7 +391,7 @@ function makeLocalCommandHarness(input: {
     checkpoints: [],
     updatedAt: now,
   };
-  if ("historyReadFailureAfterFallback" in input) {
+  if ("historyReadFailureAfterFallback" in input || input.resumeFallback) {
     const nativeThreadRef = {
       driver: providerThread.driver,
       nativeId: "native-resume-thread",
@@ -393,10 +442,11 @@ function makeLocalCommandHarness(input: {
       ),
     ensureThread: () => Effect.succeed(providerThread),
   };
+  const compactThread = vi.fn(() => Effect.void);
   const open = vi.fn(() =>
     input.interruptOpen === true
       ? Effect.interrupt
-      : "historyReadFailureAfterFallback" in input
+      : "historyReadFailureAfterFallback" in input || input.resumeFallback
         ? Effect.succeed(resumeFallbackSession as never)
         : "ensureThreadFailure" in input
           ? Effect.succeed({ driver: providerThread.driver, ensureThread } as never)
@@ -414,7 +464,7 @@ function makeLocalCommandHarness(input: {
                   ),
                 ),
               )
-            : input.failReadsAfterRunning === true
+            : input.failReadsAfterRunning === true || input.pendingHandoff || input.missedTurn
               ? Effect.succeed({
                   driver: providerThread.driver,
                   providerSession: {
@@ -430,13 +480,14 @@ function makeLocalCommandHarness(input: {
                     lastError: null,
                   },
                   ensureThread: () => Effect.succeed(providerThread),
+                  compactThread,
                 } as never)
               : Effect.die("A local command must not open a native session."),
   );
   const startRootRun = vi.fn<
     (input: RunExecutionService.RunExecutionServiceV2StartRootRunInput) => Effect.Effect<void>
   >(() =>
-    input.failReadsAfterRunning === true
+    input.failReadsAfterRunning === true || input.missedTurn
       ? Effect.void
       : Effect.die("A local command must not start a native turn."),
   );
@@ -450,7 +501,7 @@ function makeLocalCommandHarness(input: {
   );
   const tryHandlePromptCommand = vi.fn(() =>
     input.logoutFailure === undefined
-      ? Effect.succeed(true)
+      ? Effect.succeed(input.text.trim().toLowerCase() === "/logout")
       : Effect.fail(
           new ProviderSetupError({
             instanceId: oldInstanceId,
@@ -487,9 +538,23 @@ function makeLocalCommandHarness(input: {
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
-          prepareProviderHandoff: () => Effect.die("history read must fail first"),
+          prepareProviderHandoff: () =>
+            input.resumeFallback
+              ? Effect.succeed(handoff)
+              : Effect.die("history read must fail first"),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          write: ({ events: incoming }) =>
+            Effect.sync(() => {
+              for (const event of incoming) {
+                expect(isDomainEvent(event)).toBe(true);
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
+              return [];
+            }),
+        }),
         IdAllocator.layer,
         FileSystem.layerNoop({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
@@ -514,12 +579,16 @@ function makeLocalCommandHarness(input: {
               ),
             }),
           getTurnStartHistory: () =>
-            Effect.fail(
-              new ProjectionStore.ProjectionStoreReadError({
-                threadId,
-                cause: input.historyReadFailureAfterFallback,
-              }),
-            ),
+            input.missedTurn
+              ? Effect.succeed(projection.turnItems)
+              : input.resumeFallback
+                ? Effect.succeed([])
+                : Effect.fail(
+                    new ProjectionStore.ProjectionStoreReadError({
+                      threadId,
+                      cause: input.historyReadFailureAfterFallback,
+                    }),
+                  ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
@@ -532,6 +601,7 @@ function makeLocalCommandHarness(input: {
   );
   return {
     open,
+    compactThread,
     writeIfRunCurrent,
     startRootRun,
     tryHandlePromptCommand,
@@ -827,6 +897,76 @@ effectIt.effect("persists a failed sign-out without starting a provider turn", (
         },
       },
     ]);
+  }),
+);
+
+for (const resumeFallback of [false, true]) {
+  effectIt.effect(
+    `rejects compaction when context handoff ${resumeFallback ? "is prepared after resume fails" : "is already pending"}`,
+    () =>
+      Effect.gen(function* () {
+        const harness = makeLocalCommandHarness({
+          text: " /COMPACT ",
+          previousMessages: ["Earlier conversation"],
+          pendingHandoff: !resumeFallback,
+          resumeFallback,
+        });
+
+        yield* harness.start;
+        yield* harness.start;
+
+        expect(harness.startRootRun).not.toHaveBeenCalled();
+        const projection = harness.projection();
+        expect(projection.runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+        expect(projection.attempts[0]?.status).toBe("failed");
+        expect(projection.nodes[0]?.status).toBe("failed");
+        expect(projection.turnItems).toMatchObject([
+          {
+            type: "error",
+            failure: {
+              class: "validation_error",
+              message:
+                "Context handoff replaces compaction. Send a message to the selected provider, or switch back to compact the current conversation.",
+            },
+          },
+        ]);
+        expect(projection.contextHandoffs).toHaveLength(1);
+        expect(projection.contextHandoffs[0]?.status).toBe("ready");
+        expect(projection.contextHandoffs[0]?.delivery).toBeUndefined();
+        expect(projection.providerTurns).toEqual([]);
+      }),
+  );
+}
+
+effectIt.effect("rejects native compaction before preparing missed-turn recovery context", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "/compact",
+      previousMessages: ["Earlier conversation"],
+      missedTurn: true,
+    });
+
+    yield* harness.start;
+
+    const startedRun = harness.startRootRun.mock.calls[0]?.[0];
+    const compact = startedRun?.session.compactThread;
+    expect(compact).toBeDefined();
+    if (startedRun === undefined || compact === undefined) return;
+    const error = yield* compact({
+      ...startedRun,
+      threadId: startedRun.run.threadId,
+      runId: startedRun.run.id,
+      runOrdinal: startedRun.run.ordinal,
+      rootNodeId: startedRun.rootNode.id,
+    }).pipe(Effect.flip);
+
+    expect(error).toMatchObject({
+      _tag: "ProviderAdapterTurnStartError",
+      cause:
+        "Context handoff replaces compaction. Send a message to the selected provider, or switch back to compact the current conversation.",
+    });
+    expect(harness.compactThread).not.toHaveBeenCalled();
+    expect(harness.projection().contextHandoffs).toEqual([]);
   }),
 );
 

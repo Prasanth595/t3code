@@ -1,7 +1,10 @@
 import type {
+  ModelSelection,
   OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   ProviderInstanceId,
+  ServerProvider,
 } from "@t3tools/contracts";
 
 /**
@@ -13,6 +16,54 @@ export type HandoffTimelineRun = Pick<
   OrchestrationV2Run,
   "id" | "ordinal" | "providerInstanceId" | "modelSelection"
 >;
+
+export type HandoffEndpoints = ReturnType<typeof resolveHandoffEndpoints>;
+
+/** Preview the next send's handoff without adding anything to durable history. */
+export function resolvePendingHandoff(
+  projection: OrchestrationV2ThreadProjection | null | undefined,
+  selection: ModelSelection | null | undefined,
+  providers: ReadonlyArray<ServerProvider>,
+): HandoffEndpoints | null {
+  if (projection == null || selection == null) return null;
+  // A prepared destination can become active before its first turn starts.
+  const sourceRun = projection.runs.findLast(
+    (run) =>
+      run.startedAt !== null && run.providerThreadId !== null && run.status !== "rolled_back",
+  );
+  const sourceThread = projection.providerThreads.find(
+    (thread) =>
+      thread.id === (sourceRun?.providerThreadId ?? projection.thread.activeProviderThreadId),
+  );
+  if (sourceThread?.nativeThreadRef == null && sourceRun === undefined) return null;
+  const sourceInstanceId = sourceThread?.providerInstanceId ?? sourceRun?.providerInstanceId;
+  if (sourceInstanceId === undefined) return null;
+  const sourceSelection = sourceRun?.modelSelection ?? {
+    instanceId: sourceInstanceId,
+    model:
+      projection.thread.modelSelection.instanceId === sourceInstanceId
+        ? projection.thread.modelSelection.model
+        : undefined,
+  };
+  const source = providers.find((provider) => provider.instanceId === sourceInstanceId);
+  const target = providers.find((provider) => provider.instanceId === selection.instanceId);
+  if (sourceInstanceId === selection.instanceId) {
+    if (
+      sourceSelection.model === selection.model ||
+      target?.requiresNewThreadForModelChange !== true
+    ) {
+      return null;
+    }
+  } else if (
+    sourceThread?.nativeThreadRef != null &&
+    source?.driver === target?.driver &&
+    source?.continuation?.groupKey !== undefined &&
+    source.continuation.groupKey === target?.continuation?.groupKey
+  ) {
+    return null;
+  }
+  return { from: [sourceSelection], to: selection };
+}
 
 export function resolveHandoffEndpoints(
   item: Pick<

@@ -1,3 +1,4 @@
+import { ProviderThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import {
@@ -87,6 +88,26 @@ describe("live provider-turn usage (#8144)", () => {
 });
 
 describe("latestProviderTurnTokenUsage", () => {
+  it("does not compact a fresh handoff using the previous provider context", () => {
+    const source = ProviderThreadId.make("source");
+    const target = ProviderThreadId.make("target");
+    const previousUsage = {
+      providerThreadId: source,
+      tokenUsage: { usedTokens: 150_000, updatedAt: "2026-10-11T00:00:00Z" },
+    };
+    expect(latestProviderTurnTokenUsage([previousUsage], target)).toBeNull();
+    const currentUsage = {
+      providerThreadId: target,
+      tokenUsage: { usedTokens: 500, updatedAt: "2026-10-11T01:00:00Z" },
+    };
+    expect(latestProviderTurnTokenUsage([previousUsage, currentUsage], target)?.usedTokens).toBe(
+      500,
+    );
+    expect(latestProviderTurnTokenUsage([previousUsage, currentUsage], source)?.usedTokens).toBe(
+      150_000,
+    );
+  });
+
   it("picks the newest report, not the last turn in snapshot order", () => {
     const usage = (usedTokens: number, updatedAt: string) => ({
       tokenUsage: { usedTokens, updatedAt },

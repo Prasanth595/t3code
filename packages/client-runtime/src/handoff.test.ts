@@ -1,6 +1,16 @@
-import { ProviderInstanceId, RunId } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  ProviderThreadId,
+  RunId,
+  type OrchestrationV2ThreadProjection,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveHandoffEndpoints, type HandoffTimelineRun } from "./handoff.ts";
+import {
+  resolveHandoffEndpoints,
+  resolvePendingHandoff,
+  type HandoffTimelineRun,
+} from "./handoff.ts";
 
 const from = ProviderInstanceId.make("codex_personal");
 const to = ProviderInstanceId.make("claudeAgent");
@@ -61,5 +71,104 @@ describe("handoff endpoints shared by web and mobile", () => {
     expect(
       resolveHandoffEndpoints(item, [run("target", 2, from, "wrong-model")]).to.model,
     ).toBeUndefined();
+  });
+});
+
+const projection = {
+  thread: {
+    activeProviderThreadId: "native-source",
+    modelSelection: { instanceId: from, model: "source" },
+  },
+  providerThreads: [
+    { id: "native-source", providerInstanceId: from, nativeThreadRef: { nativeId: "source" } },
+  ],
+  runs: [
+    {
+      ...run("source", 1, from, "source"),
+      providerThreadId: ProviderThreadId.make("native-source"),
+      startedAt: "2026-10-11T00:00:00Z",
+    },
+  ],
+} as unknown as OrchestrationV2ThreadProjection;
+
+describe("pending context handoff", () => {
+  it("appears on selection, updates the destination, and disappears on returning", () => {
+    expect(resolvePendingHandoff(projection, { instanceId: to, model: "first" }, [])).toEqual({
+      from: [{ instanceId: from, model: "source" }],
+      to: { instanceId: to, model: "first" },
+    });
+    expect(
+      resolvePendingHandoff(projection, { instanceId: to, model: "second" }, [])?.to.model,
+    ).toBe("second");
+    expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
+    expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
+  });
+  it("skips empty conversations and replaces the preview after the handoff starts", () => {
+    expect(
+      resolvePendingHandoff(
+        { ...projection, runs: [], providerThreads: [] },
+        { instanceId: to, model: "target" },
+        [],
+      ),
+    ).toBeNull();
+    const switched = {
+      ...projection,
+      thread: {
+        ...projection.thread,
+        activeProviderThreadId: ProviderThreadId.make("native-target"),
+      },
+      providerThreads: [
+        ...projection.providerThreads,
+        {
+          ...projection.providerThreads[0]!,
+          id: ProviderThreadId.make("native-target"),
+          providerInstanceId: to,
+        },
+      ],
+      runs: [
+        ...projection.runs,
+        {
+          ...projection.runs[0]!,
+          id: RunId.make("target"),
+          ordinal: 2,
+          providerThreadId: ProviderThreadId.make("native-target"),
+          providerInstanceId: to,
+          modelSelection: { instanceId: to, model: "target" },
+        },
+      ],
+    };
+    expect(resolvePendingHandoff(switched, { instanceId: to, model: "target" }, [])).toBeNull();
+    const notStarted = {
+      ...switched,
+      runs: [projection.runs[0]!, { ...switched.runs[1]!, startedAt: null }],
+    };
+    expect(resolvePendingHandoff(notStarted, { instanceId: to, model: "target" }, [])).toEqual({
+      from: [{ instanceId: from, model: "source" }],
+      to: { instanceId: to, model: "target" },
+    });
+    expect(resolvePendingHandoff(notStarted, { instanceId: from, model: "source" }, [])).toBeNull();
+    const rolledBack = {
+      ...switched,
+      runs: [projection.runs[0]!, { ...switched.runs[1]!, status: "rolled_back" as const }],
+    };
+    expect(resolvePendingHandoff(rolledBack, { instanceId: from, model: "source" }, [])).toBeNull();
+  });
+  it("only previews a same-provider model change when it needs a fresh native thread", () => {
+    const providers = [
+      { instanceId: from, requiresNewThreadForModelChange: true },
+    ] as unknown as ServerProvider[];
+    expect(
+      resolvePendingHandoff(projection, { instanceId: from, model: "other" }, providers)?.to.model,
+    ).toBe("other");
+  });
+  it("resumes compatible account overlays without showing a handoff", () => {
+    const providers = [from, to].map((instanceId) => ({
+      instanceId,
+      driver: "codex",
+      continuation: { groupKey: "shared" },
+    })) as unknown as ServerProvider[];
+    expect(
+      resolvePendingHandoff(projection, { instanceId: to, model: "target" }, providers),
+    ).toBeNull();
   });
 });
