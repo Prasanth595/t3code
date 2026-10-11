@@ -312,7 +312,10 @@ describe("mobile model options", () => {
     expect(resolveSelectableModelSelection(config, usable, null)).toBe(usable);
     expect(resolveSelectableModelSelection(config, disabled, null)).toBeNull();
     expect(resolveSelectableModelSelection(config, removed, null)).toBeNull();
-    expect(isModelSelectionUnavailable(config, disabled, null)).toBe(false);
+    // Disabled is disabled even with no settings to consult; only a provider
+    // that is merely missing or unauthenticated falls through silently.
+    expect(isModelSelectionUnavailable(config, disabled, null)).toBe(true);
+    expect(isModelSelectionUnavailable(config, removed, null)).toBe(false);
     // An offline environment has no config to validate.
     expect(resolveSelectableModelSelection(null, disabled, null)).toBe(disabled);
   });
@@ -557,6 +560,9 @@ describe("mobile model options", () => {
     it("words a project's own turn-off apart from missing setup", () => {
       const settings: ServerSettings = {
         ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
+        },
         projectSettingsOverrides: {
           [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
@@ -644,6 +650,25 @@ describe("mobile model options", () => {
       // configWith's snapshot always reports enabled: true, standing in for
       // the server keeping the instance alive to serve project-b's override.
       expect(buildModelOptions(configWith(settings), null, undefined, projectId)).toEqual([]);
+    });
+
+    it("refuses to send an instance the project merely inherits as disabled, not just an explicit override", () => {
+      const settings: ServerSettings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerInstances: {
+          [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
+        },
+      };
+      const selection = { instanceId, model: "model-a" };
+
+      // configWith's snapshot always reports enabled: true, standing in for
+      // the server keeping the instance alive for another project's keep-alive.
+      expect(isModelSelectionUnavailable(configWith(settings), selection, projectId)).toBe(true);
+      expect(
+        describeUnavailableModelSelection(configWith(settings), selection, projectId).title,
+      ).toBe("Model turned off for this project");
+      // With no project in scope, the machine value applies and is disabled.
+      expect(isModelSelectionUnavailable(configWith(settings), selection, null)).toBe(true);
     });
 
     it("marks a project-disabled instance's fallback selection unavailable instead of reviving it", () => {

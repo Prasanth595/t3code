@@ -96,6 +96,27 @@ function isProjectDisabledOverride(
   );
 }
 
+/**
+ * Whether the project cannot use this instance at all, whether the project
+ * turned it off itself or it merely inherits a machine-level disable. Either
+ * way the server's `ThreadManagementService.dispatch` refuses a send, and the
+ * instance may still look installed and running in the snapshot because
+ * another project's keep-alive left it up.
+ */
+function isDisabledForProject(
+  config: T3ServerConfig | null | undefined,
+  provider:
+    | { readonly instanceId: ModelSelection["instanceId"]; readonly enabled: boolean }
+    | undefined,
+  instanceId: ModelSelection["instanceId"],
+  projectId: ProjectId | null,
+): boolean {
+  if (isProjectDisabledOverride(config, instanceId, projectId)) {
+    return true;
+  }
+  return provider !== undefined && !isProviderEnabledForProject(config, provider, projectId);
+}
+
 function normalizeSelectionOptions(
   selection: ModelSelection,
   capabilities: ModelCapabilities | null,
@@ -122,8 +143,9 @@ function normalizeSelectionOptions(
 }
 
 /**
- * Whether the selection cannot be sent as is: the project turned its instance
- * off, or a known Antigravity selection needs setup or a different model.
+ * Whether the selection cannot be sent as is: the instance resolves disabled
+ * for the project (its own override, or an inherited machine-level disable),
+ * or a known Antigravity selection needs setup or a different model.
  *
  * `projectId` has no default: a caller that forgets it would silently check
  * only the machine-wide state and miss a project that turned this instance
@@ -137,18 +159,17 @@ export function isModelSelectionUnavailable(
   if (!config || !selection) {
     return false;
   }
-  if (isProjectDisabledOverride(config, selection.instanceId, projectId)) {
-    return true;
-  }
   const provider = config.providers.find(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
+  if (isDisabledForProject(config, provider, selection.instanceId, projectId)) {
+    return true;
+  }
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   return (
     driver === "antigravity" &&
     (!provider ||
-      !isProviderEnabledForProject(config, provider, projectId) ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
       provider.availability === "unavailable" ||
@@ -162,7 +183,10 @@ export function describeUnavailableModelSelection(
   selection: ModelSelection,
   projectId: ProjectId | null,
 ): { readonly title: string; readonly detail: string } {
-  return isProjectDisabledOverride(config, selection.instanceId, projectId)
+  const provider = config?.providers.find(
+    (candidate) => candidate.instanceId === selection.instanceId,
+  );
+  return isDisabledForProject(config, provider, selection.instanceId, projectId)
     ? {
         title: "Model turned off for this project",
         detail: "Turn it back on from web or desktop, or choose another model.",
