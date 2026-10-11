@@ -592,6 +592,9 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Snooze limited threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
+      ...(settings.showFileLinkPaths !== DEFAULT_UNIFIED_SETTINGS.showFileLinkPaths
+        ? ["File chip paths"]
+        : []),
       ...(settings.persistComposerContextStrip !==
       DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip
         ? ["Composer context"]
@@ -720,6 +723,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
       settings.wordWrap,
+      settings.showFileLinkPaths,
       followSystem,
       theme,
       themeHalves,
@@ -796,6 +800,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
       wordWrap: DEFAULT_UNIFIED_SETTINGS.wordWrap,
+      showFileLinkPaths: DEFAULT_UNIFIED_SETTINGS.showFileLinkPaths,
       persistComposerContextStrip: DEFAULT_UNIFIED_SETTINGS.persistComposerContextStrip,
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
@@ -2534,6 +2539,27 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("file-chip-paths")}
+          description="Show compact paths in chat file chips instead of only file names."
+          resetAction={
+            settings.showFileLinkPaths !== DEFAULT_UNIFIED_SETTINGS.showFileLinkPaths ? (
+              <SettingResetButton
+                label="file chip paths"
+                onClick={() =>
+                  updateSettings({ showFileLinkPaths: DEFAULT_UNIFIED_SETTINGS.showFileLinkPaths })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showFileLinkPaths}
+              onCheckedChange={(checked) => updateSettings({ showFileLinkPaths: Boolean(checked) })}
+              aria-label="Show compact paths in file chips"
+            />
           }
         />
         <SettingsRow

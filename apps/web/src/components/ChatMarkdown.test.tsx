@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
 
-import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  type AuthEnvironmentScope,
+} from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
-import { useThreadFindHighlights } from "./chat/threadFindHighlights";
+import { collectThreadFindRanges, useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 
@@ -10,7 +14,7 @@ import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -24,15 +28,6 @@ vi.mock("./chat/MermaidDiagram", () => ({
   MermaidDiagram: () => <svg aria-label="Diagram" />,
 }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
-vi.mock("../hooks/useSettings", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../hooks/useSettings")>();
-  const settings = actual.getClientSettings();
-  return {
-    ...actual,
-    useClientSettings: (select?: (value: typeof settings) => unknown) =>
-      select ? select(settings) : settings,
-  };
-});
 vi.mock("./ui/tooltip", async () => {
   const { cloneElement, isValidElement } = await import("react");
   return {
@@ -86,6 +81,18 @@ import ChatMarkdown, {
   hasMarkdownFilePrimaryAction,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+import {
+  __resetClientSettingsPersistenceForTests,
+  __setClientSettingsForTests,
+} from "../hooks/useSettings";
+
+beforeEach(() => {
+  __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+});
+
+afterEach(() => {
+  __resetClientSettingsPersistenceForTests();
+});
 
 function codeButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root
@@ -643,6 +650,42 @@ describe("ChatMarkdown skill chips", () => {
 });
 
 describe("ChatMarkdown file option chips", () => {
+  it.each([
+    "[Source](/tmp/project/src/main.ts)",
+    ':codex-file-citation{path="/tmp/project/src/main.ts" purpose="output"}',
+  ])("updates a mounted %s chip without changing its target", async (text) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const environmentId = EnvironmentId.make("file-chip-test");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const chip = () => container.querySelector<HTMLAnchorElement>("a.chat-markdown-file-link")!;
+    const render = (cwd: string) =>
+      root.render(<ChatMarkdown cwd={cwd} environmentId={environmentId} text={text} />);
+
+    try {
+      await act(() => render("/tmp/project"));
+      expect(chip().textContent).toBe("main.ts");
+      expect(chip().getAttribute("href")).toBe("/tmp/project/src/main.ts");
+
+      await act(() =>
+        __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, showFileLinkPaths: true }),
+      );
+      expect(chip().textContent).toBe("./src/main.ts");
+
+      await act(() => render("/tmp/project/src"));
+      expect(chip().textContent).toBe("./main.ts");
+      expect(chip().getAttribute("href")).toBe("/tmp/project/src/main.ts");
+
+      await act(() => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS));
+      expect(chip().textContent).toBe("main.ts");
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps the fallback button text selectable", () => {
     const html = renderToStaticMarkup(
       <ChatMarkdown cwd="/tmp/project" text="[Source](/tmp/project/src/main.ts)" />,
@@ -1045,6 +1088,72 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("chat-markdown-file-link");
   });
 });
+
+it.each([true, false])(
+  "keeps file chip find ranges aligned with the index when compact paths start %s",
+  async (initialPreference) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      showFileLinkPaths: initialPreference,
+    });
+    const cwd = "/tmp/project";
+    const text = "[Source](/tmp/project/src/main.ts:12:3) and `/tmp/project/src/main.ts:12:3`";
+    const segments = searchableMessageSegments({ role: "assistant", text, streaming: false }, cwd);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    function Probe({ searching }: { searching: boolean }) {
+      return (
+        <div data-timeline-row-id="row">
+          <div data-thread-find-text>
+            <MarkdownFindContext value={searching}>
+              <ChatMarkdown cwd={cwd} text={text} />
+            </MarkdownFindContext>
+          </div>
+        </div>
+      );
+    }
+    const expectFindParity = () => {
+      expect(container.textContent).toContain("main.ts · L12:C3");
+      expect(container.textContent).not.toContain("./src/main.ts:12:3");
+      for (const query of ["main.ts · L12:C3", "src/main.ts", "main.ts:12:3"]) {
+        const indexed = (segments ?? []).reduce(
+          (sum, segment) => sum + countThreadSearchOccurrences(segment, query),
+          0,
+        );
+        expect(indexed).toBe(query === "main.ts · L12:C3" ? 2 : 0);
+        const ranges = collectThreadFindRanges(container, query);
+        expect(ranges.map(({ range }) => range.toString())).toEqual(
+          Array.from({ length: indexed }, () => query),
+        );
+      }
+    };
+    try {
+      await act(() => root.render(<Probe searching={false} />));
+      expect(container.textContent).toContain(
+        initialPreference ? "./src/main.ts:12:3" : "main.ts · L12:C3",
+      );
+      await act(() => root.render(<Probe searching={true} />));
+      expectFindParity();
+      for (const preference of [!initialPreference, initialPreference, true]) {
+        await act(() =>
+          __setClientSettingsForTests({
+            ...DEFAULT_CLIENT_SETTINGS,
+            showFileLinkPaths: preference,
+          }),
+        );
+        expectFindParity();
+      }
+      await act(() => root.render(<Probe searching={false} />));
+      expect(container.textContent).toContain("./src/main.ts:12:3");
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("opens a disclosure only when find selects a match inside it", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

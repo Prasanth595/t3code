@@ -62,6 +62,7 @@ beforeEach(() => {
 
 describe("restoring V2 settings", () => {
   it.each([
+    ["showFileLinkPaths", "File chip paths"],
     ["persistComposerContextStrip", "Composer context"],
     ["autoResumeLimitedThreads", "Auto-resume limited threads"],
     ["snoozeLimitedThreads", "Snooze limited threads"],

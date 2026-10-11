@@ -200,6 +200,22 @@ describe("client settings hydration", () => {
 });
 
 describe("persistClientSettingsPatch", () => {
+  it.each([true, false])("restores the file-chip preference %s after hydration", async (value) => {
+    let durable = { ...DEFAULT_CLIENT_SETTINGS, showFileLinkPaths: !value };
+    persistenceMocks.getClientSettings.mockImplementation(async () => durable);
+    persistenceMocks.setClientSettings.mockImplementation(async (settings) => {
+      durable = settings;
+    });
+
+    await ensureClientSettingsHydrated();
+    await persistClientSettingsPatch({ showFileLinkPaths: value });
+    expect(durable.showFileLinkPaths).toBe(value);
+
+    __resetClientSettingsPersistenceForTests();
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().showFileLinkPaths).toBe(value);
+  });
+
   it("waits for settings writes in request order", async () => {
     __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     let finishFirst!: () => void;

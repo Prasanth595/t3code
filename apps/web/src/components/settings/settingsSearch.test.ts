@@ -45,6 +45,16 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
 ];
 
 describe("searchSettings", () => {
+  it.each(["file chip paths", "compact path", "relative workspace"])(
+    "finds the file chip preference for %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "file-chip-paths",
+        to: "/settings/general",
+      });
+    },
+  );
+
   it.each(["OTel", "OTLP", "telemetry export", "Grafana"])(
     "finds environment telemetry settings for %s",
     (query) => {
@@ -433,10 +443,16 @@ describe("settings search targets", () => {
   });
 
   it("treats device-local rows as reachable from every selection", () => {
-    const setting = getSettingsSearchTargetScope("time-format")!;
-    expect(setting).toEqual({ title: "Time format", scope: null });
-    expect(isSettingsSearchScopeAvailable(setting.scope, "project")).toBe(true);
-    expect(isSettingsSearchScopeAvailable(setting.scope, "all")).toBe(true);
+    for (const [id, title] of [
+      ["time-format", "Time format"],
+      ["file-chip-paths", "File chip paths"],
+    ]) {
+      const setting = getSettingsSearchTargetScope(id)!;
+      expect(setting).toEqual({ title, scope: null });
+      for (const scope of ["all", "environment", "project", "checkout"] as const) {
+        expect(isSettingsSearchScopeAvailable(setting.scope, scope)).toBe(true);
+      }
+    }
     expect(getSettingsSearchTargetScope("appearance")).toMatchObject({ scope: null });
     expect(getSettingsSearchTargetScope("missing-setting")).toBeNull();
   });

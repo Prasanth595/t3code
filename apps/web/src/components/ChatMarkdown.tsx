@@ -150,6 +150,7 @@ import {
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
+import { formatCompactFilePath } from "../filePathDisplay";
 import { LRUCache } from "../lib/lruCache";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
@@ -2497,6 +2498,8 @@ function useChatMarkdownState({
   // synchronously whether to intercept its `_blank`, and a subscription is what
   // makes a persisted "app" apply once settings hydrate after launch.
   const linkTargetPreference = useClientSettings((settings) => settings.browserLinkTarget);
+  const showFileLinkPaths = useClientSettings((settings) => settings.showFileLinkPaths);
+  const finding = use(MarkdownFindContext);
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
@@ -2643,6 +2646,18 @@ function useChatMarkdownState({
   );
   const fileLinkChip = useCallback(
     (fileLinkMeta: MarkdownFileLinkMeta, copyMarkdown: string, mediaSource?: string) => {
+      // Thread find indexes canonical labels on the server; its DOM ranges must match.
+      const label =
+        showFileLinkPaths && !finding
+          ? formatCompactFilePath(fileLinkMeta.targetPath, cwd)
+          : fileLinkLabel(
+              {
+                path: fileLinkMeta.filePath,
+                ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
+                ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
+              },
+              fileLinkParentSuffixByPath,
+            );
       const mediaPath = mediaSource ?? fileLinkMeta.filePath;
       const canPreviewMedia =
         mediaMimeTypeFromExtension(
@@ -2663,14 +2678,7 @@ function useChatMarkdownState({
           displayPath={fileLinkMeta.displayPath}
           panelPath={panelPath}
           line={fileLinkMeta.line}
-          label={fileLinkLabel(
-            {
-              path: fileLinkMeta.filePath,
-              ...(fileLinkMeta.line !== undefined ? { line: fileLinkMeta.line } : {}),
-              ...(fileLinkMeta.column !== undefined ? { column: fileLinkMeta.column } : {}),
-            },
-            fileLinkParentSuffixByPath,
-          )}
+          label={label}
           copyMarkdown={copyMarkdown}
           theme={resolvedTheme}
           threadRef={threadRef}
@@ -2702,8 +2710,10 @@ function useChatMarkdownState({
     [
       canUseShellActions,
       canOperatePreview,
+      cwd,
       environmentId,
       fileLinkParentSuffixByPath,
+      finding,
       openFileInPanel,
       openInPreferredEditor,
       openMarkdownFileInPreview,
@@ -2712,6 +2722,7 @@ function useChatMarkdownState({
       resolvedTheme,
       revealInFileManagerLabel,
       revealMarkdownFileInFileManager,
+      showFileLinkPaths,
       threadRef,
     ],
   );

@@ -405,6 +405,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "file-chip-paths",
+    title: "File chip paths",
+    to: "/settings/general",
+    searchTerms: ["file chip path compact relative workspace home absolute"],
+  },
+  {
     id: "response-streaming",
     title: "Response streaming",
     to: "/settings/general",
