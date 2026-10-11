@@ -1170,6 +1170,10 @@ export function createServerEnvironmentAtoms<R, E>(
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
       },
     }),
+    transcribeAudio: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:transcribe-audio",
+      tag: WS_METHODS.providerTranscribeAudio,
+    }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,

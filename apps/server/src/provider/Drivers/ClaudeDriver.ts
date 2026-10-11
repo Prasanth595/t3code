@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { HttpClient } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -37,6 +38,10 @@ import { ProviderDriverError } from "../Errors.ts";
 import { claudeUsageReader } from "./claudeUsage.ts";
 import { makeClaudeScopedLimitNames } from "../claudeUsageLimits.ts";
 import * as ClaudeResetCredits from "../claudeResetCredits.ts";
+import {
+  ClaudeVoiceTranscriptionError,
+  transcribeClaudeAudio,
+} from "../claudeVoiceTranscription.ts";
 import * as ResetCreditCoordinator from "../resetCreditCoordinator.ts";
 import {
   checkClaudeProviderStatus,
@@ -169,6 +174,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         continuationGroupKey,
       });
 
+      // Dictation reads the CLI's login file, which macOS keeps in the keychain instead.
+      const voiceInput = (yield* HostProcess.Platform) !== "darwin";
+      const stampSnapshot = (snapshot: Parameters<typeof stampIdentity>[0]) => ({
+        ...stampIdentity(snapshot),
+        voiceInput,
+      });
+
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
@@ -241,7 +253,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   ),
               ),
             ),
-            Effect.map(stampIdentity),
+            Effect.map(stampSnapshot),
           ),
         ),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -258,7 +270,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         initialSnapshot: (settings) =>
           modelCatalog.pipe(
             Effect.flatMap((catalog) => makePendingClaudeProvider(settings.provider, catalog)),
-            Effect.map(stampIdentity),
+            Effect.map(stampSnapshot),
           ),
         checkProvider,
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
@@ -346,6 +358,30 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           ),
         );
 
+      const transcribeAudio: NonNullable<ProviderInstance["transcribeAudio"]> = ({
+        audio,
+        language,
+      }) =>
+        snapshot.getSnapshot.pipe(
+          Effect.flatMap((current) =>
+            current.version
+              ? transcribeClaudeAudio({ configDir, version: current.version, audio, language })
+              : Effect.fail(new ClaudeVoiceTranscriptionError({ reason: "notReady" })),
+          ),
+          Effect.provide(NodeSocket.layerWebSocketConstructor),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError(
+            (cause) =>
+              new ProviderDriverError({
+                driver: DRIVER_KIND,
+                instanceId,
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
+
       return {
         instanceId,
         driverKind: DRIVER_KIND,
@@ -369,6 +405,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         orchestrationAdapter,
         textGeneration,
         consumeResetCredit,
+        transcribeAudio,
       } satisfies ProviderInstance;
     }),
 };

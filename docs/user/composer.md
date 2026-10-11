@@ -152,6 +152,18 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Voice input on web and desktop
+
+When the thread's environment is signed in to Claude Code, the composer shows a
+microphone beside the attach button. Hold **Space** in the composer to talk and release
+to insert the transcript at the cursor, like Claude Code's voice mode. A quick tap on
+Space still types a space. You can also hold the microphone button, or click it once
+to start and again to stop. Review the text before sending.
+
+Claude transcribes the audio using that environment's Claude subscription. Recordings
+can be up to five minutes long. Voice input is not available when the environment runs
+on macOS, where Claude Code keeps its login in the keychain.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

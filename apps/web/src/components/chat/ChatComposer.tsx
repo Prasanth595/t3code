@@ -1072,6 +1072,7 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
   );
 }
 import { Button } from "../ui/button";
+import { ComposerVoiceInputControl } from "./ComposerVoiceInputControl";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -2894,6 +2895,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (!isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan !== null);
   const showCollapsedMobilePromptRow =
     isComposerCollapsedMobile && !isComposerApprovalState && pendingUserInputs.length === 0;
+  const voiceInputInstanceId =
+    canOperateThread &&
+    (!activePendingProgress || activePendingProgress.activeQuestion?.allowCustomAnswer !== false)
+      ? (providerStatuses.find(
+          (provider) =>
+            provider.voiceInput && provider.enabled && provider.auth.status === "authenticated",
+        )?.instanceId ?? null)
+      : null;
   const showComposerAttachAction =
     fileStagingLimit !== null &&
     (!activePendingProgress ||
@@ -7668,6 +7677,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <TooltipPopup>Attach files</TooltipPopup>
                       </Tooltip>
                     </>
+                  ) : null}
+                  {voiceInputInstanceId ? (
+                    <ComposerVoiceInputControl
+                      environmentId={environmentId}
+                      instanceId={voiceInputInstanceId}
+                      ownerKey={composerDraftTargetKey}
+                      readDraft={() => ({
+                        text: promptRef.current,
+                        cursor: readComposerSnapshot().expandedCursor,
+                      })}
+                      commitDraft={(text, cursor) => {
+                        applyPromptReplacement(0, promptRef.current.length, text, {
+                          expandedCursorAfterReplace: cursor,
+                        });
+                      }}
+                    />
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}

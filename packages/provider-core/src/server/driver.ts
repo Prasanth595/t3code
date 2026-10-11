@@ -102,6 +102,11 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
+  /** Transcribe 16 kHz mono PCM16 dictation with the signed-in account. */
+  readonly transcribeAudio?: (input: {
+    readonly audio: Uint8Array;
+    readonly language: string;
+  }) => Effect.Effect<string, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;
   readonly auth?: ProviderAuthController;

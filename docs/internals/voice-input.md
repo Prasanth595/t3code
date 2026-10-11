@@ -2,8 +2,13 @@
 
 Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
-text. The current implementation transcribes locally on supported iOS devices;
-environment-backed transcription is not implemented.
+text. iOS transcribes locally. Web and desktop send the finished recording to the
+draft's environment, where the [Claude driver](../../apps/server/src/provider/claudeVoiceTranscription.ts)
+transcribes it with the Claude Code CLI's own login and speech-to-text socket, the
+same one Claude Code's voice mode uses. That socket is undocumented and only takes
+16 kHz mono PCM, so the client converts the recording before sending it. macOS keeps
+the CLI's login in the keychain, so environments on macOS do not advertise
+`voiceInput` (see the reset-credit reader that shares the same constraint).
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 owns the operation while the client supplies capture and transcription. Preparation

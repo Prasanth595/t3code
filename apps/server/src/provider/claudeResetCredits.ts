@@ -147,7 +147,8 @@ const readJson = <S extends Schema.Top>(schema: S, file: string) =>
     );
   });
 
-const readAccessToken = (configDir: string) =>
+/** The CLI's claude.ai login, read from its config directory. */
+export const readClaudeAccessToken = (configDir: string) =>
   Effect.gen(function* () {
     if ((yield* HostProcess.Platform) === "darwin") return undefined;
     const path = yield* Path.Path;
@@ -155,12 +156,15 @@ const readAccessToken = (configDir: string) =>
     return credentials.claudeAiOauth?.accessToken?.trim() || undefined;
   });
 
+/** The headers the CLI sends with its claude.ai login. */
+export const claudeOAuthHeaders = (token: string, version: string) => ({
+  authorization: `Bearer ${token}`,
+  "anthropic-beta": "oauth-2025-04-20",
+  "user-agent": `claude-cli/${version} (external, cli)`,
+});
+
 const withClaudeHeaders = (token: string, version: string) =>
-  HttpClientRequest.setHeaders({
-    authorization: `Bearer ${token}`,
-    "anthropic-beta": "oauth-2025-04-20",
-    "user-agent": `claude-cli/${version} (external, cli)`,
-  });
+  HttpClientRequest.setHeaders(claudeOAuthHeaders(token, version));
 
 /**
  * Reads the banked resets for the login in `configDir`. Any failure reads as
@@ -168,7 +172,7 @@ const withClaudeHeaders = (token: string, version: string) =>
  */
 export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
   function* (configDir: string, version: string) {
-    const token = yield* readAccessToken(configDir);
+    const token = yield* readClaudeAccessToken(configDir);
     if (!token) return undefined;
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
@@ -226,7 +230,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
   }
-  const token = yield* readAccessToken(input.configDir).pipe(
+  const token = yield* readClaudeAccessToken(input.configDir).pipe(
     Effect.mapError((cause) => new ClaudeResetCreditError({ reason: "loginUnreadable", cause })),
   );
   const config = yield* readJson(Config, input.accountConfigPath).pipe(

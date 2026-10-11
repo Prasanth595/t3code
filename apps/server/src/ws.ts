@@ -2341,6 +2341,31 @@ const layerWsRpc = (
             );
             return { outcome };
           }),
+        [WS_METHODS.providerTranscribeAudio]: (input) =>
+          Effect.gen(function* () {
+            const instance = yield* providerInstances.getInstance(input.instanceId);
+            if (instance?.enabled !== true || instance.transcribeAudio === undefined) {
+              return yield* new ProviderSetupError({
+                instanceId: input.instanceId,
+                operation: "transcribe-audio",
+                detail: "This provider cannot transcribe voice input.",
+              });
+            }
+            const text = yield* instance
+              .transcribeAudio({ audio: input.audio, language: input.language })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new ProviderSetupError({
+                      instanceId: input.instanceId,
+                      operation: "transcribe-audio",
+                      detail: error.detail,
+                      cause: error,
+                    }),
+                ),
+              );
+            return { text };
+          }),
         [WS_METHODS.providerAuthStart]: (input) => providerAuth.start(input, currentSessionId),
         [WS_METHODS.providerAuthRespond]: (input) =>
           Effect.annotateCurrentSpan({ instanceId: input.instanceId }).pipe(

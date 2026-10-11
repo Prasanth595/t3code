@@ -281,6 +281,8 @@ export const ServerProvider = Schema.Struct({
     }),
   ),
   configurableProviders: Schema.optional(Schema.Boolean),
+  /** The account can transcribe composer dictation (`provider.transcribeAudio`). */
+  voiceInput: Schema.optional(Schema.Boolean),
   runtimePaths: Schema.optionalKey(
     Schema.Struct({
       homePath: TrimmedNonEmptyString,
