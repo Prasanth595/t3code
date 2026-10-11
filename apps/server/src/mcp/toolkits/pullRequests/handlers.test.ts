@@ -657,6 +657,23 @@ describe("pull request guide tools", () => {
     }),
   );
 
+  it.effect("reports an unreadable entry on its own and still writes the rest of the batch", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const result = yield* harness.call("write_pull_request_guides", {
+        pullRequests: [
+          { url: "https://example.com/not-a-pull-request" },
+          { repository: "t3tools/t3code" },
+          { repository: "t3tools/t3code", number: 5 },
+        ],
+      });
+      expect(result.guides.map((guide) => guide.outcome)).toEqual(["failed", "failed", "started"]);
+      expect(result.guides[0]?.detail).toContain("not a recognised pull request URL");
+      expect(result.guides[1]?.detail).toContain("Pass either url");
+      expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.number)).toEqual([5]);
+    }),
+  );
+
   it.effect("joins a run already going rather than reporting a new one", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

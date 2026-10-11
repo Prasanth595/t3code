@@ -315,12 +315,18 @@ const make = Effect.gen(function* () {
       .listShells()
       .pipe(Effect.mapError((cause) => new PullRequestListFailedError({ cause })));
     const callerProject = known.find((project) => project.id === callerThread?.projectId);
+    // Each target resolves on its own, so one bad URL in a batch is that entry's failure only.
     return yield* Effect.forEach(targets, (input) =>
       resolveTarget(input, callerProject).pipe(
         Effect.map((target) => ({
+          input,
           target,
           project: projectForPullRequest(known, target, callerProject),
+          failure: null,
         })),
+        Effect.catch((error) =>
+          Effect.succeed({ input, target: null, project: undefined, failure: error.message }),
+        ),
       ),
     );
   });
@@ -426,6 +432,16 @@ const make = Effect.gen(function* () {
           located,
           (entry) =>
             Effect.gen(function* () {
+              if (entry.target === null) {
+                return {
+                  host: entry.input.host ?? "",
+                  repository: entry.input.repository ?? "",
+                  number: entry.input.number ?? 0,
+                  url: entry.input.url ?? "",
+                  outcome: "failed" as const,
+                  detail: entry.failure,
+                };
+              }
               const identity = {
                 host: entry.target.host,
                 repository: entry.target.repository,
@@ -468,7 +484,10 @@ const make = Effect.gen(function* () {
     read_pull_request_guide: McpToolAccess.reads((input) =>
       Effect.gen(function* () {
         const [entry] = yield* locateAll([input]);
-        if (entry === undefined || entry.project === undefined) {
+        if (entry !== undefined && entry.target === null) {
+          return yield* new PullRequestGuideFailedError({ detail: entry.failure ?? "" });
+        }
+        if (entry === undefined || entry.target === null || entry.project === undefined) {
           return yield* new PullRequestProjectNotFoundError({
             repository: entry?.target.repository ?? input.repository ?? "",
           });
