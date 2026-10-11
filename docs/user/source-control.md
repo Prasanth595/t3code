@@ -10,6 +10,37 @@ rebases, the files Git brought in are left out. A file stays in the list when th
 committed it, or fixed a conflict in it. Use the branch comparison to review everything that changed
 against your base branch. Restore still returns the complete saved workspace.
 
+## Turn off Git checkpoint capture
+
+T3 Code captures Git checkpoints so you can restore a saved workspace and review turn diffs.
+In embedded-firmware monorepos, large binary images and build outputs can make capture expensive
+and increase storage use when those files are tracked or not ignored by Git.
+
+To stop future automatic capture, add `"checkpointCaptureEnabled": false` to the server's
+existing `settings.json`. Preserve the other settings in the file. The default path is
+`~/.t3/userdata/settings.json`. For a remote environment, edit the file on the server machine.
+This setting applies to all projects on that server. Malformed settings can cause T3 Code to use
+its defaults, including enabled checkpoint capture. A settings read failure instead prevents
+capture and can delay run completion until the read succeeds.
+
+```json
+{
+  "checkpointCaptureEnabled": false
+}
+```
+
+Set `checkpointCaptureEnabled` back to `true` to re-enable future captures. No restart is needed.
+The setting applies to new checkpoint operations. A capture already in progress can finish.
+Re-enabling capture does not reconstruct skipped snapshots or their turn diffs.
+
+Existing snapshots remain restorable. Skipped runs have no ready checkpoint, so checkpoint diffs
+and **Edit from here** are unavailable for those runs, including conversation-only rewind.
+Git status, fetch, worktrees, and agent Git commands stay active. This option does not reclaim
+storage from existing snapshots or stop all Git-related disk growth.
+
+Prefer `.gitignore` for disposable artifacts and generated outputs. Ignored untracked files are
+not captured. Ignore rules do not exclude files that Git already tracks.
+
 ## Connect an account
 
 Install Git and configure authentication on the machine running your T3 Code server. For a remote

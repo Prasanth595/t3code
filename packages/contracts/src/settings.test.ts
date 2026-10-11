@@ -23,6 +23,24 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings checkpoint capture", () => {
+  it("keeps automatic checkpoint capture enabled unless explicitly disabled", () => {
+    expect(decodeServerSettings({}).checkpointCaptureEnabled).toBe(true);
+    expect(DEFAULT_SERVER_SETTINGS.checkpointCaptureEnabled).toBe(true);
+    expect(
+      encodeServerSettings(decodeServerSettings({ checkpointCaptureEnabled: false })),
+    ).toMatchObject({
+      checkpointCaptureEnabled: false,
+    });
+    expect(decodeServerSettingsPatch({ checkpointCaptureEnabled: false })).toEqual({
+      checkpointCaptureEnabled: false,
+    });
+    expect(decodeServerSettingsPatch({ checkpointCaptureEnabled: true })).toEqual({
+      checkpointCaptureEnabled: true,
+    });
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 
 import { isGitImport, parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 
 const CHECKPOINT_REFS_PREFIX = "refs/t3/orchestration-v2/checkpoints";
@@ -246,7 +247,10 @@ function makeCheckpoint(input: {
 export const layer: Layer.Layer<
   CheckpointServiceV2,
   never,
-  CheckpointStore.CheckpointStore | Crypto.Crypto | IdAllocator.IdAllocatorV2
+  | CheckpointStore.CheckpointStore
+  | Crypto.Crypto
+  | IdAllocator.IdAllocatorV2
+  | ServerSettings.ServerSettingsService
 > = Layer.effect(
   CheckpointServiceV2,
   Effect.gen(function* () {
@@ -255,12 +259,18 @@ export const layer: Layer.Layer<
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Crypto.Crypto, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
 
-    const isGitCheckpointable = (cwd: string) =>
-      checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+    const isGitCheckpointable = Effect.fnUntraced(function* (cwd: string) {
+      const settings = yield* serverSettings.getSettings;
+      if (!settings.checkpointCaptureEnabled) {
+        return false;
+      }
+      return yield* checkpointStore.isGitRepository(cwd).pipe(Effect.orElseSucceed(() => false));
+    });
 
     const ensureScope: CheckpointServiceV2Shape["ensureScope"] = (scope) => Effect.succeed(scope);
 
