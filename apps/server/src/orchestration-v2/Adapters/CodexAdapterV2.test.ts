@@ -3121,7 +3121,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
   const configuredNetworkAccessReply = {
     result: {
-      config: { sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true } },
+      config: {
+        default_permissions: null,
+        sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true },
+      },
       origins: {},
     },
   };
@@ -3139,6 +3142,26 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         sandboxPolicy: { type: "workspaceWrite" },
       }),
     ),
+  );
+
+  it.effect(
+    "keeps the bare workspace-write policy when default_permissions selects a profile",
+    () =>
+      runAutoModeTurn(
+        autoModeTurnTranscript({
+          scenario: "workspace-write-config-default-permissions",
+          configReadReply: {
+            result: {
+              config: {
+                default_permissions: ":workspace",
+                sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true },
+              },
+              origins: {},
+            },
+          },
+          sandboxPolicy: { type: "workspaceWrite" },
+        }),
+      ),
   );
 
   it.effect("skips configRequirements/read when the config has no workspace-write table", () =>

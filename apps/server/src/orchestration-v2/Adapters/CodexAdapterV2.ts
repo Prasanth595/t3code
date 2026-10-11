@@ -1368,10 +1368,12 @@ export function codexThreadRuntimeParams(input: {
   };
 }
 
-// Decodes only this table, so an unrelated config field cannot fail the turn.
+// Decodes only this table and the profile selection that makes Codex ignore
+// it, so an unrelated config field cannot fail the turn.
 const decodeCodexWorkspaceWriteConfig = Schema.decodeUnknownEffect(
   Schema.Struct({
     config: Schema.Struct({
+      default_permissions: Schema.optionalKey(Schema.Unknown),
       sandbox_workspace_write: Schema.optionalKey(
         Schema.NullOr(CodexSchema.V2ConfigReadResponse__SandboxWorkspaceWrite),
       ),
@@ -6253,7 +6255,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const workspaceWriteConfig = usesCodexWorkspaceWriteDefault(turnInput.runtimePolicy)
               ? yield* client.raw.request("config/read", { cwd: turnInput.runtimePolicy.cwd }).pipe(
                   Effect.flatMap(decodeCodexWorkspaceWriteConfig),
-                  Effect.map((response) => response.config.sandbox_workspace_write),
+                  // T3 starts threads without a sandbox mode, so when
+                  // `default_permissions` selects a profile, Codex runs the
+                  // thread under it and ignores this table. The merged config
+                  // can't show a higher layer's `sandbox_mode` overriding that
+                  // selection, so those turns also keep the bare policy.
+                  Effect.map(({ config }) =>
+                    config.default_permissions == null ? config.sandbox_workspace_write : undefined,
+                  ),
                   // Under managed permission profiles Codex ignores this table,
                   // so copying it would grant what the admin's profile excludes.
                   Effect.flatMap((config) =>
