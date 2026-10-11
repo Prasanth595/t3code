@@ -37,14 +37,18 @@ const INSTRUCTIONS = "Branch naming instructions";
 let root: Root;
 const onChange = vi.fn();
 
-function render(mode: BranchNamingMode, saved: { prefix?: string; instructions?: string } = {}) {
+function render(
+  mode: BranchNamingMode,
+  saved: { prefix?: string; instructions?: string } = {},
+  disabled = false,
+) {
   act(() =>
     root.render(
       <BranchNamingSettings
         mode={mode}
         prefix={saved.prefix ?? "t3"}
         instructions={saved.instructions ?? "Use issue IDs."}
-        disabled={false}
+        disabled={disabled}
         onChange={onChange}
       />,
     ),
@@ -124,6 +128,15 @@ describe("BranchNamingSettings", () => {
       branchNamePrefix: "feat/",
       branchNameInstructions: "New rules.",
     });
+  });
+
+  it("still saves a draft when a pending write disables the field", () => {
+    render("custom");
+    act(() => input(INSTRUCTIONS).onChangeText("New rules."));
+    render("custom", {}, true);
+    leaveScreen();
+
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ branchNameInstructions: "New rules." });
   });
 
   it("drops a draft once a newer saved value replaces the field", () => {

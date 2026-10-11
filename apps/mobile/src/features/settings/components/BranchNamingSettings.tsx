@@ -41,7 +41,9 @@ export function BranchNamingSettings(props: {
     const draft = drafts.current[field];
     delete drafts.current[field];
     const saved = savedValue(field);
-    if (draft === undefined || draft.over !== saved || props.disabled) return {};
+    // Not gated on `disabled`: a pending write disables the inputs, and the
+    // route queues this save behind it and checks write access itself.
+    if (draft === undefined || draft.over !== saved) return {};
     const value = draft.text.trim();
     return saved === null || value !== saved ? { [field]: value } : {};
   };
