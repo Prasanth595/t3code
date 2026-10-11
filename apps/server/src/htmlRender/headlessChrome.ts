@@ -347,9 +347,10 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
     const exit = yield* child.exitCode.pipe(
       Effect.map((code): { exitCode?: number; signal?: string } => ({ exitCode: code })),
-      Effect.catch((error) =>
-        Effect.succeed({ signal: EXIT_SIGNAL.exec(String(error.cause))?.[1] ?? "unknown" }),
-      ),
+      Effect.catch((error) => {
+        const signal = EXIT_SIGNAL.exec(String(error.cause))?.[1];
+        return Effect.succeed(signal === undefined ? {} : { signal });
+      }),
       Effect.timeoutOption("1 second"),
     );
     const error = new HtmlRenderBrowserError({
