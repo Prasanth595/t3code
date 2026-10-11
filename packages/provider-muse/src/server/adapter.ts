@@ -48,6 +48,7 @@ import {
   MuseDelta,
   MuseItemEvent,
   MuseSessionResult,
+  MuseSubscriptionUsage,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseTurnRetryScheduled,
@@ -194,6 +195,16 @@ export interface MuseAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  /**
+   * Receives each subscription usage report (`usage/changed`) from this adapter's hosts,
+   * with the account generation the reporting host started under.
+   */
+  readonly onSubscriptionUsage?: (
+    usage: MuseSubscriptionUsage,
+    accountGeneration: number,
+  ) => Effect.Effect<void>;
+  /** The instance's account generation, read as each host starts, since reports name no account. */
+  readonly usageAccountGeneration?: Effect.Effect<number>;
 }
 
 interface ActiveTurn {
@@ -238,6 +249,7 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/tokenUsage",
   "session/todoListChanged",
   "turn/retryScheduled",
+  "usage/changed",
 ]);
 // Tools whose results already show as their own rows: T3's todo list and question
 // rows, and the workflow item a `workflow` call launches.
@@ -305,6 +317,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const eventPermit = yield* Semaphore.make(1);
       let host: MuseSdkHost;
       let hostEpoch = 0;
+      // The account generation the current host started under; see usageAccountGeneration.
+      let hostAccountGeneration = 0;
       let closed = false;
       let broken = false;
       let nativeSessionId: string | undefined;
@@ -1007,6 +1021,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       });
       const handleNotification = Effect.fnUntraced(function* (method: string, data: unknown) {
         const params = yield* decode(recordSchema, data);
+        // Account-wide, so it names no session: Meta's subscription windows after a response.
+        if (method === "usage/changed") {
+          const usage = yield* decode(MuseSubscriptionUsage, params);
+          if (options.onSubscriptionUsage)
+            yield* options.onSubscriptionUsage(usage, hostAccountGeneration);
+          return;
+        }
         if (params.sessionId !== nativeSessionId) return;
         if (method === "view/gap")
           return yield* protocolError("Muse delivery gap requires session recovery");
@@ -1370,6 +1391,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       );
       const launchHost = Effect.fnUntraced(function* () {
         const epoch = ++hostEpoch;
+        hostAccountGeneration = options.usageAccountGeneration
+          ? yield* options.usageAccountGeneration
+          : 0;
         const mcpSession = yield* mcpSessions.read(input.threadId);
         const environment = McpProviderSession.withAgentDeviceEnvironment(
           options.environment,
