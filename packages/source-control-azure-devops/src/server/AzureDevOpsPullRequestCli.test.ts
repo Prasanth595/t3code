@@ -801,8 +801,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       yield* ask();
       const again = yield* ask();
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 5);
-      // The second read goes straight to the pushes, and still answers with the head's blob.
+      assert.strictEqual(mockedExecute.mock.calls.length, 4);
+      // The second read goes straight to the pushes, finds the same push's changes already held,
+      // and still answers with the head's blob.
       expect(argsOfCall(3)).toContain("pullRequestIterations");
       expect([...again.revisions]).toEqual([["README.md", "8f80"]]);
     }),

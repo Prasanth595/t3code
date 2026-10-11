@@ -1,5 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Semaphore from "effect/Semaphore";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -53,6 +56,13 @@ export const MAX_DIFF_SPAWNS = 2 * DIFF_FILE_CONCURRENCY;
 
 /** How many pull requests' repository locations one provider remembers at once. */
 export const LOCATION_CACHE_CAPACITY = 128;
+
+/**
+ * How many pushes' change lists one provider remembers. A list never changes once its push lands,
+ * but can run to thousands of entries, so this holds a handful of reviews rather than a listing's
+ * worth.
+ */
+const ITERATION_CHANGES_CAPACITY = 32;
 
 const CAPABILITIES: PullRequestCapabilities = {
   // Azure serves no patch of its own, so the one the Code tab reads is built here out of the
@@ -140,13 +150,42 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
   };
 }
 
+/** One pull request's pushes, in the terms Azure's iteration routes address them by. */
+interface IterationScope {
+  readonly cwd: string;
+  readonly location: AzureDevOpsRepositoryLocation;
+  readonly number: number;
+}
+
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   // Made once with the provider, which the registry builds once, so this is the whole build's
   // allowance rather than one request's.
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
+  // Diff slices and context expansion read the same immutable blobs. Bound both count and size.
+  const itemContents = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", project = "", repository = "", commit = "", ...pathParts] = key.split("\n");
+      const path = pathParts.join("\n");
+      return diffSpawns.withPermits(1)(
+        cli.readItemContent({ cwd, location: { project, repository }, commit, path }),
+      );
+    },
+    {
+      capacity: 64,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value.contents.length <= 128 * 1024
+          ? Duration.infinity
+          : Duration.zero,
+    },
+  );
   const readItemContent = (input: Parameters<typeof cli.readItemContent>[0]) =>
-    diffSpawns.withPermits(1)(cli.readItemContent(input));
+    Cache.get(
+      itemContents,
+      [input.cwd, input.location.project, input.location.repository, input.commit, input.path].join(
+        "\n",
+      ),
+    );
 
   const fail =
     (operation: string) => (error: AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCliError) =>
@@ -181,27 +220,142 @@ export const make = Effect.gen(function* () {
    */
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
-  const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
+  /**
+   * Keeps where a read placed a pull request. A listing's rows only take spare room, so walking a
+   * long listing cannot evict the pull request being read.
+   */
+  const rememberLocation = (
+    cwd: string,
+    pullRequest: AzureDevOpsPullRequest,
+    options: { readonly evict: boolean },
+  ) => {
+    if (pullRequest.location === null) return;
+    const key = `${cwd} ${pullRequest.number}`;
+    if (!locations.has(key) && locations.size >= LOCATION_CACHE_CAPACITY) {
+      if (!options.evict) return;
+      const oldest = locations.keys().next().value;
+      if (oldest !== undefined) locations.delete(oldest);
+    }
+    locations.delete(key);
+    locations.set(key, pullRequest.location);
+  };
+
+  const knownLocation = (input: { readonly cwd: string; readonly number: number }) => {
     const key = `${input.cwd} ${input.number}`;
     const held = locations.get(key);
     if (held !== undefined) {
       locations.delete(key);
       locations.set(key, held);
-      return Effect.succeed(held);
     }
-    return cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
-      Effect.map((pullRequest) => {
-        const location = pullRequest.location;
-        if (location === null) return null;
-        if (locations.size >= LOCATION_CACHE_CAPACITY) {
-          const oldest = locations.keys().next().value;
-          if (oldest !== undefined) locations.delete(oldest);
-        }
-        locations.set(key, location);
-        return location;
+    return held;
+  };
+
+  /**
+   * `az repos pr show`, shared by the reads of one pull request that overlap: a review opening asks
+   * for its detail, conversation and diff at once, and each of them can start here. Nothing is kept
+   * once it answers, so a read that starts afterwards asks Azure again.
+   */
+  const pullRequestReads = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", number = ""] = key.split("\n");
+      return cli
+        .getPullRequest({ cwd, number: Number(number) })
+        .pipe(
+          Effect.tap((pullRequest) =>
+            Effect.sync(() => rememberLocation(cwd, pullRequest, { evict: true })),
+          ),
+        );
+    },
+    { capacity: LOCATION_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+
+  const readPullRequest = (input: { readonly cwd: string; readonly number: number }) =>
+    Cache.get(pullRequestReads, `${input.cwd}\n${input.number}`);
+
+  /** Run after a write, so a read asked for once it lands cannot join one that started before. */
+  const forgetRead = (input: { readonly cwd: string; readonly number: number }) =>
+    Cache.invalidate(pullRequestReads, `${input.cwd}\n${input.number}`);
+
+  const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
+    const held = knownLocation(input);
+    return held !== undefined
+      ? Effect.succeed(held)
+      : readPullRequest(input).pipe(Effect.map((pullRequest) => pullRequest.location));
+  };
+
+  const iterationKey = (scope: IterationScope, iterationId?: number) =>
+    [
+      scope.cwd,
+      scope.location.project,
+      scope.location.repository,
+      scope.number,
+      ...(iterationId === undefined ? [] : [iterationId]),
+    ].join("\n");
+
+  const fromIterationKey = (key: string) => {
+    const [cwd = "", project = "", repository = "", number = "", iterationId = ""] =
+      key.split("\n");
+    return {
+      cwd,
+      location: { project, repository },
+      number: Number(number),
+      iterationId: Number(iterationId),
+    };
+  };
+
+  const changesKey = (scope: IterationScope, iteration: AzureDevOpsIteration) =>
+    [iterationKey(scope, iteration.id), iteration.headCommit, iteration.mergeBaseCommit].join("\n");
+
+  /**
+   * The pushes a pull request has had, shared by overlapping reads the way a pull request read is.
+   * Never kept: the newest push is what the list is read for, and a push adds one.
+   */
+  const iterationReads = yield* Cache.makeWith(
+    (key: string) => cli.listIterations(fromIterationKey(key)),
+    { capacity: LOCATION_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+
+  /**
+   * One push by its id, which is all a diff cursor names. A push never changes once it lands, so
+   * the latest one is kept from every listing and a slice carrying on from it lists nothing.
+   */
+  const iterationsById = yield* Cache.makeWith(
+    (key: string) => {
+      const scope = fromIterationKey(key);
+      return Cache.get(iterationReads, iterationKey(scope)).pipe(
+        Effect.map((iterations) =>
+          iterations.find((candidate) => candidate.id === scope.iterationId),
+        ),
+      );
+    },
+    {
+      capacity: LOCATION_CACHE_CAPACITY,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value !== undefined ? Duration.infinity : Duration.zero,
+    },
+  );
+
+  /**
+   * What one push changed, against the merge base. Never changes once the push lands, so the
+   * detail's file count, every slice of the diff and the viewed marks share one read of it.
+   */
+  const iterationChanges = yield* Cache.makeWith(
+    (key: string) => cli.listIterationChanges(fromIterationKey(key)),
+    {
+      capacity: ITERATION_CHANGES_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+    },
+  );
+
+  const listIterations = (scope: IterationScope) =>
+    Cache.get(iterationReads, iterationKey(scope)).pipe(
+      Effect.tap((iterations) => {
+        const latest = iterations.at(-1);
+        return latest === undefined
+          ? Effect.void
+          : Cache.set(iterationsById, iterationKey(scope, latest.id), latest);
       }),
     );
-  };
 
   /**
    * Everything a diff read needs before it can ask for a file: where the repository lives, and
@@ -212,7 +366,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const location = yield* locationOf(input);
       if (location === null) return null;
-      const iterations = yield* cli.listIterations({
+      const iterations = yield* listIterations({
         cwd: input.cwd,
         location,
         number: input.number,
@@ -269,24 +423,16 @@ export const make = Effect.gen(function* () {
    * reported against the merge base rather than against the push before it, so the newest one is
    * the whole of the change rather than the last slice of it.
    */
-  const listLatestChanges = (input: {
-    readonly cwd: string;
-    readonly location: AzureDevOpsRepositoryLocation;
-    readonly number: number;
-    readonly iterations: ReadonlyArray<AzureDevOpsIteration>;
-  }) => {
+  const listLatestChanges = (
+    input: IterationScope & { readonly iterations: ReadonlyArray<AzureDevOpsIteration> },
+  ) => {
     const latest = input.iterations.at(-1);
     return latest === undefined
       ? Effect.succeed({
           changes: [],
           truncated: false,
         } as AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges)
-      : cli.listIterationChanges({
-          cwd: input.cwd,
-          location: input.location,
-          number: input.number,
-          iterationId: latest.id,
-        });
+      : Cache.get(iterationChanges, changesKey(input, latest));
   };
 
   const provider: PullRequestProviderApi = {
@@ -314,6 +460,13 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError(fail("listChangeRequests")),
+          // A row states where its pull request lives, so opening one from the list needs no
+          // read of the pull request before its conversation or its pushes can be asked for.
+          Effect.tap((batch) =>
+            Effect.sync(() => {
+              for (const row of batch.items) rememberLocation(input.cwd, row, { evict: false });
+            }),
+          ),
           Effect.map((batch) => ({
             items: batch.items.map(toChangeRequest),
             truncated: batch.truncated,
@@ -327,7 +480,7 @@ export const make = Effect.gen(function* () {
     // The polled path a linked thread's row stays live on: one `az` read, no iterations or
     // changes behind it, since the file count that would cost is not shown here.
     getChangeRequestSummary: (input) =>
-      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
+      readPullRequest(input).pipe(
         Effect.mapError(fail("getChangeRequestSummary")),
         Effect.map((pullRequest): ProviderChangeRequestSummary => ({
           number: pullRequest.number,
@@ -345,27 +498,43 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
+    // A hover card is the pull request read alone, where the detail it would otherwise fall back
+    // to reads its pushes and their changes behind it for a file count the card never shows.
+    getChangeRequestPreview: (input) =>
+      readPullRequest(input).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          createdAt: pullRequest.createdAt,
+        })),
+      ),
+
     getChangeRequest: (input) =>
       Effect.gen(function* () {
-        const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
-        const location = pullRequest.location;
         // The file count is two reads past the pull request itself, and it is the only thing
         // riding on them, so a failure leaves it unknown rather than losing the whole detail.
-        const changedFiles =
-          location === null
-            ? 0
-            : yield* cli.listIterations({ cwd: input.cwd, location, number: input.number }).pipe(
-                Effect.flatMap((iterations) =>
-                  listLatestChanges({
-                    cwd: input.cwd,
-                    location,
-                    number: input.number,
-                    iterations,
-                  }),
-                ),
-                Effect.map((listed) => listed.changes.length),
-                Effect.orElseSucceed(() => 0),
-              );
+        const countFiles = (location: AzureDevOpsRepositoryLocation) => {
+          const scope = { cwd: input.cwd, location, number: input.number };
+          return listIterations(scope).pipe(
+            Effect.flatMap((iterations) => listLatestChanges({ ...scope, iterations })),
+            Effect.map((listed) => listed.changes.length),
+            Effect.orElseSucceed(() => 0),
+          );
+        };
+        // Once anything has placed the pull request, its pushes are read alongside it rather
+        // than after it.
+        const known = knownLocation(input);
+        const [pullRequest, knownCount] = yield* Effect.all(
+          [readPullRequest(input), known === undefined ? Effect.succeed(null) : countFiles(known)],
+          { concurrency: 2 },
+        );
+        const location = pullRequest.location;
+        const changedFiles = knownCount ?? (location === null ? 0 : yield* countFiles(location));
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
           body: pullRequest.body,
@@ -385,21 +554,24 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.mapError(fail("getChangeRequest"))),
 
     getChangeRequestActivity: (input) =>
-      cli.getPullRequest({ cwd: input.cwd, number: input.number }).pipe(
-        Effect.mapError(fail("getChangeRequestActivity")),
-        Effect.flatMap((pullRequest) =>
-          (pullRequest.location === null
+      locationOf(input).pipe(
+        Effect.flatMap((location) =>
+          (location === null
             ? Effect.succeed({ comments: [], truncated: true })
-            : cli
-                .listThreads({
-                  cwd: input.cwd,
-                  location: pullRequest.location,
-                  number: input.number,
-                })
-                .pipe(
-                  Effect.map((comments) => ({ comments, truncated: false })),
-                  Effect.orElseSucceed(() => ({ comments: [], truncated: true })),
-                )
+            : cli.listThreads({ cwd: input.cwd, location, number: input.number }).pipe(
+                Effect.map((comments) => ({ comments, truncated: false })),
+                // Only what is this conversation's problem. A signed-out CLI, a rate limit or no
+                // `az` at all is the host failing, and with a remembered location there is no pull
+                // request read ahead of this one left to report it.
+                Effect.catchTags({
+                  AzureDevOpsPullRequestNotFoundError: () =>
+                    Effect.succeed({ comments: [], truncated: true }),
+                  AzureDevOpsCommandFailedError: () =>
+                    Effect.succeed({ comments: [], truncated: true }),
+                  AzureDevOpsPullRequestReadError: () =>
+                    Effect.succeed({ comments: [], truncated: true }),
+                }),
+              )
           ).pipe(
             Effect.map((conversation): ProviderChangeRequestActivity => ({
               comments: conversation.comments,
@@ -410,6 +582,7 @@ export const make = Effect.gen(function* () {
             })),
           ),
         ),
+        Effect.mapError(fail("getChangeRequestActivity")),
       ),
 
     // No request at all: Azure has nothing to say about the viewer that a pull request read can
@@ -420,22 +593,18 @@ export const make = Effect.gen(function* () {
     // the Code tab has nothing to scope itself to and always asks for the whole change.
     getDiff: (input) =>
       Effect.gen(function* () {
-        const scope = yield* diffScope(input);
-        if (scope === null) return EMPTY_DIFF_SLICE;
+        const location = yield* locationOf(input);
+        if (location === null) return EMPTY_DIFF_SLICE;
+        const scope = { cwd: input.cwd, location, number: input.number };
         const cursor = parseAzureDevOpsDiffCursor(input.cursor);
         // Reading on stays with the push the first slice was taken against. A push landing
         // mid-read would otherwise renumber the files and hand the reader one twice, or none.
         const iteration =
           cursor === null
-            ? scope.iterations.at(-1)
-            : scope.iterations.find((candidate) => candidate.id === cursor.iterationId);
+            ? (yield* listIterations(scope)).at(-1)
+            : yield* Cache.get(iterationsById, iterationKey(scope, cursor.iterationId));
         if (iteration === undefined) return EMPTY_DIFF_SLICE;
-        const listed = yield* cli.listIterationChanges({
-          cwd: input.cwd,
-          location: scope.location,
-          number: input.number,
-          iterationId: iteration.id,
-        });
+        const listed = yield* Cache.get(iterationChanges, changesKey(scope, iteration));
         const changes = listed.changes;
 
         const sections: string[] = [];
@@ -589,7 +758,7 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(Effect.ensuring(forgetRead(input)), Effect.mapError(fail("runAction"))),
 
     updateChangeRequest: (input) =>
       cli
@@ -599,7 +768,7 @@ export const make = Effect.gen(function* () {
           title: input.title,
           body: input.body,
         })
-        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+        .pipe(Effect.ensuring(forgetRead(input)), Effect.mapError(fail("updateChangeRequest"))),
 
     // Never called: `capabilities.reviewers.listCandidates` is false, and the service refuses the
     // list without it.
@@ -623,7 +792,7 @@ export const make = Effect.gen(function* () {
           reviewers: input.reviewers.map((reviewer) => reviewer.id),
           requested: input.requested,
         })
-        .pipe(Effect.mapError(fail("setReviewerRequest"))),
+        .pipe(Effect.ensuring(forgetRead(input)), Effect.mapError(fail("setReviewerRequest"))),
 
     // Never called: `capabilities.comment` is false, and the service refuses a comment without it.
     comment: () => unsupported("comment"),

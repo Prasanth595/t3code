@@ -1,6 +1,7 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
+import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
@@ -1104,7 +1105,30 @@ const SIMPLE_ACTION_MUTATIONS = {
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const api = yield* GitHubApi.GitHubApi;
+  const transport = yield* GitHubApi.GitHubApi;
+  // A read started after a write must not join a request that captured the old state.
+  const forgetReads = Effect.suspend(() =>
+    Effect.all([Cache.invalidateAll(detailsInFlight), Cache.invalidateAll(workflowRunsInFlight)]),
+  );
+  const api = GitHubApi.GitHubApi.of({
+    ...transport,
+    graphql: (input) =>
+      transport
+        .graphql(input)
+        .pipe(
+          Effect.ensuring(
+            input.query.trimStart().startsWith("mutation") ? forgetReads : Effect.void,
+          ),
+        ),
+    rest: (input) =>
+      transport
+        .rest(input)
+        .pipe(
+          Effect.ensuring(
+            input.method !== undefined && input.method !== "GET" ? forgetReads : Effect.void,
+          ),
+        ),
+  });
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
   const revalidateChecks = yield* makeChecksRevalidator;
@@ -1202,6 +1226,15 @@ export const make = Effect.gen(function* () {
    */
   const nodeIds = new Map<string, string>();
 
+  const rememberNodeId = (key: string, nodeId: string) => {
+    nodeIds.delete(key);
+    if (nodeIds.size >= NODE_ID_CACHE_CAPACITY) {
+      const oldest = nodeIds.keys().next().value;
+      if (oldest !== undefined) nodeIds.delete(oldest);
+    }
+    nodeIds.set(key, nodeId);
+  };
+
   const pullRequestNodeId = (input: {
     readonly cwd: string;
     readonly repository: string;
@@ -1228,17 +1261,7 @@ export const make = Effect.gen(function* () {
       variables: { owner, name, number: input.number },
       query: PULL_REQUEST_NODE_ID_GRAPHQL_QUERY,
       decode: decodePullRequestNodeIdJson,
-    }).pipe(
-      Effect.tap((nodeId) =>
-        Effect.sync(() => {
-          if (nodeIds.size >= NODE_ID_CACHE_CAPACITY) {
-            const oldest = nodeIds.keys().next().value;
-            if (oldest !== undefined) nodeIds.delete(oldest);
-          }
-          nodeIds.set(key, nodeId);
-        }),
-      ),
-    );
+    }).pipe(Effect.tap((nodeId) => Effect.sync(() => rememberNodeId(key, nodeId))));
   };
 
   /**
@@ -1542,6 +1565,14 @@ export const make = Effect.gen(function* () {
           query: pullRequestCoreGraphQlQuery(input.host),
           decode: decodePullRequestCoreJson,
         }).pipe(
+          Effect.tap((core) => {
+            const nodeId = core.nodeId;
+            return nodeId === undefined
+              ? Effect.void
+              : Effect.sync(() =>
+                  rememberNodeId(`${input.host} ${owner}/${name} ${input.number}`, nodeId),
+                );
+          }),
           // Past a hundred checks the first page would let the rest imply success, so the whole
           // rollup is walked instead.
           Effect.filterOrElse(
@@ -1564,6 +1595,7 @@ export const make = Effect.gen(function* () {
                 })),
               ),
           ),
+          Effect.map(({ nodeId: _nodeId, ...core }) => core),
         ),
       ),
     );
@@ -1716,6 +1748,52 @@ export const make = Effect.gen(function* () {
         ],
         { concurrency: 2 },
       ).pipe(Effect.map(([, runs]) => runs));
+
+  // Opening a pull request reads its detail, its checks and the viewer's permissions at once, and
+  // each starts from the same detail query, and for a fork's pull request the same workflow runs.
+  // Reads in flight together under the same credential and quota share one request. Nothing is
+  // kept once it lands, so a read that starts later asks GitHub again.
+  const inFlightKey = (...parts: ReadonlyArray<string | number>) =>
+    Effect.gen(function* () {
+      const pinned = yield* GitHubApi.PinnedGitHubCredential;
+      return [
+        ...parts,
+        yield* SourceControlRateLimit.Interactive,
+        yield* SourceControlRateLimit.CredentialScope,
+        pinned?.credentialFingerprint ?? "",
+      ].join("\n");
+    });
+  const detailsInFlight = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", host = "", repository = "", number = ""] = key.split("\n");
+      return getPullRequestDetail({ cwd, host, repository, number: Number(number) });
+    },
+    { capacity: 64, timeToLive: () => 0 },
+  );
+  const workflowRunsInFlight = yield* Cache.makeWith(
+    (key: string) => {
+      const [
+        cwd = "",
+        host = "",
+        repository = "",
+        number = "",
+        headSha = "",
+        headBranch = "",
+        headRepositoryOwner = "",
+      ] = key.split("\n");
+      return listWorkflowRunsRequiringApproval({
+        cwd,
+        host,
+        repository,
+        number: Number(number),
+        headSha,
+        headBranch,
+        headRepositoryOwner,
+        isCrossRepository: true,
+      });
+    },
+    { capacity: 64, timeToLive: () => 0 },
+  );
 
   /** One pull request's summary, through the same aliased query the batch uses. */
   const viewPullRequestSummary = (input: PullRequestSummaryRead) => {
@@ -1897,82 +1975,73 @@ export const make = Effect.gen(function* () {
           }),
         );
       }
-      /** Pages of up to a hundred until `rows` have arrived or GitHub has no more. */
-      const collect = (
-        rows: number,
-        page: (
-          after: string | null,
-          rows: number,
-        ) => Effect.Effect<GitHubPullRequestListPage, GitHubPullRequestApiError>,
-      ) =>
-        Effect.gen(function* () {
-          const countRows = (pages: ReadonlyArray<GitHubPullRequestListPage>) =>
-            pages.reduce((total, read) => total + read.rawCount, 0);
-          const { pages, truncated } = yield* readGraphQlPages(
-            (after, pages: ReadonlyArray<GitHubPullRequestListPage>) =>
-              page(after, rows - countRows(pages)),
-            {
-              nextCursor: (read) => read.endCursor,
-              until: (pages) => countRows(pages) >= rows,
-            },
-          );
-          // `truncated` also covers a cursor GitHub repeated before `rows` arrived.
-          return {
-            items: pages.flatMap((read) => read.items),
-            rawCount: countRows(pages),
-            truncated,
-          };
-        });
       const read = (
         continues: boolean,
-        requestedRows = input.limit + 1,
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
-        collect(requestedRows, (after, rows) =>
-          continues
-            ? graphqlRead({
-                cwd: input.cwd,
-                host: input.host,
-                operation: "listPullRequests",
-                // The reader's own words are in the query.
-                variables: { q: query, after },
-                query: pullRequestSearchGraphQlQuery(rows, false, true),
-                decode: decodePullRequestSearchJson,
-              })
-            : graphqlRead({
-                cwd: input.cwd,
-                host: input.host,
-                operation: "listPullRequests",
-                variables: { owner, name, states: LIST_STATES[input.state], after },
-                query: pullRequestListGraphQlQuery(rows),
-                decode: decodePullRequestListJson,
-              }),
-        ).pipe(
-          Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
-            const items = continues
-              ? rawItems
-              : rawItems.filter((item) => matchesUnsortedListing(item, input));
-            if (
-              !continues &&
-              items.length < input.limit &&
-              rawCount >= requestedRows &&
-              requestedRows < fallbackMaxRows
-            ) {
-              const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
-              if (nextRows > requestedRows) return read(false, nextRows);
-            }
-            return Effect.succeed({
-              items: items.slice(0, input.limit),
-              // One row over the page size is the probe for a next page, and it is
-              // counted before decoding: a skipped malformed row must not end paging.
-              truncated:
-                cutShort ||
-                (continues
-                  ? rawCount > input.limit
-                  : items.length > input.limit || rawCount >= requestedRows),
-              continues,
-            });
-          }),
-        );
+        Effect.gen(function* () {
+          let requestedRows = input.limit + 1;
+          let rawCount = 0;
+          const items: GitHubPullRequestListItem[] = [];
+          const { truncated: cutShort } = yield* readGraphQlPages(
+            (after): Effect.Effect<GitHubPullRequestListPage, GitHubPullRequestApiError> => {
+              const rows = requestedRows - rawCount;
+              const page = continues
+                ? graphqlRead({
+                    cwd: input.cwd,
+                    host: input.host,
+                    operation: "listPullRequests",
+                    // The reader's own words are in the query.
+                    variables: { q: query, after },
+                    query: pullRequestSearchGraphQlQuery(rows, false, true),
+                    decode: decodePullRequestSearchJson,
+                  })
+                : graphqlRead({
+                    cwd: input.cwd,
+                    host: input.host,
+                    operation: "listPullRequests",
+                    variables: { owner, name, states: LIST_STATES[input.state], after },
+                    query: pullRequestListGraphQlQuery(rows),
+                    decode: decodePullRequestListJson,
+                  });
+              return page.pipe(
+                Effect.tap((read) =>
+                  Effect.sync(() => {
+                    rawCount += read.rawCount;
+                    items.push(
+                      ...(continues
+                        ? read.items
+                        : read.items.filter((item) => matchesUnsortedListing(item, input))),
+                    );
+                    if (
+                      !continues &&
+                      items.length < input.limit &&
+                      rawCount >= requestedRows &&
+                      requestedRows < fallbackMaxRows
+                    ) {
+                      // Widen the target while keeping the pages and cursors already read.
+                      requestedRows = Math.min(requestedRows * 2, fallbackMaxRows);
+                    }
+                  }),
+                ),
+              );
+            },
+            {
+              nextCursor: (read) => read.endCursor,
+              until: () => rawCount >= requestedRows,
+            },
+          );
+          return {
+            items: items.slice(0, input.limit),
+            // One row over the page size is the probe for a next page, and it is
+            // counted before decoding: a skipped malformed row must not end paging.
+            truncated:
+              cutShort ||
+              (continues
+                ? rawCount > input.limit
+                : items.length > input.limit || rawCount >= requestedRows),
+            continues,
+          };
+        });
       // GitHub does not index every repository for search, and one it will not search answers
       // with no rows rather than with an error — so an empty listing is read again from the
       // repository's own list. Those rows come back newest-created first, an order no `updated:`
@@ -2109,7 +2178,10 @@ export const make = Effect.gen(function* () {
     getPullRequestSummary,
     getPullRequestWatchFingerprint,
 
-    getPullRequestDetail,
+    getPullRequestDetail: (input) =>
+      inFlightKey(input.cwd, input.host, input.repository, input.number).pipe(
+        Effect.flatMap((key) => Cache.get(detailsInFlight, key)),
+      ),
     getPullRequestPreview: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
       return graphqlRead({
@@ -2121,7 +2193,22 @@ export const make = Effect.gen(function* () {
         decode: decodePullRequestPreviewJson,
       });
     },
-    listWorkflowRunsRequiringApproval,
+    listWorkflowRunsRequiringApproval: (input) =>
+      Effect.gen(function* () {
+        // Runs the checks revalidator just confirmed are this caller's alone to filter.
+        if ((yield* KnownWorkflowRuns) !== null)
+          return yield* listWorkflowRunsRequiringApproval(input);
+        const key = yield* inFlightKey(
+          input.cwd,
+          input.host,
+          input.repository,
+          input.number,
+          input.headSha,
+          input.headBranch,
+          input.headRepositoryOwner,
+        );
+        return yield* Cache.get(workflowRunsInFlight, key);
+      }),
 
     getPullRequestStack: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);

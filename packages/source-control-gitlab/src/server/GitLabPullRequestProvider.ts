@@ -1,5 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import type {
   PullRequestCapabilities,
   PullRequestReaction,
@@ -99,8 +102,44 @@ export function gitLabProviderFailure(
   return { reason: "failed" };
 }
 
+const mergeRequestKey = (input: {
+  readonly cwd: string;
+  readonly repository: string;
+  readonly number: number;
+}) => `${input.cwd}\n${input.repository}\n${input.number}`;
+
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+  // The detail, its checks and the viewer's permissions are all `merge_requests/:iid`, and a page
+  // opening asks for them at once. One read answers the ones that land within a second of it; a
+  // failure is not held, and every write below forgets the merge request it wrote to.
+  const mergeRequests = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", repository = "", number = ""] = key.split("\n");
+      return cli.getMergeRequestDetail({ cwd, repository, number: Number(number) });
+    },
+    { capacity: 64, timeToLive: (exit) => (Exit.isSuccess(exit) ? "1 second" : 0) },
+  );
+  const mergeRequest = (input: Parameters<typeof mergeRequestKey>[0]) =>
+    Cache.get(mergeRequests, mergeRequestKey(input));
+
+  // How a project lets its merge requests land is a setting, which moves far more slowly than
+  // the detail every refresh was reading it alongside.
+  const mergeSettings = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", repository = ""] = key.split("\n");
+      return cli.getProjectMergeCapabilities({ cwd, repository });
+    },
+    { capacity: 32, timeToLive: (exit) => (Exit.isSuccess(exit) ? "5 minutes" : 0) },
+  );
+
+  // A write can change anything the merge request reports, so the held read is dropped once it
+  // ends, failed or not: a write that failed part-way may still have changed it.
+  const writing =
+    (input: Parameters<typeof mergeRequestKey>[0]) =>
+    <A, E>(write: Effect.Effect<A, E>) =>
+      write.pipe(Effect.ensuring(Cache.invalidate(mergeRequests, mergeRequestKey(input))));
 
   const fail = (operation: string) => (error: GitLabPullRequestCli.GitLabPullRequestCliError) =>
     new PullRequestProviderError({
@@ -138,17 +177,20 @@ export const make = Effect.gen(function* () {
         ),
 
     getChangeRequestChecks: (input) =>
-      cli.getMergeRequestDetail(input).pipe(
+      mergeRequest(input).pipe(
         Effect.map(({ state, checks }) => ({ state, checks })),
         Effect.mapError(fail("getChangeRequestChecks")),
       ),
 
+    // Hover cards and linked rows do not use the project's merge settings.
+    getChangeRequestPreview: (input) =>
+      mergeRequest(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
+    getChangeRequestSummary: (input) =>
+      mergeRequest(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+
     getChangeRequest: (input) =>
       Effect.all(
-        [
-          cli.getMergeRequestDetail(input),
-          cli.getProjectMergeCapabilities({ cwd: input.cwd, repository: input.repository }),
-        ],
+        [mergeRequest(input), Cache.get(mergeSettings, `${input.cwd}\n${input.repository}`)],
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
@@ -214,12 +256,17 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
-    // request, so there is no cheaper thing to ask GitLab.
-    getViewerPermissions: (input) =>
-      cli
-        .getMergeRequestDetail(input)
-        .pipe(Effect.mapError(fail("getViewerPermissions")), Effect.map(gitLabViewerPermissions)),
+    // The same read the detail takes it from: `user.can_merge` lives on the merge request, so
+    // there is no cheaper thing to ask GitLab. The server asks this before every write, so it
+    // starts a fresh read; the write after it can then reuse what it read.
+    getViewerPermissions: (input) => {
+      const key = mergeRequestKey(input);
+      return Cache.invalidate(mergeRequests, key).pipe(
+        Effect.andThen(Cache.get(mergeRequests, key)),
+        Effect.mapError(fail("getViewerPermissions")),
+        Effect.map(gitLabViewerPermissions),
+      );
+    },
 
     getDiff: (input) => cli.getMergeRequestDiff(input).pipe(Effect.mapError(fail("getDiff"))),
 
@@ -237,25 +284,38 @@ export const make = Effect.gen(function* () {
 
     // Users only: GitLab requests a review of a person, and the groups that can stand in for one
     // appear in approval rules rather than in a merge request's reviewers.
+    // The merge request the permission check just read, where it is held, rather than a second
+    // read of it; where it is not, the CLI reads it alongside the project's users.
     listReviewerCandidates: (input) =>
-      cli
-        .listReviewerCandidates({
-          cwd: input.cwd,
-          repository: input.repository,
-          number: input.number,
-        })
-        .pipe(Effect.mapError(fail("listReviewerCandidates"))),
+      Cache.getSuccess(mergeRequests, mergeRequestKey(input)).pipe(
+        Effect.flatMap((held) =>
+          cli.listReviewerCandidates({
+            cwd: input.cwd,
+            repository: input.repository,
+            number: input.number,
+            mergeRequest: Option.getOrUndefined(held),
+          }),
+        ),
+        Effect.mapError(fail("listReviewerCandidates")),
+      ),
 
+    // The reviewer set is rewritten from the held read, which the permission check before this
+    // write has just taken and which no write of this provider outlives.
     setReviewerRequest: (input) =>
-      cli
-        .setReviewerRequest({
-          cwd: input.cwd,
-          repository: input.repository,
-          number: input.number,
-          reviewers: input.reviewers,
-          requested: input.requested,
-        })
-        .pipe(Effect.mapError(fail("setReviewerRequest"))),
+      mergeRequest(input).pipe(
+        Effect.flatMap((held) =>
+          cli.setReviewerRequest({
+            cwd: input.cwd,
+            repository: input.repository,
+            number: input.number,
+            reviewers: input.reviewers,
+            requested: input.requested,
+            mergeRequest: held,
+          }),
+        ),
+        writing(input),
+        Effect.mapError(fail("setReviewerRequest")),
+      ),
 
     runAction: (input) =>
       cli
@@ -266,7 +326,7 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.mapError(fail("runAction"))),
+        .pipe(writing(input), Effect.mapError(fail("runAction"))),
 
     updateChangeRequest: (input) =>
       cli
@@ -277,9 +337,10 @@ export const make = Effect.gen(function* () {
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(input.body === undefined ? {} : { description: input.body }),
         })
-        .pipe(Effect.mapError(fail("updateChangeRequest"))),
+        .pipe(writing(input), Effect.mapError(fail("updateChangeRequest"))),
 
-    comment: (input) => cli.commentOnMergeRequest(input).pipe(Effect.mapError(fail("comment"))),
+    comment: (input) =>
+      cli.commentOnMergeRequest(input).pipe(writing(input), Effect.mapError(fail("comment"))),
 
     // The kind is not read: every comment this provider hands out, positioned or not, carries a
     // plain REST note id, and one endpoint rewrites both.
@@ -292,9 +353,10 @@ export const make = Effect.gen(function* () {
           noteId: input.commentId,
           body: input.body,
         })
-        .pipe(Effect.mapError(fail("updateComment"))),
+        .pipe(writing(input), Effect.mapError(fail("updateComment"))),
 
-    submitReview: (input) => cli.submitReview(input).pipe(Effect.mapError(fail("submitReview"))),
+    submitReview: (input) =>
+      cli.submitReview(input).pipe(writing(input), Effect.mapError(fail("submitReview"))),
 
     replyToThread: (input) =>
       cli
@@ -305,7 +367,7 @@ export const make = Effect.gen(function* () {
           discussionId: input.threadId,
           body: input.body,
         })
-        .pipe(Effect.mapError(fail("replyToThread"))),
+        .pipe(writing(input), Effect.mapError(fail("replyToThread"))),
 
     setReaction: (input) =>
       cli
@@ -317,7 +379,7 @@ export const make = Effect.gen(function* () {
           content: input.content,
           reacted: input.reacted,
         })
-        .pipe(Effect.mapError(fail("setReaction"))),
+        .pipe(writing(input), Effect.mapError(fail("setReaction"))),
 
     setThreadResolution: (input) =>
       cli
@@ -328,7 +390,7 @@ export const make = Effect.gen(function* () {
           discussionId: input.threadId,
           resolved: input.resolved,
         })
-        .pipe(Effect.mapError(fail("setThreadResolution"))),
+        .pipe(writing(input), Effect.mapError(fail("setThreadResolution"))),
   };
 
   return provider;

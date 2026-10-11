@@ -1,3 +1,4 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -107,6 +108,17 @@ export interface ForgejoRepositoryInput {
   readonly repository?: string;
   readonly reference?: string;
   readonly host?: string;
+}
+
+/** What resolving a target reads from a `ForgejoRepositoryInput`, flat so it can key a cache. */
+interface ForgejoTargetInput {
+  readonly cwd: string;
+  readonly reference?: string | undefined;
+  readonly repository?: string | undefined;
+  readonly host?: string | undefined;
+  readonly remoteUrl?: string | undefined;
+  readonly providerBaseUrl?: string | undefined;
+  readonly requestedHost?: string | undefined;
 }
 
 export interface ForgejoRepository {
@@ -425,15 +437,24 @@ export const make = Effect.gen(function* () {
       ),
   );
 
-  const authenticateFj = Effect.fn("ForgejoCli.authenticateFj")(function* (
+  type FjLogin = Pick<typeof ForgejoLoginSchema.Type, "name" | "url">;
+
+  /** The stored token when fj checked it within the last 30s, read without taking `authLock`. */
+  const checkedToken = Effect.fn("ForgejoCli.checkedToken")(function* (
     cwd: string,
-    login: typeof ForgejoLoginSchema.Type,
+    login: FjLogin,
   ) {
-    const keys = yield* readKeys(cwd);
-    const token = keys.hosts[login.name]?.token;
+    const token = (yield* readKeys(cwd)).hosts[login.name]?.token;
     const now = yield* Clock.currentTimeMillis;
     const cached = authenticated.get(login.url);
-    if (token && cached?.token === token && now - cached.time < 30_000) return token;
+    return token && cached?.token === token && now - cached.time < 30_000 ? token : undefined;
+  });
+
+  const renewFj = Effect.fn("ForgejoCli.renewFj")(function* (cwd: string, login: FjLogin) {
+    // Another request may have renewed this login while this one waited for the lock.
+    const checked = yield* checkedToken(cwd, login);
+    if (checked) return checked;
+    const now = yield* Clock.currentTimeMillis;
     yield* execute({ command: "fj", cwd, args: ["--host", login.url, "whoami"] });
     // fj owns OAuth renewal. Re-read the file after it has refreshed an expired token.
     const refreshed = (yield* readKeys(cwd)).hosts[login.name]?.token;
@@ -447,6 +468,12 @@ export const make = Effect.gen(function* () {
     authenticated.set(login.url, { token: refreshed, time: now });
     return refreshed;
   }, authLock.withPermits(1));
+
+  // Only a renewal serialises; requests with a recently checked token run concurrently.
+  const authenticateFj = (cwd: string, login: FjLogin) =>
+    checkedToken(cwd, login).pipe(
+      Effect.flatMap((token) => (token ? Effect.succeed(token) : renewFj(cwd, login))),
+    );
 
   const getAccount: NonNullable<ForgejoCli["Service"]["getAccount"]> = Effect.fn(
     "ForgejoCli.getAccount",
@@ -481,17 +508,17 @@ export const make = Effect.gen(function* () {
   });
 
   const resolveTarget = Effect.fn("ForgejoCli.resolveTarget")(function* (
-    input: ForgejoRepositoryInput,
+    input: ForgejoTargetInput,
     hostOnly = false,
   ) {
     const referenceRemote = input.reference ? parseForgejoRemote(input.reference) : null;
-    let remoteUrl = [input.reference, input.repository, input.context?.remoteUrl].find(
+    let remoteUrl = [input.reference, input.repository, input.remoteUrl].find(
       (value) => value && parseForgejoRemote(value),
     );
     let remote =
       referenceRemote ??
       (input.repository ? parseForgejoRemote(input.repository) : null) ??
-      (input.context ? parseForgejoRemote(input.context.remoteUrl) : null);
+      (input.remoteUrl ? parseForgejoRemote(input.remoteUrl) : null);
     if (!remote && (!input.repository || input.host)) {
       const result = yield* process
         .run({
@@ -547,13 +574,13 @@ export const make = Effect.gen(function* () {
         ssh: false,
         path: remote?.path ?? "",
       };
-    const schemeRemoteUrl = remote?.ssh ? input.context?.provider.baseUrl : remoteUrl;
+    const schemeRemoteUrl = remote?.ssh ? input.providerBaseUrl : remoteUrl;
     const fjLogins = yield* listLogins({
       cwd: input.cwd,
       command: "fj",
       ...(schemeRemoteUrl ? { remoteUrl: schemeRemoteUrl } : {}),
     });
-    const requestedHost = input.host ?? input.context?.requestedHost;
+    const requestedHost = input.host ?? input.requestedHost;
     const matchHostOnly = hostOnly || (!!input.host && !remote?.path);
     const selectLogin = (logins: ReturnType<typeof parseForgejoLogins>) =>
       remote
@@ -629,11 +656,39 @@ export const make = Effect.gen(function* () {
       });
     return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
-  const resolveRepository = (input: ForgejoRepositoryInput) => resolveTarget(input);
+  // Share pending resolution, but reselect the login after it finishes so account and remote
+  // changes apply to the next request without an extra identity check.
+  const targets = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", reference, repository, host, remoteUrl, baseUrl, requestedHost, scope] = key
+        .split("\n")
+        .map((value) => value || undefined);
+      return resolveTarget(
+        { cwd, reference, repository, host, remoteUrl, providerBaseUrl: baseUrl, requestedHost },
+        scope === "host",
+      );
+    },
+    { capacity: 64, timeToLive: () => 0 },
+  );
+  const targetKey = (input: ForgejoRepositoryInput, hostOnly = false) =>
+    [
+      input.cwd,
+      input.reference,
+      input.repository,
+      input.host,
+      input.context?.remoteUrl,
+      input.context?.provider.baseUrl,
+      input.context?.requestedHost,
+      hostOnly ? "host" : "",
+    ].join("\n");
+  const resolveRepository = (input: ForgejoRepositoryInput) => Cache.get(targets, targetKey(input));
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
-    const repository = yield* resolveTarget(
-      input,
-      input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
+    const repository = yield* Cache.get(
+      targets,
+      targetKey(
+        input,
+        input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
+      ),
     );
     const stdin =
       input.body === undefined

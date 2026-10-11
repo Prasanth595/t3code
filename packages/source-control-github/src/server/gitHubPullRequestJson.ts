@@ -708,6 +708,7 @@ const RawCoreSchema = Schema.Struct({
     repository: Schema.Struct({
       ...RawRepositoryAccessSchema.fields,
       pullRequest: Schema.Struct({
+        id: Schema.optional(Schema.String),
         ...RawDetailSchema.fields,
         ...RawViewerFieldsSchema.fields,
         viewerCanUpdateBranch: Schema.Boolean,
@@ -826,7 +827,7 @@ export const pullRequestCoreGraphQlQuery = (host: string) => {
   repository(owner: $owner, name: $name) {
     mergeCommitAllowed squashMergeAllowed rebaseMergeAllowed viewerPermission
     pullRequest(number: $number) {
-      number title url body state isDraft mergeable reviewDecision
+      id number title url body state isDraft mergeable reviewDecision
       additions deletions changedFiles createdAt updatedAt mergedAt closedAt
       headRefName baseRefName headRefOid isCrossRepository
       headRepositoryOwner { login }
@@ -2302,6 +2303,7 @@ export function decodePullRequestWatchFingerprintsJson(
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {
+  readonly nodeId?: string;
   readonly viewerAccess: GitHubViewerAccess & GitHubRepositoryAccess;
   readonly comparison: GitHubBaseComparison | null;
   readonly checksTruncated: boolean;
@@ -2316,6 +2318,7 @@ export function decodePullRequestCoreJson(
   const pr = repository.pullRequest;
   const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
   return Result.succeed({
+    ...(pr.id === undefined ? {} : { nodeId: pr.id }),
     ...toDetail({
       ...pr,
       reviewRequests: pr.reviewRequests.nodes.flatMap(({ requestedReviewer }) =>

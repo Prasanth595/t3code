@@ -309,6 +309,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly cwd: string;
       readonly repository: string;
       readonly number: number;
+      /** The merge request as the caller already holds it, which spares reading it again. */
+      readonly mergeRequest?: GitLabMergeRequestDetail | undefined;
     }) => Effect.Effect<PullRequestReviewerCandidateList, GitLabPullRequestCliError>;
 
     readonly setReviewerRequest: (input: {
@@ -317,6 +319,8 @@ export class GitLabPullRequestCli extends Context.Service<
       readonly number: number;
       readonly reviewers: ReadonlyArray<{ readonly id: string }>;
       readonly requested: boolean;
+      /** The merge request as the caller holds it, whose reviewer set is the one rewritten. */
+      readonly mergeRequest?: GitLabMergeRequestDetail | undefined;
     }) => Effect.Effect<void, GitLabPullRequestCliError>;
 
     readonly runMergeRequestAction: (input: {
@@ -946,6 +950,17 @@ export const make = Effect.gen(function* () {
       }),
     );
 
+  /** The merge request a caller handed over, or a read of it where none was. */
+  const heldOrRead = (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly number: number;
+    readonly mergeRequest?: GitLabMergeRequestDetail | undefined;
+  }): Effect.Effect<GitLabMergeRequestDetail, GitLabPullRequestCliError> =>
+    input.mergeRequest === undefined
+      ? mergeRequestDetail(input)
+      : Effect.succeed(input.mergeRequest);
+
   /** The people with access to the project, one page deep. */
   const projectUsers = (input: {
     readonly cwd: string;
@@ -1319,7 +1334,7 @@ export const make = Effect.gen(function* () {
       ),
 
     listReviewerCandidates: (input) =>
-      Effect.all([mergeRequestDetail(input), projectUsers(input)], { concurrency: 2 }).pipe(
+      Effect.all([heldOrRead(input), projectUsers(input)], { concurrency: 2 }).pipe(
         Effect.map(([mergeRequest, users]) => {
           const author = mergeRequest.author?.login;
           const requested = new Set(mergeRequest.reviewRequestLogins);
@@ -1337,7 +1352,7 @@ export const make = Effect.gen(function* () {
       ),
 
     setReviewerRequest: (input) =>
-      mergeRequestDetail(input).pipe(
+      heldOrRead(input).pipe(
         Effect.flatMap((mergeRequest) => {
           // GitLab has no endpoint that adds or removes one reviewer: `reviewer_ids` replaces the
           // whole set, so the set that is already there is read first and the change applied to

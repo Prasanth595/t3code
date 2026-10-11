@@ -606,6 +606,9 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /** Set by `getRepositoryPermission` once Bitbucket answers that its endpoint is gone. */
+  let repositoryPermissionRemoved = false;
+
   return BitbucketPullRequestApi.of({
     getViewer: () =>
       bitbucket.request({ method: "GET", url: "/user" }).pipe(
@@ -665,17 +668,29 @@ export const make = Effect.gen(function* () {
     // permission being refused, so it is read the same way an unreachable read already is
     // elsewhere — as a permission that could not be learned, which grants rather than blocks, and
     // leaves the actual merge or write to say why if the account may not do it. Any other failure
-    // (a bad token, a network fault, an unreadable body) still fails as it did before.
+    // (a bad token, a network fault, an unreadable body) still fails as it did before. Once the
+    // configured Bitbucket has answered 410 it is not asked again while this server runs.
     getRepositoryPermission: (input) =>
       withRepository(input.repository, () =>
-        readPage({
-          operation: "getRepositoryPermission",
-          url: `/user/permissions/repositories?q=${encodeURIComponent(
-            `repository.full_name="${filterLiteral(input.repository.trim())}"`,
-          )}`,
-          decode: decodeRepositoryPermissionJson,
-        }),
-      ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
+        Effect.suspend(() =>
+          repositoryPermissionRemoved
+            ? Effect.succeed(true)
+            : readPage({
+                operation: "getRepositoryPermission",
+                url: `/user/permissions/repositories?q=${encodeURIComponent(
+                  `repository.full_name="${filterLiteral(input.repository.trim())}"`,
+                )}`,
+                decode: decodeRepositoryPermissionJson,
+              }),
+        ),
+      ).pipe(
+        Effect.catchIf(isRepositoryPermissionRemovedError, () =>
+          Effect.sync(() => {
+            repositoryPermissionRemoved = true;
+            return true;
+          }),
+        ),
+      ),
 
     getPullRequestDiff: pullRequestDiff,
 

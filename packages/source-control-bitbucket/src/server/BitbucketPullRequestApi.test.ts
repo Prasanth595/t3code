@@ -1015,6 +1015,25 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.fail(
+          new BitbucketApi.BitbucketResponseError({
+            operation: "request",
+            status: 401,
+            responseBodyLength: 0,
+          }),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
+
+      assert.strictEqual(error._tag, "BitbucketResponseError");
+    }),
+  );
+
   it.effect(
     "reads a removed permissions endpoint as granted rather than failing the merge on it",
     () =>
@@ -1033,26 +1052,10 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
         assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+        // Gone for good, so the next check does not ask again.
+        assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+        expect(mockedRequest).toHaveBeenCalledTimes(1);
       }),
-  );
-
-  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
-    Effect.gen(function* () {
-      mockedRequest.mockReturnValue(
-        Effect.fail(
-          new BitbucketApi.BitbucketResponseError({
-            operation: "request",
-            status: 401,
-            responseBodyLength: 0,
-          }),
-        ),
-      );
-      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
-
-      const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
-
-      assert.strictEqual(error._tag, "BitbucketResponseError");
-    }),
   );
 
   it.effect("reads the workspace's people and marks whoever is already a reviewer", () =>

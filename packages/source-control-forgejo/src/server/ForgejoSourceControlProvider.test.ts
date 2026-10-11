@@ -1,6 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -30,6 +32,227 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
     : undefined;
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+
+it.effect("refreshes Forgejo viewer permissions immediately after credentials change", () => {
+  let account = "alice";
+  const requests: string[] = [];
+  const renewals: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provideService(ForgejoCli.ForgejoCli, cli),
+    );
+    const input = { cwd: "/repo", repository: "acme/web", host: "forgejo.test", number: 42 };
+    const alice = yield* provider.getViewerPermissions(input);
+    assert.deepStrictEqual(alice.verdicts, ["comment"]);
+    assert.include(alice.actions, "merge");
+    assert.strictEqual(alice.labels, true);
+    account = "bob";
+    const bob = yield* provider.getViewerPermissions(input);
+    assert.deepStrictEqual(bob.verdicts, ["comment", "approve", "request-changes"]);
+    assert.deepStrictEqual(bob.actions, []);
+    assert.strictEqual(bob.labels, false);
+    assert.strictEqual(bob.requestReviewers, false);
+    assert.strictEqual(requests.length, 6);
+    assert.deepStrictEqual(renewals, ["alice", "bob"]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({
+        exists: () => Effect.succeed(true),
+        readFileString: () =>
+          Effect.succeed(
+            encodeJson({ hosts: { "forgejo.test": { type: "Application", token: account } } }),
+          ),
+      }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        requests.push(request.url);
+        assert.strictEqual(request.headers.authorization, `token ${account}`);
+        const response = request.url.endsWith("/user")
+          ? { login: account }
+          : request.url.endsWith("/pulls/42")
+            ? {
+                number: 42,
+                title: "Permissions",
+                body: "",
+                html_url: "https://forgejo.test/acme/web/pulls/42",
+                user: { login: "alice" },
+                state: "open",
+                merged: false,
+                head: { ref: "feature", sha: "head", repo: null },
+                base: { ref: "main", sha: "base", repo: null },
+                created_at: "2026-09-16T00:00:00Z",
+                updated_at: "2026-09-16T00:00:00Z",
+                closed_at: null,
+                merged_at: null,
+                labels: [],
+              }
+            : { full_name: "acme/web", permissions: { push: account === "alice", admin: false } };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response(encodeJson(response))),
+        );
+      }),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            if (input.command === "git")
+              return Effect.succeed(
+                processOutput("origin\thttps://forgejo.test/acme/web.git (fetch)"),
+              );
+            assert.strictEqual(input.command, "fj");
+            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
+            renewals.push(account);
+            return Effect.succeed(processOutput(""));
+          },
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("reselects the current tea login between API requests", () => {
+  let account = "alice";
+  const selected: string[] = [];
+  return Effect.gen(function* () {
+    const cli = yield* ForgejoCli.make;
+    const input = { cwd: "/repo", repository: "https://forgejo.test/acme/web", path: "user" };
+    assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"alice"}');
+    account = "bob";
+    assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"bob"}');
+    assert.deepStrictEqual(selected, ["alice", "bob"]);
+  }).pipe(
+    Effect.provideService(
+      FileSystem.FileSystem,
+      FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
+    ),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("tea owns HTTP")),
+    ),
+    Effect.provide(
+      TestSourceControlHost.layer({
+        process: {
+          run: (input) => {
+            assert.strictEqual(input.command, "tea");
+            if (input.args[0] === "login")
+              return Effect.succeed(
+                processOutput(
+                  encodeJson([
+                    { name: account, url: "https://forgejo.test", user: account, default: "true" },
+                  ]),
+                ),
+              );
+            assert.strictEqual(input.args[0], "api");
+            assert.strictEqual(input.args[input.args.indexOf("--login") + 1], account);
+            selected.push(account);
+            return Effect.succeed(
+              processOutput(encodeJson({ login: account }), { stderr: "HTTP/1.1 200 OK\n" }),
+            );
+          },
+        },
+      }),
+    ),
+  );
+});
+
+it.effect("shares pending Forgejo pull reads and refreshes after writes and failures", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const paths: string[] = [];
+    let pullReads = 0;
+    let state = "open";
+    let reject = false;
+    const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          api: (input) =>
+            Effect.gen(function* () {
+              paths.push(input.path);
+              if (input.method === "PATCH") {
+                state = "closed";
+                return processOutput("{}");
+              }
+              if (input.path.endsWith("/pulls/42")) {
+                pullReads++;
+                if (reject)
+                  return yield* new ForgejoCli.ForgejoCliError({
+                    command: "tea",
+                    cwd: input.cwd,
+                    reason: "rate-limit",
+                    detail: "limited",
+                  });
+                const response = {
+                  number: 42,
+                  title: "Shared pull",
+                  body: "",
+                  html_url: "https://forgejo.test/acme/web/pulls/42",
+                  user: { login: "alice" },
+                  state,
+                  merged: false,
+                  head: { ref: "feature", sha: state === "open" ? "before" : "after", repo: null },
+                  base: { ref: "main", sha: "base", repo: null },
+                  created_at: "2026-09-16T00:00:00Z",
+                  updated_at: "2026-09-16T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                };
+                if (pullReads === 1) {
+                  yield* Deferred.succeed(started, undefined);
+                  yield* Deferred.await(release);
+                }
+                return processOutput(encodeJson(response));
+              }
+              return processOutput(
+                input.path === "user"
+                  ? '{"login":"bob"}'
+                  : input.path.includes("/statuses/")
+                    ? "[]"
+                    : '{"full_name":"acme/web","permissions":{"push":true,"admin":false}}',
+              );
+            }),
+        }),
+      ),
+    );
+    const summary = provider.getChangeRequestSummary;
+    const checks = provider.getChangeRequestChecks;
+    if (!summary || !checks) return yield* Effect.die("narrow reads missing");
+    const input = { cwd: "/repo", repository: "acme/web", host: "forgejo.test", number: 42 };
+    const reads = yield* Effect.all(
+      [
+        summary(input),
+        checks(input),
+        provider.getViewerPermissions(input),
+        provider.getChangeRequest(input),
+      ],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    yield* Effect.yieldNow;
+    assert.strictEqual(pullReads, 1);
+    yield* provider.runAction({ ...input, action: "close" });
+    const updated = yield* checks(input);
+    assert.strictEqual(updated.state, "closed");
+    assert.strictEqual(pullReads, 2);
+    assert.include(paths, "repos/acme/web/statuses/after?sort=recentupdate&limit=50&page=1");
+    yield* Deferred.succeed(release, undefined);
+    const original = yield* Fiber.join(reads);
+    assert.strictEqual(original[0].state, "open");
+    reject = true;
+    const failed = yield* summary(input).pipe(Effect.result);
+    assert.strictEqual(failed._tag, "Failure");
+    assert.strictEqual(pullReads, 3);
+    reject = false;
+    assert.strictEqual((yield* summary(input)).state, "closed");
+    assert.strictEqual(pullReads, 4);
+  }),
+);
 
 it.effect("submits a Forgejo review without sending its summary in the preliminary GET", () => {
   const methods: string[] = [];

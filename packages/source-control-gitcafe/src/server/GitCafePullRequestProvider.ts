@@ -1,5 +1,8 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
@@ -55,6 +58,13 @@ const DIFF_FILES_BATCH = 64;
 const LINE_STATS_MAX_FILES = DIFF_FILES_BATCH * 4;
 /** Structural `/changes` pages, 500 files each, read to count a pull request's files. */
 const MAX_CHANGE_PAGES = 20;
+/**
+ * How long one pull read answers every caller, so a panel's detail, activity, diff and stack
+ * reads, or a write's permission check and its own read, ask GitCafe once.
+ */
+const PULL_TTL = Duration.seconds(1);
+/** A viewer's actor id is stable, so involvement filters skip `/filter-options` for this long. */
+const ACTOR_TTL = Duration.minutes(10);
 
 const chunk = <A>(items: ReadonlyArray<A>, size: number): Array<ReadonlyArray<A>> =>
   Array.from({ length: Math.ceil(items.length / size) }, (_, index) =>
@@ -136,7 +146,8 @@ const StackOutcome = Schema.Struct({ id: Schema.String, state: Schema.String });
 /** Where a stack operation stopped short; anything else is underway or done. */
 const FAILED_STACK_STATES = new Set(["failed", "stopped", "cancelled", "reconciliation_required"]);
 
-type PullRef = ProviderRepositoryRef & { readonly number: number };
+type RepositoryRef = Pick<ProviderRepositoryRef, "host" | "repository">;
+type PullRef = RepositoryRef & { readonly number: number };
 type Paged<A> = { readonly items: ReadonlyArray<A>; readonly next: string | null };
 
 /** The heads a reader saw are still every unmerged layer the action moves. */
@@ -188,7 +199,7 @@ export const make = Effect.gen(function* () {
   /** The repository's API root, refused before anything is sent for a host GitCafe is not on. */
   const repositoryPath = (
     operation: string,
-    input: ProviderRepositoryRef,
+    input: RepositoryRef,
   ): Effect.Effect<string, PullRequestProviderError> =>
     GitCafeHosts.isGitCafeHost(input.host) &&
     GitCafeHosts.gitCafeRepositoryPath(input.repository) === input.repository
@@ -237,10 +248,39 @@ export const make = Effect.gen(function* () {
   const pullPath = (operation: string, input: PullRef) =>
     repositoryPath(operation, input).pipe(Effect.map((base) => `${base}/pulls/${input.number}`));
 
+  const pullKey = (input: PullRef) => `${input.host}\n${input.repository}\n${input.number}`;
+  // A failed read is not held, so the next caller asks GitCafe again.
+  const pulls = yield* Cache.makeWith(
+    (key: string) => {
+      const [host = "", repository = "", number = ""] = key.split("\n");
+      return read(
+        "readPull",
+        { host },
+        { path: `/repos/${repository}/pulls/${number}` },
+        Json.GitCafePullDetail,
+      );
+    },
+    { capacity: 64, timeToLive: (exit) => (Exit.isSuccess(exit) ? PULL_TTL : Duration.zero) },
+  );
+
   const readPull = (operation: string, input: PullRef) =>
-    pullPath(operation, input).pipe(
-      Effect.flatMap((path) => read(operation, input, { path }, Json.GitCafePullDetail)),
+    repositoryPath(operation, input).pipe(
+      Effect.flatMap(() => Cache.get(pulls, pullKey(input))),
+      // One read can answer several callers, so each failure is reported as its caller's.
+      Effect.mapError(
+        (error) =>
+          new PullRequestProviderError({
+            provider: error.provider,
+            operation,
+            reason: error.reason,
+            detail: error.detail,
+            ...(error.cause === undefined ? {} : { cause: error.cause }),
+          }),
+      ),
     );
+
+  /** Drops a pull's shared read once a write on it settles, whatever the outcome. */
+  const forgetPull = (input: PullRef) => Cache.invalidate(pulls, pullKey(input));
 
   /** Every page of a cursor list, up to `MAX_PAGES`; `next` stays set when more remained. */
   const readPages = <S extends Schema.Codec<Paged<unknown>, unknown, never, never>>(
@@ -278,11 +318,13 @@ export const make = Effect.gen(function* () {
 
   /**
    * The stack a pull request belongs to, with each unmerged layer's head. GitCafe's stack lists no
-   * heads, and they are what a land or restack is fenced on, so each open layer's pull is read.
+   * heads, and they are what a land or restack is fenced on, so each open layer's pull is read;
+   * `fresh` skips the shared pull reads for that fence.
    */
   const readStack = Effect.fn("GitCafePullRequestProvider.readStack")(function* (
     operation: string,
     input: PullRef,
+    fresh = false,
   ) {
     const path = yield* pullPath(operation, input);
     const { stack } = yield* read(
@@ -294,14 +336,16 @@ export const make = Effect.gen(function* () {
     if (stack === null) return null;
     const members = yield* Effect.forEach(
       stack.members,
-      (member) =>
-        member.state === "merged"
-          ? Effect.succeed(member)
-          : readPull(operation, { ...input, number: member.pullRequestNumber }).pipe(
-              Effect.map((pull) =>
-                pull.headOid == null ? member : { ...member, headOid: pull.headOid },
-              ),
-            ),
+      (member) => {
+        if (member.state === "merged") return Effect.succeed(member);
+        const layer = { ...input, number: member.pullRequestNumber };
+        return (fresh ? forgetPull(layer) : Effect.void).pipe(
+          Effect.andThen(readPull(operation, layer)),
+          Effect.map((pull) =>
+            pull.headOid == null ? member : { ...member, headOid: pull.headOid },
+          ),
+        );
+      },
       { concurrency: 4 },
     );
     return { ...stack, members };
@@ -344,7 +388,7 @@ export const make = Effect.gen(function* () {
     const operation = land ? "landStackThrough" : "restackStack";
     if (!land && input.action !== "update-branch")
       return yield* failure(operation, `GitCafe cannot ${input.action} a stack.`);
-    const stack = yield* readStack(operation, input);
+    const stack = yield* readStack(operation, input, true);
     if (
       stack === null ||
       stack.number !== input.stackNumber ||
@@ -372,6 +416,12 @@ export const make = Effect.gen(function* () {
           : { expectedRevision: stack.revision, requestId: yield* randomUuidV4 },
       },
       StackOutcome,
+    ).pipe(
+      Effect.ensuring(
+        Effect.forEach(stack.members, (member) =>
+          forgetPull({ ...input, number: member.pullRequestNumber }),
+        ),
+      ),
     );
     if (FAILED_STACK_STATES.has(outcome.state))
       return yield* failure(operation, `GitCafe's stack operation ${outcome.state}.`);
@@ -385,6 +435,7 @@ export const make = Effect.gen(function* () {
   const readLineStats = Effect.fn("GitCafePullRequestProvider.readLineStats")(function* (
     input: PullRef,
     version: number,
+    headOid: string,
   ) {
     const path = yield* pullPath("getChangeRequest", input);
     const files: Array<Json.GitCafeDiffFile> = [];
@@ -399,6 +450,12 @@ export const make = Effect.gen(function* () {
         { path: `${path}/changes?${query}` },
         Changes,
       );
+      if (
+        batch.version !== version ||
+        batch.headOid !== headOid ||
+        (revision !== undefined && batch.comparisonBaseOid !== revision.baseOid)
+      )
+        return yield* failure("getChangeRequest", "GitCafe answered from a different revision.");
       revision ??= {
         version: batch.version,
         headOid: batch.headOid,
@@ -411,22 +468,53 @@ export const make = Effect.gen(function* () {
     }
     // A hunk read that loses a race with a push leaves the counts at zero rather than dropping
     // the file count with them.
-    const counted =
+    const details: Option.Option<ReadonlyArray<ReadonlyArray<Json.GitCafeDiffFile>>> =
       files.some((file) => file.additions !== undefined) ||
       files.length > LINE_STATS_MAX_FILES ||
       revision === undefined
-        ? files
-        : (yield* Effect.forEach(
+        ? Option.some([files])
+        : yield* Effect.forEach(
             chunk(detailablePaths(files), DIFF_FILES_BATCH),
             (paths) => readDiffFiles(input, revision, paths),
             { concurrency: 4 },
-          ).pipe(Effect.orElseSucceed(() => [[]]))).flat();
+          ).pipe(Effect.option);
+    const counted: ReadonlyArray<Json.GitCafeDiffFile> = Option.isSome(details)
+      ? details.value.flat()
+      : [];
     return {
+      revision,
+      complete: Option.isSome(details) && after === null,
       changedFiles: files.length,
       additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
       deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
     };
   });
+
+  /**
+   * Line totals held by the revision they count, which never changes, so reopening an unchanged
+   * pull request skips the `/changes` pages and hunk reads. Only a complete count of the head
+   * the pull reported is held.
+   */
+  const lineStats = yield* Cache.makeWith(
+    (key: string) => {
+      const [host = "", repository = "", number = "", version = "", headOid = ""] = key.split("\n");
+      return readLineStats(
+        { host, repository, number: Number(number) },
+        Number(version),
+        headOid,
+      ).pipe(
+        Effect.map(({ revision, complete, ...stats }) => ({
+          stats,
+          held: complete && revision?.version === Number(version) && revision.headOid === headOid,
+        })),
+      );
+    },
+    {
+      capacity: 64,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value.held ? Duration.infinity : Duration.zero,
+    },
+  );
 
   const merge = Effect.fn("GitCafePullRequestProvider.merge")(function* (
     input: Parameters<PullRequestProviderApi["runAction"]>[0],
@@ -470,11 +558,34 @@ export const make = Effect.gen(function* () {
         },
       },
       MergeOutcome,
-    );
+    ).pipe(Effect.ensuring(forgetPull(input)));
     // An accepted merge is GitCafe's to finish; the pull request's state reports when it has.
     if (outcome.state === "failed")
       return yield* failure("merge", outcome.reason ?? "GitCafe could not merge the pull request.");
   });
+
+  /** The viewer's actor on a repository; a viewer GitCafe knows no actor for is asked again. */
+  const viewerActors = yield* Cache.makeWith(
+    (key: string) => {
+      const [host = "", repository = "", viewer = ""] = key.split("\n");
+      return read(
+        "listChangeRequests",
+        { host },
+        { path: `/repos/${repository}/filter-options` },
+        FilterOptions,
+      ).pipe(
+        Effect.map(
+          (options) =>
+            options.actors.find((actor) => actor.handle.toLowerCase() === viewer)?.actorId,
+        ),
+      );
+    },
+    {
+      capacity: 64,
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && exit.value !== undefined ? ACTOR_TTL : Duration.zero,
+    },
+  );
 
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("gitcafe"),
@@ -495,11 +606,9 @@ export const make = Effect.gen(function* () {
           // A host narrows as far as it can: when the actor list can't be read, the listing comes
           // back unnarrowed and the page's own involvement filter does the rest. A refused token
           // or a rate limit still fails, since the service acts on those for the whole host.
-          const options = yield* read(
-            "listChangeRequests",
-            input,
-            { path: `${base}/filter-options` },
-            FilterOptions,
+          const actor = yield* Cache.get(
+            viewerActors,
+            `${input.host}\n${input.repository}\n${input.viewer.toLowerCase()}`,
           ).pipe(
             Effect.map(Option.some),
             Effect.catchTags({
@@ -509,10 +618,8 @@ export const make = Effect.gen(function* () {
                   : Effect.succeed(Option.none()),
             }),
           );
-          if (Option.isSome(options)) {
-            actorId = options.value.actors.find(
-              (actor) => actor.handle.toLowerCase() === input.viewer.toLowerCase(),
-            )?.actorId;
+          if (Option.isSome(actor)) {
+            actorId = actor.value;
             // A viewer GitCafe knows no actor for has authored and been asked to review nothing.
             if (actorId === undefined) return { items: [], truncated: false, continues: false };
           }
@@ -584,7 +691,20 @@ export const make = Effect.gen(function* () {
               ),
           pull.headOid === null
             ? Effect.succeed(null)
-            : readLineStats(input, pull.version).pipe(Effect.orElseSucceed(() => null)),
+            : Cache.get(
+                lineStats,
+                [
+                  input.host,
+                  input.repository,
+                  input.number,
+                  pull.version,
+                  pull.headOid,
+                  pull.observedBaseOid ?? "",
+                ].join("\n"),
+              ).pipe(
+                Effect.map(({ stats }) => stats),
+                Effect.orElseSucceed(() => null),
+              ),
         ],
         { concurrency: 3 },
       );
@@ -634,6 +754,11 @@ export const make = Effect.gen(function* () {
             : permissions,
       };
     }),
+    // A hover card needs only the pull, not detail's status, checks and line counts.
+    getChangeRequestPreview: (input) =>
+      readPull("getChangeRequestPreview", input).pipe(
+        Effect.map((pull) => Json.toChangeRequest(pull, input)),
+      ),
     getChangeRequestStack: (input) =>
       readStack("getChangeRequestStack", input).pipe(
         Effect.map((stack) => (stack === null ? null : Json.toStack(stack, input))),
@@ -668,7 +793,10 @@ export const make = Effect.gen(function* () {
       },
     ),
     getViewerPermissions: (input) =>
-      readPull("getViewerPermissions", input).pipe(Effect.map(Json.toViewerPermissions)),
+      forgetPull(input).pipe(
+        Effect.andThen(readPull("getViewerPermissions", input)),
+        Effect.map(Json.toViewerPermissions),
+      ),
     getDiff: Effect.fn("GitCafePullRequestProvider.getDiff")(function* (input) {
       if (input.commit !== undefined)
         return yield* failure("getDiff", "GitCafe commit diffs are not supported yet.");
@@ -718,7 +846,7 @@ export const make = Effect.gen(function* () {
             method: "POST",
             path: `${path}/${input.action}`,
             body: { expectedVersion: pull.version },
-          });
+          }).pipe(Effect.ensuring(forgetPull(input)));
           return;
         }
         default:
@@ -742,7 +870,7 @@ export const make = Effect.gen(function* () {
             },
           },
           Versioned,
-        );
+        ).pipe(Effect.ensuring(forgetPull(input)));
       },
     ),
     comment: (input) =>
@@ -756,6 +884,7 @@ export const make = Effect.gen(function* () {
           ),
         ),
         Effect.asVoid,
+        Effect.ensuring(forgetPull(input)),
       ),
     updateComment: Effect.fn("GitCafePullRequestProvider.updateComment")(function* (input) {
       if (!isId(input.commentId))
@@ -767,7 +896,7 @@ export const make = Effect.gen(function* () {
         input,
         { method: "PATCH", path, body: { body: input.body, expectedVersion: detail.version } },
         Written,
-      );
+      ).pipe(Effect.ensuring(forgetPull(input)));
     }),
     submitReview: Effect.fn("GitCafePullRequestProvider.submitReview")(function* (input) {
       if (input.comments.length > 0)
@@ -791,7 +920,7 @@ export const make = Effect.gen(function* () {
           },
         },
         Written,
-      );
+      ).pipe(Effect.ensuring(forgetPull(input)));
     }),
     listReviewerCandidates: () =>
       Effect.fail(
@@ -812,7 +941,7 @@ export const make = Effect.gen(function* () {
           body: { body: input.body },
         },
         Written,
-      );
+      ).pipe(Effect.ensuring(forgetPull(input)));
     }),
     setReaction: Effect.fn("GitCafePullRequestProvider.setReaction")(function* (input) {
       const path = `${yield* pullPath("setReaction", input)}/reactions/`;
@@ -834,13 +963,15 @@ export const make = Effect.gen(function* () {
           method: "POST",
           path,
           body: { subject, emoji: { kind: "unicode", value: Json.REACTION_EMOJI[input.content] } },
-        });
+        }).pipe(Effect.ensuring(forgetPull(input)));
         return;
       }
       if (mine == null) return;
       if (!isId(mine))
         return yield* failure("setReaction", "GitCafe returned an unreadable reaction id.");
-      yield* send("setReaction", input, { method: "DELETE", path: `${path}${mine}` });
+      yield* send("setReaction", input, { method: "DELETE", path: `${path}${mine}` }).pipe(
+        Effect.ensuring(forgetPull(input)),
+      );
     }),
     setThreadResolution: Effect.fn("GitCafePullRequestProvider.setThreadResolution")(
       function* (input) {
@@ -861,7 +992,7 @@ export const make = Effect.gen(function* () {
             body: { expectedVersion: root.version },
           },
           Written,
-        );
+        ).pipe(Effect.ensuring(forgetPull(input)));
       },
     ),
   };

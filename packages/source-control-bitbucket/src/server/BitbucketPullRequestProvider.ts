@@ -9,6 +9,7 @@ import {
   type ProviderChangeRequest,
   type ProviderChangeRequestActivity,
   type ProviderChangeRequestDetail,
+  type ProviderChangeRequestSummary,
   type PullRequestProviderApi,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
@@ -230,6 +231,54 @@ export const make = Effect.gen(function* () {
             viewerPermissions: bitbucketViewerPermissions({ canWrite }),
           }),
         ),
+      );
+    },
+
+    // Everything a hover card shows is on the pull request itself.
+    getChangeRequestPreview: (input) =>
+      api.getPullRequest({ repository: input.repository, number: input.number }).pipe(
+        Effect.mapError(fail("getChangeRequestPreview")),
+        Effect.map((pullRequest) => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          createdAt: pullRequest.createdAt,
+        })),
+      ),
+
+    // The detail's line counts and conflict state, which a linked thread shows, without its
+    // checks and permission reads.
+    getChangeRequestSummary: (input) => {
+      const target = { repository: input.repository, number: input.number };
+      return Effect.all(
+        [
+          api.getPullRequest(target),
+          api.getDiffStat(target),
+          recoverRead(api.getMergeability(target), "unknown" as const),
+        ],
+        { concurrency: 3 },
+      ).pipe(
+        Effect.mapError(fail("getChangeRequestSummary")),
+        Effect.map(([pullRequest, diffStat, mergeability]): ProviderChangeRequestSummary => ({
+          number: pullRequest.number,
+          title: pullRequest.title,
+          url: pullRequest.url,
+          author: pullRequest.author,
+          headBranch: pullRequest.headBranch,
+          baseBranch: pullRequest.baseBranch,
+          state: pullRequest.state,
+          isDraft: pullRequest.isDraft,
+          mergeability,
+          additions: diffStat.additions,
+          deletions: diffStat.deletions,
+          changedFiles: diffStat.changedFiles,
+          mergedAt: null,
+          closedAt: null,
+          updatedAt: pullRequest.updatedAt,
+        })),
       );
     },
 

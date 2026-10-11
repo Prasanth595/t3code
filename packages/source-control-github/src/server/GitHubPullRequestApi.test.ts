@@ -184,12 +184,13 @@ function listedPullRequests(
   count: number,
   firstNumber: number,
   overrides?: (number: number) => Readonly<Record<string, unknown>>,
+  endCursor: string | null = null,
 ): string {
   return encodeJson({
     data: {
       repository: {
         pullRequests: {
-          pageInfo: { hasNextPage: false },
+          pageInfo: { hasNextPage: endCursor !== null, endCursor },
           nodes: rows(count, firstNumber, overrides),
         },
       },
@@ -1408,10 +1409,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(listedPullRequests(3, 1, () => ({ isDraft: true })))),
+        Effect.succeed(output(listedPullRequests(3, 1, () => ({ isDraft: true }), "c3"))),
       );
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(listedPullRequests(6, 1, (number) => ({ isDraft: number < 4 })))),
+        Effect.succeed(output(listedPullRequests(3, 4, () => ({ isDraft: false }), "c6"))),
       );
       mockedStackMemberships.mockReturnValueOnce(
         Effect.succeed(
@@ -1446,6 +1447,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(batch.items[1]?.stack).toBeUndefined();
       expect(batch.truncated).toBe(true);
       expect(batch.continues).toBe(false);
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
       expect(mockedStackMemberships).toHaveBeenCalledTimes(1);
       const membership = mockedStackMemberships.mock.calls[0]?.[0];
       const numbers = Object.entries(
@@ -2049,15 +2051,23 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const unrelated = () => ({ reviewRequests: [{ login: "somebody-else" }] });
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(output(listedPullRequests(3, 1, unrelated))),
+        Effect.succeed(
+          output(
+            listedPullRequests(
+              3,
+              1,
+              (number) => ({
+                ...unrelated(),
+                ...(number === 1 ? { number: null } : {}),
+              }),
+              "c3",
+            ),
+          ),
+        ),
       );
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
-          output(
-            listedPullRequests(4, 1, (number) =>
-              number === 4 ? { reviewRequests: [{ login: "bilal" }] } : unrelated(),
-            ),
-          ),
+          output(listedPullRequests(1, 4, () => ({ reviewRequests: [{ login: "bilal" }] }))),
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -2073,9 +2083,67 @@ layer("GitHubPullRequestApi.layer", (it) => {
       });
 
       expect(batch.items.map((item) => item.number)).toEqual([4]);
+      // The malformed row still counts toward the requested range.
       expect(queryAt(1)).toContain("first: 3,");
-      expect(queryAt(2)).toContain("first: 6,");
+      expect(queryAt(2)).toContain("first: 3,");
+      expect(varsAt(1)["after"]).toBeNull();
+      expect(varsAt(2)["after"]).toBe("c3");
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
       assert.isFalse(batch.truncated);
+    }),
+  );
+
+  it.effect("does not restart an exhausted search-free fallback at a full filtered boundary", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(listedPullRequests(3, 1, () => ({ isDraft: true })))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 2,
+        filters: { draft: "hide" },
+      });
+
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(batch.items).toEqual([]);
+      assert.isFalse(batch.truncated);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("keeps the repeated-cursor guard while widening a search-free fallback", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(listedPullRequests(3, 1, () => ({ isDraft: true }), "same"))),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(listedPullRequests(3, 4, () => ({ isDraft: true }), "same"))),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 2,
+        filters: { draft: "hide" },
+      });
+
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(varsAt(2)["after"]).toBe("same");
+      expect(batch.items).toEqual([]);
+      assert.isTrue(batch.truncated);
+      assert.isFalse(batch.continues);
     }),
   );
 
@@ -2116,10 +2184,17 @@ layer("GitHubPullRequestApi.layer", (it) => {
         limit: 2,
       });
 
-      // The last widening reads a thousand rows, a page of a hundred at a time, and stops there.
+      // Widening continues from the preceding cursor and reads no row a second time.
       const last = mockedExecute.mock.calls.length - 1;
-      expect(varsAt(last)["after"]).toBe(`c${listed - 100}`);
-      expect(listed - (3 + 6 + 12 + 24 + 48 + 96 + 192 + 384 + 768)).toBe(1000);
+      expect(varsAt(last)["after"]).toBe("c968");
+      expect(queryAt(last)).toContain("first: 32,");
+      expect(listed).toBe(1000);
+      expect(mockedExecute).toHaveBeenCalledTimes(17);
+      expect(
+        mockedExecute.mock.calls
+          .slice(2)
+          .every(([call]) => call.kind === "graphql" && call.variables?.["after"] !== null),
+      ).toBe(true);
       assert.strictEqual(batch.items.length, 0);
       assert.isTrue(batch.truncated);
     }),
@@ -3614,6 +3689,77 @@ layer("GitHubPullRequestApi.layer", (it) => {
       );
 
       assert.strictEqual(error._tag, "GitHubPullRequestReadError");
+    }),
+  );
+
+  it.effect("starts a fresh detail read after a mutation while an older read is pending", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let detailReads = 0;
+      mockedExecute.mockImplementation((call) =>
+        Effect.gen(function* () {
+          if (call.kind === "graphql" && call.query.trimStart().startsWith("mutation")) {
+            return output("{}");
+          }
+          if (call.kind === "graphql" && call.query.includes(NODE_ID_QUERY)) {
+            return output(encodeJson(nodeIdAnswer("PR_after_write")));
+          }
+          const title = ++detailReads === 1 ? "Before mutation" : "After mutation";
+          if (detailReads === 1) {
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+          }
+          return output(encodeJson(coreResponse({ title })));
+        }),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.detail-after-write.test",
+        number: 7,
+      };
+
+      const older = yield* cli.getPullRequestDetail(input).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* cli.updatePullRequest({ ...input, title: "After mutation" });
+      const fresh = yield* cli.getPullRequestDetail(input);
+
+      expect(fresh.title).toBe("After mutation");
+      expect(detailReads).toBe(2);
+      expect(variablesOf("updatePullRequest(")).toEqual([
+        { pullRequestId: "PR_after_write", title: "After mutation" },
+      ]);
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(older)).title).toBe("Before mutation");
+    }),
+  );
+
+  it.effect("uses the node id from core detail for the first mutation without another lookup", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ id: "PR_from_core" })))),
+        )
+        .mockReturnValue(Effect.succeed(output("{}")));
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = {
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.core-node-id.test",
+        number: 7,
+      };
+
+      const detail = yield* cli.getPullRequestDetail(input);
+      yield* cli.updatePullRequest({ ...input, title: "Uses core id" });
+
+      expect(detail).not.toHaveProperty("nodeId");
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(variablesOf(NODE_ID_QUERY)).toEqual([]);
+      expect(variablesOf("updatePullRequest(")).toEqual([
+        { pullRequestId: "PR_from_core", title: "Uses core id" },
+      ]);
     }),
   );
 

@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -148,24 +149,47 @@ export const make = Effect.gen(function* () {
     }
     return { items, truncated: true };
   });
-  const write = (input: ForgejoCli.ForgejoApiInput) => request(input).pipe(Effect.asVoid);
+  // Share pending reads only: credentials and repository permissions can change between requests.
+  const pulls = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", repository = "", host = "", number = ""] = key.split("\n");
+      const ref = { cwd, repository, host, number: Number(number) };
+      return read({ ...ref, path: pullPath(ref) }, ForgejoPullRequest);
+    },
+    { capacity: 64, timeToLive: () => 0 },
+  );
   const getPull = (input: ProviderRepositoryRef & { readonly number: number }) =>
-    read(
-      {
-        cwd: input.cwd,
-        repository: input.repository,
-        host: input.host,
-        path: pullPath(input),
-      },
-      ForgejoPullRequest,
+    Cache.get(pulls, [input.cwd, input.repository, input.host, input.number].join("\n"));
+  const write = (input: ForgejoCli.ForgejoApiInput) =>
+    request(input).pipe(
+      Effect.onExit(() => Cache.invalidateAll(pulls)),
+      Effect.asVoid,
     );
+  const repos = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", repository = "", host = ""] = key.split("\n");
+      const ref = { cwd, repository, host };
+      return read({ ...ref, path: repoPath(ref) }, ForgejoRepository);
+    },
+    { capacity: 32, timeToLive: () => 0 },
+  );
+  const viewers = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", repository, host] = key.split("\n");
+      return read(
+        { cwd, ...(repository ? { repository } : {}), ...(host ? { host } : {}), path: "user" },
+        ForgejoUser,
+      ).pipe(Effect.map((user) => user.login));
+    },
+    { capacity: 32, timeToLive: () => 0 },
+  );
   const getRepo = (input: ProviderRepositoryRef) =>
-    read({ ...input, path: repoPath(input) }, ForgejoRepository);
+    Cache.get(repos, [input.cwd, input.repository, input.host].join("\n"));
   const getViewer = (input: {
     readonly cwd: string;
     readonly repository?: string;
     readonly host?: string;
-  }) => read({ ...input, path: "user" }, ForgejoUser).pipe(Effect.map((user) => user.login));
+  }) => Cache.get(viewers, [input.cwd, input.repository, input.host].join("\n"));
   const permissions = (
     repo: typeof ForgejoRepository.Type,
     pr: typeof ForgejoPullRequest.Type,
