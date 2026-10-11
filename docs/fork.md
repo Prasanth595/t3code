@@ -91,6 +91,28 @@ scripts/fork-desktop-mac.sh --publish
 
 The script creates a prerelease on the fork. Installed fork apps offer it as an update.
 
+## Live server updates
+
+Most fork changes are server and web code. They reach the Mac without a new app and without an app restart.
+
+- The setting `T3CODE_DESKTOP_LIVE_SERVER_DIR` names a live server folder. It is off when unset.
+- With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a` or `<folder>/b`, two worktrees of this repository.
+- `scripts/fork-live/build.sh` runs every minute. When fork main has a new commit, it builds it in the folder that `current` does not point to. Then it writes `<folder>/ready.json` with the path, commit, subject and build time.
+- The update button offers the ready build as `live <commit>`. A full app update always comes first.
+- Install moves the `current` link, restarts the server and reloads the windows. If the new server does not start, the link goes back and the previous server starts again.
+- A failed build shows a macOS notification. The app keeps its current server.
+- A full app update is still needed when the app shell changes: `apps/desktop`, Electron or the native dependencies.
+
+One-time setup on the Mac:
+
+```sh
+export T3CODE_DESKTOP_LIVE_SERVER_DIR="$HOME/Github/t3code/live"
+scripts/fork-live/build.sh
+"$T3CODE_DESKTOP_LIVE_SERVER_DIR/current/scripts/fork-live/install-agent.sh" "$T3CODE_DESKTOP_LIVE_SERVER_DIR"
+```
+
+The first build creates `current` and sets the setting for apps that start later. Then quit and start the app once. The build log is `~/Library/Logs/t3-live-build.log`.
+
 ## Deploy to the VPS
 
 The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
