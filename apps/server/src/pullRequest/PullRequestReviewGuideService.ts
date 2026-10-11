@@ -405,12 +405,17 @@ const make = Effect.gen(function* () {
     };
     // Claimed atomically, so two readers pressing Generate start one run between them. The head
     // is read again under the claim: a press that read an older head before a push must not
-    // replace the run another press started for the new one.
+    // replace a run another press started for the new one, so it asks to be pressed again.
     const claimed = yield* ownership.withPermits(1)(
       pullRequests.detail(input).pipe(
         Effect.flatMap((latest) =>
           (latest.headSha ?? null) !== currentHeadSha
-            ? Ref.get(runs).pipe(Effect.map((current) => current.get(runKey) ?? null))
+            ? Effect.fail(
+                new PullRequestOperationError({
+                  operation: "generateReviewGuide",
+                  detail: "The pull request changed while the guide was starting. Try again.",
+                }),
+              )
             : Ref.modify(runs, (current) => {
                 const existing = current.get(runKey);
                 if (existing?._tag === "Running" && existing.headSha === currentHeadSha) {
