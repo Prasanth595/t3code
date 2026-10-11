@@ -1723,14 +1723,11 @@ export default function ChatView(props: ChatViewProps) {
     status: threadStatus,
   });
   const threadDetailLoading = threadSyncPhase === "loading";
-  // Keep usage between turns, but never carry another native context across a handoff.
+  // Latest provider-reported context usage (#8144): the newest report wins;
+  // stale turns keep the meter alive between turns.
   const activeThreadLiveTokenUsage = useMemo(
-    () =>
-      latestProviderTurnTokenUsage(
-        serverProjection?.providerTurns ?? [],
-        serverProjection?.thread.activeProviderThreadId,
-      ),
-    [serverProjection?.providerTurns, serverProjection?.thread.activeProviderThreadId],
+    () => latestProviderTurnTokenUsage(serverProjection?.providerTurns ?? []),
+    [serverProjection?.providerTurns],
   );
   const serverVisibleTurnItems = useThreadVisibleTurnItems(routeThreadDetailRef);
   const serverThreadHistory = useThreadHistory(routeThreadDetailRef);

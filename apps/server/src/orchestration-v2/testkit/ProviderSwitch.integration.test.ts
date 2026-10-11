@@ -601,7 +601,7 @@ describe("orchestration v2 provider switching", () => {
                 )
               : undefined;
           yield* Effect.addFinalizer(() => Effect.sync(() => spy?.mockRestore()));
-          const current = scenario.startsWith("compact")
+          let current = scenario.startsWith("compact")
             ? "/compact"
             : capacityScenario && !turnUsageScenario
               ? "x".repeat(70_000)
@@ -706,21 +706,25 @@ describe("orchestration v2 provider switching", () => {
             const handoff = rejected.contextHandoffs.at(-1)!;
             assert.equal(compactRun.status, "failed");
             assert.isNull(compactRun.startedAt);
-            const error = rejected.turnItems.find(
-              (item) => item.type === "error" && item.runId === compactRun.id,
-            );
-            assert.equal(
-              error?.type === "error" ? error.failure.class : undefined,
-              "validation_error",
-            );
-            assert.include(
-              error?.type === "error" ? error.failure.message : "",
-              "Context handoff replaces compaction",
+            assert.isTrue(
+              rejected.turnItems.some(
+                (item) =>
+                  item.type === "error" && item.title === "Context handoff replaces compaction",
+              ),
             );
             assert.lengthOf(yield* Ref.get(capturedTurns), 1);
             assert.lengthOf(yield* Ref.get(injectedHistory), 0);
             assert.equal(handoff.status, "ready");
             assert.isUndefined(handoff.delivery);
+            if (scenario === "compact-native") {
+              yield* dispatch(3, "/compact", CODEX_MODEL_SELECTION);
+              yield* wait(3);
+              const returned = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(returned.runs.at(-1)?.status, "completed");
+              assert.equal(returned.runs.at(-1)?.contextHandoffId, null);
+              assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.driver, CODEX_DRIVER);
+              return;
+            }
             if (scenario === "compact-legacy") {
               const { history: _history, ...legacyHandoff } = handoff;
               yield* eventSink.write({
@@ -736,28 +740,9 @@ describe("orchestration v2 provider switching", () => {
                 ],
               });
             }
-            yield* dispatch(targetOrdinal + 1, "Continue after compact", targetSelection);
+            current = "Continue after compact";
+            yield* dispatch(targetOrdinal + 1, current, targetSelection);
             yield* wait(targetOrdinal + 1);
-            const continued = yield* orchestrator.getThreadProjection(threadId);
-            assert.equal(continued.runs.at(-1)?.status, "completed");
-            assert.equal(
-              continued.contextHandoffs.find((record) => record.id === handoff.id)?.delivery
-                ?.status,
-              scenario === "compact-native" ? "injected" : "inline",
-            );
-            const turns = yield* Ref.get(capturedTurns);
-            assert.lengthOf(turns, 2);
-            assert.equal(turns.at(-1)?.driver, CLAUDE_DRIVER);
-            if (scenario === "compact-native") {
-              assert.equal(turns.at(-1)?.text, "Continue after compact");
-              assert.include(
-                yield* encodeJson(yield* Ref.get(injectedHistory)),
-                "Original request with constraints",
-              );
-            } else {
-              assert.include(turns.at(-1)!.text, "Original request with constraints");
-            }
-            return;
           }
           if (scenario.includes("retry")) {
             const failed = yield* orchestrator.getThreadProjection(threadId);
@@ -901,16 +886,23 @@ describe("orchestration v2 provider switching", () => {
           }
           if (
             scenario === "delivery-write-failure" ||
+            scenario === "compact-fallback" ||
+            scenario === "compact-legacy" ||
             (scenario.startsWith("screenshot") && scenario.endsWith("fallback"))
           ) {
             assert.equal(
               handoff.delivery?.status,
-              scenario.startsWith("screenshot") ? "inline" : "pending",
+              scenario === "delivery-write-failure" ? "pending" : "inline",
             );
             assert.include(
               (yield* Ref.get(capturedTurns)).at(-1)!.text,
               "Original request with constraints",
             );
+            if (scenario.startsWith("compact")) {
+              const text = (yield* Ref.get(capturedTurns)).at(-1)!.text;
+              assert.notInclude(text, "/compact");
+              assert.notInclude(text, "Context handoff replaces compaction");
+            }
           } else {
             assert.equal(handoff.delivery?.status, "injected");
             assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.text, current);

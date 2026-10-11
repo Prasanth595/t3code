@@ -3,7 +3,6 @@ import type {
   OrchestrationV2ProviderTurnTokenUsage,
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
-  ProviderThreadId,
   ThreadTokenUsageSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -25,19 +24,13 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
   readonly updatedAt: string;
 };
 
-/** Newest usage report for the active native context. Snapshots order turns
+/** Newest usage report across a thread's provider turns. Snapshots order turns
     by provider thread, not time, so pick by timestamp. */
 export function latestProviderTurnTokenUsage(
-  turns: ReadonlyArray<
-    Pick<OrchestrationV2ProviderTurn, "tokenUsage"> &
-      Partial<Pick<OrchestrationV2ProviderTurn, "providerThreadId">>
-  >,
-  providerThreadId?: ProviderThreadId | null,
+  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "tokenUsage">>,
 ): OrchestrationV2ProviderTurnTokenUsage | null {
   let latest: OrchestrationV2ProviderTurnTokenUsage | null = null;
-  for (const turn of turns) {
-    if (providerThreadId != null && turn.providerThreadId !== providerThreadId) continue;
-    const { tokenUsage } = turn;
+  for (const { tokenUsage } of turns) {
     if (tokenUsage === undefined) continue;
     // Ties go to the later entry, since live upserts append.
     if (latest === null || Date.parse(tokenUsage.updatedAt) >= Date.parse(latest.updatedAt)) {
@@ -53,10 +46,7 @@ export function deriveLatestContextWindowSnapshot(
     readonly item: OrchestrationV2TurnItem;
   }>,
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
-  providerThread?:
-    | (Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> &
-        Partial<Pick<OrchestrationV2ProviderThread, "id">>)
-    | null,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
@@ -130,7 +120,6 @@ export function deriveLatestContextWindowSnapshot(
     if (!entry || entry.item.type !== "compaction") {
       continue;
     }
-    if (providerThread?.id != null && entry.item.providerThreadId !== providerThread.id) continue;
     const payload = entry.item;
     const usedTokens = asFiniteNumber(payload.afterTokenCount);
     if (usedTokens === null || usedTokens < 0) {

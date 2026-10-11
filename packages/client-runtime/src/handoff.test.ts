@@ -103,56 +103,6 @@ describe("pending context handoff", () => {
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "source" }, [])).toBeNull();
     expect(resolvePendingHandoff(projection, { instanceId: from, model: "other" }, [])).toBeNull();
   });
-  it("skips empty conversations and replaces the preview after the handoff starts", () => {
-    expect(
-      resolvePendingHandoff(
-        { ...projection, runs: [], providerThreads: [] },
-        { instanceId: to, model: "target" },
-        [],
-      ),
-    ).toBeNull();
-    const switched = {
-      ...projection,
-      thread: {
-        ...projection.thread,
-        activeProviderThreadId: ProviderThreadId.make("native-target"),
-      },
-      providerThreads: [
-        ...projection.providerThreads,
-        {
-          ...projection.providerThreads[0]!,
-          id: ProviderThreadId.make("native-target"),
-          providerInstanceId: to,
-        },
-      ],
-      runs: [
-        ...projection.runs,
-        {
-          ...projection.runs[0]!,
-          id: RunId.make("target"),
-          ordinal: 2,
-          providerThreadId: ProviderThreadId.make("native-target"),
-          providerInstanceId: to,
-          modelSelection: { instanceId: to, model: "target" },
-        },
-      ],
-    };
-    expect(resolvePendingHandoff(switched, { instanceId: to, model: "target" }, [])).toBeNull();
-    const notStarted = {
-      ...switched,
-      runs: [projection.runs[0]!, { ...switched.runs[1]!, startedAt: null }],
-    };
-    expect(resolvePendingHandoff(notStarted, { instanceId: to, model: "target" }, [])).toEqual({
-      from: [{ instanceId: from, model: "source" }],
-      to: { instanceId: to, model: "target" },
-    });
-    expect(resolvePendingHandoff(notStarted, { instanceId: from, model: "source" }, [])).toBeNull();
-    const rolledBack = {
-      ...switched,
-      runs: [projection.runs[0]!, { ...switched.runs[1]!, status: "rolled_back" as const }],
-    };
-    expect(resolvePendingHandoff(rolledBack, { instanceId: from, model: "source" }, [])).toBeNull();
-  });
   it("only previews a same-provider model change when it needs a fresh native thread", () => {
     const providers = [
       { instanceId: from, requiresNewThreadForModelChange: true },

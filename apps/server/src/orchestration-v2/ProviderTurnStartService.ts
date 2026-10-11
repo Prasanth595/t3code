@@ -288,8 +288,6 @@ export const layer: Layer.Layer<
           readonly signal: string;
           readonly status: "completed" | "failed";
           readonly now: DateTime.Utc;
-          /** Omitted when the run never started, so `startedAt` stays as projected. */
-          readonly startedAt?: DateTime.Utc;
           readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
           readonly itemProviderThreadId: OrchestrationV2ProviderThread["id"];
           readonly item:
@@ -305,7 +303,6 @@ export const layer: Layer.Layer<
           readonly providerThreadUpdate?: OrchestrationV2ProviderThread;
         }) {
           const { now, status } = input;
-          const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
           const item: OrchestrationV2TurnItem = {
             id: idAllocator.derive.runSignalTurnItem({ runId, signal: input.signal }),
             threadId: projection.thread.id,
@@ -330,14 +327,14 @@ export const layer: Layer.Layer<
           };
           const eventPayloads = [
             { type: "turn-item.updated", payload: item },
-            { type: "run.updated", payload: { ...run, status, ...started, completedAt: now } },
+            { type: "run.updated", payload: { ...run, status, completedAt: now } },
             {
               type: "run-attempt.updated",
-              payload: { ...attempt, status, ...started, completedAt: now },
+              payload: { ...attempt, status, completedAt: now },
             },
             {
               type: "node.updated",
-              payload: { ...rootNode, status, ...started, completedAt: now },
+              payload: { ...rootNode, status, completedAt: now },
             },
             ...(input.providerThreadUpdate === undefined
               ? []
@@ -428,7 +425,6 @@ export const layer: Layer.Layer<
             signal: isEmptyCompaction ? "empty-compaction" : "provider-sign-out",
             status,
             now,
-            startedAt: now,
             providerInstanceId: authInstanceId,
             itemProviderThreadId: nativeThread?.id ?? providerThread.id,
             item:
@@ -1101,24 +1097,40 @@ export const layer: Layer.Layer<
         ...runningProviderThread,
         contextUsage: handoffUsage,
       };
-      const missedRuns = projection.runs.filter(
+      const undeliveredRuns = projection.runs.filter(
         (source) =>
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&
           !deliveredAttemptIds.has(source.activeAttemptId),
       );
-      const missedRunIds = new Set(missedRuns.map((source) => source.id));
-      const missedItems =
-        missedRunIds.size === 0
+      const undeliveredItems =
+        undeliveredRuns.length === 0
           ? []
-          : (yield* projectionStore.getTurnStartHistory(input.threadId, [...missedRunIds])).filter(
-              (item) =>
-                item.runId !== null &&
-                missedRunIds.has(item.runId) &&
-                !coveredItemIds.has(item.id) &&
-                historicalMessage(item) !== null,
+          : yield* projectionStore.getTurnStartHistory(
+              input.threadId,
+              undeliveredRuns.map((source) => source.id),
             );
+      const maintenanceMessageIds = new Set(
+        undeliveredItems.flatMap((item) =>
+          item.type === "user_message" &&
+          item.attachments.length === 0 &&
+          ["/compact", "/logout"].includes(item.text.trim().toLowerCase())
+            ? [item.messageId]
+            : [],
+        ),
+      );
+      const missedRuns = undeliveredRuns.filter(
+        (source) => !maintenanceMessageIds.has(source.userMessageId),
+      );
+      const missedRunIds = new Set(missedRuns.map((source) => source.id));
+      const missedItems = undeliveredItems.filter(
+        (item) =>
+          item.runId !== null &&
+          missedRunIds.has(item.runId) &&
+          !coveredItemIds.has(item.id) &&
+          historicalMessage(item) !== null,
+      );
       const startWithHandoffs = (
         turnInput: Parameters<typeof session.startTurn>[0],
         compact = false,
