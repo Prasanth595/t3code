@@ -24,6 +24,7 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 import {
+  type GitCommandError,
   PullRequestOperationError,
   type PullRequestDetail,
   type PullRequestRef,
@@ -75,6 +76,30 @@ export class PullRequestReviewGuideService extends Context.Service<
 >()("t3/pullRequest/PullRequestReviewGuideService") {}
 
 const keyString = (key: ThreadPullRequestKey) => `${key.host}/${key.repository}#${key.number}`;
+
+/**
+ * A fetch the remote refused for a reason the reader can fix names that fix; any other failure
+ * keeps git's own error.
+ */
+const fetchFailure = (remote: string, cause: GitCommandError) => {
+  const retry = `Run "git fetch ${remote}" in the project once, then write the guide again.`;
+  switch (cause.reason) {
+    case "host_key_unverified":
+      return new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail: `Git does not trust the SSH host key of the project's "${remote}" remote. ${retry}`,
+        cause,
+      });
+    case "authentication_failed":
+      return new PullRequestOperationError({
+        operation: "generateReviewGuide",
+        detail: `Git could not sign in to the project's "${remote}" remote. ${retry}`,
+        cause,
+      });
+    default:
+      return cause;
+  }
+};
 
 const nowIso = Clock.currentTimeMillis.pipe(
   Effect.map((millis) => DateTime.formatIso(DateTime.makeUnsafe(millis))),
@@ -186,12 +211,14 @@ const make = Effect.gen(function* () {
   ) {
     const remote = yield* git.resolvePrimaryRemoteName(workspaceRoot);
     const fetch = (args: ReadonlyArray<string>) =>
-      git.execute({
-        operation: "PullRequestReviewGuideService.fetch",
-        cwd: workspaceRoot,
-        args: ["fetch", "--quiet", "--no-tags", remote, ...args],
-        timeoutMs: 5 * 60_000,
-      });
+      git
+        .execute({
+          operation: "PullRequestReviewGuideService.fetch",
+          cwd: workspaceRoot,
+          args: ["fetch", "--quiet", "--no-tags", remote, ...args],
+          timeoutMs: 5 * 60_000,
+        })
+        .pipe(Effect.mapError((cause) => fetchFailure(remote, cause)));
     // The base branch is what the change is measured from; the head commit is the change. Hosts
     // that do not serve an unadvertised commit still serve their pull refs, which GitHub and
     // Forgejo name the same way.
