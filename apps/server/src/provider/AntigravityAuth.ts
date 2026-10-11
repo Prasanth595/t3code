@@ -96,7 +96,11 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
     authorizationUrl: null,
     interaction: null,
     expiresAt: null,
-    ...(busy ? { message: "Sign-in is in progress in another client." } : {}),
+    ...(busy
+      ? { message: "Sign-in is in progress in another client." }
+      : snapshot.state.phase === "failed"
+        ? { message: "Sign-in failed in another client." }
+        : {}),
   };
 }
 
@@ -117,7 +121,13 @@ function providerReason(message: string): string | undefined {
   // Allowlist plain prose. This excludes URLs (encoded or not), paths, emails,
   // and key=value fragments without enumerating each leak shape.
   if (!/^[\p{L}\p{N} .,:;'"()!?-]+$/u.test(text)) return undefined;
-  if (/[\p{L}\p{N}]{32,}/u.test(text)) return undefined;
+  // Scheme-like ("https:example.com") and hostname-like ("support.google.com")
+  // runs pass the character allowlist but still name a location. Prose puts
+  // a space after "." and ":".
+  if (/[\p{L}\p{N}][.:][\p{L}\p{N}]/u.test(text)) return undefined;
+  // Credential-shaped runs: a long unbroken token, or a long digit run, even
+  // when hyphens split it ("sk-1234...").
+  if (/\S{20,}/u.test(text) || /\p{N}{8,}/u.test(text)) return undefined;
   return text;
 }
 
@@ -423,10 +433,6 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             options.instanceId,
             flow.pending,
             input.callbackUrl,
-          ).pipe(
-            // Keep the status row in step with the RPC error so a rejected
-            // redirect URL is not hidden behind stale text.
-            Effect.tapError((error) => publishFlow(flow, { ...flow.state, message: error.detail })),
           );
           flow.callbackSent = true;
           yield* publishFlow(flow, {

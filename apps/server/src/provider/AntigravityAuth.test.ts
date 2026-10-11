@@ -268,6 +268,8 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       );
       const failed = yield* phase(harness.auth, "failed");
       assert.equal(failed.message, reason);
+      const other = yield* phase(harness.auth, "failed", otherOwner);
+      assert.equal(other.message, "Sign-in failed in another client.");
       yield* Deferred.await(harness.closed);
     }),
   );
@@ -296,6 +298,9 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     ["an email address", "Account alice@example.com is not eligible"],
     ["a key=value fragment", "reason=invalid"],
     ["only digits and punctuation", "555-123-4567"],
+    ["a scheme without slashes", "Onboarding failed: See https:example.com for help."],
+    ["a bare hostname", "Onboarding failed. Visit support.google.com for help."],
+    ["a hyphenated credential", "Invalid token sk-123456789012345678901234567890"],
   ])("keeps the generic failure when an authenticate error contains %s", ([, errorMessage]) =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -359,9 +364,7 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
         assert.isTrue(Exit.isFailure(result));
       }
       assert.equal(harness.forwarded(), 0);
-      const waiting = yield* phase(harness.auth, "waiting");
-      assert.equal(waiting.authorizationUrl, authorizationUrl);
-      assert.include(waiting.message ?? "", "redirect URL");
+      assert.equal((yield* phase(harness.auth, "waiting")).authorizationUrl, authorizationUrl);
       yield* harness.auth.controller.cancel(owner, state.flowId!);
     }),
   );
