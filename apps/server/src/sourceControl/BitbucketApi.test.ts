@@ -1036,3 +1036,52 @@ it.effect("fails a wedged raw request after the request timeout", () => {
     assert.strictEqual(error.operation, "request");
   }).pipe(Effect.provide(layer));
 });
+
+const stalledResponseBody = (status: number): Response =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        // Headers arrive, but neither a successful nor error body completes.
+        controller.enqueue(new TextEncoder().encode("{"));
+      },
+    }),
+    { status, headers: { "content-type": "application/json" } },
+  );
+
+for (const status of [200, 503]) {
+  it.effect(`bounds JSON response-body reads after HTTP ${status} headers`, () => {
+    const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
+
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const child = yield* Effect.forkChild(
+        Effect.flip(bitbucket.getPullRequest({ cwd: "/repo", reference: "42" })),
+      );
+      while (execute.mock.calls.length === 0) {
+        yield* Effect.yieldNow;
+      }
+      yield* TestClock.adjust("31 seconds");
+      const error = yield* Fiber.join(child);
+      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+      assert.strictEqual(error.operation, "getPullRequest");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(`bounds raw response-body reads after HTTP ${status} headers`, () => {
+    const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
+
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const child = yield* Effect.forkChild(
+        Effect.flip(bitbucket.request({ method: "GET", url: "/user" })),
+      );
+      while (execute.mock.calls.length === 0) {
+        yield* Effect.yieldNow;
+      }
+      yield* TestClock.adjust("31 seconds");
+      const error = yield* Fiber.join(child);
+      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+      assert.strictEqual(error.operation, "request");
+    }).pipe(Effect.provide(layer));
+  });
+}
