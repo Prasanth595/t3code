@@ -83,6 +83,7 @@ import {
 } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestStackMenu } from "./PullRequestStackMenu";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
@@ -302,7 +303,7 @@ const openNumberContextMenu = (
   event.stopPropagation();
   void showPullRequestLinkContextMenu({
     url: detail.url,
-    openLabel: openOnHostLabel(detail.provider),
+    openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
     position: { x: event.clientX, y: event.clientY },
   });
 };
@@ -525,18 +526,44 @@ export function PullRequestDetailPanel({
     setChromeCondensed(chromeStateByTab.current[tab] ?? false);
   }, [tab]);
   const condensed = chromeCondensed;
-  const scrollerRef = useRef<HTMLElement | null>(null);
+  const scrollerByTab = useRef<Partial<Record<DetailTab, HTMLDivElement | null>>>({});
+  const scrollerRefs = useMemo(
+    () => ({
+      summary: (node: HTMLDivElement | null) => {
+        scrollerByTab.current.summary = node;
+      },
+      timeline: (node: HTMLDivElement | null) => {
+        scrollerByTab.current.timeline = node;
+      },
+      code: (node: HTMLDivElement | null) => {
+        scrollerByTab.current.code = node;
+      },
+    }),
+    [],
+  );
   const foldRef = useRef<HTMLDivElement | null>(null);
   const condensedRowRef = useRef<HTMLDivElement | null>(null);
   // Refund after the fold commits so the content under the reader does not jump with its height.
-  const compensationRef = useRef<number | null>(null);
+  const compensationRef = useRef<{
+    tab: DetailTab;
+    scroller: HTMLDivElement;
+    delta: number;
+  } | null>(null);
   useLayoutEffect(() => {
-    if (compensationRef.current === null) return;
-    const scroller = scrollerRef.current;
-    const delta = compensationRef.current;
+    const compensation = compensationRef.current;
+    if (compensation === null) return;
     compensationRef.current = null;
-    if (scroller) scroller.scrollTop = Math.max(0, scroller.scrollTop + delta);
-  }, [condensed]);
+    if (
+      !condensed ||
+      compensation.tab !== tab ||
+      scrollerByTab.current[tab] !== compensation.scroller
+    )
+      return;
+    compensation.scroller.scrollTop = Math.max(
+      0,
+      compensation.scroller.scrollTop + compensation.delta,
+    );
+  }, [condensed, tab]);
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
@@ -732,16 +759,18 @@ export function PullRequestDetailPanel({
     if (detail?.autoMergeMethod !== undefined) setMergeMethod(detail.autoMergeMethod);
   }, [detail?.autoMergeMethod, pullRequestKey]);
   const repositoryUrl = detail === null ? null : changeRequestRepositoryUrl(detail.url);
+  const hostClient = sourceControlClients.get(detail?.provider);
   const markdownContext = useMemo(
-    () => ({ repositoryUrl: detail?.provider === "github" ? repositoryUrl : null, threadRef }),
-    [detail?.provider, repositoryUrl, threadRef],
+    () => ({
+      repositoryUrl:
+        repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
+      threadRef,
+    }),
+    [hostClient, repositoryUrl, threadRef],
   );
   const authorProfileUrl =
-    detail?.provider === "github" &&
-    detail.author !== null &&
-    !detail.author.login.endsWith("[bot]") &&
-    repositoryUrl !== null
-      ? new URL(`/${encodeURIComponent(detail.author.login)}`, repositoryUrl).toString()
+    detail?.author && repositoryUrl !== null
+      ? hostClient.authorProfileUrl(detail.author.login, repositoryUrl)
       : null;
   const checkoutCommand = handoffSummary
     ? pullRequestCheckoutCommand(
@@ -1725,7 +1754,7 @@ export function PullRequestDetailPanel({
                       </button>
                     }
                   />
-                  <TooltipPopup side="top">{openOnHostLabel(detail.provider)}</TooltipPopup>
+                  <TooltipPopup side="top">{openOnHostLabel(hostClient)}</TooltipPopup>
                 </Tooltip>
               </>
             ) : null}
@@ -1780,7 +1809,7 @@ export function PullRequestDetailPanel({
                       </button>
                     }
                   />
-                  <TooltipPopup side="top">{openOnHostLabel(detail.provider)}</TooltipPopup>
+                  <TooltipPopup side="top">{openOnHostLabel(hostClient)}</TooltipPopup>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger
@@ -1806,6 +1835,7 @@ export function PullRequestDetailPanel({
               ) : null}
               {nativeStack ? (
                 <PullRequestStackMenu
+                  hostLabel={hostClient.label}
                   stack={nativeStack}
                   notice={nativeStackQuery.notice}
                   onRetry={nativeStackQuery.error ? nativeStackQuery.refresh : undefined}
@@ -2211,7 +2241,7 @@ export function PullRequestDetailPanel({
                   ) : null}
                   <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
                     <ArrowUpRightIcon className="size-3.5" />
-                    {openOnHostLabel(detail.provider)}
+                    {openOnHostLabel(hostClient)}
                   </MenuItem>
                   <MenuItem onClick={() => copyReference(detail.url, "PR link")}>
                     <LinkIcon className="size-3.5" />
@@ -2733,8 +2763,8 @@ export function PullRequestDetailPanel({
       <div
         className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
         onScrollCapture={(event) => {
-          const scroller = event.target as HTMLElement;
-          scrollerRef.current = scroller;
+          const scroller = scrollerByTab.current[tab];
+          if (event.target !== scroller || scroller === null || scroller === undefined) return;
           const top = scroller.scrollTop;
           setChromeCondensed((previous) => {
             let next = previous;
@@ -2749,7 +2779,7 @@ export function PullRequestDetailPanel({
                 next = false;
               }
             } else if (foldHeight > 0 && top > foldHeight + 32) {
-              compensationRef.current = -chromeDelta;
+              compensationRef.current = { tab, scroller, delta: -chromeDelta };
               next = true;
             }
             chromeStateByTab.current[tab] = next;
@@ -2775,6 +2805,7 @@ export function PullRequestDetailPanel({
             {mountedTabs.has("summary") ? (
               <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
                 <PullRequestSummaryTab
+                  scrollerRef={scrollerRefs.summary}
                   environmentId={environmentId}
                   threadRef={threadRef}
                   reference={reference}
@@ -2802,6 +2833,7 @@ export function PullRequestDetailPanel({
                   />
                 ) : (
                   <PullRequestTimelineTab
+                    scrollerRef={scrollerRefs.timeline}
                     detail={detail}
                     environmentId={environmentId}
                     threadRef={threadRef}
@@ -2817,6 +2849,7 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
                 <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
                   <PullRequestCodeTab
+                    scrollerRef={scrollerRefs.code}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
                     reference={reference}
