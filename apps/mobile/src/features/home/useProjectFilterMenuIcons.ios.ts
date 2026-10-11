@@ -70,19 +70,28 @@ export function useProjectFilterMenuIcons<T extends HomeListFilterMenuProject>(
     ),
   );
 
-  const [dataUris, setDataUris] = useState<ReadonlyMap<string, string | null>>(faviconDataUris);
+  const [dataUris, setDataUris] = useState<ReadonlyMap<string, string | null>>(
+    () => new Map(faviconDataUris),
+  );
   useEffect(() => {
     let active = true;
+    const refresh = () => {
+      if (active) setDataUris(new Map(faviconDataUris));
+    };
+    let missingCached = false;
     for (const url of faviconUrls) {
-      if (!url || faviconDataUris.has(url)) continue;
-      void loadFaviconDataUri(url).then(() => {
-        if (active) setDataUris(new Map(faviconDataUris));
-      });
+      if (!url) continue;
+      if (faviconDataUris.has(url)) {
+        missingCached ||= !dataUris.has(url);
+        continue;
+      }
+      void loadFaviconDataUri(url).then(refresh);
     }
+    if (missingCached) refresh();
     return () => {
       active = false;
     };
-  }, [faviconUrls]);
+  }, [dataUris, faviconUrls]);
 
   return useMemo(
     () =>
