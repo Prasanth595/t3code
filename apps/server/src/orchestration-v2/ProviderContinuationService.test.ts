@@ -13,6 +13,7 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -605,6 +606,59 @@ describe("ProviderContinuationService", () => {
           yield* Effect.yieldNow;
           assert.equal(yield* Ref.get(attempts), 1);
           assert.equal(yield* Queue.size(acknowledged), 0);
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "clears the adapter's sticky continuation flag when a non-delegated wake is refused",
+    () => {
+      return Effect.gen(function* () {
+        const requested = yield* Ref.make(true);
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(projection),
+          dispatch: () =>
+            Effect.fail(
+              new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                projectId: ProjectId.make("project-provider-continuation-disabled"),
+                instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
+              }) as never,
+            ),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        // Mirrors the ACP adapter's own dispatchIfCurrent: on a failed effect
+        // it clears its sticky "continuation requested" flag before
+        // re-raising. If this service pre-recovered the failure before
+        // handing the effect here, this flag would stay stuck set and
+        // hasPendingBackgroundWork would never clear.
+        const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.gen(function* () {
+            const exit = yield* Effect.exit(effect);
+            if (Exit.isFailure(exit)) {
+              yield* Ref.set(requested, false);
+              return yield* Effect.failCause(exit.cause);
+            }
+            return Option.some(exit.value);
+          });
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer(request(dispatchIfCurrent));
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+          assert.isFalse(
+            yield* Ref.get(requested),
+            "a disabled instance must still clear the adapter's sticky offer flag",
+          );
         }).pipe(
           Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
           Effect.scoped,
