@@ -271,6 +271,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     >
       {category === "project" ? (
         <>
+          {modelRow}
           {projectEnvironments.length > 1 ? (
             <SettingsRow
               serverScoped
@@ -316,7 +317,6 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               }
             />
           ) : null}
-          {modelRow}
           {workspaceRow}
         </>
       ) : category === "general" ? (
