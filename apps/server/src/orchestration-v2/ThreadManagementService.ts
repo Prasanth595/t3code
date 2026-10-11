@@ -307,9 +307,18 @@ export interface ThreadManagementServiceShape {
   readonly ensureLegacyTranscript: (
     threadId: ThreadId,
   ) => Effect.Effect<void, LegacyV1ThreadImporter.LegacyV1ThreadImportError>;
+  /**
+   * The single chokepoint for commands that can start or wake provider work:
+   * `message.dispatch` and `delegated_task.request` are refused here when the
+   * resolved instance is off for the project, except a command id that
+   * already has a receipt, which only replays its recorded result.
+   */
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
-  ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
+  ) => Effect.Effect<
+    Orchestrator.OrchestratorV2DispatchResult,
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
   readonly getThreadHistoryPage: Orchestrator.OrchestratorV2["Service"]["getThreadHistoryPage"];
   readonly getTimelinePage: Orchestrator.OrchestratorV2["Service"]["getTimelinePage"];
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
@@ -408,7 +417,9 @@ export interface ThreadManagementServiceShape {
     readonly byOwnAgent: boolean;
   }) => Effect.Effect<
     { readonly sequence: number } | { readonly settlesWhenTurnEnds: true },
-    Orchestrator.OrchestratorV2Error
+    // Dispatches thread.settle, a command the enablement chokepoint never
+    // gates; the type stays accurate anyway.
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
@@ -429,7 +440,12 @@ export interface ThreadManagementServiceShape {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
     readonly reason?: string | undefined;
-  }) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
+  }) => Effect.Effect<
+    void,
+    // Dispatches thread.stop, a command the enablement chokepoint never
+    // gates; the type stays accurate anyway.
+    Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+  >;
   readonly getThreadEventSequence: Orchestrator.OrchestratorV2["Service"]["getThreadEventSequence"];
   readonly recoverDelegatedTask: Orchestrator.OrchestratorV2["Service"]["recoverDelegatedTask"];
   readonly delegatedTaskResultPending: Orchestrator.OrchestratorV2["Service"]["delegatedTaskResultPending"];
@@ -605,8 +621,41 @@ const make = Effect.gen(function* () {
       Effect.andThen(orchestrator.getThreadSnapshotWindow(threadId, options)),
     );
 
+  // Every path that can start or wake a provider turn funnels through this
+  // dispatch, so resolving and checking the target instance here (instead of
+  // at each caller) is the one place "off" is enforced.
+  const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
+    switch (command.type) {
+      case "message.dispatch":
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((projection) =>
+            assertProviderInstanceEnabled({
+              projectId: projection.thread.projectId,
+              commandId: command.commandId,
+              instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+            }),
+          ),
+        );
+      case "delegated_task.request":
+        return orchestrator.getThreadRecords(command.parentThreadId, []).pipe(
+          Effect.flatMap((parent) =>
+            assertProviderInstanceEnabled({
+              projectId: parent.thread.projectId,
+              commandId: command.commandId,
+              instanceId: command.modelSelection.instanceId,
+            }),
+          ),
+        );
+      default:
+        return Effect.void;
+    }
+  };
+
   const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
-    ensureCommandTranscripts(command).pipe(Effect.andThen(orchestrator.dispatch(command)));
+    ensureCommandTranscripts(command).pipe(
+      Effect.andThen(assertDispatchTargetEnabled(command)),
+      Effect.andThen(orchestrator.dispatch(command)),
+    );
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(
@@ -689,12 +738,6 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
         });
       }
-      yield* assertProviderInstanceEnabled({
-        projectId: input.projectId,
-        commandId: input.commandId,
-        instanceId: (input.modelSelection ?? target.thread.modelSelection).instanceId,
-      });
-
       const steerableRun = latestSteerableRun(target);
       let dispatchMode: Extract<
         OrchestrationV2Command,
@@ -719,7 +762,7 @@ const make = Effect.gen(function* () {
         };
       }
 
-      const dispatch = yield* orchestrator.dispatch({
+      const dispatched = yield* dispatch({
         type: "message.dispatch",
         commandId: input.commandId,
         threadId: input.threadId,
@@ -771,7 +814,7 @@ const make = Effect.gen(function* () {
             : input.mode === "restart"
               ? "restarted"
               : "steered";
-      return { dispatch, projection, message, run, turnItem, delivery };
+      return { dispatch: dispatched, projection, message, run, turnItem, delivery };
     });
 
   const waitForThread: ThreadManagementServiceShape["waitForThread"] = (input) =>
@@ -1029,7 +1072,9 @@ const make = Effect.gen(function* () {
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = (input) =>
     Effect.gen(function* () {
       const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
-      const failures: Array<Orchestrator.OrchestratorV2Error> = [];
+      const failures: Array<
+        Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
+      > = [];
       for (const task of subagents) {
         if (task.origin !== "app_owned" || task.childThreadId === null) continue;
         const threadId = task.childThreadId;

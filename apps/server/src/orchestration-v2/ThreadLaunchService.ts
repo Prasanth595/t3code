@@ -180,9 +180,13 @@ export class ThreadLaunchService extends Context.Service<
       input: Pick<ThreadLaunchInput, "projectId" | "workspaceStrategy">,
     ) => Effect.Effect<void, ThreadLaunchBaseRefError>;
     /** Dispatches prepared-run.retry and prepares the run's workspace again. */
-    readonly retryPreparation: (
-      input: ThreadLaunchRetryInput,
-    ) => Effect.Effect<Orchestrator.OrchestratorV2DispatchResult, Orchestrator.OrchestratorV2Error>;
+    readonly retryPreparation: (input: ThreadLaunchRetryInput) => Effect.Effect<
+      Orchestrator.OrchestratorV2DispatchResult,
+      // Dispatches prepared-run.retry, a command the enablement chokepoint
+      // never gates; the type stays accurate anyway.
+      | Orchestrator.OrchestratorV2Error
+      | ThreadManagement.ThreadManagementProviderInstanceDisabledError
+    >;
   }
 >()("t3/orchestration-v2/ThreadLaunchService") {}
 

@@ -1993,7 +1993,9 @@ const make = Effect.gen(function* () {
           parent.thread.interactionMode,
           input.interactionMode,
         );
-        yield* assertTargetEnabledForProject(parent, commandId, target);
+        // ThreadManagementService.dispatch is the chokepoint for this command
+        // type's own enablement check, using the same command id and its
+        // receipt-replay exemption, so no separate assert runs here.
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -2015,10 +2017,12 @@ const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.mapError((error) =>
-              failure(
-                "orchestration_error",
-                `Unable to create delegated task: ${errorMessage(error)}`,
-              ),
+              error._tag === "ThreadManagementProviderInstanceDisabledError"
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to create delegated task: ${errorMessage(error)}`,
+                  ),
             ),
           );
         const taskEvent = result.storedEvents.find(

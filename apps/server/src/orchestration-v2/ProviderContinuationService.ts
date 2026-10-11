@@ -126,22 +126,49 @@ export const layer = Layer.effectDiscard(
             fixtureName: "delegated-completion",
             commandName: "dispatch",
           });
-          yield* threads.dispatch({
-            type: "message.dispatch",
-            commandId,
-            threadId: request.threadId,
-            messageId: delivery.messageId,
-            text: delegatedCompletionText(delivery.taskIds),
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "agent",
-            creationSource: "server",
-            delegatedCompletion: {
-              parentRunId: request.delegatedCompletion.parentRunId,
-              generation: delivery.generation,
-              taskIds: delivery.taskIds,
-            },
-          });
+          yield* threads
+            .dispatch({
+              type: "message.dispatch",
+              commandId,
+              threadId: request.threadId,
+              messageId: delivery.messageId,
+              text: delegatedCompletionText(delivery.taskIds),
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "server",
+              delegatedCompletion: {
+                parentRunId: request.delegatedCompletion.parentRunId,
+                generation: delivery.generation,
+                taskIds: delivery.taskIds,
+              },
+            })
+            .pipe(
+              // The project turned the target instance off between the cohort
+              // read above and this dispatch. The cohort's delivery stays open
+              // in the run record rather than retrying: the next event that
+              // re-offers it (a sibling completion, a restart) gets a fresh
+              // chance once an enabled instance can serve it.
+              Effect.catchTags({
+                ThreadManagementProviderInstanceDisabledError: (error) =>
+                  Effect.logInfo(
+                    "orchestration-v2.provider-continuation.delegated-completion-disabled",
+                    {
+                      threadId: request.threadId,
+                      projectId: error.projectId,
+                      instanceId: error.instanceId,
+                    },
+                  ).pipe(
+                    Effect.andThen(
+                      request.clearIfCurrent !== undefined
+                        ? request.clearIfCurrent()
+                        : request.dispatchIfCurrent !== undefined
+                          ? request.dispatchIfCurrent(Effect.void)
+                          : Effect.void,
+                    ),
+                  ),
+              }),
+            );
           yield* clearRetryAttempt(retryKey);
           return;
         }
@@ -154,26 +181,41 @@ export const layer = Layer.effectDiscard(
             ordinal: projection.messages.length + 1,
           }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
-          type: "message.dispatch",
-          commandId,
-          threadId: request.threadId,
-          messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
-          // detects to attach the buffered CLI output and drop this text. A
-          // message_text wake has no buffered output, so it must not carry that
-          // marker or the turn settles immediately having prompted nothing.
-          creationSource: request.delivery === "message_text" ? "server" : "provider",
-        });
+        const dispatch = threads
+          .dispatch({
+            type: "message.dispatch",
+            commandId,
+            threadId: request.threadId,
+            messageId,
+            text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+            notification: request.notification ?? {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
+            // detects to attach the buffered CLI output and drop this text. A
+            // message_text wake has no buffered output, so it must not carry that
+            // marker or the turn settles immediately having prompted nothing.
+            creationSource: request.delivery === "message_text" ? "server" : "provider",
+          })
+          .pipe(
+            // The adapter's buffered wake has nowhere else to go once the
+            // instance is off: drop it rather than warn, since nothing here
+            // retries it either way.
+            Effect.catchTags({
+              ThreadManagementProviderInstanceDisabledError: (error) =>
+                Effect.logInfo("orchestration-v2.provider-continuation.instance-disabled", {
+                  threadId: request.threadId,
+                  providerThreadId: request.providerThreadId,
+                  projectId: error.projectId,
+                  instanceId: error.instanceId,
+                }),
+            }),
+          );
         if (request.dispatchIfCurrent === undefined) {
           yield* dispatch;
           return;

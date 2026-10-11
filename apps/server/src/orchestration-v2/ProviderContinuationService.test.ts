@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
+  ProjectId,
   ProviderDriverKind,
+  ProviderInstanceId,
   ProviderThreadId,
   RunId,
   ThreadId,
@@ -528,6 +530,64 @@ describe("ProviderContinuationService", () => {
       );
     });
   });
+
+  it.effect(
+    "a project-disabled instance refuses a delegated-completion wake exactly once, with no retry",
+    () => {
+      return Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const cleared = yield* Ref.make(false);
+        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.succeed(delegatedProjection()),
+          dispatch: () =>
+            Ref.update(attempts, (count) => count + 1).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+                    projectId: ProjectId.make("project-provider-continuation-disabled"),
+                    instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
+                  }) as never,
+                ),
+              ),
+            ),
+        });
+        const layerWorker = ProviderContinuationService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            threadId,
+            providerThreadId,
+            driver,
+            detail: null,
+            delivery: "message_text",
+            clearIfCurrent: () => Ref.set(cleared, true),
+            delegatedCompletion: {
+              parentRunId,
+              generation: 1,
+              messageId: delegatedMessageId,
+            },
+          });
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 1);
+          assert.isTrue(yield* Ref.get(cleared));
+
+          // A refusal is terminal: no backoff timer is pending behind it,
+          // so no further dispatch attempt can ever land.
+          yield* TestClock.adjust("1 hour");
+          yield* Effect.yieldNow;
+          assert.equal(yield* Ref.get(attempts), 1);
+        }).pipe(
+          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+          Effect.scoped,
+        );
+      });
+    },
+  );
 
   it.effect("keeps a Grok delegated completion queued instead of restarting active work", () => {
     return Effect.gen(function* () {

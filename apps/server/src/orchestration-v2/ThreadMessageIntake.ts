@@ -13,7 +13,8 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 
 // These dispatcher failures occur in receipt validation or planning, before
 // commitCommand. Generic dispatch errors can follow a commit and remain uncertain.
-// A disabled-instance refusal is asserted before any dispatch is attempted.
+// A disabled-instance refusal comes from ThreadManagementService.dispatch's
+// own enablement check, which also runs before any commit is attempted.
 function dispatchWasNotAccepted(
   error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
@@ -32,6 +33,7 @@ function dispatchWasNotAccepted(
   }
 }
 const isOrchestratorError = Schema.is(Orchestrator.OrchestratorV2Error);
+const isThreadManagementError = Schema.is(ThreadManagement.ThreadManagementError);
 
 const releaseUnusedClaims = Effect.fn("ThreadMessageIntake.releaseUnusedClaims")(function* (
   claimedPaths: ReadonlyArray<string>,
@@ -56,22 +58,6 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   command: OrchestrationV2Command,
 ) {
   const threads = yield* ThreadManagement.ThreadManagementService;
-  if (command.type === "message.dispatch") {
-    const projection = yield* threads.getThreadRecords(command.threadId, []);
-    yield* threads.assertProviderInstanceEnabled({
-      projectId: projection.thread.projectId,
-      commandId: command.commandId,
-      instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
-    });
-  }
-  if (command.type === "delegated_task.request") {
-    const parent = yield* threads.getThreadRecords(command.parentThreadId, []);
-    yield* threads.assertProviderInstanceEnabled({
-      projectId: parent.thread.projectId,
-      commandId: command.commandId,
-      instanceId: command.modelSelection.instanceId,
-    });
-  }
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
     const incomingByQuestionId = command.attachmentsByQuestionId;
@@ -244,11 +230,14 @@ export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(functi
         }
         // Project/receipt reads precede message dispatch. The create-thread error
         // also wraps post-message projection reads, so its tag alone is not proof.
+        // The initial message's own dispatch can still find the instance newly
+        // disabled, which wraps the same tag handled above instead of surfacing
+        // it directly, so the guard below also recognizes it.
         const notAccepted =
           error.operation === "resolve-project" ||
           error.operation === "read-receipt" ||
           ((error.operation === "create-thread" || error.operation === "dispatch-message") &&
-            isOrchestratorError(error.cause) &&
+            (isOrchestratorError(error.cause) || isThreadManagementError(error.cause)) &&
             // Projection errors under create-thread can occur after the message commit.
             (error.operation !== "create-thread" ||
               error.cause._tag !== "OrchestratorProjectionError") &&
