@@ -1,4 +1,6 @@
 import "vite-plus/test/config";
+import * as NodeModule from "node:module";
+
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -22,6 +24,13 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
+
+// jsonc-parser's `main` is UMD, whose `require("./impl/format")` calls the bundler can't follow,
+// so the bundle takes the package's ESM build. Node and the tests load the `main` entry as it is.
+const jsoncParserEsm = NodeModule.createRequire(import.meta.url)
+  .resolve("jsonc-parser/package.json")
+  .replace(/package\.json$/, "lib/esm/main.js");
+
 const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
   ? "nightly"
   : "latest";
@@ -107,6 +116,7 @@ export default mergeConfig(
         neverBundle: (id: string) => isExternalCliDependency(id),
         onlyBundle: false,
       },
+      alias: { "jsonc-parser": jsoncParserEsm },
       banner: {
         js: "#!/usr/bin/env node\n",
       },
