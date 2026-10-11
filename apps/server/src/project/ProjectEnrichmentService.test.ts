@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import type { RepositoryIdentity } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
@@ -12,6 +13,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
+import * as RepositoryIdentityMemory from "./RepositoryIdentityMemory.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const identity = (workspaceRoot: string, version = 1): RepositoryIdentity => ({
@@ -43,10 +45,17 @@ const layer = (
     | RepositoryIdentityResolver.RepositoryIdentityResolver
   >,
   options: ProjectEnrichment.ProjectEnrichmentServiceOptions = {},
+  workspaceExists: (workspaceRoot: string) => Effect.Effect<boolean> = () => Effect.succeed(true),
 ) =>
   Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make(options)).pipe(
     Layer.provide(metadataLayer),
+    Layer.provide(RepositoryIdentityMemory.layerInMemory),
+    Layer.provide(FileSystem.layerNoop({ exists: workspaceExists })),
   );
+
+const layerFavicon = Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+  resolvePath: () => Effect.succeed(null),
+});
 
 it.effect("preserves either enrichment field when the other resolver fails", () =>
   Effect.gen(function* () {
@@ -486,3 +495,45 @@ it.effect(
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
 );
+
+it.effect("keeps the last resolved identity for a workspace root whose folder is gone", () => {
+  const workspaceRoot = "/repo/feature";
+  const gitAnswers = Ref.makeUnsafe<RepositoryIdentity | null>(identity(workspaceRoot));
+  const folderExists = Ref.makeUnsafe(true);
+  const layerMetadata = Layer.merge(
+    Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+      resolve: () => Ref.get(gitAnswers),
+    }),
+    layerFavicon,
+  );
+  const resolveAgain = (service: ProjectEnrichment.ProjectEnrichmentService["Service"]) =>
+    service
+      .invalidate([workspaceRoot])
+      .pipe(
+        Effect.andThen(service.request(workspaceRoot)),
+        Effect.andThen(
+          waitForAvailable(
+            service,
+            workspaceRoot,
+            (available) => available.repositoryIdentityResolved,
+          ),
+        ),
+      );
+
+  return Effect.gen(function* () {
+    const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+    const resolved = yield* resolveAgain(service);
+    assert.deepStrictEqual(resolved.repositoryIdentity, identity(workspaceRoot));
+
+    // The worktree is removed: git finds nothing in the missing folder, memory answers.
+    yield* Ref.set(gitAnswers, null);
+    yield* Ref.set(folderExists, false);
+    const remembered = yield* resolveAgain(service);
+    assert.deepStrictEqual(remembered.repositoryIdentity, identity(workspaceRoot));
+
+    // The folder is back but has no repository: that null is real and memory stays out of it.
+    yield* Ref.set(folderExists, true);
+    const recreated = yield* resolveAgain(service);
+    assert.strictEqual(recreated.repositoryIdentity, null);
+  }).pipe(Effect.provide(layer(layerMetadata, {}, () => Ref.get(folderExists))));
+});

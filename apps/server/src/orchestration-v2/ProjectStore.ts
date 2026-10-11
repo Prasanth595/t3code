@@ -243,6 +243,14 @@ export const make = Effect.gen(function* () {
         }).pipe(mapError("apply"));
       }
       const payload = event.payload;
+      if (payload.workspaceRoot !== undefined && payload.workspaceRoot !== row.workspaceRoot) {
+        // The remembered identity described the old folder. The new one resolves on its own.
+        yield* sql`
+          UPDATE projection_projects
+          SET repository_identity_json = NULL
+          WHERE project_id = ${row.projectId}
+        `.pipe(mapError("apply"));
+      }
       yield* upsertRow({
         ...row,
         ...(payload.title === undefined ? {} : { title: payload.title }),

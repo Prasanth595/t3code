@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -13,6 +14,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
+import * as RepositoryIdentityMemory from "./RepositoryIdentityMemory.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const DEFAULT_CACHE_CAPACITY = 512;
@@ -97,7 +99,9 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   options: ProjectEnrichmentServiceOptions = {},
 ) {
   const repositoryIdentityResolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const repositoryIdentityMemory = yield* RepositoryIdentityMemory.RepositoryIdentityMemory;
   const faviconResolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+  const fileSystem = yield* FileSystem.FileSystem;
   const cacheCapacity = Math.max(1, options.cacheCapacity ?? DEFAULT_CACHE_CAPACITY);
   const maxPending = Math.max(1, options.maxPending ?? DEFAULT_MAX_PENDING);
   const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
@@ -105,8 +109,25 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   const failureTtl = options.failureTtl ?? DEFAULT_FAILURE_TTL;
   const faviconTtl = options.faviconTtl ?? DEFAULT_FAVICON_TTL;
 
+  // Git has nothing to read in a deleted folder, so a removed worktree would resolve to no
+  // repository and fall out of its group. The identity it last resolved to still names the
+  // repository, so that is the answer while the folder is gone. A folder that exists and resolves
+  // to null really has no repository, and memory stays out of it.
+  const resolveRepositoryIdentityWithMemory = Effect.fn(
+    "ProjectEnrichmentService.resolveRepositoryIdentityWithMemory",
+  )(function* (workspaceRoot: string) {
+    const identity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
+    if (identity !== null) {
+      yield* repositoryIdentityMemory.remember(workspaceRoot, identity);
+      return identity;
+    }
+    const exists = yield* fileSystem.exists(workspaceRoot).pipe(Effect.orElseSucceed(() => true));
+    if (exists) return null;
+    return Option.getOrNull(yield* repositoryIdentityMemory.recall(workspaceRoot));
+  });
+
   const repositoryIdentityCache = yield* Cache.makeWith(
-    (workspaceRoot: string) => Effect.exit(repositoryIdentityResolver.resolve(workspaceRoot)),
+    (workspaceRoot: string) => Effect.exit(resolveRepositoryIdentityWithMemory(workspaceRoot)),
     {
       capacity: cacheCapacity,
       timeToLive: Exit.match({
@@ -308,4 +329,6 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
   });
 });
 
-export const layer = Layer.effect(ProjectEnrichmentService, make());
+export const layer = Layer.effect(ProjectEnrichmentService, make()).pipe(
+  Layer.provide(RepositoryIdentityMemory.layerSql),
+);
