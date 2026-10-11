@@ -402,9 +402,9 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
       httpClient.execute,
       Effect.flatMap(HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)),
       Effect.timeout(CLOUD_CLI_OAUTH_HTTP_TIMEOUT),
-      Effect.catchTag("TimeoutError", (cause) =>
-        Effect.fail(new CloudCliAuthorizationError({ cause })),
-      ),
+      Effect.catchTags({
+        TimeoutError: (cause) => Effect.fail(new CloudCliAuthorizationError({ cause })),
+      }),
     );
     // Clerk's advertised lifetime and interval are authoritative.
     const expiresIn = Duration.seconds(authorization.expires_in);
