@@ -2538,6 +2538,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     const requestWrite = Effect.fn("requestPlanWrite")(function* (
       turn: Effect.Success<ReturnType<typeof openPermissionTurn>>,
       toolName: "Edit" | "Bash",
+      signal: AbortSignal = new AbortController().signal,
     ) {
       const canUseTool = turn.getOpenedOptions()?.canUseTool;
       assert.isFunction(canUseTool);
@@ -2547,7 +2548,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           : { command: "echo after > target.txt" };
       const decision = yield* Effect.promise(() =>
         canUseTool!(toolName, toolInput, {
-          signal: new AbortController().signal,
+          signal,
           toolUseID: "tool-plan-write",
           requestId: "request-plan-write",
         }),
@@ -2632,6 +2633,37 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.equal(permission.first.type, "decision", "Never raised an approval request");
           if (permission.first.type !== "decision") return;
           assert.equal(permission.first.result?.behavior, "deny");
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+    );
+
+    it.effect.each(
+      (["auto", "full-access"] as const).flatMap((runtimeMode) =>
+        (["Edit", "Bash"] as const).map((toolName) => ({ runtimeMode, toolName })),
+      ),
+    )(
+      "denies a pending $toolName approval in $runtimeMode Plan when the turn aborts",
+      ({ runtimeMode, toolName }) =>
+        Effect.gen(function* () {
+          const turn = yield* openPermissionTurn(runtimeMode);
+          const abort = new AbortController();
+          const permission = yield* requestWrite(turn, toolName, abort.signal);
+          assert.equal(permission.first.type, "request");
+          if (permission.first.type !== "request") return;
+          const request = permission.first.event.runtimeRequest;
+
+          abort.abort();
+          assert.equal((yield* Fiber.join(permission.decision))?.behavior, "deny");
+          // A late approval finds no pending request and cannot allow the write.
+          const late = yield* turn.runtime
+            .respondToRuntimeRequest({ requestId: request.id, decision: "accept" })
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(late));
+          assert.equal(yield* turn.fileSystem.readFileString(turn.target), "before");
         }).pipe(
           Effect.scoped,
           Effect.provide(
