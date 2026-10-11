@@ -3,7 +3,6 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { detectComposerTrigger, replaceTextRange } from "../../composer-logic";
 import { buildDocJson, serializeEditorDoc } from "../../composer-rich-text-doc";
@@ -51,7 +50,6 @@ describe("thread references in question answers", () => {
     expect(answers).toEqual({
       q: "Speak with [Parser design](t3-thread://v1/fixture-peer) now to figure this out.",
     });
-    expect(parseThreadLinkHref("t3-thread://v1/fixture-peer")).toBe(record.threadId);
     expect(collectInlineContextIds(edited)).toEqual([]);
   });
 

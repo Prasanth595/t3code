@@ -4,7 +4,7 @@ When an agent asks a question that accepts a custom answer, use **Attach files**
 
 Each question keeps its own attachments as you move between questions. Your normal prompt draft stays separate. Wait for uploads to finish before submitting; retry or remove any failed upload. A failed response keeps the draft available to try again.
 
-On web and desktop, type `@` followed by another thread's title to select it in a custom answer. The answer includes a thread link with its ID, so the agent can consult that thread when asked.
+On web and desktop, type `@` followed by another thread's title to select it in a custom answer. The answer includes a thread link with its ID, which agents with T3 Code tools can use to read that thread.
 
 Files upload to the environment running the thread, including remote environments. The agent receives paths to those saved files with your answer and can open them with its available tools. Questions that only accept predefined choices do not offer attachments. Older servers need updating before this option appears.
 
