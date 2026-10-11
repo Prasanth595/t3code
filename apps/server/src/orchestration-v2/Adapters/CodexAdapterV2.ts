@@ -2735,7 +2735,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           childThreadId: ThreadId,
           rootContext: ActiveCodexTurnContext,
           restoring: ReadonlySet<ThreadId> = new Set(),
-        ): Effect.fn.Return<CodexSubagentThreadContext | undefined, ProviderAdapter.ProviderAdapterProtocolError> {
+        ): Effect.fn.Return<
+          CodexSubagentThreadContext | undefined,
+          ProviderAdapter.ProviderAdapterProtocolError
+        > {
           if (restoring.has(childThreadId) || rootContext.input.readSubagentThread === undefined)
             return;
           const saved = yield* rootContext.input.readSubagentThread(childThreadId).pipe(
@@ -2793,6 +2796,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ...saved.providerThread,
             providerSessionId: input.providerSessionId,
           };
+          const reportedSelection = subagentSelections.get(nativeThreadId);
           const subagent: CodexSubagentThreadContext = {
             parentContext,
             restoredFromProjection: true,
@@ -2816,7 +2820,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             turnItemOrdinal: saved.turnItem.ordinal,
             task: {
               ...saved.subagent,
-              model: subagentModels.get(nativeThreadId) ?? saved.subagent.model,
+              model: reportedSelection?.model ?? saved.subagent.model,
+              ...(reportedSelection === undefined
+                ? {}
+                : {
+                    modelSelection: {
+                      instanceId: saved.subagent.providerInstanceId,
+                      ...reportedSelection,
+                    },
+                  }),
             },
           };
           const latestTurn = saved.latestProviderTurn;
@@ -6938,7 +6950,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
             }).pipe(
               Effect.mapError((cause) =>
-                cause._tag === "ProviderAdapter.ProviderAdapterProtocolError"
+                cause._tag === "ProviderAdapterProtocolError"
                   ? cause
                   : new ProviderAdapter.ProviderAdapterProtocolError({
                       driver: CODEX_PROVIDER,

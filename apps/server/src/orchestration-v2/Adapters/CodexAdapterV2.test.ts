@@ -2308,7 +2308,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         if (response === "invalid") {
           assert.equal(injection._tag, "Failure");
           if (injection._tag === "Failure") {
-            assert.equal(injection.failure._tag, "ProviderAdapter.ProviderAdapterProtocolError");
+            assert.equal(injection.failure._tag, "ProviderAdapterProtocolError");
             assert.propertyVal(injection.failure.cause, "code", -32602);
             assert.notProperty(injection.failure, "payload");
           }
@@ -2448,8 +2448,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const error = yield* harness.runtime.unloadThread!({
         providerThread: harness.providerThread,
       }).pipe(Effect.flip);
-      assert.equal(error._tag, "ProviderAdapter.ProviderAdapterProtocolError");
-      const cause = error._tag === "ProviderAdapter.ProviderAdapterProtocolError" ? error.cause : undefined;
+      assert.equal(error._tag, "ProviderAdapterProtocolError");
+      const cause = error._tag === "ProviderAdapterProtocolError" ? error.cause : undefined;
       assert.equal((cause as { _tag?: string } | undefined)?._tag, "CodexAppServerRequestError");
     }).pipe(
       Effect.scoped,
@@ -7519,7 +7519,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 event.providerTurn.status === "running",
             ),
           );
-        }).pipe(Effect.provide(Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer))),
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
       ),
   );
 
@@ -7888,7 +7892,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             identity,
             providerTurnId: null,
           });
-          const project = Effect.fnUntraced(function* (event: ProviderAdapter.ProviderAdapterV2Event) {
+          const project = Effect.fnUntraced(function* (
+            event: ProviderAdapter.ProviderAdapterV2Event,
+          ) {
             const [accepted, next] = RunExecutionService.routeProviderEvent(
               event,
               identity,
@@ -8568,6 +8574,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           Effect.provide(
             Layer.mergeAll(
               IdAllocator.layer,
+              McpProviderSessions.layer,
               NodeServices.layer,
               ProviderEventIngestor.layer.pipe(
                 Layer.provide(
@@ -8603,7 +8610,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           identity: RunExecutionService.ProviderEventRouteIdentity;
           routing: RunExecutionService.ProviderEventRoutingState;
         }> = [];
-        const project = Effect.fnUntraced(function* (event: ProviderAdapter.ProviderAdapterV2Event) {
+        const project = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
           for (const consumer of consumers) {
             const [accepted, next] = RunExecutionService.routeProviderEvent(
               event,
@@ -8794,6 +8803,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         Effect.provide(
           Layer.mergeAll(
             IdAllocator.layer,
+            McpProviderSessions.layer,
             NodeServices.layer,
             ProjectionStore.layerMemory,
             ProviderEventIngestor.layer.pipe(
