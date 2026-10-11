@@ -132,11 +132,12 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const data = step ? root : nested(root, 1);
   const model = step ? nested(data, 24) : data;
   const usage = bytesAt(data, step ? 9 : 4);
-  const usages = usage === undefined ? [] : [fields(usage)];
+  // Copy the usage bytes: subarrays kept in usages would hold each row's whole blob alive.
+  const usages = usage === undefined ? [] : [fields(usage.slice())];
   for (const retry of data.get(step ? 28 : 17) ?? []) {
     if (!(retry instanceof Uint8Array)) throw new Error("Invalid retry metadata");
     const retryUsage = bytesAt(fields(retry), 2);
-    if (retryUsage !== undefined) usages.push(fields(retryUsage));
+    if (retryUsage !== undefined) usages.push(fields(retryUsage.slice()));
   }
   return {
     model: modelName(
@@ -171,6 +172,8 @@ class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatab
   }
 }
 
+const PAGE_SIZE = 256;
+
 const readDatabase = Effect.fn("readDatabase")(function* (
   path: string,
   sessionId: string,
@@ -192,36 +195,87 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     if (!tables.has("gen_metadata") && !tables.has("steps")) {
       return yield* new AntigravityDatabaseDecodeError({ path });
     }
-    const readMetadata = Effect.fnUntraced(function* (
+    // One statement.all() loads every row it returns before the event loop runs
+    // again, so a table is read in rowid pages when that keeps the query's order:
+    // in an ordinary rowid table with no index and no column named rowid, ORDER BY
+    // idx sorts a rowid-order scan, which paging plus a stable sort by idx
+    // reproduces. Any other table is read with its single query.
+    const readRows = Effect.fnUntraced(function* (
+      table: string,
       query: string,
+      pagedQuery: string,
+      onRow: (
+        row: Record<string, unknown>,
+      ) => Effect.Effect<boolean, AntigravityDatabaseDecodeError>,
+    ) {
+      const [schema] = yield* sql<{ readonly pageable: unknown }>`
+        SELECT EXISTS (SELECT 1 FROM pragma_table_list(${table}) WHERE type = 'table' AND wr = 0)
+          AND NOT EXISTS (SELECT 1 FROM pragma_index_list(${table}))
+          AND NOT EXISTS (SELECT 1 FROM pragma_table_xinfo(${table}) WHERE name = 'rowid' COLLATE NOCASE)
+          AS pageable
+      `;
+      const paged = schema?.pageable === 1;
+      // Rowids can exceed Number.MAX_SAFE_INTEGER, so the cursor is read as text.
+      let after: number | bigint = -Infinity;
+      while (true) {
+        const rows = paged
+          ? yield* sql.unsafe<Record<string, unknown>>(pagedQuery, [after, PAGE_SIZE])
+          : yield* sql.unsafe<Record<string, unknown>>(query);
+        for (const [index, row] of rows.entries()) {
+          if (yield* onRow(row)) return;
+          if ((index + 1) % PAGE_SIZE === 0) yield* Effect.yieldNow;
+        }
+        if (!paged || rows.length < PAGE_SIZE) return;
+        after = BigInt(rows[rows.length - 1]!.position as string);
+      }
+    });
+    const readMetadata = Effect.fnUntraced(function* (
+      table: string,
+      query: string,
+      pagedQuery: string,
       column: string,
       step: boolean,
     ) {
       const entries: Array<{ idx: number; entry: Metadata }> = [];
-      for (const row of yield* sql.unsafe<Record<string, unknown>>(query)) {
-        const idx = row.idx;
-        if (typeof idx !== "number") {
-          return yield* new AntigravityDatabaseDecodeError({ path });
-        }
-        entries.push({ idx, entry: yield* decode(() => metadata(blob(row[column]), step)) });
-        if (entries.length % 256 === 0) yield* Effect.yieldNow;
-      }
-      return entries;
+      yield* readRows(table, query, pagedQuery, (row) =>
+        Effect.gen(function* () {
+          const idx = row.idx;
+          if (typeof idx !== "number") {
+            return yield* new AntigravityDatabaseDecodeError({ path });
+          }
+          entries.push({ idx, entry: yield* decode(() => metadata(blob(row[column]), step)) });
+          return false;
+        }),
+      );
+      return entries.sort((a, b) => a.idx - b.idx);
     });
     const generations = tables.has("gen_metadata")
-      ? yield* readMetadata("SELECT idx, data FROM gen_metadata ORDER BY idx", "data", false)
+      ? yield* readMetadata(
+          "gen_metadata",
+          "SELECT idx, data FROM gen_metadata ORDER BY idx",
+          "SELECT CAST(rowid AS TEXT) AS position, idx, data FROM gen_metadata WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          "data",
+          false,
+        )
       : [];
     let trajectoryTimestamp: number | null = null;
     if (tables.has("trajectory_metadata_blob")) {
-      for (const row of yield* sql.unsafe<{ readonly data: unknown }>(
+      yield* readRows(
+        "trajectory_metadata_blob",
         "SELECT data FROM trajectory_metadata_blob",
-      )) {
-        trajectoryTimestamp ??= yield* decode(() => timestamp(nested(fields(blob(row.data)), 2)));
-      }
+        "SELECT CAST(rowid AS TEXT) AS position, data FROM trajectory_metadata_blob WHERE rowid > ? ORDER BY rowid LIMIT ?",
+        (row) =>
+          decode(() => {
+            trajectoryTimestamp = timestamp(nested(fields(blob(row.data)), 2));
+            return trajectoryTimestamp !== null;
+          }),
+      );
     }
     const steps = tables.has("steps")
       ? yield* readMetadata(
+          "steps",
           "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx",
+          "SELECT CAST(rowid AS TEXT) AS position, idx, metadata FROM steps WHERE metadata IS NOT NULL AND rowid > ? ORDER BY rowid LIMIT ?",
           "metadata",
           true,
         )
