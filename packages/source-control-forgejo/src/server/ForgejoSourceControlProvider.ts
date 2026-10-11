@@ -8,6 +8,7 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import {
+  isMissingExecutable,
   providerAuth,
   probeSourceControlProvider,
   type SourceControlCliDiscoverySpec,
@@ -150,13 +151,28 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return null;
+        let unanswered: ForgejoCli.ForgejoCliError | undefined;
         for (const command of ["fj", "tea"] as const) {
           const logins = yield* listLogins({
             cwd: input.cwd,
             command,
             remoteUrl: input.context.remoteUrl,
-          }).pipe(Effect.orElseSucceed(() => []));
-          const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
+          }).pipe(Effect.result);
+          if (Result.isFailure(logins)) {
+            // Only a CLI that is not installed holds no login. Every spawn failure, a missing
+            // checkout too, is `missing-cli`; tea's cause tells them apart, and fj's never has one.
+            const error = logins.failure;
+            const missing =
+              error.reason === "missing-cli" &&
+              (command === "fj" ? error.cause === undefined : isMissingExecutable(error.cause));
+            if (!missing) unanswered = error;
+            continue;
+          }
+          const login = ForgejoCli.matchForgejoLogin(
+            logins.success,
+            remote,
+            input.context.requestedHost,
+          );
           if (login)
             return {
               kind: SourceControlProviderKind.make("forgejo"),
@@ -164,7 +180,15 @@ export const makeDiscovery = Effect.gen(function* () {
               baseUrl: login.url,
             };
         }
-        return null;
+        if (unanswered === undefined) return null;
+        return yield* new SourceControlProviderError({
+          provider: SourceControlProviderKind.make("forgejo"),
+          operation: "refineUnknownRemote",
+          cwd: input.cwd,
+          command: unanswered.command,
+          detail: unanswered.detail,
+          cause: unanswered,
+        });
       },
     ),
   } satisfies SourceControlManagedCliDiscoverySpec;

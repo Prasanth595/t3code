@@ -4,14 +4,20 @@
  * @module source-control-core/server/discovery
  */
 import * as NodeUtil from "node:util";
-import type {
-  SourceControlProviderAuth,
-  SourceControlProviderDiscoveryItem,
-  SourceControlProviderInfo,
-  SourceControlProviderKind,
+import {
+  VcsProcessSpawnError,
+  type SourceControlProviderAuth,
+  type SourceControlProviderDiscoveryItem,
+  type SourceControlProviderError,
+  type SourceControlProviderInfo,
+  type SourceControlProviderKind,
+  type VcsError,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as SourceControlHost from "./SourceControlHost.ts";
@@ -55,10 +61,11 @@ export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
 export type SourceControlManagedCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "managed-cli";
   readonly probe: (cwd: string) => Effect.Effect<SourceControlProviderDiscoveryItem>;
+  /** Fails when the integration could not answer for this checkout, as opposed to answering no. */
   readonly refineUnknownRemote: (input: {
     readonly cwd: string;
     readonly context: SourceControlProvider.SourceControlProviderContext;
-  }) => Effect.Effect<SourceControlProviderInfo | null>;
+  }) => Effect.Effect<SourceControlProviderInfo | null, SourceControlProviderError>;
 };
 
 export type SourceControlProviderDiscoverySpec =
@@ -294,19 +301,44 @@ export function probeSourceControlProvider(input: {
   );
 }
 
+const isVcsProcessSpawnError = Schema.is(VcsProcessSpawnError);
+
+/**
+ * A hosting CLI that is not installed claims no remote for any checkout. The spawner checks the
+ * cwd with `FileSystem.access` first, so a missing checkout fails there instead; only the
+ * executable's own ENOENT comes from `ChildProcess`. Any other failure says nothing of the host.
+ */
+export function isMissingExecutable(error: unknown): boolean {
+  return (
+    isVcsProcessSpawnError(error) &&
+    error.cause instanceof PlatformError.PlatformError &&
+    error.cause.reason._tag === "NotFound" &&
+    error.cause.reason.module === "ChildProcess"
+  );
+}
+
+export interface UnknownRemoteVerdict {
+  /** The first integration that claims the remote, or null when none does. */
+  readonly provider: SourceControlProviderInfo | null;
+  /**
+   * Every integration up to that answer could ask, so another checkout of the remote would hear
+   * the same. False when one could not ask from this checkout (it is missing, a CLI timed out).
+   */
+  readonly settled: boolean;
+}
+
 export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvider")(
   function* (input: {
     readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
     readonly process: SourceControlHost.SourceControlHost["Service"]["process"];
     readonly cwd: string;
-    readonly context: SourceControlProvider.SourceControlProviderContext | null;
-  }): Effect.fn.Return<SourceControlProvider.SourceControlProviderContext | null> {
-    if (input.context === null || input.context.provider.kind !== "unknown") {
-      return input.context;
-    }
+    readonly context: SourceControlProvider.SourceControlProviderContext;
+  }): Effect.fn.Return<UnknownRemoteVerdict> {
     const context = input.context;
 
-    const providers = yield* Effect.forEach(input.specs, (spec) => {
+    const ask = (
+      spec: SourceControlProviderDiscoverySpec,
+    ): Effect.Effect<SourceControlProviderInfo | null, SourceControlProviderError | VcsError> => {
       if (spec.type === "managed-cli") {
         return spec.refineUnknownRemote({ cwd: input.cwd, context });
       }
@@ -330,11 +362,18 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
               auth,
             }),
           ),
-          Effect.orElseSucceed(() => null),
+          // A CLI that is not installed answers no for every checkout.
+          Effect.catchIf(isMissingExecutable, () => Effect.succeed(null)),
         );
-    });
-    const provider = providers.find((candidate) => candidate !== null);
-
-    return provider ? { ...context, provider } : context;
+    };
+    const answers = yield* Effect.forEach(input.specs, (spec) => Effect.result(ask(spec)));
+    // The first claim wins. It is settled only if every integration before it answered, since one
+    // that could not ask might have claimed first.
+    let settled = true;
+    for (const answer of answers) {
+      if (Result.isFailure(answer)) settled = false;
+      else if (answer.success !== null) return { provider: answer.success, settled };
+    }
+    return { provider: null, settled };
   },
 );

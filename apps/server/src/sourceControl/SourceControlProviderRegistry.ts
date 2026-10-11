@@ -3,8 +3,11 @@ import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
@@ -18,14 +21,20 @@ import {
   probeSourceControlProvider,
   refineUnknownRemoteProvider,
   type SourceControlProviderDiscoverySpec,
+  type UnknownRemoteVerdict,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 const PROVIDER_DETECTION_CACHE_CAPACITY = 2_048;
 const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
+const UNKNOWN_REMOTE_CACHE_CAPACITY = 512;
+// A login made in a terminal (`gh auth login`, `tea login add`) sends the server no signal, so
+// each host is asked again after this long.
+const UNKNOWN_REMOTE_CACHE_TTL = Duration.minutes(5);
 
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
@@ -150,6 +159,45 @@ function selectProviderContext(
   );
 }
 
+// What the refiners read, minus `owner/repo`: the provider name and base URL (GitHub, GitLab),
+// the remote's scheme, host, port and any installation mount (Forgejo), and a requested host.
+function unknownRemoteKey(context: SourceControlProvider.SourceControlProviderContext): string {
+  const remote = context.remoteUrl
+    .trim()
+    .replace(/\/+$/u, "")
+    .replace(/\.git$/iu, "");
+  const url = /^[a-z][a-z0-9+.-]*:\/\//iu.test(remote) ? URL.parse(remote) : null;
+  const server = url
+    ? `${url.protocol}//${url.host}${url.pathname.split("/").slice(0, -2).join("/")}`
+    : remote.replace(/^[^@/]+@/u, "").replace(/:.*$/u, ""); // SCP form: the host alone
+  return [
+    context.provider.name,
+    context.provider.baseUrl,
+    server.toLowerCase(),
+    context.requestedHost?.toLowerCase() ?? "",
+  ].join("\u0000");
+}
+
+/** Checkouts of one server share a lookup; the first to ask supplies the cwd and context. */
+class UnknownRemoteRequest {
+  readonly key: string;
+  readonly cwd: string;
+  readonly context: SourceControlProvider.SourceControlProviderContext;
+
+  constructor(cwd: string, context: SourceControlProvider.SourceControlProviderContext) {
+    this.key = unknownRemoteKey(context);
+    this.cwd = cwd;
+    this.context = context;
+  }
+
+  [Equal.symbol](that: unknown): boolean {
+    return that instanceof UnknownRemoteRequest && that.key === this.key;
+  }
+  [Hash.symbol](): number {
+    return Hash.string(this.key);
+  }
+}
+
 function bindProviderContext(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   context: SourceControlProvider.SourceControlProviderContext | null,
@@ -198,6 +246,7 @@ function bindProviderContext(
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig.ServerConfig;
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
     const { process } = yield* SourceControlHost.SourceControlHost;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
     const providers = new Map<
@@ -208,6 +257,41 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 
     const get: SourceControlProviderRegistry["Service"]["get"] = (kind) =>
       Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
+
+    // Only a settled verdict is kept. One a checkout could not reach is shared with the lookups
+    // already waiting on it, then dropped.
+    const unknownRemoteCache = yield* Cache.makeWith<UnknownRemoteRequest, UnknownRemoteVerdict>(
+      (request) =>
+        refineUnknownRemoteProvider({
+          specs: discoverySpecs,
+          process,
+          cwd: request.cwd,
+          context: request.context,
+        }),
+      {
+        capacity: UNKNOWN_REMOTE_CACHE_CAPACITY,
+        timeToLive: (exit) =>
+          Exit.isSuccess(exit) && exit.value.settled ? UNKNOWN_REMOTE_CACHE_TTL : Duration.zero,
+      },
+    );
+    // A token, account or host switch saved in Settings changes what GitHub claims.
+    const settingsChanges = yield* serverSettings.subscribeChanges;
+    yield* Stream.runForEach(settingsChanges, () => Cache.invalidateAll(unknownRemoteCache)).pipe(
+      Effect.forkScoped,
+    );
+
+    // The verdict for the remote's server, applied to this caller's own context.
+    const refineRemote = (
+      cwd: string,
+      context: SourceControlProvider.SourceControlProviderContext | null,
+    ): Effect.Effect<SourceControlProvider.SourceControlProviderContext | null> =>
+      context === null || context.provider.kind !== "unknown"
+        ? Effect.succeed(context)
+        : Cache.get(unknownRemoteCache, new UnknownRemoteRequest(cwd, context)).pipe(
+            Effect.map((verdict) =>
+              verdict.provider ? { ...context, provider: verdict.provider } : context,
+            ),
+          );
 
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
@@ -237,12 +321,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         );
         const context = selectProviderContext(remotes.remotes);
 
-        return yield* refineUnknownRemoteProvider({
-          specs: discoverySpecs,
-          process,
-          cwd,
-          context,
-        });
+        return yield* refineRemote(cwd, context);
       },
     );
 
@@ -258,12 +337,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
       (input.context === undefined
         ? Cache.get(providerContextCache, input.cwd)
-        : refineUnknownRemoteProvider({
-            specs: discoverySpecs,
-            process,
-            cwd: input.cwd,
-            context: input.context,
-          })
+        : refineRemote(input.cwd, input.context)
       ).pipe(
         Effect.map((context) => {
           const kind = context?.provider.kind ?? SourceControlProviderKind.make("unknown");
