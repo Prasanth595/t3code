@@ -1,5 +1,5 @@
 import { BranchNamingMode, type ServerSettingsPatch } from "@t3tools/contracts";
-import { useRef } from "react";
+import { useEffect, useEffectEvent, useRef } from "react";
 import { View } from "react-native";
 
 import { AppText as Text, AppTextInput } from "../../../components/AppText";
@@ -25,8 +25,22 @@ export function BranchNamingSettings(props: {
   disabled: boolean;
   onChange: (patch: ServerSettingsPatch) => void;
 }) {
-  const prefixEdited = useRef(false);
-  const instructionsEdited = useRef(false);
+  // Typed text waits here until it saves. Android's Back closes the keyboard
+  // without ending editing, so leaving the screen saves it too.
+  const drafts = useRef<{ branchNamePrefix?: string; branchNameInstructions?: string }>({});
+  const save = (field: "branchNamePrefix" | "branchNameInstructions") => {
+    const draft = drafts.current[field];
+    delete drafts.current[field];
+    if (draft === undefined || props.disabled) return;
+    const value = draft.trim();
+    const saved = field === "branchNamePrefix" ? props.prefix : props.instructions;
+    if (saved === null || value !== saved) props.onChange({ [field]: value });
+  };
+  const saveDrafts = useEffectEvent(() => {
+    save("branchNamePrefix");
+    save("branchNameInstructions");
+  });
+  useEffect(() => () => saveDrafts(), []);
   return (
     <SettingsSection
       title="Worktree branch naming"
@@ -53,8 +67,8 @@ export function BranchNamingSettings(props: {
           <AppTextInput
             key={props.prefix}
             accessibilityLabel="Branch prefix"
-            onChangeText={() => {
-              prefixEdited.current = true;
+            onChangeText={(text) => {
+              drafts.current.branchNamePrefix = text;
             }}
             defaultValue={props.prefix ?? ""}
             placeholder={props.prefix === null ? "Mixed" : "No prefix"}
@@ -62,16 +76,7 @@ export function BranchNamingSettings(props: {
             autoCapitalize="none"
             autoCorrect={false}
             className="min-h-10 rounded-xl px-3 py-2 text-base text-foreground"
-            onEndEditing={(event) => {
-              const value = event.nativeEvent.text.trim();
-              if (
-                !props.disabled &&
-                prefixEdited.current &&
-                (props.prefix === null || value !== props.prefix)
-              )
-                props.onChange({ branchNamePrefix: value });
-              prefixEdited.current = false;
-            }}
+            onEndEditing={() => save("branchNamePrefix")}
           />
         </View>
       ) : null}
@@ -83,8 +88,8 @@ export function BranchNamingSettings(props: {
           <AppTextInput
             key={props.instructions}
             accessibilityLabel="Branch naming instructions"
-            onChangeText={() => {
-              instructionsEdited.current = true;
+            onChangeText={(text) => {
+              drafts.current.branchNameInstructions = text;
             }}
             defaultValue={props.instructions ?? ""}
             placeholder={
@@ -96,16 +101,7 @@ export function BranchNamingSettings(props: {
             multiline
             autoCapitalize="sentences"
             className="min-h-24 rounded-xl px-3 py-2 text-base text-foreground"
-            onEndEditing={(event) => {
-              const value = event.nativeEvent.text.trim();
-              if (
-                !props.disabled &&
-                instructionsEdited.current &&
-                (props.instructions === null || value !== props.instructions)
-              )
-                props.onChange({ branchNameInstructions: value });
-              instructionsEdited.current = false;
-            }}
+            onEndEditing={() => save("branchNameInstructions")}
           />
         </View>
       ) : null}
