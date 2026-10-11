@@ -267,7 +267,9 @@ function mapQueryAcrossKeyboardLayouts(query: string): ReadonlyArray<string> {
   const layoutIds = lookupCharacter(layoutIdsByCharacter, trigger.toLowerCase());
   if (layoutIds === undefined) return NO_LAYOUT_VARIANTS;
 
-  const lowercased = query.toLowerCase();
+  // Composed first, so a pasted `α` + combining acute reads as the one `ά` it
+  // shows. Lam-alef has no composed form and stays two characters.
+  const lowercased = query.normalize("NFC").toLowerCase();
   const characters = [...lowercased];
   const variants = new Set<string>();
   for (const layoutId of layoutIds) {

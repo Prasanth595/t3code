@@ -53,6 +53,13 @@ describe("expandQueryAcrossKeyboardLayouts", () => {
     expect(expandQueryAcrossKeyboardLayouts("ىهلاف")).toEqual(["nibt", "night"]);
   });
 
+  it("reads a decomposed accented letter like its composed spelling", () => {
+    expect(expandQueryAcrossKeyboardLayouts("\u03B1\u0301")).toEqual(
+      expandQueryAcrossKeyboardLayouts("\u03AC"),
+    );
+    expect(expandQueryAcrossKeyboardLayouts("\u03B1\u0301")).toContain("a");
+  });
+
   it("reads each overlapping key on its own", () => {
     // `لالا` is two lam-alef keys, two `gh` pairs, or one of each in either order.
     expect([...expandQueryAcrossKeyboardLayouts("لالا")].toSorted()).toEqual([
