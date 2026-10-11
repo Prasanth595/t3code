@@ -38,7 +38,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, type UseEditorOptions } from "@tiptap/react";
 
 import {
   clampCollapsedComposerCursor,
@@ -1039,8 +1039,10 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     [activeSuggestionId, ariaLabel, className, disabled, placeholder, richText, suggestionListId],
   );
 
-  const editor = useEditor(
-    {
+  // Tiptap compares these options on every render. Fresh extension and editorProps
+  // objects force a ProseMirror view update even when only thread state changed.
+  const editorOptions = useMemo<UseEditorOptions>(
+    () => ({
       extensions: [
         StarterKit.configure({
           blockquote: false,
@@ -1148,25 +1150,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             ]
           : []),
       ],
-      content: buildDocJson(
-        value,
-        (name) => {
-          const normalized = name.startsWith("$") ? name.slice(1) : name;
-          const found = skills.find((candidate) => candidate.name === normalized);
-          if (!found) {
-            return {
-              label: formatProviderSkillDisplayName({ name: normalized }),
-              description: null,
-            };
-          }
-          const shortDescription = found.shortDescription?.trim();
-          return {
-            label: formatProviderSkillDisplayName(found),
-            description: shortDescription || found.description?.trim() || null,
-          };
-        },
-        { styling: richText, literalText },
-      ),
+      content: buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
       editable: !disabled,
       editorProps: {
         attributes: editorAttributes,
@@ -1485,12 +1469,14 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       onSelectionUpdate: ({ editor: updated }) => {
         handleEditorChange(updated);
       },
-    },
-    [],
+    }),
+    [disabled, editorAttributes, handleEditorChange, literalText, richText, skillLabelFor, value],
   );
 
+  const editor = useEditor(editorOptions, []);
+
   useEffect(() => {
-    editor?.setEditable(!disabled);
+    if (editor && editor.options.editable !== !disabled) editor.setEditable(!disabled);
   }, [disabled, editor]);
 
   useEffect(() => {
@@ -1504,7 +1490,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   // through `className`, so the attributes are pushed to the view here for
   // those measurements to see the layout they are about to reserve for.
   useLayoutEffect(() => {
-    if (!editor?.isInitialized) return;
+    if (!editor?.isInitialized || editor.view.props.attributes === editorAttributes) return;
     editor.view.setProps({ attributes: editorAttributes });
   }, [editor, editorAttributes]);
 
@@ -1572,7 +1558,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     }
     const map = serializeEditorDoc(editor.state.doc);
     const flat = collapsedToFlat(map, normalizedCursor);
-    editor.commands.setTextSelection(flatToPm(map, flat));
+    const position = flatToPm(map, flat);
+    const selection = editor.state.selection;
+    if (!(selection instanceof TextSelection) || !selection.empty || selection.from !== position) {
+      editor.commands.setTextSelection(position);
+    }
     if (isFocused) scrollTiptapCaretIntoView(editor);
     if (pendingCitation) {
       citationRequestRef.current = null;

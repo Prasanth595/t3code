@@ -132,6 +132,7 @@ interface ThreadResumeSnapshot {
 interface ThreadResumeCache {
   snapshot: ThreadResumeSnapshot | undefined;
   owner: object | undefined;
+  hydration?: Effect.Effect<ThreadResumeSnapshot>;
 }
 
 function matchesThreadSnapshot(
@@ -168,6 +169,58 @@ function cachedThreadState(value: EnvironmentThreadState): EnvironmentThreadStat
   };
 }
 
+const hydrateThreadResumeCache = Effect.fn("EnvironmentThreadState.hydrateResumeCache")(function* (
+  environmentId: EnvironmentIdType,
+  threadId: ThreadIdType,
+  resume: ThreadResumeCache,
+) {
+  if (resume.snapshot !== undefined) return resume.snapshot;
+  if (resume.hydration === undefined) {
+    const cache = yield* Persistence.EnvironmentCacheStore;
+    // Pointerdown and navigation join one disk read/decode, without opening
+    // a live subscription or fetching a snapshot for a cached thread.
+    resume.hydration = yield* Effect.cached(
+      cache.loadThread(environmentId, threadId).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not load cached thread.", {
+            environmentId,
+            threadId,
+            error: error.message,
+          }).pipe(Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>())),
+        ),
+        Effect.map((cached): ThreadResumeSnapshot => {
+          const data = Option.map(cached, (snapshot) => snapshot.projection);
+          return {
+            state: {
+              data,
+              status: statusWithoutLiveData(data),
+              error: Option.none(),
+              history: Option.match(cached, {
+                onNone: () => EMPTY_THREAD_HISTORY_META,
+                onSome: historyMetaFromCachedSnapshot,
+              }),
+            },
+            sequence: Option.match(cached, {
+              onNone: () => 0,
+              onSome: (snapshot) => snapshot.snapshotSequence,
+            }),
+            persisted: Option.isSome(cached),
+            supportsHistoryPaging: Option.exists(
+              cached,
+              (snapshot) => snapshot.historyCursor !== undefined,
+            ),
+          };
+        }),
+      ),
+    );
+  }
+  const cached = yield* resume.hydration;
+  // Never replace a state installed by a newer live scope.
+  resume.snapshot ??= cached;
+  delete resume.hydration;
+  return resume.snapshot;
+});
+
 export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make")(function* (
   threadId: ThreadIdType,
   resumeCache?: ThreadResumeCache,
@@ -185,55 +238,28 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   );
   const wakeups = yield* Effect.serviceOption(ConnectionWakeups.ConnectionWakeups);
   const environmentId = supervisor.target.environmentId;
-  const retained = resumeCache?.snapshot;
   const owner = {};
   if (resumeCache) resumeCache.owner = owner;
-  const cached =
-    retained === undefined
-      ? yield* cache.loadThread(environmentId, threadId).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not load cached thread.").pipe(
-              Effect.annotateLogs({
-                environmentId,
-                threadId,
-                error: error.message,
-              }),
-              Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>()),
-            ),
-          ),
-        )
-      : Option.none<OrchestrationV2ThreadDetailSnapshot>();
-  const cachedThread = Option.map(cached, (snapshot) => snapshot.projection);
-  const initialState: EnvironmentThreadState = retained
-    ? cachedThreadState(retained.state)
-    : {
-        data: cachedThread,
-        status: statusWithoutLiveData(cachedThread),
-        error: Option.none(),
-        history: Option.match(cached, {
-          onNone: () => EMPTY_THREAD_HISTORY_META,
-          onSome: historyMetaFromCachedSnapshot,
-        }),
-      };
+  const initialSnapshot = yield* hydrateThreadResumeCache(
+    environmentId,
+    threadId,
+    resumeCache ?? { snapshot: undefined, owner: undefined },
+  );
+  const initialState = cachedThreadState(initialSnapshot.state);
   const state = yield* SubscriptionRef.make(initialState);
   // Client capability opts into bounded socket resets even when HTTP fails.
   // Persistence separately requires paging metadata confirmed by the server.
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
   const acceptsBoundedSocketSnapshots = yield* Ref.make(canLoadHistory);
-  const supportsHistoryPaging = yield* Ref.make(
-    retained?.supportsHistoryPaging ??
-      Option.exists(cached, (snapshot) => snapshot.historyCursor !== undefined),
-  );
+  const supportsHistoryPaging = yield* Ref.make(initialSnapshot.supportsHistoryPaging === true);
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
-  const initialSequence =
-    retained?.sequence ??
-    Option.match(cached, { onNone: () => 0, onSome: (snapshot) => snapshot.snapshotSequence });
+  const initialSequence = initialSnapshot.sequence;
   const lastSequence = yield* SubscriptionRef.make(initialSequence);
   let committed: ThreadResumeSnapshot = {
     state: initialState,
     sequence: initialSequence,
-    persisted: retained?.persisted ?? Option.isSome(cached),
+    persisted: initialSnapshot.persisted,
     supportsHistoryPaging: yield* Ref.get(supportsHistoryPaging),
   };
   if (resumeCache?.owner === owner) resumeCache.snapshot = committed;
@@ -1010,42 +1036,10 @@ export function createEnvironmentThreadStateAtoms<R, E>(
           return resume.snapshot === undefined
             ? Stream.concat(
                 Stream.unwrap(
-                  Effect.gen(function* () {
-                    // Decode only this opened thread, without waiting for discovery/auth/socket.
-                    const cache = yield* Persistence.EnvironmentCacheStore;
-                    const cached = yield* cache.loadThread(environmentId, threadId).pipe(
-                      Effect.catch((error) =>
-                        Effect.logWarning("Could not load cached thread.", {
-                          environmentId,
-                          threadId,
-                          error: error.message,
-                        }).pipe(Effect.as(Option.none<OrchestrationV2ThreadDetailSnapshot>())),
-                      ),
-                    );
-                    const data = Option.map(cached, (snapshot) => snapshot.projection);
-                    const state: EnvironmentThreadState = {
-                      data,
-                      status: statusWithoutLiveData(data),
-                      error: Option.none(),
-                      history: Option.match(cached, {
-                        onNone: () => EMPTY_THREAD_HISTORY_META,
-                        onSome: historyMetaFromCachedSnapshot,
-                      }),
-                    };
-                    resume.snapshot = {
-                      state,
-                      sequence: Option.match(cached, {
-                        onNone: () => 0,
-                        onSome: (snapshot) => snapshot.snapshotSequence,
-                      }),
-                      persisted: Option.isSome(cached),
-                      supportsHistoryPaging: Option.exists(
-                        cached,
-                        (snapshot) => snapshot.historyCursor !== undefined,
-                      ),
-                    };
-                    return Stream.succeed(state);
-                  }),
+                  // Disk hydration still precedes discovery/auth/socket.
+                  hydrateThreadResumeCache(environmentId, threadId, resume).pipe(
+                    Effect.map((snapshot) => Stream.succeed(cachedThreadState(snapshot.state))),
+                  ),
                 ),
                 live,
               )
@@ -1065,17 +1059,23 @@ export function createEnvironmentThreadStateAtoms<R, E>(
       label: "environment-thread:prefetch",
       concurrency: {
         mode: "singleFlight",
-        key: ({ environmentId, input }) => threadKey({ environmentId, threadId: input }),
+        key: ({
+          environmentId,
+          input,
+        }: {
+          environmentId: EnvironmentIdType;
+          input: ThreadIdType;
+        }) => threadKey({ environmentId, threadId: input }),
       },
       execute: (threadId: ThreadIdType, registry, environmentId) =>
         Effect.gen(function* () {
           const retained = registry.get(resumeFamily(threadKey({ environmentId, threadId })));
-          if (retained.snapshot !== undefined && Option.isSome(retained.snapshot.state.data))
-            return;
+          const snapshot = yield* hydrateThreadResumeCache(environmentId, threadId, retained);
+          if (Option.isSome(snapshot.state.data) || snapshot.state.status === "deleted") return;
           const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
           const prepared = yield* SubscriptionRef.get(supervisor.prepared);
           if (Option.isNone(prepared)) return;
-          // Intent must not decode disk histories for threads the user has not opened.
+          // Only an activated thread without a disk snapshot needs an HTTP warmup.
           const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
           yield* loader.prefetch?.(prepared.value, threadId) ?? Effect.void;
         }),

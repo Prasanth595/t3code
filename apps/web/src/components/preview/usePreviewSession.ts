@@ -67,6 +67,7 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
+    const initialSessions = get.once(sessionsAtom);
     get.subscribe(sessionsAtom, (result) => {
       reconcileSessions(result);
     });
@@ -81,7 +82,10 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       // The cached list can predate an automation-created tab. Keep the local
       // snapshot visible until an authoritative refresh arrives instead of
       // reconciling against a stale empty result when the panel first mounts.
-      get.refresh(sessionsAtom);
+      // Mount already starts a fresh request. Do not interrupt and repeat it.
+      if (initialSessions._tag !== "Initial" && !initialSessions.waiting) {
+        get.refresh(sessionsAtom);
+      }
       if (eventsVersion === 0) applyLatestEvent(initialEvent);
     });
   }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`preview:session-sync:${threadKey}`));

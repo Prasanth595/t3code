@@ -478,13 +478,15 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
   const sourceControlDiscovery = useEnvironmentQuery(
-    props.environmentId === null
+    !props.open || props.environmentId === null
       ? null
       : sourceControlEnvironment.discovery({
           environmentId: props.environmentId,
           input: {},
         }),
   );
+  const isLoadingPublishProviders =
+    sourceControlDiscovery.isPending && sourceControlDiscovery.data === null;
   const [selectedPublishProvider, setSelectedPublishProvider] =
     useState<SourceControlProviderKind | null>(null);
   const [publishRepositoryOverride, setPublishRepositoryOverride] = useState<string | null>(null);
@@ -672,7 +674,21 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
         </WizardHeader>
 
         <WizardPanel>
-          <div className={cn("space-y-2", publishWizardStep !== 0 && "hidden")}>
+          {publishWizardStep === 0 && isLoadingPublishProviders ? (
+            <div
+              role="status"
+              className="flex items-center gap-2 py-3 text-xs text-muted-foreground"
+            >
+              <Spinner size="sm" aria-hidden />
+              Checking source control accounts...
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              "space-y-2",
+              (publishWizardStep !== 0 || isLoadingPublishProviders) && "hidden",
+            )}
+          >
             <span id="publish-provider-cards-label" className="text-xs font-medium text-foreground">
               Provider
             </span>

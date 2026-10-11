@@ -1,5 +1,5 @@
-import { fileURLToPath } from "node:url";
-import type { Plugin } from "vite-plus";
+import * as NodeURL from "node:url";
+import { minify, type HtmlTagDescriptor, type Plugin } from "vite-plus";
 
 /** Coalesce startup imports without pulling dynamic panels or icon pickers into boot. */
 export function coldBootPlugin(): Plugin {
@@ -14,8 +14,8 @@ export function coldBootPlugin(): Plugin {
           // An explicit main entry lets Rolldown identify its live static dependencies
           // after tree shaking. Bootstrap still imports it dynamically.
           input: [
-            fileURLToPath(new URL("../index.html", import.meta.url)),
-            fileURLToPath(new URL("../src/main.tsx", import.meta.url)),
+            NodeURL.fileURLToPath(new URL("../index.html", import.meta.url)),
+            NodeURL.fileURLToPath(new URL("../src/main.tsx", import.meta.url)),
           ],
           output: {
             codeSplitting: {
@@ -48,7 +48,7 @@ export function coldBootPlugin(): Plugin {
     },
     transformIndexHtml: {
       order: "post",
-      handler(html, context) {
+      async handler(html, context) {
         const bundle = context.bundle;
         if (!bundle) return;
         const files = new Set<string>();
@@ -64,16 +64,17 @@ export function coldBootPlugin(): Plugin {
         for (const chunk of Object.values(bundle)) {
           if (
             chunk.type === "chunk" &&
-            /\/apps\/web\/src\/(?:main\.tsx|routes\/_chat(?:\.\$environmentId\.\$threadId)?\.tsx\?tsr-split=component)$/.test(
+            /\/apps\/web\/src\/(?:main\.tsx|components\/CommandPalette\.tsx|observability\/clientTracing\.ts|routes\/_chat(?:\.\$environmentId\.\$threadId)?\.tsx\?tsr-split=component)$/.test(
               chunk.facadeModuleId?.replaceAll("\\", "/") ?? "",
             )
           ) {
             visit(chunk.fileName);
           }
         }
-        // Preload startup and thread imports without evaluating them or following lazy panels.
+        // Tracing and palette content can download alongside boot without being evaluated.
+        // Preload startup and thread imports without following lazy panels.
         const missing = (fileName: string) => !html.includes(`href="${base}${fileName}"`);
-        return [
+        const tags: HtmlTagDescriptor[] = [
           ...[...files].filter(missing).map((fileName) => ({
             tag: "link",
             attrs: { rel: "modulepreload", crossorigin: "", href: `${base}${fileName}` },
@@ -85,6 +86,13 @@ export function coldBootPlugin(): Plugin {
             injectTo: "head" as const,
           })),
         ];
+        // Inline startup scripts ship on every HTML load.
+        for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/g)) {
+          const result = await minify("boot.js", match[1]!);
+          if (result.errors.length) throw new Error("Could not minify boot script.");
+          html = html.replace(match[0], `<script>${result.code}</script>`);
+        }
+        return { html, tags };
       },
     },
   };

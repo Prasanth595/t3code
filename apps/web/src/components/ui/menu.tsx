@@ -8,6 +8,7 @@ import { cn } from "~/lib/utils";
 import { buttonVariants } from "./button";
 
 const Menu = MenuPrimitive.Root;
+export const MenuCreateHandle = MenuPrimitive.createHandle;
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (

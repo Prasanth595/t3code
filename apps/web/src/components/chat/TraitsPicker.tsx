@@ -164,9 +164,6 @@ function getSelectedTraits(
       descriptor.type === "boolean",
   );
   const primarySelectDescriptor = selectDescriptors[0] ?? null;
-  const contextWindowDescriptor =
-    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
-  const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
   const fastModeDescriptor =
     booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
   const thinkingDescriptor =
@@ -181,35 +178,16 @@ function getSelectedTraits(
   // Check if "ultrathink" appears in the body text (not just our prefix)
   const ultrathinkInBodyText =
     ultrathinkPromptControlled && isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
-  const effort =
-    (ultrathinkPromptControlled
-      ? "ultrathink"
-      : getDescriptorStringValue(primarySelectDescriptor)) ?? null;
-  const thinkingEnabled =
-    typeof thinkingDescriptor?.currentValue === "boolean" ? thinkingDescriptor.currentValue : null;
-  const contextWindow = getDescriptorStringValue(contextWindowDescriptor);
-  const selectedAgent = getDescriptorStringValue(agentDescriptor);
-  const selectedAgentLabel = agentDescriptor
-    ? getProviderOptionCurrentLabel(agentDescriptor)
-    : null;
 
   return {
-    caps,
     descriptors,
     selectDescriptors,
     booleanDescriptors,
     primarySelectDescriptor,
-    contextWindowDescriptor,
-    agentDescriptor,
     fastModeDescriptor,
     thinkingDescriptor,
-    effort,
-    thinkingEnabled,
-    contextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
-    selectedAgent,
-    selectedAgentLabel,
     modelIsUnavailable,
   };
 }
@@ -233,25 +211,12 @@ function getTraitsSectionVisibility(input: {
     input.planModeEnabled,
   );
 
-  const showEffort = selected.primarySelectDescriptor !== null;
-  const showThinking = selected.thinkingDescriptor !== null;
-  const showFastMode = selected.fastModeDescriptor !== null;
-  const showContextWindow = selected.contextWindowDescriptor !== null;
-  const showAgent = selected.agentDescriptor !== null;
-
   return {
     ...selected,
-    showEffort,
-    showThinking,
-    showFastMode,
-    showContextWindow,
-    showAgent,
     hasAnyControls:
-      showEffort ||
-      showThinking ||
-      showFastMode ||
-      showContextWindow ||
-      showAgent ||
+      selected.primarySelectDescriptor !== null ||
+      selected.thinkingDescriptor !== null ||
+      selected.fastModeDescriptor !== null ||
       (selected.modelIsUnavailable && selected.descriptors.length > 0),
   };
 }
@@ -591,7 +556,7 @@ export const TraitsPicker = memo(function TraitsPicker({
   }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
-  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled, hasAnyControls } =
     getTraitsSectionVisibility({
       provider,
       models,
@@ -601,17 +566,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       allowPromptInjectedEffort,
       planModeEnabled,
     });
-  if (
-    !shouldRenderTraitsControls({
-      provider,
-      models,
-      model,
-      prompt,
-      modelOptions,
-      allowPromptInjectedEffort,
-      planModeEnabled,
-    })
-  ) {
+  if (!hasAnyControls) {
     return null;
   }
 

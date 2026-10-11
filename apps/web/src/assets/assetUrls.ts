@@ -76,12 +76,11 @@ export function useAssetUrls(
           ),
     [canReadFiles, resources],
   );
-  const results = useAtomValue(
-    assetEnvironment.createUrls({
-      environmentId,
-      resources: allowedResources,
-    }),
+  const atom = useMemo(
+    () => assetEnvironment.createUrls({ environmentId, resources: allowedResources }),
+    [environmentId, allowedResources],
   );
+  const results = useAtomValue(atom);
   return useMemo(() => {
     if (preparedConnection._tag === "None") return resources.map(() => null);
     let resultIndex = 0;

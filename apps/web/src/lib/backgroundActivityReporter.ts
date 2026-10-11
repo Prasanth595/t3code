@@ -20,6 +20,7 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import { randomUUID } from "./utils";
+import { waitForFirstTimelinePaint } from "./firstTimelinePaint";
 
 const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
 const REPORT_INTERVAL_MS = 25_000;
@@ -168,7 +169,10 @@ export function retainedBackgroundScopes(
 export const layerObserver = Layer.succeed(
   EnvironmentRpcSubscriptionObserver,
   EnvironmentRpcSubscriptionObserver.of({
-    observe: observeBackgroundActivitySubscription,
+    observe: (observation) =>
+      waitForFirstTimelinePaint(observation.method).pipe(
+        Effect.andThen(() => observeBackgroundActivitySubscription(observation)),
+      ),
   }),
 );
 

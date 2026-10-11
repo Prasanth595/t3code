@@ -26,7 +26,7 @@ export const environmentSnapshotAtom = createEnvironmentSnapshotAtom(environment
 
 export const allEnvironmentShellsBootstrappedAtom = Atom.make((get) => {
   const catalog = AsyncResult.value(get(environmentCatalog.catalogAtom));
-  if (Option.isNone(catalog)) {
+  if (Option.isNone(catalog) || !catalog.value.isReady) {
     return false;
   }
   for (const environmentId of enabledEnvironmentIds(catalog.value)) {

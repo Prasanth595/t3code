@@ -98,4 +98,29 @@ function ContextStrip({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-export const ComposerSurface = { Shell, Host, Main, ContextStrip };
+/** Reserves the empty desktop editor's body and toolbar until the timeline paints. */
+function Pending({ className, ...props }: ComponentProps<"textarea">) {
+  return (
+    <Main>
+      <div className="relative px-3 pt-3.5 pb-2 sm:px-4 sm:pt-4">
+        <div className="relative flow-root font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt,var(--text-sm))">
+          <textarea
+            {...props}
+            aria-label="Message"
+            data-testid="composer-editor"
+            placeholder="Ask anything..."
+            className={cn(
+              "-m-1 block h-19.5 w-[calc(100%+0.5rem)] resize-none overflow-y-auto bg-transparent p-1 leading-relaxed text-foreground placeholder:text-placeholder/75 focus:outline-none",
+              className,
+            )}
+          />
+        </div>
+      </div>
+      <div aria-hidden className="px-3 pb-3 sm:px-4 sm:pb-4">
+        <div className="h-8" />
+      </div>
+    </Main>
+  );
+}
+
+export const ComposerSurface = { Shell, Host, Main, ContextStrip, Pending };

@@ -83,6 +83,7 @@ import React, {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
+  lazy,
   use,
   useCallback,
   memo,
@@ -100,6 +101,7 @@ import type {
 import ReactMarkdown from "react-markdown";
 import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
+import { remarkCacheParsedMarkdown } from "../markdown-parsed-cache";
 import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
@@ -116,7 +118,6 @@ import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
-import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { markdownImageGallery, markdownImageItems } from "./chat/markdownImageGallery";
 import { MediaVideoPlayer } from "./media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "./media/MediaActions";
@@ -211,6 +212,10 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+
+const ExpandedImageDialog = lazy(() =>
+  import("./chat/ExpandedImageDialog").then((module) => ({ default: module.ExpandedImageDialog })),
+);
 
 interface ChatMarkdownProps {
   text: string;
@@ -3473,6 +3478,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+const MemoizedReactMarkdown = memo(ReactMarkdown);
+
 function ChatMarkdown({
   text,
   className,
@@ -3493,13 +3500,15 @@ function ChatMarkdown({
     props.isStreaming === true &&
     extraRemarkPlugins.length === 0 &&
     /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
+  const cacheParsedMarkdown = props.isStreaming !== true && extraRemarkPlugins.length === 0;
   const remarkPlugins = useMemo(
     () => [
       ...(lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS),
       ...extraRemarkPlugins,
       ...(incrementalParsing ? [createIncrementalMarkdownPlugin()] : []),
+      ...(cacheParsedMarkdown ? [remarkCacheParsedMarkdown] : []),
     ],
-    [extraRemarkPlugins, incrementalParsing, lineBreaks],
+    [cacheParsedMarkdown, extraRemarkPlugins, incrementalParsing, lineBreaks],
   );
 
   // react-markdown converts unparsed HTML nodes to text when skipHtml is false.
@@ -3517,7 +3526,7 @@ function ChatMarkdown({
       onCopy={handleCopy}
     >
       <ChatMarkdownRendererContext value={componentState}>
-        <ReactMarkdown
+        <MemoizedReactMarkdown
           remarkPlugins={remarkPlugins}
           rehypePlugins={
             parseRawHtml
@@ -3529,13 +3538,15 @@ function ChatMarkdown({
           urlTransform={markdownUrlTransform}
         >
           {text}
-        </ReactMarkdown>
+        </MemoizedReactMarkdown>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
-        <ExpandedImageDialog
-          preview={localMediaPreview}
-          onClose={() => setLocalMediaPreview(null)}
-        />
+        <Suspense fallback={null}>
+          <ExpandedImageDialog
+            preview={localMediaPreview}
+            onClose={() => setLocalMediaPreview(null)}
+          />
+        </Suspense>
       ) : null}
     </div>
   );

@@ -35,9 +35,9 @@ import { Button } from "../ui/button";
 /**
  * Holds back authenticated and hosted app trees until the first-run decision
  * is known, so a fresh install never flashes the main screen before the wizard.
- * Explicit thread links bypass this decision so their cached rows and detail
- * hydration do not wait for live workspace evidence. Landing pages stay blank
- * while pending, including EventRouter's automatic welcome navigation.
+ * Explicit thread links can mount while workspace evidence is pending after
+ * settings hydrate. Wizard and recovery decisions still apply. Landing pages
+ * stay blank while pending, including EventRouter's automatic welcome navigation.
  *
  * Decision order: a set `onboardingCompletedAt` resolves to the app as soon as
  * settings hydrate (the common case, no server round-trip). A `null` flag also
@@ -173,7 +173,7 @@ export function FirstRunGate({
     persistCompletion,
   ]);
 
-  // A stalled server read gets a recovery screen, but never mounts the app.
+  // A stalled server read gets a recovery screen.
   // The timer starts after settings hydrate so slow local hydration does not
   // show a false connection failure.
   useEffect(() => {
@@ -186,17 +186,16 @@ export function FirstRunGate({
   }, [decision, enabled, hydrated]);
 
   useEffect(() => {
-    if (decision === "wizard" && pathname !== "/welcome" && threadRef === null) {
+    if (decision === "wizard" && pathname !== "/welcome") {
       void navigate({ to: "/welcome", replace: true });
     }
-  }, [decision, navigate, pathname, threadRef]);
+  }, [decision, navigate, pathname]);
 
-  // An explicit thread link takes precedence over automatic first-run navigation.
-  // Mount its detail even before live workspace evidence or settings arrives.
-  if (threadRef !== null) return children;
   if (settingsReadFailed) {
     return <FirstRunRecovery reason="settings" retrying={hydrationStatus === "retrying"} />;
   }
+  // Thread details need not wait for workspace evidence, but cannot bypass a known decision.
+  if (threadRef !== null && hydrated && decision === "pending" && !stalled) return children;
   if (decision !== "app") {
     return stalled ? <FirstRunRecovery reason="connection" /> : null;
   }

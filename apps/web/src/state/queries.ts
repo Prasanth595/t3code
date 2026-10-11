@@ -22,7 +22,7 @@ import type {
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useFilesystemReadAccess } from "./filesystem";
@@ -59,9 +59,12 @@ const threadSearchResultsAtom = createThreadSearchResultsAtomFamily({
 
 export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
+  const settled = useRef(value);
 
   useEffect(() => {
+    if (Object.is(value, settled.current)) return;
     const timer = window.setTimeout(() => {
+      settled.current = value;
       setDebounced(value);
     }, delayMs);
     return () => {

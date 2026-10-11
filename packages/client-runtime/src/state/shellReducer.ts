@@ -1,7 +1,7 @@
 import {
   OrchestrationV2ThreadShell,
+  OrchestrationProjectShell,
   ThreadPullRequestLink,
-  type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
   type OrchestrationV2ShellStreamItem,
 } from "@t3tools/contracts";
@@ -9,6 +9,9 @@ import * as Schema from "effect/Schema";
 
 const sameThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);
 const sameLinks = Schema.toEquivalence(Schema.UndefinedOr(Schema.Array(ThreadPullRequestLink)));
+const sameRepositoryIdentity = Schema.toEquivalence(
+  OrchestrationProjectShell.fields.repositoryIdentity,
+);
 
 /** Whether two rows' pull request links are equal, including both absent. */
 export function sameThreadPullRequests(
@@ -96,39 +99,36 @@ export function mergeShellSnapshotProjects(
     return next;
   }
 
-  const isEnrichment = options !== undefined;
-  const resolvedRootSet = isEnrichment ? new Set(options.resolvedRepositoryIdentityRoots) : null;
-
-  if (isEnrichment) {
+  if (options !== undefined) {
+    const resolvedRootSet = new Set(options.resolvedRepositoryIdentityRoots);
     const nextById = new Map(next.projects.map((project) => [project.id, project] as const));
-    return {
-      ...previous,
-      projects: previous.projects.map((project) => {
-        const candidate = nextById.get(project.id);
-        if (candidate === undefined || candidate.workspaceRoot !== project.workspaceRoot) {
-          return project;
-        }
-        if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
-        }
-        if (project.repositoryIdentity == null && candidate.repositoryIdentity != null) {
-          return { ...project, repositoryIdentity: candidate.repositoryIdentity };
-        }
+    const projects = previous.projects.map((project) => {
+      const candidate = nextById.get(project.id);
+      if (candidate === undefined || candidate.workspaceRoot !== project.workspaceRoot) {
         return project;
-      }),
-    };
+      }
+      if (
+        (resolvedRootSet.has(project.workspaceRoot) ||
+          (project.repositoryIdentity == null && candidate.repositoryIdentity != null)) &&
+        !sameRepositoryIdentity(project.repositoryIdentity, candidate.repositoryIdentity)
+      ) {
+        return { ...project, repositoryIdentity: candidate.repositoryIdentity };
+      }
+      return project;
+    });
+    // Resume metadata often repeats the HTTP snapshot. Keep project rows and
+    // their list stable so sidebar grouping and memoized thread rows can skip it.
+    return projects.every((project, index) => project === previous.projects[index])
+      ? previous
+      : { ...previous, projects };
   }
 
   const previousById = new Map(previous.projects.map((project) => [project.id, project] as const));
   return {
     ...next,
-    projects: next.projects.map((project) => {
-      const prior = previousById.get(project.id);
-      if (resolvedRootSet?.has(project.workspaceRoot) === true) {
-        return project;
-      }
-      return retainRepositoryIdentity(prior, project);
-    }),
+    projects: next.projects.map((project) =>
+      retainRepositoryIdentity(previousById.get(project.id), project),
+    ),
   };
 }
 

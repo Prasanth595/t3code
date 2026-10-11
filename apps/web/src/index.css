@@ -2338,6 +2338,7 @@ code {
     );
   }
   [data-chat-canvas] .messages-timeline-scroll {
+    contain: layout style;
     padding-inline-start: calc(
       0.75rem + var(--chat-lane-inset-start, 0px) - var(--chat-timeline-gutter, 0px)
     );

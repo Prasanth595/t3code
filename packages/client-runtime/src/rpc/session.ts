@@ -25,6 +25,7 @@ import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
 import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+import { shareServerLifecycle } from "./serverLifecycle.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -85,6 +86,7 @@ type ServerConfigSubscription = Stream.Stream<
 type ServerConfigSubscriptionInput = Parameters<
   WsRpcProtocolClient[typeof WS_METHODS.subscribeServerConfig]
 >[0];
+type ServerLifecycleMethod = WsRpcProtocolClient[typeof WS_METHODS.subscribeServerLifecycle];
 type EnvironmentThemesUpdatedEvent = Extract<
   ServerConfigStreamEvent,
   { readonly type: "environmentThemesUpdated" }
@@ -218,6 +220,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       Effect.withSpan("environment.websocket.connect"),
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));
+    const lifecycleEvents = yield* shareServerLifecycle(
+      protocolClient[WS_METHODS.subscribeServerLifecycle]({}),
+    );
     const initialConfigDeferred = yield* Deferred.make<ServerConfig>();
     const serverConfigExit = yield* Deferred.make<void, ServerConfigSubscriptionError>();
     const configSubscriptionClosed = yield* Deferred.make<never, ConnectionAttemptError>();
@@ -383,7 +388,20 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     );
 
     return {
-      client: protocolClient,
+      client: {
+        ...protocolClient,
+        [WS_METHODS.subscribeServerLifecycle]: ((
+          input: Parameters<ServerLifecycleMethod>[0],
+          options?: Parameters<ServerLifecycleMethod>[1],
+        ) =>
+          // Explicit headers, context, and queue options keep their original RPC semantics.
+          options === undefined
+            ? lifecycleEvents
+            : protocolClient[WS_METHODS.subscribeServerLifecycle](
+                input,
+                options,
+              )) as ServerLifecycleMethod,
+      },
       initialConfig,
       subscribeServerConfig,
       ready: Deferred.await(connected).pipe(

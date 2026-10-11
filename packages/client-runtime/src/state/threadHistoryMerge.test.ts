@@ -105,7 +105,8 @@ describe("threadHistoryMerge", () => {
       "item-2",
       "item-3",
     ]);
-    expect(merged.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3]);
+    expect(merged.visibleTurnItems[2]).toBe(projection.visibleTurnItems[0]);
+    expect(merged.visibleTurnItems[3]).toBe(projection.visibleTurnItems[1]);
     expect(merged.turnItems.map((item) => item.id)).toEqual([
       "item-2",
       "item-3",

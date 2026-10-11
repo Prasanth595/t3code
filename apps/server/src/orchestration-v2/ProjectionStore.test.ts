@@ -829,6 +829,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           snapshotSequence: 0,
         });
         assert.lengthOf(page.items, turns * 102);
+        const history = yield* projectionStore.getThreadHistoryPage(threadId, cursor!);
+        assert.deepEqual(
+          history.items.map((row) => String(row.sourceItemId)),
+          page.items.map((row) => String(row.sourceItemId)),
+        );
+        assert.strictEqual(history.hasMoreHistory, page.hasMoreHistory);
         loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }

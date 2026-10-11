@@ -85,6 +85,8 @@ import {
   isConversationHistoryItem,
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
+  decodeThreadHistoryCursor,
+  encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   selectRecentTimelineWindow,
   THREAD_HISTORY_PAGE_POLICY,
@@ -4930,6 +4932,131 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readTimelineIndex(threadId, new Set()).pipe(Effect.map((index) => index.visible)),
     );
 
+    // Ordinary local history can seek by ordinal without decoding the entire
+    // timeline and its control state. Forks, hidden rows and search jumps retain
+    // the ancestry-aware selector below.
+    const seekHistoryPage = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      cursor: string,
+      snapshotSequence: number,
+      conversationOnly: boolean,
+    ) {
+      let anchor: ReturnType<typeof decodeThreadHistoryCursor>;
+      try {
+        anchor = decodeThreadHistoryCursor(cursor);
+      } catch {
+        // Preserve thread-not-found precedence and cursor errors in the fallback.
+        return null;
+      }
+      if (anchor.st !== threadId) return null;
+      const anchors = yield* sql<{ ordinal: number; turn_item_id: string }>`
+        SELECT item.ordinal, item.turn_item_id
+        FROM orchestration_v2_projection_turn_items item
+        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = item.thread_id
+        WHERE item.thread_id = ${threadId} AND item.turn_item_id = ${anchor.si}
+          AND thread.deleted_at IS NULL
+          AND json_extract(thread.payload_json, '$.forkedFrom.type') IS NOT 'run'
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs
+            WHERE thread_id = ${threadId} AND status IN ('rolled_back', 'cancelled')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_run_attempts
+            WHERE thread_id = ${threadId} AND status = 'superseded'
+          )`;
+      const end = anchors[0];
+      if (end === undefined) return null;
+      const turns = yield* sql<{
+        ordinal: number;
+        turn_item_id: string;
+        created_by: string | null;
+      }>`
+        SELECT ordinal, turn_item_id, json_extract(payload_json, '$.createdBy') AS created_by
+        FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId} AND type = 'user_message'
+          AND (ordinal, turn_item_id) < (${end.ordinal}, ${end.turn_item_id})
+          AND json_extract(payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
+        ORDER BY ordinal DESC, turn_item_id DESC LIMIT ${THREAD_HISTORY_MAX_RAW_TURNS}`;
+      const userTurns = turns.filter((row) => row.created_by === "user");
+      if (userTurns.length === 0) {
+        const users = yield* sql<{ turn_item_id: string }>`
+          SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId} AND type = 'user_message'
+            AND (ordinal, turn_item_id) < (${end.ordinal}, ${end.turn_item_id})
+            AND json_extract(payload_json, '$.inputIntent') IN ('turn_start', 'queued_turn')
+            AND json_extract(payload_json, '$.createdBy') = 'user'
+          LIMIT 1`;
+        // No-user histories need the payload byte budget as well as the row limit.
+        if (users.length === 0) return null;
+      }
+      const start =
+        userTurns[OLDER_THREAD_USER_TURN_LIMIT - 1] ??
+        (turns.length === THREAD_HISTORY_MAX_RAW_TURNS ? turns.at(-1) : undefined);
+      const rows = yield* sql<{
+        ordinal: number;
+        turn_item_id: string;
+        run_id: string | null;
+        node_id: string | null;
+        type: OrchestrationV2TurnItem["type"];
+        payload_json: string | null;
+      }>`
+        SELECT ordinal, turn_item_id, run_id, node_id, type,
+          CASE WHEN ${conversationOnly ? 1 : 0} = 0
+            OR type NOT IN ('command_execution', 'reasoning', 'file_change', 'dynamic_tool')
+            THEN payload_json END AS payload_json
+        FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId}
+          AND (ordinal, turn_item_id) < (${end.ordinal}, ${end.turn_item_id})
+          ${start === undefined ? sql`` : sql`AND (ordinal, turn_item_id) >= (${start.ordinal}, ${start.turn_item_id})`}
+        ORDER BY ordinal ASC, turn_item_id ASC`;
+      const oldest = rows[0];
+      if (oldest === undefined) return null;
+      // Cursor fallback positions stay identical to the canonical full index.
+      // This count uses the covering thread/ordinal index, without reading bodies.
+      const counts = yield* sql<{ count: number }>`
+        SELECT COUNT(*) AS count FROM orchestration_v2_projection_turn_items
+        WHERE thread_id = ${threadId}
+          AND (ordinal, turn_item_id) < (${oldest.ordinal}, ${oldest.turn_item_id})`;
+      const offset = counts[0]?.count ?? 0;
+      const items = rows.map((row, position) => ({
+        sourceThreadId: threadId,
+        sourceItemId: TurnItemId.make(row.turn_item_id),
+        visibility: "local" as const,
+        position,
+        canonicalPosition: offset + position,
+        item: {
+          id: TurnItemId.make(row.turn_item_id),
+          threadId,
+          runId: row.run_id === null ? null : RunId.make(row.run_id),
+          nodeId: row.node_id === null ? null : NodeId.make(row.node_id),
+          type: row.type,
+        },
+        synthetic: undefined,
+      }));
+      return {
+        page: {
+          items,
+          nextCursor:
+            offset > 0
+              ? encodeThreadHistoryCursor({
+                  snapshotSequence,
+                  sourceThreadId: threadId,
+                  sourceItemId: oldest.turn_item_id,
+                  position: offset,
+                })
+              : null,
+          hasMoreHistory: offset > 0,
+        },
+        payloads: new Map(
+          rows.flatMap((row) =>
+            row.payload_json === null
+              ? []
+              : [[`${threadId}:${row.turn_item_id}`, row.payload_json] as const],
+          ),
+        ),
+      };
+    });
+
     const getThreadHistoryPage: ProjectionStoreV2Shape["getThreadHistoryPage"] = (
       threadId,
       cursor,
@@ -4939,57 +5066,83 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       sql
         .withTransaction(
           Effect.gen(function* () {
-            const index = yield* readTimelineIndex(threadId, new Set());
-            if (index.records.thread.deletedAt !== null)
-              return yield* new ProjectionStoreThreadNotFoundError({ threadId });
             const revisions = yield* sql<{
               sequence: number;
             }>`SELECT COALESCE(MAX(sequence), 0) AS sequence
           FROM orchestration_events WHERE application_event_version = 2
           AND aggregate_kind = 'thread' AND stream_id = ${threadId}`;
             const snapshotSequence = revisions[0]?.sequence ?? 0;
-            // Choose complete turns from the light index before loading any bodies.
-            // A history page does not need nodes, provider turns, or other control state.
-            const page = yield* Effect.try({
-              try: () =>
-                selectHistoryPageFromCursor({
-                  items: index.visible.map((row, position) => ({
-                    ...row,
-                    position,
-                    canonicalPosition: position,
-                  })),
-                  cursor,
-                  snapshotSequence,
-                  rowEncodedBytes: () => 0,
-                  throughEntryId,
-                }),
-              catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
-            });
-            const end = (page.items.at(-1)?.canonicalPosition ?? -1) + 1;
-            const hasUserTurns = index.visible
-              .slice(0, end)
-              .some((row) => isThreadHistoryUserTurn(row.item));
+            const sought =
+              throughEntryId === undefined
+                ? yield* seekHistoryPage(
+                    threadId,
+                    cursor,
+                    snapshotSequence,
+                    conversationOnly === true,
+                  )
+                : null;
+            const selected =
+              sought === null
+                ? yield* Effect.gen(function* () {
+                    const index = yield* readTimelineIndex(threadId, new Set());
+                    if (index.records.thread.deletedAt !== null)
+                      return yield* new ProjectionStoreThreadNotFoundError({ threadId });
+                    // Choose complete turns from the light index before loading any bodies.
+                    // A history page does not need nodes, provider turns, or other control state.
+                    const page = yield* Effect.try({
+                      try: () =>
+                        selectHistoryPageFromCursor({
+                          items: index.visible.map((row, position) => ({
+                            ...row,
+                            position,
+                            canonicalPosition: position,
+                          })),
+                          cursor,
+                          snapshotSequence,
+                          rowEncodedBytes: () => 0,
+                          throughEntryId,
+                        }),
+                      catch: (cause) => new ProjectionStoreReadError({ threadId, cause }),
+                    });
+                    const end = (page.items.at(-1)?.canonicalPosition ?? -1) + 1;
+                    return {
+                      page,
+                      hasUserTurns: index.visible
+                        .slice(0, end)
+                        .some((row) => isThreadHistoryUserTurn(row.item)),
+                    };
+                  })
+                : { page: sought.page, hasUserTurns: true };
+            const { page, hasUserTurns } = selected;
             const materialized =
               conversationOnly && hasUserTurns
                 ? page.items.filter((row) => isConversationHistoryItem(row.item))
                 : page.items;
-            const sources = yield* encodeTimelineSources(
-              materialized
-                .filter((row) => !row.synthetic)
-                .map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
-            );
-            const payloads = yield* sql<{
-              thread_id: string;
-              turn_item_id: string;
-              payload_json: string;
-            }>`
+            const byIdentity =
+              sought !== null
+                ? sought.payloads
+                : yield* Effect.gen(function* () {
+                    const sources = yield* encodeTimelineSources(
+                      materialized
+                        .filter((row) => !row.synthetic)
+                        .map((row) => ({ threadId: row.sourceThreadId, id: row.sourceItemId })),
+                    );
+                    const payloads = yield* sql<{
+                      thread_id: string;
+                      turn_item_id: string;
+                      payload_json: string;
+                    }>`
           SELECT item.thread_id, item.turn_item_id, item.payload_json
           FROM orchestration_v2_projection_turn_items item JOIN json_each(${sources}) wanted
           ON item.thread_id = json_extract(wanted.value, '$.threadId')
             AND item.turn_item_id = json_extract(wanted.value, '$.id')`;
-            const byIdentity = new Map(
-              payloads.map((row) => [`${row.thread_id}:${row.turn_item_id}`, row.payload_json]),
-            );
+                    return new Map(
+                      payloads.map((row) => [
+                        `${row.thread_id}:${row.turn_item_id}`,
+                        row.payload_json,
+                      ]),
+                    );
+                  });
             const items = yield* Effect.forEach(materialized, (row) =>
               Effect.gen(function* () {
                 const payload = byIdentity.get(`${row.sourceThreadId}:${row.sourceItemId}`);

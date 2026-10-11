@@ -1,5 +1,5 @@
 import { PermissionUpdateNotice } from "../components/PermissionUpdateNotice";
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   Outlet,
@@ -9,20 +9,20 @@ import {
   type ErrorComponentProps,
   useLocation,
   useNavigate,
+  useParams,
   useRouter,
 } from "@tanstack/react-router";
 import { Check, Copy } from "lucide";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
 import { APP_BASE_NAME, APP_DISPLAY_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { resolveServerBackedAppDisplayName } from "../branding.logic";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
-import { CommandPalette } from "../components/CommandPalette";
+import { CommandPalette } from "../components/CommandPaletteHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
-import { ConnectOnboardingDialog } from "../components/cloud/ConnectOnboardingDialog";
 import { RelayClientInstallDialog } from "../components/cloud/RelayClientInstallDialog";
 import { SshPasswordPromptDialog } from "../components/desktop/SshPasswordPromptDialog";
 import { SnapShotCoordinator } from "../components/desktop/SnapShotCoordinator";
@@ -63,7 +63,7 @@ import {
 } from "../logicalProject";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
-import { configureClientTracing } from "../observability/clientTracing";
+import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { resolveInitialServerAuthGateState } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
@@ -83,9 +83,64 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { useFirstTimelinePaint } from "../lib/firstTimelinePaint";
+import { resolveThreadRouteRef } from "../threadRoutes";
+import { canUseEarlyPrimaryHttp } from "../connection/earlyPrimaryHttp";
+import { fetchSessionState, peekPairingTokenFromUrl } from "../environments/primary/auth";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentShell } from "../state/shell";
+import { environmentThreadDetails } from "../state/threads";
+
+let initialThreadDataStarted = false;
+let releaseInitialThreadData: (() => void) | undefined;
+
+function warmInitialThreadData(pathname: string): void {
+  if (initialThreadDataStarted) return;
+  initialThreadDataStarted = true;
+  if (!canUseEarlyPrimaryHttp() || peekPairingTokenFromUrl()) return;
+  const match = /^\/([^/]+)\/([^/]+)\/?$/.exec(pathname);
+  const descriptor = window.__t3EarlyPrimaryHttp?.responses["/.well-known/t3/environment"];
+  if (!match || !descriptor || /^\/(settings|projects|draft)\//.test(pathname)) return;
+  let active = true;
+  const releases: Array<() => void> = [];
+  releaseInitialThreadData = () => {
+    active = false;
+    for (const release of releases) release();
+    releaseInitialThreadData = undefined;
+  };
+  void Promise.all([descriptor, fetchSessionState()])
+    .then(([value, session]) => {
+      // Reuse the gate's session read so an invalid cookie adds no requests.
+      if (!active || !session.authenticated || window.location.pathname !== pathname) return;
+      const environmentId = decodeURIComponent(match[1]!);
+      if (
+        typeof value !== "object" ||
+        value === null ||
+        !("environmentId" in value) ||
+        value.environmentId !== environmentId
+      ) {
+        return;
+      }
+      const threadRef = {
+        environmentId: EnvironmentId.make(environmentId),
+        threadId: ThreadId.make(decodeURIComponent(match[2]!)),
+      };
+      // Warm the actual readers: a cached thread still resumes without HTTP.
+      // Requests and route mounting retain their existing authentication checks.
+      releases.push(appAtomRegistry.mount(environmentShell.stateAtom(threadRef.environmentId)));
+      releases.push(appAtomRegistry.mount(environmentThreadDetails.stateAtom(threadRef)));
+    })
+    .catch(() => releaseInitialThreadData?.());
+}
+
+const ConnectOnboardingDialog = lazy(() =>
+  import("../components/cloud/ConnectOnboardingDialog").then((module) => ({
+    default: module.ConnectOnboardingDialog,
+  })),
+);
 
 export const Route = createRootRoute({
-  beforeLoad: async ({ location }) => {
+  beforeLoad: async ({ location, preload }) => {
     if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
       return {
         authGateState: {
@@ -102,7 +157,12 @@ export const Route = createRootRoute({
       };
     }
 
-    const authGateState = await resolveInitialServerAuthGateState();
+    if (!preload) warmInitialThreadData(location.pathname);
+    const authGateState = await resolveInitialServerAuthGateState().catch((error: unknown) => {
+      releaseInitialThreadData?.();
+      throw error;
+    });
+    if (authGateState.status !== "authenticated") releaseInitialThreadData?.();
     if (
       authGateState.status === "authenticated" &&
       getDesktopSnapShotBridge() &&
@@ -140,7 +200,14 @@ function RootRouteNotFoundView() {
 
 function RootRouteView() {
   useEffect(() => installDesktopPasteAsText(window.desktopBridge, window), []);
+  useEffect(() => {
+    // Transfer ownership after child mounts, including StrictMode's effect replay.
+    const timer = window.setTimeout(() => releaseInitialThreadData?.(), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
   const pathname = useLocation({ select: (location) => location.pathname });
+  const threadRef = useParams({ strict: false, select: resolveThreadRouteRef });
+  useFirstTimelinePaint(threadRef === null);
   const { authGateState } = Route.useRouteContext();
   const primaryEnvironmentAuthenticated = authGateState.status === "authenticated";
   const returningFromWelcomeRef = useRef(pathname === "/welcome");
@@ -232,7 +299,11 @@ function RootRouteView() {
           {primaryEnvironmentAuthenticated ? <DesktopWebLinkCoordinator /> : null}
           {isElectron ? <RunningThreadKeepAlive /> : null}
           <RelayClientInstallDialog />
-          <ConnectOnboardingDialog />
+          {hasCloudPublicConfig() ? (
+            <Suspense fallback={null}>
+              <ConnectOnboardingDialog />
+            </Suspense>
+          ) : null}
           <SshPasswordPromptDialog />
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
@@ -482,7 +553,9 @@ function errorReport(error: unknown, pathname: string): string {
 
 function AuthenticatedTracingBootstrap() {
   useEffect(() => {
-    void configureClientTracing();
+    void import("../observability/clientTracing").then(({ configureClientTracing }) =>
+      configureClientTracing(),
+    );
   }, []);
 
   return null;

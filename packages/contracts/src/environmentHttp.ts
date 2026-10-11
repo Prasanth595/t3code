@@ -605,11 +605,12 @@ const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentInternalError,
 ] as const;
 
+// HTTP endpoint construction must not traverse every snapshot's JSON codec during client boot.
 class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
   .add(
     HttpApiEndpoint.get("shellSnapshot", "/api/orchestration/shell", {
       headers: OrchestrationProtocolHeaders,
-      success: OrchestrationV2ShellSnapshot,
+      success: Schema.suspend(() => OrchestrationV2ShellSnapshot),
       error: EnvironmentOrchestrationSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -617,7 +618,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("threadSnapshot", "/api/orchestration/threads/:threadId", {
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
-      success: OrchestrationV2ThreadDetailSnapshot,
+      success: Schema.suspend(() => OrchestrationV2ThreadDetailSnapshot),
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -626,7 +627,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
       query: EnvironmentOrchestrationThreadBoundedSnapshotQuery,
-      success: OrchestrationV2ThreadBoundedSnapshot,
+      success: Schema.suspend(() => OrchestrationV2ThreadBoundedSnapshot),
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   )
@@ -635,7 +636,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
       query: EnvironmentOrchestrationThreadHistoryQuery,
-      success: OrchestrationV2ThreadHistoryPage,
+      success: Schema.suspend(() => OrchestrationV2ThreadHistoryPage),
       error: EnvironmentOrchestrationThreadHistoryErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

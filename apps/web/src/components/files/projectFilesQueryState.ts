@@ -271,7 +271,7 @@ export function useProjectFileQuery(
   );
   const optimisticFile = relativePath === null ? null : optimisticResult;
   const cause = failureCause(result);
-  const readError = isProjectReadFileError(cause) ? cause : null;
+  const readError = cause !== null && isProjectReadFileError(cause) ? cause : null;
 
   return {
     data: canReadFiles ? (optimisticFile?.data ?? data) : null,

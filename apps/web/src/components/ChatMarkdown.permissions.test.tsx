@@ -27,7 +27,10 @@ const state = vi.hoisted(() => ({
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
 }));
 
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => serverConfig }));
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
+  useAtomValue: () => serverConfig,
+}));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
 vi.mock("../hooks/useSettings", () => ({

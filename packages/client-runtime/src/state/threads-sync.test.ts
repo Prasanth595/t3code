@@ -575,23 +575,27 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("does not let a delayed cache read replace an initialized successor", () =>
+  it.effect("shares a delayed cache read without replacing successor live data", () =>
     Effect.gen(function* () {
       const resumeCache: NonNullable<Parameters<typeof makeEnvironmentThreadState>[1]> = {
         snapshot: undefined,
         owner: undefined,
       };
       const loading = yield* Deferred.make<void>();
+      const diskReads = yield* Ref.make(0);
       const response = yield* Deferred.make<Option.Option<OrchestrationV2ThreadDetailSnapshot>>();
       const oldFiber = yield* makeHarness({
         resumeCache,
-        loadCached: Deferred.succeed(loading, undefined).pipe(
+        loadCached: Ref.update(diskReads, (count) => count + 1).pipe(
+          Effect.andThen(Deferred.succeed(loading, undefined)),
           Effect.andThen(Deferred.await(response)),
         ),
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(loading);
-      const successor = yield* makeHarness({ cached: BASE_PROJECTION, resumeCache });
-      yield* awaitThreadState(successor.observed, (value) => value.status === "live");
+      const successorFiber = yield* makeHarness({
+        resumeCache,
+        loadCached: Ref.update(diskReads, (count) => count + 1).pipe(Effect.as(Option.none())),
+      }).pipe(Effect.forkScoped);
       yield* Deferred.succeed(
         response,
         Option.some({
@@ -603,11 +607,18 @@ describe("EnvironmentThreads", () => {
         }),
       );
       const old = yield* Fiber.join(oldFiber);
+      const successor = yield* Fiber.join(successorFiber);
       yield* awaitThreadState(old.observed, (value) => value.status === "live");
+      yield* Queue.offer(successor.inputs, titleUpdated("Successor title", 9));
+      yield* awaitThreadState(
+        successor.observed,
+        (value) => Option.getOrNull(value.data)?.thread.title === "Successor title",
+      );
 
-      expect(resumeCache.snapshot?.sequence).toBe(CACHED_SNAPSHOT_SEQUENCE);
+      expect(yield* Ref.get(diskReads)).toBe(1);
+      expect(resumeCache.snapshot?.sequence).toBe(9);
       expect(Option.getOrThrow(resumeCache.snapshot!.state.data).thread.title).toBe(
-        BASE_PROJECTION.thread.title,
+        "Successor title",
       );
     }),
   );
@@ -1545,6 +1556,7 @@ describe("EnvironmentThreads", () => {
         error: null,
         expanded: false,
       });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
       expect(yield* Ref.get(harness.lastSubscribeAfterSequence)).toBe(2);
     }),
   );

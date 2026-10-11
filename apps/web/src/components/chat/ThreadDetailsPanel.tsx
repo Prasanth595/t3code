@@ -15,12 +15,57 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
-import type { ComponentProps } from "react";
+import { useLayoutEffect, useMemo, type ComponentProps } from "react";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { selectThreadPanelOpen, useRightPanelStore } from "../../rightPanelStore";
+import { useChatCanvas } from "./ChatCanvasContext";
+import { resolveThreadDetailsCardLayout } from "./threadDetailsCardLayout";
+
+/**
+ * Holds the chat lane where the open details card will sit without mounting its
+ * queries, so the first timeline paint does not shift when the card arrives.
+ */
+export function ThreadDetailsPanelPlaceholder({
+  environmentId,
+  threadId,
+}: {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+}) {
+  const canvas = useChatCanvas();
+  const inlineOpen = useRightPanelStore((state) =>
+    selectThreadPanelOpen(
+      state.threadPanelVisibilityByThreadKey,
+      { environmentId, threadId },
+      "inline",
+    ),
+  );
+  const placement = canvas
+    ? resolveThreadDetailsCardLayout({
+        container: canvas.container,
+        lane: canvas.lane,
+        frame: null,
+        topInset: canvas.detailsCardTopInset,
+      })
+    : null;
+  const reportDetailsCard = canvas?.reportDetailsCard;
+  const left = inlineOpen ? placement?.x : undefined;
+  const right = placement ? placement.x + placement.width : undefined;
+  const bottom = placement ? placement.y + placement.height : undefined;
+  useLayoutEffect(() => {
+    reportDetailsCard?.(
+      left !== undefined && right !== undefined && bottom !== undefined
+        ? { left, right, bottom }
+        : null,
+    );
+  }, [reportDetailsCard, left, right, bottom]);
+  useLayoutEffect(() => () => reportDetailsCard?.(null), [reportDetailsCard]);
+  return null;
+}
 
 export interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -63,6 +108,10 @@ export interface ThreadDetailsPanelProps extends Pick<
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
+  const threadRef = useMemo(
+    () => ({ environmentId: props.environmentId, threadId: props.threadId }),
+    [props.environmentId, props.threadId],
+  );
   const fileScripts = useT3ProjectFileScripts(
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
@@ -92,7 +141,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
 
   return (
     <ThreadDetailsCard
-      threadRef={{ environmentId: props.environmentId, threadId: props.threadId }}
+      threadRef={threadRef}
       anchor={props.anchor}
       handle={props.handle}
       onPresentationChange={props.onPresentationChange}

@@ -1,8 +1,6 @@
-import {
-  createFileTreeIconResolver,
-  getBuiltInSpriteSheet,
-  type FileTreeIcons,
-} from "@pierre/trees";
+import { createFileTreeIconResolver } from "@pierre/trees/icon-resolver";
+import { getBuiltInSpriteSheet } from "@pierre/trees/icons";
+import type { FileTreeIcons } from "@pierre/trees";
 import { VIDEO_FILE_EXTENSIONS } from "@t3tools/shared/video";
 import { fileIconPathForMimeType } from "@t3tools/shared/filePreview";
 

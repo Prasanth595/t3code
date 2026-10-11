@@ -543,6 +543,26 @@ const streamStaticFile = (file: FileSystem.File, size: bigint) =>
     }),
   );
 
+// Match the compression middleware's parsing and server preference, including q=0 exclusions.
+const staticCompressionEncoding = (header: string | undefined) => {
+  if (!header?.trim()) return;
+  const accepted = new Map<string, number>();
+  for (const part of header.split(",")) {
+    const member = part
+      .trim()
+      .toLowerCase()
+      .replace(/[ \t]*;[ \t]*/g, ";");
+    const match = /^([a-z0-9!#$%&'*+.^_`|~-]+)(?:;q=(0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?))?$/.exec(
+      member,
+    );
+    if (!match) return;
+    accepted.set(match[1]!, match[2] === undefined ? 1 : Number(match[2]));
+  }
+  return (["br", "gzip", "deflate"] as const).find(
+    (encoding) => (accepted.get(encoding) ?? accepted.get("*") ?? 0) > 0,
+  );
+};
+
 const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
   function* (immutableBuildAssets: ReadonlySet<string>) {
     const request = yield* HttpServerRequest.HttpServerRequest;
@@ -658,13 +678,25 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       });
     }
 
+    if (immutable && fileInfo.size >= 65_536n && /\.(?:js|css)$/.test(filePath)) {
+      const encoding = staticCompressionEncoding(request.headers["accept-encoding"]);
+      if (encoding === "br" || encoding === "gzip") {
+        const compressed = yield* openStaticFile(`${filePath}.${encoding === "br" ? "br" : "gz"}`);
+        if (compressed) {
+          opened = compressed;
+          headers["Content-Encoding"] = encoding;
+          headers.Vary = "Accept-Encoding";
+        }
+      }
+    }
+
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
     // The request scope closes the handle for GET, HEAD, 304, errors, and cancellation.
-    // HEAD still passes through compression, which selects headers without reading the stream.
-    return HttpServerResponse.stream(streamStaticFile(opened.file, fileInfo.size), {
+    // HEAD selects the same encoding without reading the stream.
+    return HttpServerResponse.stream(streamStaticFile(opened.file, opened.info.size), {
       headers,
       contentType,
-      contentLength: Number(fileInfo.size),
+      contentLength: Number(opened.info.size),
     });
   },
   Effect.catchTags({

@@ -18,6 +18,7 @@ import { loadRepoEnv } from "../../scripts/lib/public-config";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
 import { tailwindPlugins } from "./vite/tailwind";
 import { coldBootPlugin } from "./vite/coldBoot";
+import { precompressPlugin } from "./vite/precompress";
 
 const repoEnv = loadRepoEnv();
 Object.assign(process.env, repoEnv);
@@ -163,6 +164,7 @@ export default defineConfig(() => {
     plugins: [
       devCompressionPlugin(),
       coldBootPlugin(),
+      precompressPlugin(),
       thirdPartyLicensesPlugin({
         bundleName: "web",
         configFile: new URL("../../third-party-licenses.config.json", import.meta.url),

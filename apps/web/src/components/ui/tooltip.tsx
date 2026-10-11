@@ -4,6 +4,7 @@ import { createContext, use, useEffect, useRef, type ComponentProps, type RefObj
 import { cn } from "~/lib/utils";
 
 const TooltipProvider = TooltipPrimitive.Provider;
+export const TooltipCreateHandle = TooltipPrimitive.createHandle;
 
 type TooltipActionsRef = RefObject<TooltipPrimitive.Root.Actions | null>;
 const TooltipHoverContext = createContext<TooltipActionsRef | null>(null);

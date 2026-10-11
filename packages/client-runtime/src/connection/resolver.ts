@@ -3,6 +3,7 @@ import type {
   ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
 import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -71,6 +72,10 @@ const isBearerProfile = Schema.is(BearerConnectionProfile);
 const isSshProfile = Schema.is(SshConnectionProfile);
 const isBearerCredential = Schema.is(BearerConnectionCredential);
 
+type AuthorizedConnection = PreparedConnection & {
+  readonly descriptor: ExecutionEnvironmentDescriptor | undefined;
+};
+
 // Platform discovery just read this public descriptor to identify the primary.
 // Consume it once during startup; retries and later reconnects read the host again.
 const bootstrapDescriptors = new WeakMap<
@@ -81,8 +86,9 @@ const bootstrapDescriptors = new WeakMap<
 export function rememberPrimaryConnectionDescriptor(
   target: PrimaryConnectionTarget,
   descriptor: ExecutionEnvironmentDescriptor,
+  fetchedAt: number,
 ): void {
-  bootstrapDescriptors.set(target, { descriptor, fetchedAt: Date.now() });
+  bootstrapDescriptors.set(target, { descriptor, fetchedAt });
 }
 
 function primarySocketUrl(
@@ -114,7 +120,8 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
         socketUrl: primarySocketUrl(target, presentation.metadata),
         httpAuthorization: null,
         target,
-      } satisfies PreparedConnection;
+        descriptor: undefined,
+      } satisfies AuthorizedConnection;
     }
 
     const authorized = yield* remote.authorizeBearer({
@@ -127,7 +134,8 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
     return {
       ...authorized,
       target,
-    } satisfies PreparedConnection;
+      descriptor: authorized.descriptor,
+    } satisfies AuthorizedConnection;
   });
 });
 
@@ -159,7 +167,11 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         expectedEnvironmentId: target.environmentId,
         directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
       });
-      return { ...authorized, target } satisfies PreparedConnection;
+      return {
+        ...authorized,
+        target,
+        descriptor: authorized.descriptor,
+      } satisfies AuthorizedConnection;
     }
     // A learned route borrows the credential of the route it was learned from.
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
@@ -181,13 +193,10 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
       connectionMethod: "direct",
     });
     return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
+      ...authorized,
       target,
-    } satisfies PreparedConnection;
+      descriptor: authorized.descriptor,
+    } satisfies AuthorizedConnection;
   });
 });
 
@@ -200,13 +209,10 @@ const makeRelayBroker = Effect.fn("clientRuntime.connection.broker.makeRelay")(f
         expectedEnvironmentId: target.environmentId,
       });
       return {
-        environmentId: authorized.environmentId,
-        label: authorized.label,
-        httpBaseUrl: authorized.httpBaseUrl,
-        socketUrl: authorized.socketUrl,
-        httpAuthorization: authorized.httpAuthorization,
+        ...authorized,
         target,
-      } satisfies PreparedConnection;
+        descriptor: authorized.descriptor,
+      } satisfies AuthorizedConnection;
     },
     Effect.withSpan("clientRuntime.connection.broker.relay"),
     withRelayClientTracing,
@@ -264,13 +270,10 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       connectionMethod: "ssh",
     });
     return {
-      environmentId: authorized.environmentId,
-      label: authorized.label,
-      httpBaseUrl: authorized.httpBaseUrl,
-      socketUrl: authorized.socketUrl,
-      httpAuthorization: authorized.httpAuthorization,
+      ...authorized,
       target,
-    } satisfies PreparedConnection;
+      descriptor: authorized.descriptor,
+    } satisfies AuthorizedConnection;
   });
 });
 
@@ -290,7 +293,7 @@ export const make = Effect.gen(function* () {
       "connection.environment.id": target.environmentId,
       "connection.target.kind": target._tag,
     });
-    const prepared = yield* (() => {
+    const { descriptor: authorizedDescriptor, ...prepared } = yield* (() => {
       switch (target._tag) {
         case "PrimaryConnectionTarget":
           return primary(target);
@@ -306,14 +309,15 @@ export const make = Effect.gen(function* () {
       target._tag === "PrimaryConnectionTarget" ? bootstrapDescriptors.get(target) : undefined;
     if (target._tag === "PrimaryConnectionTarget") bootstrapDescriptors.delete(target);
     const descriptor =
-      bootstrap !== undefined && Date.now() - bootstrap.fetchedAt < 5_000
+      authorizedDescriptor ??
+      (bootstrap !== undefined && (yield* Clock.currentTimeMillis) - bootstrap.fetchedAt < 5_000
         ? bootstrap.descriptor
         : yield* fetchRemoteEnvironmentDescriptor({
             httpBaseUrl: prepared.httpBaseUrl,
           }).pipe(
             Effect.mapError(mapRemoteEnvironmentError),
             Effect.provideService(HttpClient.HttpClient, httpClient),
-          );
+          ));
     if (descriptor.environmentId !== target.environmentId) {
       return yield* environmentMismatchError({
         expected: target.environmentId,

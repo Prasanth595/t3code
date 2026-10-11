@@ -102,6 +102,7 @@ import {
   type ReactElement,
   type ComponentProps,
 } from "react";
+import { flushSync } from "react-dom";
 import { shallow } from "zustand/vanilla/shallow";
 import { useParams, useRouter } from "@tanstack/react-router";
 
@@ -281,8 +282,22 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import {
+  Menu,
+  MenuCreateHandle,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
+import {
+  Tooltip,
+  TooltipCreateHandle,
+  TooltipPopup,
+  TooltipProvider,
+  TooltipTrigger,
+} from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
   composerDraftHasUserContent,
@@ -572,6 +587,40 @@ function SidebarThreadTooltip({
   );
 }
 
+// Keep the trigger mounted so arming a tooltip cannot replace a focused row
+// or a pressed sweep button. Offscreen rows don't need popup roots yet.
+function SidebarRowTooltip({
+  children: [trigger, popup],
+  disabled = false,
+}: {
+  children: [ReactElement<ComponentProps<typeof TooltipTrigger>>, ReactNode];
+  disabled?: boolean | undefined;
+}) {
+  const [handle] = useState(() => TooltipCreateHandle());
+  const [armed, setArmed] = useState(false);
+  return (
+    <>
+      {cloneElement(trigger, {
+        handle,
+        disabled,
+        onPointerEnter: (event) => {
+          trigger.props.onPointerEnter?.(event);
+          if (!disabled) setArmed(true);
+        },
+        onFocus: (event) => {
+          trigger.props.onFocus?.(event);
+          if (!disabled) setArmed(true);
+        },
+      })}
+      {armed ? (
+        <Tooltip handle={handle} disabled={disabled}>
+          {popup}
+        </Tooltip>
+      ) : null}
+    </>
+  );
+}
+
 /**
  * Hover entry point for snooze: a clock button opening the preset menu.
  * Controlled by the row (which also uses the open state to pin its hover
@@ -584,6 +633,13 @@ function SnoozeMenuButton(props: {
   timestampFormat: TimestampFormat;
 }) {
   const { open, onOpenChange, onSnooze, timestampFormat } = props;
+  const [handle] = useState(() => MenuCreateHandle());
+  const [armed, setArmed] = useState(false);
+  // A touch or keyboard press can open the detached trigger before a normal
+  // state update installs the controlled root's onOpenChange callback.
+  const armBeforePress = useCallback(() => {
+    if (!armed) flushSync(() => setArmed(true));
+  }, [armed]);
   // Presets resolve at open time so "In 1 hour" is relative to the click,
   // not to when the row mounted.
   const presets = useMemo(
@@ -591,11 +647,17 @@ function SnoozeMenuButton(props: {
     [open, timestampFormat],
   );
   return (
-    <Menu open={open} onOpenChange={onOpenChange}>
-      <Tooltip>
+    <>
+      <SidebarRowTooltip>
         <TooltipTrigger
           render={
             <MenuTrigger
+              handle={handle}
+              onPointerEnter={() => setArmed(true)}
+              onFocus={() => setArmed(true)}
+              onMouseDownCapture={armBeforePress}
+              onKeyDownCapture={armBeforePress}
+              onClickCapture={armBeforePress}
               render={
                 <button
                   type="button"
@@ -611,32 +673,36 @@ function SnoozeMenuButton(props: {
           <ClockIcon className="size-3" />
         </TooltipTrigger>
         <TooltipPopup>Snooze thread</TooltipPopup>
-      </Tooltip>
-      <MenuPopup side="bottom" align="end">
-        {presets.map((preset) => (
-          <MenuItem
-            key={preset.id}
-            onClick={(event) => {
-              event.stopPropagation();
-              onSnooze(preset);
-            }}
-          >
-            {preset.label}
-            <MenuShortcut>{preset.whenLabel}</MenuShortcut>
-          </MenuItem>
-        ))}
-        <MenuSeparator />
-        <MenuItem
-          onClick={async (event) => {
-            event.stopPropagation();
-            const choice = await requestCustomSnooze();
-            if (choice) onSnooze(choice);
-          }}
-        >
-          Custom…
-        </MenuItem>
-      </MenuPopup>
-    </Menu>
+      </SidebarRowTooltip>
+      {armed || open ? (
+        <Menu handle={handle} open={open} onOpenChange={onOpenChange}>
+          <MenuPopup side="bottom" align="end">
+            {presets.map((preset) => (
+              <MenuItem
+                key={preset.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSnooze(preset);
+                }}
+              >
+                {preset.label}
+                <MenuShortcut>{preset.whenLabel}</MenuShortcut>
+              </MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem
+              onClick={async (event) => {
+                event.stopPropagation();
+                const choice = await requestCustomSnooze();
+                if (choice) onSnooze(choice);
+              }}
+            >
+              Custom…
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
+      ) : null}
+    </>
   );
 }
 
@@ -1224,31 +1290,28 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
-  const prefetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cancelPrefetch = useCallback(() => {
-    if (prefetchTimer.current !== null) clearTimeout(prefetchTimer.current);
-    prefetchTimer.current = null;
-  }, []);
   const prefetch = useCallback(() => {
-    cancelPrefetch();
     if (props.isActive || isRenaming) return;
     void prefetchEnvironmentThread.run(appAtomRegistry, {
       environmentId: threadRef.environmentId,
       input: threadRef.threadId,
     });
-  }, [cancelPrefetch, isRenaming, props.isActive, threadRef]);
-  const schedulePrefetch = useCallback(() => {
-    cancelPrefetch();
-    prefetchTimer.current = setTimeout(prefetch, 80);
-  }, [cancelPrefetch, prefetch]);
+  }, [isRenaming, props.isActive, threadRef]);
   const prefetchOnPointerDown = useCallback(
     (event: ReactPointerEvent) => {
-      if (event.button !== 0 || (event.target as HTMLElement).closest("button, a, input")) return;
+      // A press overlaps the request with the click; hover and selection must
+      // not download histories the user may never open.
+      if (
+        event.button !== 0 ||
+        event.shiftKey ||
+        (isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey) ||
+        (event.target as HTMLElement).closest("button, a, input")
+      )
+        return;
       prefetch();
     },
     [prefetch],
   );
-  useEffect(() => cancelPrefetch, [cancelPrefetch, schedulePrefetch]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   useEffect(() => {
     if (!canOperateThread && isRenaming) onCancelRename();
@@ -1780,7 +1843,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // Same pen the new-thread draft rows lead with, so both kinds of unsent
   // work read the same way in the list.
   const draftIndicator = hasUnsentDraft ? (
-    <Tooltip>
+    <SidebarRowTooltip>
       <TooltipTrigger
         render={
           <span
@@ -1794,13 +1857,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         <SquarePenIcon aria-hidden className={draftPenClassName} />
       </TooltipTrigger>
       <TooltipPopup side="top">Unsent draft</TooltipPopup>
-    </Tooltip>
+    </SidebarRowTooltip>
   ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
     props.pinningSupported && canOperateThread && !sortable?.isDragging ? (
-      <Tooltip>
+      <SidebarRowTooltip>
         <TooltipTrigger
           render={
             <button
@@ -1823,7 +1886,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           />
         </TooltipTrigger>
         <TooltipPopup>Unpin thread</TooltipPopup>
-      </Tooltip>
+      </SidebarRowTooltip>
     ) : (
       <PinIcon
         aria-label="Pinned"
@@ -1845,7 +1908,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           sortable?.isDragging && "relative z-20",
         )}
       >
-        <Tooltip disabled={sortable?.isDragging}>
+        <SidebarRowTooltip disabled={sortable?.isDragging}>
           <TooltipTrigger
             render={
               <div
@@ -1857,9 +1920,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
-                onMouseEnter={schedulePrefetch}
-                onMouseLeave={cancelPrefetch}
-                onFocus={prefetch}
                 onPointerDown={prefetchOnPointerDown}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
@@ -1917,7 +1977,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   ) : isWoke ? (
                     // A wake can land straight in the settled tail (e.g. PR
                     // merged while snoozed); the signal must survive the trip.
-                    <Tooltip>
+                    <SidebarRowTooltip>
                       <TooltipTrigger
                         render={
                           <button
@@ -1932,7 +1992,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         }
                       />
                       <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
-                    </Tooltip>
+                    </SidebarRowTooltip>
                   ) : (
                     <span className="text-xs">
                       {variantAction === "unsettle"
@@ -1957,7 +2017,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     </button>
                   )
                 ) : !props.settlementSupported ? null : variantAction === "unsettle" ? (
-                  <Tooltip>
+                  <SidebarRowTooltip>
                     <TooltipTrigger
                       render={
                         <button
@@ -1975,7 +2035,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       <Undo2Icon className="mb-px size-3.5" />
                     </TooltipTrigger>
                     <TooltipPopup side="top">Un-settle thread</TooltipPopup>
-                  </Tooltip>
+                  </SidebarRowTooltip>
                 ) : (
                   <button
                     type="button"
@@ -1996,7 +2056,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
           </TooltipTrigger>
           {detailsTooltip}
-        </Tooltip>
+        </SidebarRowTooltip>
       </li>
     );
   }
@@ -2014,7 +2074,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         sortable?.isDragging && "relative z-20",
       )}
     >
-      <Tooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
+      <SidebarRowTooltip disabled={snoozeMenuOpen || sortable?.isDragging}>
         <TooltipTrigger
           render={
             <div
@@ -2026,9 +2086,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
-              onMouseEnter={schedulePrefetch}
-              onMouseLeave={cancelPrefetch}
-              onFocus={prefetch}
               onPointerDown={prefetchOnPointerDown}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
@@ -2084,7 +2141,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   >
                     {topStatus ? (
                       isWokeStatus ? (
-                        <Tooltip>
+                        <SidebarRowTooltip>
                           <TooltipTrigger
                             render={
                               <button
@@ -2102,7 +2159,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             }
                           />
                           <TooltipPopup side="top">Dismiss Woke notification</TooltipPopup>
-                        </Tooltip>
+                        </SidebarRowTooltip>
                       ) : (
                         <span
                           className={cn(
@@ -2149,7 +2206,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       )}
                     >
                       {hasUnsentDraft ? (
-                        <Tooltip>
+                        <SidebarRowTooltip>
                           <TooltipTrigger
                             render={
                               <button
@@ -2163,7 +2220,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             <XIcon className="size-3.5" />
                           </TooltipTrigger>
                           <TooltipPopup side="top">Discard draft</TooltipPopup>
-                        </Tooltip>
+                        </SidebarRowTooltip>
                       ) : null}
                       {showSnoozeButton ? (
                         <SnoozeMenuButton
@@ -2174,7 +2231,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         />
                       ) : null}
                       {props.settlementSupported ? (
-                        <Tooltip>
+                        <SidebarRowTooltip>
                           <TooltipTrigger
                             render={
                               <button
@@ -2190,7 +2247,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             Settle
                           </TooltipTrigger>
                           <TooltipPopup>Settle thread</TooltipPopup>
-                        </Tooltip>
+                        </SidebarRowTooltip>
                       ) : null}
                     </span>
                   ) : null}
@@ -2265,7 +2322,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
         {detailsTooltip}
-      </Tooltip>
+      </SidebarRowTooltip>
     </li>
   );
 });
@@ -2741,6 +2798,8 @@ export default function Sidebar() {
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
+  // The empty state reads deferred rows, so its readiness must defer with them.
+  const projectSnapshotsReadyForRows = useDeferredValue(allProjectSnapshotsReady);
   useEffect(() => {
     if (projectScopeKey !== null && allProjectSnapshotsReady && scopedProjectGroup === null) {
       setProjectScopeKey(null);
@@ -2860,12 +2919,12 @@ export default function Sidebar() {
     const activeReorderable = new Set<string>();
     for (const thread of visible) {
       const capabilities = serverConfigs.get(thread.environmentId)?.environment.capabilities;
-      // Threads on servers without the settlement capability (old server,
-      // or descriptor not loaded yet) never classify as settled: the user
-      // could neither un-settle nor pin them, so auto-settling them would
-      // strand rows in a tail with no working affordances.
-      const supportsSettlement = capabilities?.threadSettlement === true;
-      const supportsSnooze = capabilities?.threadSnooze === true;
+      // Until capabilities arrive, preserve the shell's saved placement so
+      // a settled/snoozed tail doesn't mount as active cards first. A known
+      // older server still keeps its rows in the inbox with working controls.
+      const supportsSettlement =
+        capabilities === undefined || capabilities.threadSettlement === true;
+      const supportsSnooze = capabilities === undefined || capabilities.threadSnooze === true;
       const threadKey = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
       if (capabilities?.threadActiveReorder === true) activeReorderable.add(threadKey);
       // Older servers retain their existing drag actions. Active placement
@@ -3191,7 +3250,7 @@ export default function Sidebar() {
   snoozedThreadKeysRef.current = snoozedThreadKeys;
 
   const jumpLabels = useMemo(() => {
-    const labels: Array<string | undefined> = [];
+    const labels: Array<string | null> = [];
     for (let index = 0; ; index++) {
       const command = threadJumpCommandForIndex(index);
       if (!command) break;
@@ -5643,7 +5702,7 @@ export default function Sidebar() {
           ) : null}
           {/* Thread links can mount before live snapshots; don't claim an empty workspace yet. */}
           {!isSearchingThreads &&
-          allProjectSnapshotsReady &&
+          projectSnapshotsReadyForRows &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
             activeThreads.length +

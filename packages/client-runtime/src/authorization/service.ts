@@ -50,6 +50,8 @@ export interface AuthorizedRemoteEnvironment {
   readonly httpBaseUrl: string;
   readonly socketUrl: string;
   readonly httpAuthorization: PreparedHttpAuthorization;
+  /** Freshly read during this authorization; never persisted with credentials. */
+  readonly descriptor?: ExecutionEnvironmentDescriptor;
 }
 
 export interface AuthorizedRemoteHttpEnvironment {
@@ -128,6 +130,10 @@ export const make = Effect.gen(function* () {
       readonly token: Effect.Effect<TokenStore.RemoteDpopAccessToken, ConnectionAttemptError>;
     }
   >();
+  const tokenDescriptors = new WeakMap<
+    TokenStore.RemoteDpopAccessToken,
+    ExecutionEnvironmentDescriptor
+  >();
   const bearerDescriptors = yield* Ref.make<
     ReadonlyMap<
       EnvironmentId,
@@ -177,7 +183,7 @@ export const make = Effect.gen(function* () {
           return next;
         });
       }
-      return descriptor;
+      return { descriptor, freshlyFetched: !canReuseDescriptor };
     },
   );
 
@@ -191,7 +197,7 @@ export const make = Effect.gen(function* () {
       readonly bearerToken: string;
       readonly connectionMethod: ClientConnectionMethod;
     }) {
-      const descriptor = yield* verifyDirectEndpoint(input);
+      const { descriptor, freshlyFetched } = yield* verifyDirectEndpoint(input);
       const socketUrl = yield* resolveRemoteWebSocketConnectionUrl({
         wsBaseUrl: input.wsBaseUrl,
         httpBaseUrl: input.httpBaseUrl,
@@ -207,6 +213,7 @@ export const make = Effect.gen(function* () {
         label: descriptor.label,
         httpBaseUrl: input.httpBaseUrl,
         socketUrl,
+        ...(freshlyFetched ? { descriptor } : {}),
         httpAuthorization: {
           _tag: "Bearer" as const,
           token: input.bearerToken,
@@ -348,7 +355,7 @@ export const make = Effect.gen(function* () {
         Effect.withSpan("environment.authorization.accessToken.exchange"),
       );
       const issuedAt = yield* Clock.currentTimeMillis;
-      return new TokenStore.RemoteDpopAccessToken({
+      const token = new TokenStore.RemoteDpopAccessToken({
         environmentId: descriptor.environmentId,
         accountId: identity.accountId,
         label: descriptor.label,
@@ -357,6 +364,8 @@ export const make = Effect.gen(function* () {
         expiresAtEpochMs: issuedAt + access.expires_in * 1_000,
         dpopThumbprint: thumbprint,
       });
+      tokenDescriptors.set(token, descriptor);
+      return token;
     },
   );
 
@@ -491,18 +500,28 @@ export const make = Effect.gen(function* () {
     input: Parameters<RemoteEnvironmentAuthorization["Service"]["authorizeDpop"]>[0],
   ) {
     const endpoint = input.directEndpoint;
-    if (endpoint !== undefined) {
-      yield* verifyDirectEndpoint({
-        expectedEnvironmentId: input.expectedEnvironmentId,
-        httpBaseUrl: endpoint.httpBaseUrl,
-        connectionMethod: "direct",
-      });
-    }
-    const authorized = (token: TokenStore.RemoteDpopAccessToken, socketUrl: string) => ({
-      ...httpAuthorization(token, endpoint?.httpBaseUrl),
-      socketUrl,
-    });
+    const verified =
+      endpoint === undefined
+        ? undefined
+        : yield* verifyDirectEndpoint({
+            expectedEnvironmentId: input.expectedEnvironmentId,
+            httpBaseUrl: endpoint.httpBaseUrl,
+            connectionMethod: "direct",
+          });
     let selected = yield* getDpopToken(input);
+    const authorized = (token: TokenStore.RemoteDpopAccessToken, socketUrl: string) => {
+      // A cached token must re-read compatibility; only this exchange's descriptor is reusable.
+      const descriptor = verified?.freshlyFetched
+        ? verified.descriptor
+        : endpoint === undefined && !selected.fromCache
+          ? tokenDescriptors.get(token)
+          : undefined;
+      return {
+        ...httpAuthorization(token, endpoint?.httpBaseUrl),
+        socketUrl,
+        ...(descriptor === undefined ? {} : { descriptor }),
+      };
+    };
     if (selected.fromCache) {
       const cachedSocket = yield* createDpopSocketUrl(
         selected.token,

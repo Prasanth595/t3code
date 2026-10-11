@@ -53,10 +53,23 @@ function projectedItemKey(row: OrchestrationV2ProjectedTurnItem): string {
   return `${row.sourceThreadId}:${row.sourceItemId}`;
 }
 
-function renumberVisible(
-  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
-): OrchestrationV2ProjectedTurnItem[] {
-  return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
+type HistoryMergeIndex = {
+  projection: OrchestrationV2ThreadProjection;
+  visible: Map<string, OrchestrationV2ProjectedTurnItem>;
+  local: Map<string, OrchestrationV2ThreadProjection["turnItems"][number]>;
+};
+const historyMergeIndexes = new WeakMap<OrchestrationV2ThreadProjection, HistoryMergeIndex>();
+
+function historyMergeIndex(projection: OrchestrationV2ThreadProjection): HistoryMergeIndex {
+  const cached = historyMergeIndexes.get(projection);
+  if (cached?.projection === projection) return cached;
+  const index = {
+    projection,
+    visible: new Map(projection.visibleTurnItems.map((row) => [projectedItemKey(row), row])),
+    local: new Map(projection.turnItems.map((item) => [String(item.id), item])),
+  };
+  historyMergeIndexes.set(projection, index);
+  return index;
 }
 
 /**
@@ -72,10 +85,11 @@ export function mergeOlderHistoryIntoProjection(
     return projection;
   }
 
-  const currentByKey = new Map(
-    projection.visibleTurnItems.map((row) => [projectedItemKey(row), row]),
-  );
-  const turnItemById = new Map(projection.turnItems.map((item) => [String(item.id), item]));
+  const index = historyMergeIndex(projection);
+  const currentByKey = index.visible;
+  const turnItemById = index.local;
+  const newLocalItems = new Map<string, OrchestrationV2ThreadProjection["turnItems"][number]>();
+  let overlaps = false;
   const pageKeys = new Set<string>();
   const page: OrchestrationV2ProjectedTurnItem[] = [];
   for (const pageRow of olderItems) {
@@ -86,7 +100,8 @@ export function mergeOlderHistoryIntoProjection(
       !currentByKey.has(key) &&
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id)
     ) {
-      const currentItem = turnItemById.get(String(row.sourceItemId));
+      const currentItem =
+        turnItemById.get(String(row.sourceItemId)) ?? newLocalItems.get(String(row.sourceItemId));
       // Hidden live items stay hidden. Cold snapshots also retain interrupt
       // requests outside the visible window; paging may reveal those requests.
       if (currentItem !== undefined) {
@@ -105,29 +120,46 @@ export function mergeOlderHistoryIntoProjection(
     }
     pageKeys.add(key);
     page.push(row);
+    overlaps ||= currentByKey.has(key);
     if (
       (row.visibility === "local" || row.sourceThreadId === projection.thread.id) &&
-      !turnItemById.has(String(row.sourceItemId))
-    )
-      turnItemById.set(String(row.sourceItemId), row.item);
+      !turnItemById.has(String(row.sourceItemId)) &&
+      !newLocalItems.has(String(row.sourceItemId))
+    ) {
+      newLocalItems.set(String(row.sourceItemId), row.item);
+    }
   }
   if (page.length === 0) return projection;
   // Server page order fills gaps between rows from a partial conversation load.
   // Existing rows supply live values; rows outside this range keep their order.
   const visible = [
     ...page,
-    ...projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row))),
+    ...(overlaps
+      ? projection.visibleTurnItems.filter((row) => !pageKeys.has(projectedItemKey(row)))
+      : projection.visibleTurnItems),
   ];
   if (
     visible.length === projection.visibleTurnItems.length &&
     visible.every((row, index) => row === projection.visibleTurnItems[index])
   )
     return projection;
-  return {
+  const merged = {
     ...projection,
-    turnItems: [...turnItemById.values()],
-    visibleTurnItems: renumberVisible(visible),
+    turnItems:
+      newLocalItems.size === 0
+        ? projection.turnItems
+        : [...projection.turnItems, ...newLocalItems.values()],
+    // The client follows array order; server cursors independently carry
+    // canonical positions. Keep existing row identities across prepends.
+    visibleTurnItems: visible,
   };
+  for (const row of page) currentByKey.set(projectedItemKey(row), row);
+  for (const [id, item] of newLocalItems) turnItemById.set(id, item);
+  // Advance only this index's owner. A merge against an older projection or a
+  // live reducer result rebuilds its own index instead of using future rows.
+  index.projection = merged;
+  historyMergeIndexes.set(merged, index);
+  return merged;
 }
 
 export function applyHistoryPageMeta(

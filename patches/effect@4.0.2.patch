@@ -29,3 +29,27 @@ index f5b14ef..cccf0a4 100644
    }).pipe(Option.isSome(hooks) ? Effect.ensuring(hooks.value.onDisconnect) : identity, Effect.tapCause(cause => {
      const error = Cause.findError(cause);
      const hasError = Result.isSuccess(error);
+diff --git a/dist/reactivity/Atom.js b/dist/reactivity/Atom.js
+--- a/dist/reactivity/Atom.js
++++ b/dist/reactivity/Atom.js
+@@ -794,10 +794,16 @@
+  * @category combinators
+  * @since 4.0.0
+  */
+-export const withLabel = /*#__PURE__*/dual(2, (self, name) => Object.assign(Object.create(Object.getPrototypeOf(self)), {
+-  ...self,
+-  label: [name, getStackTraceLimit() === 0 ? "" : new Error().stack?.split("\n")[5] ?? ""]
+-}));
++export const withLabel = /*#__PURE__*/dual(2, (self, name) => {
++  // Capture the creation site now, but format its stack only for diagnostics.
++  const error = getStackTraceLimit() === 0 ? undefined : new Error();
++  return Object.assign(Object.create(Object.getPrototypeOf(self)), {
++    ...self,
++    label: Object.defineProperty([name, ""], 1, {
++      get: () => error?.stack?.split("\n")[5] ?? ""
++    })
++  });
++});
+ /**
+  * Pairs an atom with an initial value for registry initialization.
+  *

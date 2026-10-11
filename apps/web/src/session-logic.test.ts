@@ -1490,7 +1490,7 @@ describe("incremental v2 timeline entries", () => {
     expect(restoredMessage.message.attachments?.[0]).not.toHaveProperty("previewUrl");
   });
 
-  it("appends committed items in canonical order even when their timestamps go backwards", () => {
+  it("appends and prepends committed items in canonical order even when timestamps go backwards", () => {
     const fixture = makeStreamingTimelineFixture("Partial");
     const input = { visibleTurnItems: fixture.visibleTurnItems, optimisticMessages: [] };
     const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
@@ -1512,6 +1512,20 @@ describe("incremental v2 timeline entries", () => {
     expect(next.entries.at(-1)).toMatchObject({ id: "late-message" });
     for (const [index, entry] of previous.entries.entries())
       expect(next.entries[index]).toBe(entry);
+    const older = {
+      ...appended,
+      sourceItemId: TurnItemId.make("older-item"),
+      item: {
+        ...appended.item,
+        id: TurnItemId.make("older-item"),
+        messageId: MessageId.make("older-message"),
+      },
+    };
+    const olderInput = { ...nextInput, visibleTurnItems: [older, ...nextInput.visibleTurnItems] };
+    const prepended = deriveTimelineEntriesFromVisibleTurnItemsWithState(olderInput, next);
+    expect(prepended.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(olderInput));
+    for (const [index, entry] of next.entries.entries())
+      expect(prepended.entries[index + 1]).toBe(entry);
   });
 
   it.each(["completion", "provenance", "ordering", "attachment", "run"] as const)(

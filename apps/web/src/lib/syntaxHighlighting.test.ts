@@ -5,7 +5,7 @@ const { getSharedHighlighter } = vi.hoisted(() => ({
   getSharedHighlighter: vi.fn(),
 }));
 
-vi.mock("@pierre/diffs", () => ({
+vi.mock("@pierre/diffs/highlighter", () => ({
   getSharedHighlighter,
 }));
 

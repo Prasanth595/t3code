@@ -72,7 +72,6 @@ const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDoc
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
 const encodeStoredShellSnapshot = Schema.encodeEffect(StoredShellSnapshotJson);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
-const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJson);
 const encodeStoredServerConfig = Schema.encodeEffect(StoredServerConfigJson);
 const decodeStoredVcsRefs = Schema.decodeUnknownEffect(StoredVcsRefsJson);
@@ -82,10 +81,7 @@ const encodeStoredVcsRefs = Schema.encodeEffect(StoredVcsRefsJson);
 function decodeCachedProjection<A, E, R>(decode: Effect.Effect<A, E, R>) {
   return Effect.gen(function* () {
     // Leave the IndexedDB callback before synchronous schema work or its render.
-    yield* Effect.callback<void>((resume) => {
-      const timer = setTimeout(() => resume(Effect.void), 0);
-      return Effect.sync(() => clearTimeout(timer));
-    });
+    yield* Effect.sleep("0 millis");
     return yield* decode;
   });
 }
@@ -840,12 +836,17 @@ export const layer = Layer.effectContext(
         ),
       saveThread: (environmentId, snapshot) =>
         Effect.gen(function* () {
-          const encoded = yield* encodeStoredThreadSnapshot({
-            schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
-            environmentId,
-            threadId: snapshot.projection.thread.id,
-            snapshot,
-          }).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
+          // Snapshots are already decoded or reduced. DateTime.Utc.toJSON uses
+          // the stored codec's ISO format; reads still validate the whole cache.
+          const encoded = yield* Effect.try(() =>
+            // @effect-diagnostics-next-line preferSchemaOverJson:off - Trusted snapshots use DateTime.toJSON; validate when reading the cache.
+            JSON.stringify({
+              schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+              environmentId,
+              threadId: snapshot.projection.thread.id,
+              snapshot,
+            } satisfies typeof StoredThreadSnapshot.Type),
+          ).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           // Control records or one oversized row can exceed the HTTP target.
           // Such snapshots use HTTP next time instead of growing the disk cache.
           if (cacheEncoder.encode(encoded).length > THREAD_CACHE_MAX_BYTES) return;

@@ -234,6 +234,8 @@ async function readSessionState(fresh: boolean): Promise<AuthSessionState> {
       return await runPrimaryHttp(
         PrimaryEnvironmentHttpClient.pipe(
           Effect.flatMap((client) => client.auth.session({ headers: {} })),
+          // Interrupt the source fetch (and its abort controller), not only its shared waiters.
+          Effect.timeout(6_000),
         ),
       );
     } catch (error) {

@@ -2148,6 +2148,7 @@ function replaceStreamingMessageRows(
   ) {
     return null;
   }
+  if (timelineEntries === previousEntries) return previous.rows;
   const replacements = new Map<ChatMessage, Extract<TimelineEntry, { kind: "message" }>>();
   for (const [index, entry] of timelineEntries.entries()) {
     const previousEntry = previousEntries[index]!;
@@ -2191,17 +2192,25 @@ function replaceStreamingMessageRows(
   });
 }
 
-/** Keep one projection per timeline. Reuse rows only when streaming content changes. */
+const timelineRowsProjectionCache = new WeakMap<
+  MessagesTimelineRowsInput["timelineEntries"],
+  MessagesTimelineRowsProjection
+>();
+
+/** Reuse rows during streaming and when returning to unchanged timeline entries. */
 export function deriveMessagesTimelineRowsWithState(
   input: MessagesTimelineRowsInput,
   previous: MessagesTimelineRowsProjection | null = null,
 ): MessagesTimelineRowsProjection {
-  return {
+  previous = timelineRowsProjectionCache.get(input.timelineEntries) ?? previous;
+  const projection = {
     input,
     rows:
       (previous === null ? null : replaceStreamingMessageRows(input, previous)) ??
       deriveMessagesTimelineRows(input),
   };
+  timelineRowsProjectionCache.set(input.timelineEntries, projection);
+  return projection;
 }
 
 export function computeStableMessagesTimelineRows(

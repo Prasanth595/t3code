@@ -1,5 +1,5 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
-import { parseDiffFromFile } from "@pierre/diffs";
+import { parseDiffFromFile } from "@pierre/diffs/utils/parseDiffFromFile";
 import type { FileDiffMetadata } from "@pierre/diffs/types";
 
 const DIFF_THEME_NAMES = {

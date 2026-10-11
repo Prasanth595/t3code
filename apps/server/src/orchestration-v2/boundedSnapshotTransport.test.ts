@@ -222,12 +222,15 @@ const seed = Effect.gen(function* () {
   for (const event of events) yield* projections.apply(event);
 });
 
-// Bounded subscriptions without afterSequence never read the event store, and
-// thread routes never touch projects.
+// Bounded subscriptions without afterSequence never replay events. The HTTP
+// response cache subscribes to revisions, and thread routes never touch projects.
 const TestLayer = Layer.mergeAll(
   management,
   Layer.effectDiscard(seed),
-  Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
+  Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({
+    latestApplicationSequence: Effect.succeed(0),
+    streamProjectedApplicationEvents: () => Stream.never,
+  }),
   Layer.mock(ProjectStore.ProjectStoreV2)({}),
   Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
 ).pipe(Layer.provideMerge(store));

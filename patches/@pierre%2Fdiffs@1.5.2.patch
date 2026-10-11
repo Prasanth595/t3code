@@ -974,7 +974,7 @@ diff --git a/package.json b/package.json
 index d9dc7b5..3c37bae 100644
 --- a/package.json
 +++ b/package.json
-@@ -58,6 +58,18 @@
+@@ -58,6 +58,26 @@
      "./worker/worker-portable.js": {
        "types": "./dist/worker/worker-portable.d.ts",
        "import": "./dist/worker/worker-portable.js"
@@ -990,6 +990,14 @@ index d9dc7b5..3c37bae 100644
 +    "./utils/parsePatchFiles": {
 +      "types": "./dist/utils/parsePatchFiles.d.ts",
 +      "import": "./dist/utils/parsePatchFiles.js"
++    },
++    "./highlighter": {
++      "types": "./dist/highlighter/shared_highlighter.d.ts",
++      "import": "./dist/highlighter/shared_highlighter.js"
++    },
++    "./utils/parseDiffFromFile": {
++      "types": "./dist/utils/parseDiffFromFile.d.ts",
++      "import": "./dist/utils/parseDiffFromFile.js"
      }
    },
    "publishConfig": {

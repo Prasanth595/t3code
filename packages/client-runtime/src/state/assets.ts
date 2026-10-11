@@ -28,6 +28,9 @@ import { createEnvironmentQueryAtomFamily } from "./runtime.ts";
 const ASSET_URL_REFRESH_INTERVAL_MS = 30 * 60_000;
 const ASSET_URL_STALE_TIME_MS = 5 * 60_000;
 const ASSET_URL_IDLE_TTL_MS = 60 * 60_000;
+const EMPTY_ASSET_URLS_ATOM = Atom.make<
+  ReadonlyArray<AsyncResult.AsyncResult<AssetCreateUrlResult, unknown>>
+>(Object.freeze([]));
 
 export class InvalidAssetCollectionKeyError extends Schema.TaggedError<InvalidAssetCollectionKeyError>()(
   "InvalidAssetCollectionKeyError",
@@ -168,7 +171,10 @@ export function createAssetEnvironmentAtoms<R, E>(
     createUrls: (target: {
       readonly environmentId: EnvironmentId;
       readonly resources: ReadonlyArray<AssetResource>;
-    }) => createUrlsFamily(JSON.stringify([target.environmentId, target.resources])),
+    }) =>
+      target.resources.length === 0
+        ? EMPTY_ASSET_URLS_ATOM
+        : createUrlsFamily(JSON.stringify([target.environmentId, target.resources])),
   };
 }
 

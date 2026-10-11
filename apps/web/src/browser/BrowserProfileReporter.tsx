@@ -2,6 +2,7 @@ import { AuthPreviewOperateScope, type BrowserProfile } from "@t3tools/contracts
 import { useEffect } from "react";
 
 import { useClientSettings, useClientSettingsHydrated } from "~/hooks/useSettings";
+import { afterFirstTimelinePaint } from "~/lib/firstTimelinePaint";
 import { useServerConfigs } from "~/state/entities";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
@@ -30,10 +31,13 @@ export function BrowserProfileReporter() {
 
   useEffect(() => {
     if (!hydrated) return;
-    for (const [environmentId, config] of serverConfigs) {
-      if (!config.environment.capabilities.serverBrowser || !operable.has(environmentId)) continue;
-      void report({ environmentId, input: { profiles, defaultProfileId } });
-    }
+    return afterFirstTimelinePaint(() => {
+      for (const [environmentId, config] of serverConfigs) {
+        if (!config.environment.capabilities.serverBrowser || !operable.has(environmentId))
+          continue;
+        void report({ environmentId, input: { profiles, defaultProfileId } });
+      }
+    });
   }, [defaultProfileId, hydrated, operable, profiles, report, serverConfigs]);
 
   return null;

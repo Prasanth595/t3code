@@ -427,12 +427,15 @@ export function providerErrorPresentation(
   };
 }
 
-function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry {
+function projectedWorkEntry(
+  row: OrchestrationV2ProjectedTurnItem,
+  createdAt: string,
+): WorkLogEntry {
   const { item } = row;
   const title = item.title?.trim() || null;
   const common = {
     id: item.id,
-    createdAt: projectedItemCreatedAt(row),
+    createdAt,
     runId: item.runId,
     tone: projectedWorkEntryTone(item),
     itemType: item.type,
@@ -764,7 +767,7 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
       id: item.id,
       kind: "work",
       createdAt,
-      entry: projectedWorkEntry(row),
+      entry: projectedWorkEntry(row, createdAt),
       ...attemptMetadata,
     });
   }
@@ -944,6 +947,7 @@ function reuseTimelineEntries(
   ) {
     return null;
   }
+  if (input.visibleTurnItems === before.visibleTurnItems) return previous.entries;
   const appended = input.visibleTurnItems.length > before.visibleTurnItems.length;
   // Anchored and optimistic messages need to be interleaved/deduplicated when
   // committed items arrive. Keep the full projection for that transition.
@@ -952,6 +956,27 @@ function reuseTimelineEntries(
     (input.optimisticMessages.length > 0 || (input.anchoredMessages?.length ?? 0) > 0)
   ) {
     return null;
+  }
+  const addedCount = input.visibleTurnItems.length - before.visibleTurnItems.length;
+  if (
+    addedCount > 0 &&
+    before.visibleTurnItems.length > 0 &&
+    input.visibleTurnItems[addedCount] === before.visibleTurnItems[0] &&
+    before.visibleTurnItems.every(
+      (row, index) => row === input.visibleTurnItems[addedCount + index],
+    )
+  ) {
+    const olderItems = input.visibleTurnItems.slice(0, addedCount);
+    // Answer folding can change an existing message across the page boundary.
+    // Leave that transition to the complete derivation.
+    const foldsAnswer = ({ item }: OrchestrationV2ProjectedTurnItem) =>
+      (item.type === "user_input_request" && item.questionAnswer !== undefined) ||
+      (item.type === "user_message" && item.messageId.startsWith("async-answer:"));
+    if (olderItems.some(foldsAnswer) || before.visibleTurnItems.some(foldsAnswer)) return null;
+    return [
+      ...deriveTimelineEntriesFromVisibleTurnItems({ ...input, visibleTurnItems: olderItems }),
+      ...previous.entries,
+    ];
   }
   // Answer rows can replace a message already present in the retained prefix.
   if (
@@ -1003,33 +1028,43 @@ function reuseTimelineEntries(
   return entries;
 }
 
-/** Reuse immutable entries during streaming without reordering the canonical v2 sequence. */
+// Revisit an immutable thread revision without rebuilding its entries. Weak
+// keys share the lifetime of the retained thread snapshot, not the component.
+const timelineEntriesProjectionCache = new WeakMap<
+  TimelineEntriesInput["visibleTurnItems"],
+  TimelineEntriesProjection
+>();
+
+/** Reuse immutable entries during streaming and when returning to a retained thread. */
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   input: TimelineEntriesInput,
   previous: TimelineEntriesProjection | null = null,
 ): TimelineEntriesProjection {
+  previous = timelineEntriesProjectionCache.get(input.visibleTurnItems) ?? previous;
   const reused = previous === null ? null : reuseTimelineEntries(input, previous);
-  if (reused !== null) return { input, entries: reused };
-  const entries = deriveTimelineEntriesFromVisibleTurnItems(input);
-  if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
-    return { input, entries };
-  }
-  // Tool output and lifecycle changes rebuild grouping, but unchanged message
-  // objects and previews still let memoized history rows stay mounted.
-  const previousMessages = new Map(
-    previous.entries.flatMap((entry) =>
-      entry.kind === "message" ? [[entry.id, entry] as const] : [],
-    ),
-  );
-  return {
-    input,
-    entries: entries.map((entry) => {
+  let entries = reused ?? deriveTimelineEntriesFromVisibleTurnItems(input);
+  if (
+    reused === null &&
+    previous !== null &&
+    shallow(input.attachmentUrlById, previous.input.attachmentUrlById)
+  ) {
+    // Tool output and lifecycle changes rebuild grouping, but unchanged message
+    // objects and previews still let memoized history rows stay mounted.
+    const previousMessages = new Map(
+      previous.entries.flatMap((entry) =>
+        entry.kind === "message" ? [[entry.id, entry] as const] : [],
+      ),
+    );
+    entries = entries.map((entry) => {
       if (entry.kind !== "message" || entry.projectedItem === undefined) return entry;
       const before = previousMessages.get(entry.id);
       if (before?.projectedItem !== entry.projectedItem) return entry;
       return before.attempt === entry.attempt ? before : { ...entry, message: before.message };
-    }),
-  };
+    });
+  }
+  const projection = { input, entries };
+  timelineEntriesProjectionCache.set(input.visibleTurnItems, projection);
+  return projection;
 }
 
 export function inferCheckpointTurnCountByRunId(

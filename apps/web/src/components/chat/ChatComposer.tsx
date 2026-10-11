@@ -458,7 +458,6 @@ function useComposerRestingTransition(
   const pinnedOverlayRef = useRef<HTMLElement | null>(null);
   const transitionCleanupTimeoutRef = useRef<number | null>(null);
   const transitionLayoutRequestRef = useRef(0);
-  const hasCompletedInitialLayoutRef = useRef(false);
 
   const clearOverlayPin = useCallback(() => {
     // The overlay belongs to the chat view and outlives this composer, so it
@@ -599,7 +598,7 @@ function useComposerRestingTransition(
       const targetChanged =
         interruptedTargetHeight === null || Math.abs(interruptedTargetHeight - nextHeight) >= 0.5;
       const shouldAnimate = shouldAnimateComposerRestingTransition({
-        hasCompletedInitialLayout: hasCompletedInitialLayoutRef.current,
+        hasCompletedInitialLayout: previousHeightRef.current !== null,
         stateChanged,
         hasInterruptedAnimation: interruptedHeight !== null,
       });
@@ -891,7 +890,18 @@ function useComposerRestingTransition(
   useLayoutEffect(() => {
     const requestId = transitionLayoutRequestRef.current + 1;
     transitionLayoutRequestRef.current = requestId;
+    // There is no source geometry to animate on mount. Seed it in the resize
+    // observer after natural layout instead of forcing layout in a microtask.
+    if (previousHeightRef.current === null && typeof ResizeObserver !== "undefined") {
+      previousCollapsedRef.current = isCollapsed;
+      return;
+    }
     const stateChanged = previousCollapsedRef.current !== isCollapsed;
+    if (previousHeightRef.current === null) {
+      // Resize observation seeds initial geometry after the browser's layout.
+      previousCollapsedRef.current = isCollapsed;
+      return;
+    }
     // A non-Git context strip enters or leaves flow through ChatView state in
     // an earlier layout effect. Let React flush that parent update before the
     // FLIP reads its destination geometry, while still running before paint.
@@ -947,6 +957,11 @@ function useComposerRestingTransition(
           : visibleTransitionElement('[data-chat-composer-controls="left"]')
       )?.getBoundingClientRect();
       previousHeightRef.current = elementRect.height;
+      previousModelStripHeightRef.current =
+        element
+          .closest<HTMLElement>('[data-slot="composer-shell"]')
+          ?.querySelector<HTMLElement>('[data-composer-model-strip="true"]')
+          ?.getBoundingClientRect().height ?? null;
       previousContentOffsetsRef.current = {
         promptFromTop: promptRect === undefined ? null : promptRect.top - elementRect.top,
         promptHeight: promptRect?.height ?? null,
@@ -963,10 +978,6 @@ function useComposerRestingTransition(
   }, [restingControlsRef, transitionToCurrentGeometry]);
 
   useEffect(() => {
-    // Host discovery and width measurement settle through layout updates on
-    // mount. Treat that bootstrap as initial geometry so an existing thread
-    // paints at rest instead of visibly collapsing from the expanded height.
-    hasCompletedInitialLayoutRef.current = true;
     return () => {
       if (transitionCleanupTimeoutRef.current !== null) {
         window.clearTimeout(transitionCleanupTimeoutRef.current);
@@ -7429,7 +7440,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 )}
 
               <div
-                className={cn("relative", isComposerResting && "flex min-w-0 items-center gap-1")}
+                className={
+                  isComposerResting ? "relative flex min-w-0 items-center gap-1" : "relative"
+                }
                 style={
                   isComposerResting && restingActionsWidth !== null
                     ? { paddingRight: `calc(${restingActionsWidth}px + 1rem)` }
@@ -7503,7 +7516,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     buildContextClipboardFragment={buildContextClipboardFragment}
                     importContextFragment={importContextFragment}
                     skills={selectedProviderSkills}
-                    containerClassName={cn(isComposerResting && "min-w-0 flex-1")}
+                    containerClassName={isComposerResting ? "min-w-0 flex-1" : ""}
                     className={cn(
                       showMobilePendingAnswerActions && "max-sm:pb-12",
                       isComposerResting &&

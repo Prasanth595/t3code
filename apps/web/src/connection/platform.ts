@@ -398,7 +398,7 @@ const loadPrimaryConnectionRegistration = Effect.fn(
     httpBaseUrl: resolved.target.httpBaseUrl,
     wsBaseUrl: resolved.target.wsBaseUrl,
   });
-  rememberPrimaryConnectionDescriptor(target, descriptor);
+  rememberPrimaryConnectionDescriptor(target, descriptor, yield* Clock.currentTimeMillis);
   return new PrimaryConnectionRegistration({
     target,
   });
