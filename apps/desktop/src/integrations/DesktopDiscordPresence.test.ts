@@ -1,11 +1,72 @@
 import { expect } from "vite-plus/test";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 
 import type { DesktopDiscordPresence } from "@t3tools/contracts";
 
 import type { DiscordActivity } from "./discord/discordIpc.ts";
 import { make, type DiscordPresenceConnector } from "./DesktopDiscordPresence.ts";
+
+it.effect("discards a pending publish when disabled", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const activities: Array<DiscordActivity | null> = [];
+    let closes = 0;
+    const connector: DiscordPresenceConnector = async () => {
+      started.resolve();
+      await release.promise;
+      return fakeClient(activities, () => {
+        closes += 1;
+      });
+    };
+    const service = yield* make({ connector, clientId: "42" });
+    const publishing = yield* service.set(presence).pipe(Effect.forkChild);
+    yield* Effect.promise(() => started.promise);
+    const disabling = yield* service.set(null).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    release.resolve();
+    yield* Fiber.join(publishing);
+    yield* Fiber.join(disabling);
+    expect(activities).toEqual([null]);
+    expect(closes).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("serializes connection attempts and ignores an old client's close", () =>
+  Effect.gen(function* () {
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const activities: Array<DiscordActivity | null> = [];
+    const callbacks: Array<() => void> = [];
+    let connects = 0;
+    const connector: DiscordPresenceConnector = async (input) => {
+      connects += 1;
+      callbacks.push(input.onClose);
+      started.resolve();
+      await release.promise;
+      return fakeClient(activities);
+    };
+    const service = yield* make({ connector, clientId: "42" });
+    const first = yield* service.set(presence).pipe(Effect.forkChild);
+    yield* Effect.promise(() => started.promise);
+    const second = yield* service.set({ ...presence, workingThreads: 2 }).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    release.resolve();
+    yield* Fiber.join(first);
+    yield* Fiber.join(second);
+    expect(connects).toBe(1);
+    expect(activities.every((activity) => activity?.state === "Running 2 agents")).toBe(true);
+    yield* service.set(null);
+    yield* service.set(presence);
+    expect(connects).toBe(2);
+    callbacks[0]!();
+    expect(yield* service.getStatus()).toBe("connected");
+    yield* service.set(presence);
+    expect(connects).toBe(2);
+  }).pipe(Effect.scoped),
+);
 
 const presence: DesktopDiscordPresence = {
   projectName: "t3code",

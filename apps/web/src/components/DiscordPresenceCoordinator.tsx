@@ -109,13 +109,15 @@ export function DiscordPresenceCoordinator() {
     }
     let workingThreads = 0;
     let attentionThreads = 0;
-    for (const value of counts.values()) {
+    for (const environmentId of environmentIds) {
+      const value = counts.get(environmentId);
+      if (value === undefined) continue;
       workingThreads += value.working;
       attentionThreads += value.attention;
     }
     const presence: DesktopDiscordPresence = {
-      projectName: activeThread.projectName,
-      modelLabel: activeThread.modelLabel,
+      projectName: activeEnvironmentId === undefined ? null : activeThread.projectName,
+      modelLabel: activeEnvironmentId === undefined ? null : activeThread.modelLabel,
       workingThreads: Math.min(999, workingThreads),
       attentionThreads: Math.min(999, attentionThreads),
     };
@@ -130,7 +132,7 @@ export function DiscordPresenceCoordinator() {
       return;
     lastPublished.current = presence;
     void bridge?.setDiscordPresence?.(presence).catch(() => undefined);
-  }, [active, activeThread, bridge, counts, pushAvailable]);
+  }, [active, activeEnvironmentId, activeThread, bridge, counts, environmentIds, pushAvailable]);
 
   if (!pushAvailable || !active) return null;
 

@@ -124,7 +124,9 @@ function unixSocketBases(
           environment.TMP,
           environment.TEMP,
           // Flatpak and Snap relocate the socket under the runtime dir.
-          runtimeDir === undefined ? undefined : NodePath.join(runtimeDir, "app/com.discordapp.Discord"),
+          runtimeDir === undefined
+            ? undefined
+            : NodePath.join(runtimeDir, "app/com.discordapp.Discord"),
           runtimeDir === undefined ? undefined : NodePath.join(runtimeDir, "snap.discord"),
           "/tmp",
         ]
@@ -353,11 +355,16 @@ export class DiscordIpcClient {
     const wasClosed = this.closed;
     this.closed = true;
     this.finishHandshake(error ?? new Error("Discord IPC connection closed."));
+    if (!wasClosed) {
+      try {
+        this.socket.destroy();
+      } catch {
+        // The transport may already be gone.
+      }
+    }
     if (!wasClosed) this.onClose?.(error);
   }
 }
 
 const isReadyDispatch = (data: unknown): boolean =>
-  typeof data === "object" &&
-  data !== null &&
-  (data as { evt?: unknown }).evt === "READY";
+  typeof data === "object" && data !== null && (data as { evt?: unknown }).evt === "READY";

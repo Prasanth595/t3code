@@ -2,6 +2,7 @@ import { expect, it } from "vite-plus/test";
 
 import {
   DISCORD_IPC_OP_FRAME,
+  DISCORD_IPC_OP_CLOSE,
   DISCORD_IPC_OP_HANDSHAKE,
   DISCORD_IPC_OP_PING,
   DISCORD_IPC_OP_PONG,
@@ -177,6 +178,31 @@ it("reports an unexpected close through onClose", async () => {
 
   fake.emit("close");
   expect(closes).toEqual([null]);
+});
+
+it.each(["close frame", "write failure"])("destroys the transport on %s", async (failure) => {
+  const fake = new FakeSocket();
+  const closes: Array<Error | null> = [];
+  const client = await DiscordIpcClient.connect({
+    clientId: "1",
+    platform: "darwin",
+    environment: { TMPDIR: "/tmp" },
+    connect: connectFake(fake),
+    onClose: (error) => closes.push(error),
+  });
+  if (failure === "close frame") {
+    fake.emit("data", encodeDiscordFrame(DISCORD_IPC_OP_CLOSE, {}));
+  } else {
+    fake.onWrite = () => {
+      throw new Error("write failed");
+    };
+    client.setActivity({ state: "Idle" });
+  }
+  expect(fake.destroyed).toBe(true);
+  expect(closes).toHaveLength(1);
+  client.close();
+  fake.emit("close");
+  expect(closes).toHaveLength(1);
 });
 
 it("rejects when the handshake never completes", async () => {

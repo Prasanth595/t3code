@@ -24,6 +24,7 @@ import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
@@ -104,6 +105,8 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
 
   const desired = yield* Ref.make<DiscordPresenceState | null>(null);
   const connection = yield* Ref.make<DiscordPresenceClient | null>(null);
+  const applyMutex = yield* Semaphore.make(1);
+  let connectionToken: object | null = null;
   const fields = yield* Ref.make<ReadonlyArray<DiscordPresenceField>>(
     options.fields ?? DEFAULT_DISCORD_PRESENCE_FIELDS,
   );
@@ -134,6 +137,7 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
 
   const clearConnection = Effect.gen(function* () {
     const client = yield* Ref.getAndSet(connection, null);
+    connectionToken = null;
     if (client === null) return;
     // Clear before closing so Discord drops the status immediately rather than
     // waiting for the socket to be noticed as gone.
@@ -143,12 +147,15 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
       // Best effort; the closing socket clears it anyway.
     }
     client.close();
+    yield* setStatus("disconnected");
   });
 
   // Reuses the live socket, or connects once. None means Discord is unreachable.
   const ensureClient = Effect.gen(function* () {
     const existing = yield* Ref.get(connection);
     if (existing !== null) return Option.some(existing);
+    const token = {};
+    connectionToken = token;
     const connected = yield* Effect.tryPromise(() =>
       connector({
         clientId,
@@ -157,6 +164,7 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
         // The socket is gone; drop it and report the disconnect so the next
         // apply reconnects.
         onClose: () => {
+          if (connectionToken !== token) return;
           Effect.runSync(Ref.set(connection, null));
           Effect.runSync(setStatus("disconnected"));
         },
@@ -172,17 +180,27 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
   });
 
   const applyOnce = Effect.gen(function* () {
-    const presence = yield* Ref.get(desired);
-    if (presence === null) {
+    if ((yield* Ref.get(desired)) === null) {
       yield* clearConnection;
       return;
     }
     const client = yield* ensureClient;
     if (Option.isNone(client)) return;
+    // Disabling or updating presence can happen while the connector is pending.
+    const presence = yield* Ref.get(desired);
+    if (presence === null) {
+      yield* clearConnection;
+      return;
+    }
     const activeFields = yield* Ref.get(fields);
-    const activity = discordActivityForPresence(presence, sessionStartedAtMs, activeFields, branding);
+    const activity = discordActivityForPresence(
+      presence,
+      sessionStartedAtMs,
+      activeFields,
+      branding,
+    );
     yield* Effect.sync(() => client.value.setActivity(activity));
-  });
+  }).pipe(applyMutex.withPermits(1));
 
   const set = Effect.fn("desktop.discordPresence.set")(function* (
     presence: DiscordPresenceState | null,
@@ -207,7 +225,7 @@ export const make = Effect.fn("DesktopDiscordPresence.make")(function* (
   yield* Effect.addFinalizer(() =>
     Effect.gen(function* () {
       yield* Ref.set(desired, null);
-      yield* clearConnection;
+      yield* applyMutex.withPermits(1)(clearConnection);
     }).pipe(Effect.ignore),
   );
 
