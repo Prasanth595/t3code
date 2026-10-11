@@ -9,7 +9,7 @@ import {
   type UsageProviderKind,
 } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   cursorKeychainAccessEnvironments,
   refreshUsageLimits,
@@ -88,13 +88,23 @@ import {
   tokenTypeSegments,
 } from "./usageBreakdown";
 import {
+  GROUP_BY_OPTIONS,
   METRIC_OPTIONS,
   WINDOW_OPTIONS,
   resolveUsageShortcut,
   type UsageMetric,
 } from "./usageShortcuts";
 import { useEscapeToGoBack } from "../../hooks/useNavigateBack";
-import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usageProviders";
+import {
+  PROVIDER_ORDER,
+  PROVIDER_PRESENTATION,
+  periodSeriesTotals,
+  providersWithUsage,
+  seriesFor,
+  type UsageGroupBy,
+  type UsageSeries,
+  type UsageSeriesKey,
+} from "./usageProviders";
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
@@ -103,6 +113,10 @@ import {
 
 function isUsageMetric(value: string | null | undefined): value is UsageMetric {
   return METRIC_OPTIONS.some((option) => option.value === value);
+}
+
+function isUsageGroupBy(value: string | null | undefined): value is UsageGroupBy {
+  return GROUP_BY_OPTIONS.some((option) => option.value === value);
 }
 
 function isUsageWindowDays(value: number): value is UsagePagePreferences["windowDays"] {
@@ -116,7 +130,10 @@ export function UsagePage() {
   useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcutTitle = (
-    option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
+    option:
+      | (typeof GROUP_BY_OPTIONS)[number]
+      | (typeof METRIC_OPTIONS)[number]
+      | (typeof WINDOW_OPTIONS)[number],
   ) => {
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
@@ -133,6 +150,8 @@ export function UsagePage() {
   }));
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
+  const groupBy = preferences.groupBy ?? "harness";
+  const byFamily = groupBy === "family";
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -177,6 +196,14 @@ export function UsagePage() {
   }, [showingKept, refreshingUsage, selectedEnvironments, hiddenProviders]);
   const isProviderLoading = (provider: UsageProviderKind) =>
     loading.everyProvider || loading.providers.has(provider);
+  // Any provider still loading may add to every model family.
+  const isSeriesLoading = useCallback(
+    (key: UsageSeriesKey) => {
+      const loadingProviders: ReadonlySet<UsageSeriesKey> = loading.providers;
+      return byFamily ? loading.partial : loading.everyProvider || loadingProviders.has(key);
+    },
+    [byFamily, loading],
+  );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
@@ -239,14 +266,19 @@ export function UsagePage() {
       ),
     [loading.providers, providersWithData],
   );
-  const chartLoadingProviders = useMemo(
-    () =>
-      new Set(
-        activeProviders.filter(
-          (provider) => loading.everyProvider || loading.providers.has(provider),
-        ),
-      ),
-    [activeProviders, loading.everyProvider, loading.providers],
+  const activeSeries = useMemo(() => {
+    const active = new Set<UsageSeriesKey>(
+      byFamily
+        ? merged.families
+            .filter((family) => family.totalTokens > 0 || family.costUsd > 0)
+            .map((family) => family.family)
+        : activeProviders,
+    );
+    return seriesFor(groupBy).filter(({ key }) => active.has(key));
+  }, [activeProviders, byFamily, groupBy, merged.families]);
+  const chartLoadingSeries = useMemo(
+    () => new Set(activeSeries.filter(({ key }) => isSeriesLoading(key)).map(({ key }) => key)),
+    [activeSeries, isSeriesLoading],
   );
   const selectedModel =
     selectedModelKey === null
@@ -257,17 +289,18 @@ export function UsagePage() {
     0,
   );
   const summaryRows: Array<
-    | { readonly kind: "usage"; readonly provider: UsageProviderKind }
+    | { readonly kind: "usage"; readonly series: UsageSeries }
     | { readonly kind: "enable"; readonly environment: EnvironmentUsageStatus }
-  > = activeProviders.map((provider) => ({ kind: "usage", provider }));
-  const cursorInsertAt =
-    Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
+  > = activeSeries.map((series) => ({ kind: "usage", series }));
+  const cursorInsertAt = byFamily
+    ? summaryRows.length
+    : Math.max(activeProviders.indexOf("codex"), activeProviders.indexOf("claude")) + 1;
   summaryRows.splice(
     cursorInsertAt,
     0,
     ...cursorAccessEnvironments.map((environment) => ({ kind: "enable" as const, environment })),
   );
-  const timeValueColumnWidth = `${60 / (activeProviders.length + 2)}%`;
+  const timeValueColumnWidth = `${60 / (activeSeries.length + 2)}%`;
 
   const updatePreferences = (patch: Partial<UsagePagePreferences>) => {
     const nextPreferences = { ...preferences, ...patch };
@@ -281,6 +314,9 @@ export function UsagePage() {
       days,
       window: makeWindow(days, undefined, days === 1 ? "hour" : "day"),
     });
+  };
+  const selectGroupBy = (nextGroupBy: UsageGroupBy) => {
+    updatePreferences({ groupBy: nextGroupBy });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
     if (nextMetric === "limits") setLimitsNow(Date.now());
@@ -316,12 +352,14 @@ export function UsagePage() {
       return;
 
     const command = resolveUsageShortcut(event, keybindings);
+    const groupOption = GROUP_BY_OPTIONS.find((option) => option.command === command);
     const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
     const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
-    if (!metricOption && !periodOption) return;
+    if (!groupOption && !metricOption && !periodOption) return;
 
     event.preventDefault();
     event.stopPropagation();
+    if (groupOption && !showingLimits) selectGroupBy(groupOption.value);
     if (metricOption) selectMetric(metricOption.value);
     if (periodOption && !showingLimits) selectWindow(periodOption.days);
   });
@@ -416,6 +454,23 @@ export function UsagePage() {
         </span>
       ) : null}
       <div className="ms-auto hidden min-w-0 items-center justify-end gap-2 xl:flex">
+        {/* Like the period, grouping stays in place but disabled on Limits. */}
+        <ToggleGroup
+          aria-label="Group usage by"
+          variant="segmented"
+          value={[groupBy]}
+          disabled={showingLimits}
+          onValueChange={(next) => {
+            const value = next[0];
+            if (isUsageGroupBy(value)) selectGroupBy(value);
+          }}
+        >
+          {GROUP_BY_OPTIONS.map((option) => (
+            <Toggle key={option.value} value={option.value} title={shortcutTitle(option)}>
+              {option.label}
+            </Toggle>
+          ))}
+        </ToggleGroup>
         <ToggleGroup
           aria-label="Usage metric"
           variant="segmented"
@@ -461,6 +516,31 @@ export function UsagePage() {
         </Button>
       </div>
       <div className="ms-auto flex min-w-0 items-center justify-end gap-1 xl:hidden">
+        <Select
+          value={groupBy}
+          disabled={showingLimits}
+          onValueChange={(value) => {
+            if (isUsageGroupBy(value)) selectGroupBy(value);
+          }}
+        >
+          <SelectTrigger
+            aria-label="Group usage by"
+            size="compact"
+            variant="ghost"
+            className="w-auto min-w-0"
+          >
+            <SelectValue>
+              By {GROUP_BY_OPTIONS.find((option) => option.value === groupBy)?.label.toLowerCase()}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {GROUP_BY_OPTIONS.map((option) => (
+              <SelectItem key={option.value} value={option.value} title={shortcutTitle(option)}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
         <Select
           value={metric}
           onValueChange={(value) => {
@@ -639,47 +719,59 @@ export function UsagePage() {
                           />
                         );
                       }
-                      const provider = row.provider;
-                      const totals = merged.providers.find((entry) => entry.provider === provider);
+                      const { key, label, color, driverKind } = row.series;
+                      const providerTotals = merged.providers.find(
+                        (entry) => entry.provider === key,
+                      );
+                      const totals = byFamily
+                        ? merged.families.find((entry) => entry.family === key)
+                        : providerTotals;
                       const share =
                         metric === "cost" ? (totals?.costShare ?? 0) : (totals?.tokenShare ?? 0);
-                      const providerSessions = totals?.sessions ?? 0;
-                      const sessionLabel = `${formatCount(providerSessions)} ${
-                        providerSessions === 1 ? "session" : "sessions"
+                      // A session can span model families, so families count requests.
+                      const count = byFamily
+                        ? (totals?.records ?? 0)
+                        : (providerTotals?.sessions ?? 0);
+                      const countLabel = `${formatCount(count)} ${byFamily ? "request" : "session"}${
+                        count === 1 ? "" : "s"
                       }`;
-                      const providerLoading = isProviderLoading(provider);
-                      const awaitingData = providerLoading && !providersWithData.includes(provider);
+                      const seriesLoading = isSeriesLoading(key);
+                      const hasData =
+                        totals !== undefined && (totals.totalTokens > 0 || totals.costUsd > 0);
+                      const awaitingData = seriesLoading && !hasData;
                       return (
-                        <div key={provider} className="flex flex-col gap-1">
+                        <div key={key} className="flex flex-col gap-1">
                           <div className="flex items-baseline justify-between gap-4">
                             <span className="flex min-w-0 items-center gap-2 text-sm text-foreground">
                               <span
                                 aria-hidden
                                 className="size-2 shrink-0 rounded-full"
-                                style={{
-                                  backgroundColor: PROVIDER_PRESENTATION[provider].color,
-                                }}
+                                style={{ backgroundColor: color }}
                               />
-                              <ProviderMark provider={provider} className="size-4" />
+                              {driverKind === undefined ? null : (
+                                <ProviderInstanceIcon
+                                  driverKind={driverKind}
+                                  displayName={label}
+                                  iconClassName="size-4"
+                                />
+                              )}
                               <span className="flex min-w-0 items-baseline gap-1.5">
-                                <span className="truncate">
-                                  {PROVIDER_PRESENTATION[provider].label}
-                                </span>
+                                <span className="truncate">{label}</span>
                                 <span
                                   className={cn(
                                     "shrink-0 whitespace-nowrap text-2xs text-muted-foreground tabular-nums",
-                                    figureClass(providerLoading),
+                                    figureClass(seriesLoading),
                                     awaitingData && "invisible",
                                   )}
                                 >
-                                  {sessionLabel}
+                                  {countLabel}
                                 </span>
                               </span>
                             </span>
                             <span
                               className={cn(
                                 "shrink-0 text-sm font-medium text-foreground tabular-nums",
-                                figureClass(providerLoading),
+                                figureClass(seriesLoading),
                               )}
                             >
                               {awaitingData
@@ -693,7 +785,7 @@ export function UsagePage() {
                           <span
                             className={cn(
                               "text-xs text-muted-foreground",
-                              figureClass(providerLoading),
+                              figureClass(seriesLoading),
                               awaitingData && "invisible",
                             )}
                           >
@@ -712,8 +804,9 @@ export function UsagePage() {
                       {metric === "tokens" ? "processed tokens" : "cost"}
                     </h2>
                     <UsageProviderChart
-                      providers={activeProviders}
-                      loadingProviders={chartLoadingProviders}
+                      series={activeSeries}
+                      groupBy={groupBy}
+                      loadingSeries={chartLoadingSeries}
                       days={days}
                       daily={merged.daily}
                       hours={hours}
@@ -900,8 +993,8 @@ export function UsagePage() {
                     <table className="w-full table-fixed text-sm">
                       <colgroup>
                         <col className="w-2/5" />
-                        {activeProviders.map((provider) => (
-                          <col key={provider} style={{ width: timeValueColumnWidth }} />
+                        {activeSeries.map(({ key }) => (
+                          <col key={key} style={{ width: timeValueColumnWidth }} />
                         ))}
                         <col style={{ width: timeValueColumnWidth }} />
                         <col style={{ width: timeValueColumnWidth }} />
@@ -909,9 +1002,9 @@ export function UsagePage() {
                       <thead>
                         <tr className="border-b border-border text-left text-xs text-muted-foreground">
                           <th className="py-2 font-normal">{shownHourly ? "Hour" : "Day"}</th>
-                          {activeProviders.map((provider) => (
-                            <th key={provider} className="py-2 text-right font-normal">
-                              {PROVIDER_PRESENTATION[provider].label}
+                          {activeSeries.map(({ key, label }) => (
+                            <th key={key} className="py-2 text-right font-normal">
+                              {label}
                             </th>
                           ))}
                           <th className="py-2 text-right font-normal">Total</th>
@@ -922,7 +1015,7 @@ export function UsagePage() {
                         {breakdownPeriods.length === 0 ? (
                           <tr>
                             <td
-                              colSpan={activeProviders.length + 3}
+                              colSpan={activeSeries.length + 3}
                               className="py-6 text-center text-muted-foreground"
                             >
                               No activity in this window.
@@ -939,15 +1032,17 @@ export function UsagePage() {
                                   ? formatHourShort(period.hourStart, shownWindow.timeZone)
                                   : formatDayShort(period.day)}
                               </td>
-                              {activeProviders.map((provider) => (
+                              {activeSeries.map(({ key }) => (
                                 <td
-                                  key={provider}
+                                  key={key}
                                   className={cn(
                                     "py-2 text-right text-muted-foreground tabular-nums",
-                                    figureClass(isProviderLoading(provider)),
+                                    figureClass(isSeriesLoading(key)),
                                   )}
                                 >
-                                  {formatUsd(period.byProvider.get(provider)?.costUsd ?? 0)}
+                                  {formatUsd(
+                                    periodSeriesTotals(period, groupBy)?.get(key)?.costUsd ?? 0,
+                                  )}
                                 </td>
                               ))}
                               <td

@@ -9,6 +9,8 @@ const UsagePagePreferencesSchema = Schema.Struct({
   windowDays: Schema.Literals([1, 7, 30, 90]),
   /** Providers filtered out of the page. Stored as hidden so new providers show by default. */
   hiddenProviders: Schema.optional(Schema.Array(UsageProviderKind)),
+  /** Absent in preferences saved before grouping existed; reads as harness. */
+  groupBy: Schema.optionalKey(Schema.Literals(["harness", "family"])),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 

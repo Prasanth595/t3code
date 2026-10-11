@@ -49,6 +49,20 @@ saved totals first, then updates them when Cursor's API responds.
 If recent work is missing or a new model shows no cost, refresh to rescan session history and
 update model pricing.
 
+## Group by harness or model
+
+On web and desktop, use **Group by** in the Usage header to switch the per-row list, the daily or
+hourly chart, and the **Breakdown → Day** or **Hour** table between **Harness**, the agent that ran
+the work, and **Model**, the vendor that made the model. Totals, the cost and token mixes, and
+**Breakdown → Model** are the same in both views. Grouped by model, rows count API requests instead
+of sessions, because one session can use models from several vendors.
+
+The vendor comes from the model ID. A vendor in a router-style path, such as `openai/` or
+`moonshotai/`, decides it first; otherwise a name such as `claude`, `gpt`, `gemini`, `grok`,
+`kimi`, `glm`, `deepseek`, `qwen`, or `mistral` does. Models from other vendors, IDs that name no
+vendor, and Pi's `Tools/summaries` show as **Other / unknown**. A model mapped under **Map to** in
+**Model prices** counts as its target model, so it also takes the target's vendor.
+
 ## Set custom model prices
 
 On web or desktop, open the environment dropdown on **Usage**, then choose **Model prices** to add,
@@ -144,7 +158,8 @@ Session, Weekly, or both for each provider. Reopen T3 to refresh expired reading
 
 On web and desktop, open Usage from the command palette. While on Usage,
 press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
+Press `H` or `M` to group by harness or model.
 Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
-24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
+24 hours, 7 days, 30 days, or 90 days. Group and period shortcuts do nothing on Limits.
 Press `Escape` to return to the previous page. Customize these shortcuts in
 **Settings → Keybindings**.

@@ -200,6 +200,8 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command,
     when: "modelPickerOpen && isDesktop",
   })),
+  { key: "h", command: "usage.group.harness", when: "usagePageOpen" },
+  { key: "m", command: "usage.group.family", when: "usagePageOpen" },
   { key: "c", command: "usage.cost", when: "usagePageOpen" },
   { key: "t", command: "usage.tokens", when: "usagePageOpen" },
   { key: "l", command: "usage.limits", when: "usagePageOpen" },

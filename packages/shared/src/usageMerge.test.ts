@@ -785,4 +785,72 @@ describe("mergeUsage", () => {
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
   });
+
+  it("groups the same usage by model family across harnesses", () => {
+    const hourStart = "2026-08-07T09:00:00.000Z";
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ hourStart, costUsd: 10 }),
+              bucket({ hourStart, provider: "pi", model: "anthropic/claude-opus-5", costUsd: 4 }),
+              bucket({ hourStart, provider: "codex", model: "gpt-6-1-sol", costUsd: 6 }),
+              bucket({ hourStart, provider: "pi", model: "Tools/summaries", costUsd: 1 }),
+            ],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+              { provider: "pi", hostId: "mac", homePath: "/a/.pi/agent" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    const tokens = 1160;
+    expect(merged.families).toEqual([
+      {
+        family: "anthropic",
+        costUsd: 14,
+        totalTokens: 2 * tokens,
+        records: 10,
+        costShare: 14 / 21,
+        tokenShare: 0.5,
+      },
+      {
+        family: "openai",
+        costUsd: 6,
+        totalTokens: tokens,
+        records: 5,
+        costShare: 6 / 21,
+        tokenShare: 0.25,
+      },
+      {
+        family: "unknown",
+        costUsd: 1,
+        totalTokens: tokens,
+        records: 5,
+        costShare: 1 / 21,
+        tokenShare: 0.25,
+      },
+    ]);
+    // The harness view of the same usage is unchanged.
+    expect(merged.providers.map((provider) => [provider.provider, provider.costUsd])).toEqual([
+      ["claude", 10],
+      ["codex", 6],
+      ["pi", 5],
+    ]);
+    for (const period of [merged.daily[0], merged.hourly[0]]) {
+      expect(period?.byFamily).toEqual(
+        new Map([
+          ["anthropic", { costUsd: 14, totalTokens: 2 * tokens }],
+          ["openai", { costUsd: 6, totalTokens: tokens }],
+          ["unknown", { costUsd: 1, totalTokens: tokens }],
+        ]),
+      );
+    }
+  });
 });

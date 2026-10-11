@@ -54,6 +54,15 @@ describe("Usage page preferences", () => {
     expect(readUsagePagePreferences()).toEqual({ metric: "tokens", windowDays: 7 });
   });
 
+  it("round-trips grouping by model", () => {
+    saveUsagePagePreferences({ metric: "cost", windowDays: 30, groupBy: "family" });
+    expect(readUsagePagePreferences()).toEqual({
+      metric: "cost",
+      windowDays: 30,
+      groupBy: "family",
+    });
+  });
+
   it("contains write failures and can save again after storage recovers", () => {
     saveUsagePagePreferences({ metric: "cost", windowDays: 30 });
     const write = vi.spyOn(storage, "setItem").mockImplementation(() => {

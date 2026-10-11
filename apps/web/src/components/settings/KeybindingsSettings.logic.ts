@@ -13,7 +13,7 @@ import {
 
 import { shortcutKeyFromEvent } from "../../keybindings";
 import { isMacPlatform } from "../../lib/utils";
-import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
+import { GROUP_BY_OPTIONS, METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 
 // Every usage.* command needs a rank. An unranked one falls back to the
 // alphabetical compare, which makes the comparator inconsistent and the order
@@ -21,7 +21,7 @@ import { METRIC_OPTIONS, WINDOW_OPTIONS } from "../usage/usageShortcuts";
 const usageCommandOrder = new Map<KeybindingCommand, number>(
   [
     "usage.open" as const,
-    ...[...METRIC_OPTIONS, ...WINDOW_OPTIONS].map((option) => option.command),
+    ...[...GROUP_BY_OPTIONS, ...METRIC_OPTIONS, ...WINDOW_OPTIONS].map((option) => option.command),
   ].map((command, index) => [command, index]),
 );
 
@@ -365,6 +365,8 @@ export function commandLabel(command: KeybindingCommand): string {
   if (command === "thread.steerQueuedMessage") return "Queue: Send First Queued Message as Steer";
   if (command === "thread.editQueuedMessage") return "Queue: Edit Last Queued Message";
   if (command === "thread.copyReference") return "Pull Request: Copy Link or Thread ID";
+  const usageGroup = GROUP_BY_OPTIONS.find((option) => option.command === command);
+  if (usageGroup) return `Usage: Group by: ${usageGroup.label}`;
   const usageMetric = METRIC_OPTIONS.find((option) => option.command === command);
   if (usageMetric) return `Usage: ${usageMetric.label}`;
   const usagePeriod = WINDOW_OPTIONS.find((option) => option.command === command);

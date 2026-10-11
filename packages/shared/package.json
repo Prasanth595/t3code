@@ -343,6 +343,10 @@
       "types": "./src/usageMerge.ts",
       "import": "./src/usageMerge.ts"
     },
+    "./usageModelFamily": {
+      "types": "./src/usageModelFamily.ts",
+      "import": "./src/usageModelFamily.ts"
+    },
     "./usageFormat": {
       "types": "./src/usageFormat.ts",
       "import": "./src/usageFormat.ts"

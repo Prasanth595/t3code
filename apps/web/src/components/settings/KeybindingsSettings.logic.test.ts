@@ -81,6 +81,8 @@ describe("KeybindingsSettings.logic", () => {
   it("orders Usage bindings and command choices like the page", () => {
     const expected = [
       "usage.open",
+      "usage.group.harness",
+      "usage.group.family",
       "usage.cost",
       "usage.tokens",
       "usage.limits",

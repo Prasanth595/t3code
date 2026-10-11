@@ -1635,6 +1635,19 @@ describe("composer and pull request shortcuts", () => {
 });
 
 describe("Usage shortcuts", () => {
+  it.each([
+    ["h", "usage.group.harness"],
+    ["m", "usage.group.family"],
+  ] as const)("groups usage with %s on Usage", (key, command) => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { usagePageOpen: true },
+      }),
+      command,
+    );
+  });
+
   it("scopes letter shortcuts to Usage", () => {
     assert.strictEqual(
       resolveShortcutCommand(event({ key: "t" }), DEFAULT_RESOLVED_KEYBINDINGS, {
