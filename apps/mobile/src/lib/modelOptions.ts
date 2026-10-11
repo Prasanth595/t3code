@@ -6,7 +6,6 @@ import type {
   RuntimeMode,
   ServerConfig as T3ServerConfig,
 } from "@t3tools/contracts";
-import { resolveProjectProviderInstanceEnabled } from "@t3tools/contracts";
 import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
@@ -71,9 +70,13 @@ function isProviderEnabledForProject(
   if (!provider) {
     return false;
   }
-  return config?.settings
-    ? resolveProjectProviderInstanceEnabled(config.settings, projectId, provider.instanceId)
-    : provider.enabled;
+  const projectOverride =
+    projectId && config?.settings
+      ? config.settings.projectSettingsOverrides[projectId]?.providerInstances?.[
+          provider.instanceId
+        ]?.enabled
+      : undefined;
+  return projectOverride ?? provider.enabled;
 }
 
 /**
