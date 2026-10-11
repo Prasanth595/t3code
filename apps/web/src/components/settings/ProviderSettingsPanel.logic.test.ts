@@ -9,7 +9,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildProviderEnvironmentOptions,
-  buildProviderInstanceEnablementOverridePatch,
+  buildProviderInstanceOverridePatch,
   classifyProviderEnvironmentAccess,
   isProviderSettingsEnvironmentAvailable,
   resolvePrimaryOperateAccess,
@@ -234,7 +234,7 @@ describe("primary operate access", () => {
   });
 });
 
-describe("buildProviderInstanceEnablementOverridePatch", () => {
+describe("buildProviderInstanceOverridePatch", () => {
   const projectId = ProjectId.make("project-a");
   const instanceId = ProviderInstanceId.make("codex_work");
   const otherInstanceId = ProviderInstanceId.make("claudeAgent_personal");
@@ -248,17 +248,12 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(
-        settings,
-        [projectId, siblingId],
-        instanceId,
-        false,
-      ),
+      buildProviderInstanceOverridePatch(settings, [projectId, siblingId], instanceId, false),
     ).toEqual({
-      [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+      [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
       [siblingId]: {
         newWorktreesStartFromOrigin: true,
-        providerInstanceEnablement: { [instanceId]: false },
+        providerInstances: { [instanceId]: { enabled: false } },
       },
     });
   });
@@ -268,9 +263,9 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
       projectSettingsOverrides: {},
     };
 
-    expect(
-      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, true),
-    ).toEqual({ [projectId]: { providerInstanceEnablement: { [instanceId]: true } } });
+    expect(buildProviderInstanceOverridePatch(settings, [projectId], instanceId, true)).toEqual({
+      [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+    });
   });
 
   it("adds an instance override alongside the project's other overrides", () => {
@@ -278,17 +273,18 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
       projectSettingsOverrides: {
         [projectId]: {
           newWorktreesStartFromOrigin: true,
-          providerInstanceEnablement: { [otherInstanceId]: false },
+          providerInstances: { [otherInstanceId]: { enabled: false } },
         },
       },
     };
 
-    expect(
-      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, true),
-    ).toEqual({
+    expect(buildProviderInstanceOverridePatch(settings, [projectId], instanceId, true)).toEqual({
       [projectId]: {
         newWorktreesStartFromOrigin: true,
-        providerInstanceEnablement: { [otherInstanceId]: false, [instanceId]: true },
+        providerInstances: {
+          [otherInstanceId]: { enabled: false },
+          [instanceId]: { enabled: true },
+        },
       },
     });
   });
@@ -296,12 +292,12 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
   it("resets the only override by clearing the whole project entry", () => {
     const settings: Pick<ServerSettings, "projectSettingsOverrides"> = {
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, undefined),
+      buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
     ).toEqual({ [projectId]: null });
   });
 
@@ -310,17 +306,20 @@ describe("buildProviderInstanceEnablementOverridePatch", () => {
       projectSettingsOverrides: {
         [projectId]: {
           newWorktreesStartFromOrigin: true,
-          providerInstanceEnablement: { [instanceId]: true, [otherInstanceId]: false },
+          providerInstances: {
+            [instanceId]: { enabled: true },
+            [otherInstanceId]: { enabled: false },
+          },
         },
       },
     };
 
     expect(
-      buildProviderInstanceEnablementOverridePatch(settings, [projectId], instanceId, undefined),
+      buildProviderInstanceOverridePatch(settings, [projectId], instanceId, undefined),
     ).toEqual({
       [projectId]: {
         newWorktreesStartFromOrigin: true,
-        providerInstanceEnablement: { [otherInstanceId]: false },
+        providerInstances: { [otherInstanceId]: { enabled: false } },
       },
     });
   });

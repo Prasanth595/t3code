@@ -287,7 +287,7 @@ it.effect("refuses a new turn when the project effectively disables the instance
   const layerTest = ServerSettings.layerTest({
     providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
     projectSettingsOverrides: {
-      [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+      [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
     },
   });
 
@@ -321,7 +321,7 @@ it.effect("allows a new turn when the project enables an instance the machine di
   const layerTest = ServerSettings.layerTest({
     providerInstances: { [instanceId]: { driver: "codex", enabled: false } },
     projectSettingsOverrides: {
-      [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+      [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
     },
   });
 

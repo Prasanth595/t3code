@@ -184,7 +184,7 @@ export function deriveProviderEntriesByEnvironment(
  * instance missing from `providerInstances` is stale (for example
  * immediately after deletion) and is treated as disabled.
  *
- * `projectId` folds in that project's `providerInstanceEnablement` override
+ * `projectId` folds in that project's `providerInstances[id].enabled` override
  * (enable or disable in either direction over the machine value); `null`
  * (no project in scope, or a caller that isn't project-aware) resolves the
  * machine value only, matching every call site before this parameter existed.

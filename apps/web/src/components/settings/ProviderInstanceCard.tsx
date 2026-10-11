@@ -478,7 +478,7 @@ export function ProviderEnvironmentSection(props: {
  * `value` is the project's explicit override (`undefined` means it
  * inherits the environment); `effectiveEnabled` is what the Switch shows.
  */
-interface ProjectEnablementControl {
+interface ProjectOverrideControl {
   readonly value: boolean | undefined;
   readonly effectiveEnabled: boolean;
   readonly onChange: (next: boolean) => void;
@@ -529,7 +529,7 @@ interface ProviderInstanceCardProps {
   readonly onAcceptUrlAuth?: ((action: AcpRegistryUrlAuthAction) => void) | undefined;
   readonly environmentId?: EnvironmentId | undefined;
   /** Omit this prop entirely for environment-wide editing. */
-  readonly projectEnablement?: ProjectEnablementControl | undefined;
+  readonly projectOverride?: ProjectOverrideControl | undefined;
   readonly acpProjects?:
     | ReadonlyArray<{
         readonly id: ProjectId;
@@ -559,7 +559,7 @@ const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> 
  *     driver-specific `config.enabled` into the envelope on load and both
  *     sides resolve through `resolveProviderInstanceEnabled` (an explicit
  *     false wins, then envelope, then config, then the driver default).
- *     With `projectEnablement` set, the Switch instead reads and writes
+ *     With `projectOverride` set, the Switch instead reads and writes
  *     that project's override, leaving the environment's `instance.enabled`
  *     untouched.
  */
@@ -591,10 +591,10 @@ export function ProviderInstanceCard({
   onAcceptUrlAuth,
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
-  projectEnablement,
+  projectOverride,
 }: ProviderInstanceCardProps) {
-  const enabled = projectEnablement
-    ? projectEnablement.effectiveEnabled
+  const enabled = projectOverride
+    ? projectOverride.effectiveEnabled
     : resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
@@ -692,8 +692,8 @@ export function ProviderInstanceCard({
   };
 
   const updateEnabled = (value: boolean) => {
-    if (projectEnablement) {
-      projectEnablement.onChange(value);
+    if (projectOverride) {
+      projectOverride.onChange(value);
       return;
     }
     onUpdate({ ...instance, enabled: value });
@@ -995,17 +995,17 @@ export function ProviderInstanceCard({
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center gap-1">
-          {projectEnablement?.value !== undefined ? (
+          {projectOverride?.value !== undefined ? (
             <SettingResetButton
               label={`${displayName} enablement`}
               tooltip="Reset to the device setting"
               disabled={readOnly || !canWriteSettings}
-              onClick={projectEnablement.onReset}
+              onClick={projectOverride.onReset}
             />
           ) : null}
           <Switch
             checked={enabled}
-            disabled={readOnly || (projectEnablement !== undefined && !canWriteSettings)}
+            disabled={readOnly || (projectOverride !== undefined && !canWriteSettings)}
             onCheckedChange={(checked) => updateEnabled(Boolean(checked))}
             aria-label={`Enable ${displayName}`}
           />

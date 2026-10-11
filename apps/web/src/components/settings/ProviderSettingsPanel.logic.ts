@@ -117,7 +117,7 @@ export function resolveRemoteOperateAccess(input: {
  * environment's enablement, leaving any other overridden keys untouched.
  */
 /** Every checkout of a project on one environment shares the same choice. */
-export function buildProviderInstanceEnablementOverridePatch(
+export function buildProviderInstanceOverridePatch(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
   projectIds: readonly ProjectId[],
   instanceId: ProviderInstanceId,
@@ -126,15 +126,16 @@ export function buildProviderInstanceEnablementOverridePatch(
   const patch: Record<ProjectId, ProjectSettingsOverrides | null> = {};
   for (const projectId of projectIds) {
     const current = settings.projectSettingsOverrides[projectId];
-    const enablement = { ...current?.providerInstanceEnablement };
-    if (value === undefined) delete enablement[instanceId];
-    else enablement[instanceId] = value;
+    const instances = { ...current?.providerInstances };
+    const instance = { ...instances[instanceId] };
+    if (value === undefined) delete instance.enabled;
+    else instance.enabled = value;
+    if (Object.keys(instance).length > 0) instances[instanceId] = instance;
+    else delete instances[instanceId];
 
-    const { providerInstanceEnablement: _omit, ...rest } = current ?? {};
+    const { providerInstances: _omit, ...rest } = current ?? {};
     const nextEntry: ProjectSettingsOverrides =
-      Object.keys(enablement).length > 0
-        ? { ...rest, providerInstanceEnablement: enablement }
-        : rest;
+      Object.keys(instances).length > 0 ? { ...rest, providerInstances: instances } : rest;
     patch[projectId] = Object.keys(nextEntry).length === 0 ? null : nextEntry;
   }
   return patch;

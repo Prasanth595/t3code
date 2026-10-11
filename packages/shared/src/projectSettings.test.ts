@@ -153,7 +153,9 @@ describe("resolveProjectSettings", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
       textGenerationModelSelection: createModelSelection(codex, "gpt-5"),
-      projectSettingsOverrides: { [projectId]: { providerInstanceEnablement: { [codex]: false } } },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [codex]: { enabled: false } } },
+      },
     };
     expect(
       resolveProjectSettings(settings, projectId).settings.textGenerationModelSelection.instanceId,
@@ -172,9 +174,9 @@ describe("resolveProjectSettings", () => {
       providerInstances: { [codexWork]: { driver: ProviderDriverKind.make("codex"), config: {} } },
       projectSettingsOverrides: {
         [projectId]: {
-          providerInstanceEnablement: {
-            [codex]: false,
-            [ProviderInstanceId.make("claudeAgent")]: false,
+          providerInstances: {
+            [codex]: { enabled: false },
+            [ProviderInstanceId.make("claudeAgent")]: { enabled: false },
           },
         },
       },

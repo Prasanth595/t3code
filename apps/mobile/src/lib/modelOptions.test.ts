@@ -538,7 +538,7 @@ describe("mobile model options", () => {
       const settings: ServerSettings = {
         ...DEFAULT_SERVER_SETTINGS,
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
       };
       const selection = { instanceId, model: "model-a" };
@@ -558,7 +558,7 @@ describe("mobile model options", () => {
           [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
         },
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
       };
       const selection = { instanceId, model: "model-a" };
@@ -574,7 +574,7 @@ describe("mobile model options", () => {
           [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
         },
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
       };
 
@@ -588,7 +588,7 @@ describe("mobile model options", () => {
           [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
         },
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
         },
       };
 
@@ -602,7 +602,7 @@ describe("mobile model options", () => {
           [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
         },
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
       };
 
@@ -616,7 +616,7 @@ describe("mobile model options", () => {
           [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
         },
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
       };
       const fallback = { instanceId, model: "model-a" };
@@ -634,7 +634,7 @@ describe("mobile model options", () => {
           [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
         },
         projectSettingsOverrides: {
-          [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+          [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
         },
       };
       const selection = { instanceId, model: "model-a" };
@@ -671,7 +671,7 @@ describe("mobile model options", () => {
             },
           },
           projectSettingsOverrides: {
-            [projectId]: { providerInstanceEnablement: { [antigravityInstanceId]: false } },
+            [projectId]: { providerInstances: { [antigravityInstanceId]: { enabled: false } } },
           },
         },
       } as unknown as ServerConfig;

@@ -1774,7 +1774,7 @@ it.effect("refuses a launch when the project disables the model's provider insta
   const harness = makeHarness({
     serverSettings: {
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+        [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
       },
     },
   });
@@ -1811,7 +1811,7 @@ it.effect("replays an accepted launch after the project disables the instance", 
 
     yield* settings.updateSettings({
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+        [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
       },
     });
 
@@ -2640,7 +2640,7 @@ it.effect("replays an accepted send after the project disables the instance", ()
 
     yield* settings.updateSettings({
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+        [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
       },
     });
 
@@ -2688,7 +2688,7 @@ it.effect("replays an accepted message.dispatch after the project disables the i
 
     yield* settings.updateSettings({
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [modelSelection.instanceId]: false } },
+        [projectId]: { providerInstances: { [modelSelection.instanceId]: { enabled: false } } },
       },
     });
 

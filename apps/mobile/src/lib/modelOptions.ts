@@ -89,9 +89,8 @@ function isProjectDisabledOverride(
     return false;
   }
   return (
-    config.settings.projectSettingsOverrides[projectId]?.providerInstanceEnablement?.[
-      instanceId
-    ] === false
+    config.settings.projectSettingsOverrides[projectId]?.providerInstances?.[instanceId]
+      ?.enabled === false
   );
 }
 

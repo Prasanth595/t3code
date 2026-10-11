@@ -972,18 +972,23 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
+export const ProjectProviderInstanceOverride = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+});
+export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOverride.Type;
+
 /**
  * One project's overrides. An absent key inherits the environment value;
  * `null` is a real value where the environment type is nullable (no default
  * model, no dedicated writer model, never auto-settle).
  *
- * `providerInstanceEnablement` sits outside `PROJECT_SCOPED_SERVER_SETTING_KEYS`:
- * every other key mirrors a `ServerSettings` field, but there is no single
- * machine-wide `enabled` field to mirror, only each instance's own
- * `providerInstances[id].enabled`. It overrides per `ProviderInstanceId`
- * instead: an instance id absent from the record inherits the machine value,
- * and a present entry wins in either direction, so a project can turn on an
- * instance the machine disabled, or turn off one the machine enabled. See
+ * `providerInstances` sits outside `PROJECT_SCOPED_SERVER_SETTING_KEYS`:
+ * every other key replaces its `ServerSettings` field whole, while this one
+ * keeps the settings.json shape but overrides field by field, per
+ * `ProviderInstanceId`. Only `enabled` is overridable today. An instance id
+ * or field absent here inherits the machine value, and a present `enabled`
+ * wins in either direction, so a project can turn on an instance the machine
+ * disabled, or turn off one the machine enabled. See
  * `resolveProjectProviderInstanceEnabled` for the combined resolution.
  */
 export const ProjectSettingsOverrides = Schema.Struct({
@@ -1011,8 +1016,10 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
-  providerInstanceEnablement: Schema.optionalKey(Schema.Record(ProviderInstanceId, Schema.Boolean)),
-} satisfies Record<ProjectScopedServerSettingKey | "providerInstanceEnablement", unknown>);
+  providerInstances: Schema.optionalKey(
+    Schema.Record(ProviderInstanceId, ProjectProviderInstanceOverride),
+  ),
+} satisfies Record<ProjectScopedServerSettingKey | "providerInstances", unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 /**
@@ -1137,7 +1144,7 @@ export const ServerSettings = Schema.Struct({
   ),
   /**
    * Per-project overrides of the keys in `PROJECT_SCOPED_SERVER_SETTING_KEYS`,
-   * plus `providerInstanceEnablement`. The source of truth for project
+   * plus `providerInstances`. The source of truth for project
    * settings; `projectAgentBrowserAccessOverrides`, `projectAutoPullOverrides`
    * and `projectScriptOverrides` are derived views kept for one release so
    * older clients keep reading them.
@@ -1384,7 +1391,7 @@ export const resolveProviderInstanceEnabled = (
 
 /**
  * Effective enablement for a provider instance within a project: the
- * project's `providerInstanceEnablement` override when set, otherwise the
+ * project's `providerInstances[id].enabled` override when set, otherwise the
  * machine-wide `resolveProviderInstanceEnabled` value. `projectId` of `null`
  * (no project in scope) always resolves to the machine-wide value.
  */
@@ -1396,7 +1403,7 @@ export const resolveProjectProviderInstanceEnabled = (
   const override =
     projectId === null
       ? undefined
-      : settings.projectSettingsOverrides[projectId]?.providerInstanceEnablement?.[instanceId];
+      : settings.projectSettingsOverrides[projectId]?.providerInstances?.[instanceId]?.enabled;
   if (override !== undefined) return override;
   const instanceConfig = Object.hasOwn(settings.providerInstances, instanceId)
     ? settings.providerInstances[instanceId]

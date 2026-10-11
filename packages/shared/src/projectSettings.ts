@@ -176,7 +176,7 @@ function resolveProjectOverrides(
     if (value === undefined) continue;
     // A model on a disabled provider falls back to the environment, like the
     // environment-level guards do for these keys. An instance this project
-    // enabled via `providerInstanceEnablement` still counts as enabled here.
+    // enabled via `providerInstances[id].enabled` still counts as enabled here.
     if (
       (key === "textGenerationModelSelection" || key === "defaultModelSelection") &&
       value !== undefined &&

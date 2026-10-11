@@ -23,7 +23,7 @@ describe("deriveProviderInstanceConfigMap", () => {
         [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     });
 
@@ -41,7 +41,7 @@ describe("deriveProviderInstanceConfigMap", () => {
         },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     });
 
@@ -60,7 +60,7 @@ describe("deriveProviderInstanceConfigMap", () => {
         [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     });
 
@@ -73,7 +73,7 @@ describe("deriveProviderInstanceConfigMap", () => {
     const settings = settingsWith({
       providerInstances: {},
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     });
 
@@ -88,7 +88,7 @@ describe("deriveProviderInstanceConfigMap", () => {
         [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
       },
     });
 
@@ -106,8 +106,8 @@ describe("deriveProviderInstanceConfigMap", () => {
         [otherInstanceId]: { driver: ProviderDriverKind.make("claudeAgent"), enabled: false },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
-        [otherProjectId]: { providerInstanceEnablement: { [otherInstanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
+        [otherProjectId]: { providerInstances: { [otherInstanceId]: { enabled: true } } },
       },
     });
 

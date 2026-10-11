@@ -1085,7 +1085,7 @@ describe("resolveProjectProviderInstanceEnabled", () => {
         [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: false },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     };
     expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(true);
@@ -1098,7 +1098,7 @@ describe("resolveProjectProviderInstanceEnabled", () => {
         [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
       },
     };
     expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(false);
@@ -1111,7 +1111,7 @@ describe("resolveProjectProviderInstanceEnabled", () => {
         [instanceId]: { driver: ProviderDriverKind.make("codex"), enabled: true },
       },
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: false } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
       },
     };
     expect(resolveProjectProviderInstanceEnabled(settings, null, instanceId)).toBe(true);
@@ -1129,7 +1129,7 @@ describe("resolveProjectProviderInstanceEnabled", () => {
     const overridden = {
       ...settings,
       projectSettingsOverrides: {
-        [projectId]: { providerInstanceEnablement: { [instanceId]: true } },
+        [projectId]: { providerInstances: { [instanceId]: { enabled: true } } },
       },
     };
     expect(resolveProjectProviderInstanceEnabled(overridden, projectId, instanceId)).toBe(true);
