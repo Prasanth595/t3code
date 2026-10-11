@@ -1115,8 +1115,9 @@ const stalledResponseBody = (status: number): Response =>
     { status, headers: { "content-type": "application/json" } },
   );
 
-for (const status of [200, 503]) {
-  it.effect(`times out a stalled Bitbucket JSON body after HTTP ${status} headers`, () => {
+it.effect.each([200, 503])(
+  "times out a stalled Bitbucket JSON body after HTTP %s headers",
+  (status) => {
     const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
     return Effect.gen(function* () {
       const api = yield* BitbucketApi.BitbucketApi;
@@ -1129,9 +1130,12 @@ for (const status of [200, 503]) {
       assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
       assert.strictEqual(error.operation, "getPullRequest");
     }).pipe(Effect.provide(layer));
-  });
+  },
+);
 
-  it.effect(`times out a stalled Bitbucket raw body after HTTP ${status} headers`, () => {
+it.effect.each([200, 503])(
+  "times out a stalled Bitbucket raw body after HTTP %s headers",
+  (status) => {
     const { execute, layer } = makeLayer({ response: () => stalledResponseBody(status) });
     return Effect.gen(function* () {
       const api = yield* BitbucketApi.BitbucketApi;
@@ -1144,26 +1148,35 @@ for (const status of [200, 503]) {
       assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
       assert.strictEqual(error.operation, "request");
     }).pipe(Effect.provide(layer));
-  });
-}
+  },
+);
 
-for (const kind of ["json", "raw"] as const) {
-  it.effect(`times out before headers for ${kind} Bitbucket requests`, () => {
-    const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
-    return Effect.gen(function* () {
-      const api = yield* BitbucketApi.BitbucketApi;
-      const fiber = yield* Effect.forkChild(
-        Effect.flip(
-          kind === "json"
-            ? api.getPullRequest({ cwd: "/repo", reference: "42" })
-            : api.request({ method: "GET", url: "/user" }),
-        ),
-      );
-      while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
-      yield* TestClock.adjust("31 seconds");
-      const error = yield* Fiber.join(fiber);
-      assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
-      assert.strictEqual(error.operation, kind === "json" ? "getPullRequest" : "request");
-    }).pipe(Effect.provide(layer));
-  });
-}
+it.effect("times out before JSON headers arrive", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+    const fiber = yield* Effect.forkChild(
+      Effect.flip(api.getPullRequest({ cwd: "/repo", reference: "42" })),
+    );
+    while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(fiber);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+    assert.strictEqual(error.operation, "getPullRequest");
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("times out before raw response headers arrive", () => {
+  const { execute, layer } = makeLayer({ response: () => Response.json({}), stall: true });
+  return Effect.gen(function* () {
+    const api = yield* BitbucketApi.BitbucketApi;
+    const fiber = yield* Effect.forkChild(
+      Effect.flip(api.request({ method: "GET", url: "/user" })),
+    );
+    while (execute.mock.calls.length === 0) yield* Effect.yieldNow;
+    yield* TestClock.adjust("31 seconds");
+    const error = yield* Fiber.join(fiber);
+    assert.instanceOf(error, BitbucketApi.BitbucketRequestError);
+    assert.strictEqual(error.operation, "request");
+  }).pipe(Effect.provide(layer));
+});
