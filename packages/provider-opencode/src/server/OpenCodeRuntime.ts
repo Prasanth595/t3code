@@ -108,7 +108,16 @@ export class OpenCodeRuntimeError extends Data.TaggedError(OPENCODE_RUNTIME_ERRO
   readonly operation: string;
   readonly cause?: unknown;
   readonly detail: string;
+  readonly reason?: OpenCodeStartupFailureReason;
 }> {}
+
+export type OpenCodeStartupFailureReason = "databaseLocked";
+
+// OpenCode reports a held opencode.db lock on stderr. Classify it once where the
+// exit is captured so callers branch on the category, not on diagnostic text.
+function classifyStartupExit(stderr: string): OpenCodeStartupFailureReason | undefined {
+  return /SQLITE_BUSY|database is locked/i.test(stderr) ? "databaseLocked" : undefined;
+}
 
 export const isOpenCodeRuntimeError = (u: unknown): u is OpenCodeRuntimeError =>
   P.isTagged(u, OPENCODE_RUNTIME_ERROR_TAG);
@@ -814,10 +823,12 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             const stdout = (yield* Ref.get(stdoutRef)) ?? "";
             const stderr = (yield* Ref.get(stderrRef)) ?? "";
             const exitCode = Number(code);
+            const reason = classifyStartupExit(stderr);
             yield* Deferred.fail(
               readyDeferred,
               new OpenCodeRuntimeError({
                 operation: "startOpenCodeServerProcess",
+                ...(reason ? { reason } : {}),
                 detail: [
                   `OpenCode server exited before startup completed (code: ${String(exitCode)}).`,
                   stdout.trim() ? `stdout:\n${stdout.trim()}` : null,
@@ -909,9 +920,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
         Effect.retry({
           times: 3,
           schedule: Schedule.spaced("250 millis"),
-          while: (error) =>
-            error.operation === "startOpenCodeServerProcess" &&
-            /SQLITE_BUSY|database is locked/i.test(error.detail),
+          while: (error) => error.reason === "databaseLocked",
         }),
       );
     });

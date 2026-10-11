@@ -236,7 +236,7 @@ server.listen(0, "127.0.0.1", () => {
 });
 
 describe("OpenCode database lock startup", () => {
-  effectIt.live.each(["transient", "permanent", "configuration"] as const)(
+  effectIt.live.each(["transient", "permanent", "configuration", "unrelated"] as const)(
     "handles %s startup failures with bounded process ownership",
     (mode) =>
       Effect.gen(function* () {
@@ -257,7 +257,9 @@ let attempt = 0;
 try { attempt = Number(readFileSync(path, "utf8")); } catch {}
 writeFileSync(path, String(++attempt));
 if (${JSON.stringify(mode)} !== "transient" || attempt < 3) {
-  writeSync(2, ${JSON.stringify(mode === "configuration" ? "Invalid configuration" : "SQLiteError: database is locked (SQLITE_BUSY)")} + "\\n");
+  // A lock mentioned outside the startup diagnostic is not a lock failure.
+  if (${JSON.stringify(mode)} === "unrelated") writeSync(1, "note: database is locked was seen earlier\\n");
+  writeSync(2, ${JSON.stringify(mode === "configuration" || mode === "unrelated" ? "Invalid configuration" : "SQLiteError: database is locked (SQLITE_BUSY)")} + "\\n");
   process.exit(1);
 }
 const server = createServer((req, res) => res.end("ok"));
@@ -291,6 +293,9 @@ server.listen(0, "127.0.0.1", () => console.log("opencode server listening on ht
         expect(Number(yield* fs.readFileString(attemptsPath))).toBe(
           mode === "transient" ? 3 : mode === "permanent" ? 4 : 1,
         );
+        if (result._tag === "Failure") {
+          expect(result.failure.reason).toBe(mode === "permanent" ? "databaseLocked" : undefined);
+        }
       }).pipe(
         Effect.scoped,
         Effect.provide([
