@@ -74,7 +74,10 @@ import {
 } from "~/components/ui/menu";
 import { useBrowserDefaults } from "~/browser/browserDefaults";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import {
+  PanelTabCloseButton,
+  panelTabTitleFadeClassName,
+} from "~/components/ui/panel-tab-close-button";
 import { faviconUrlForOrigin } from "~/lib/favicon";
 import { useTheme } from "~/hooks/useTheme";
 import { useDeviceState } from "~/state/device";
@@ -1216,17 +1219,15 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     onAuxClick={(event) => handleTabAuxClick(event, surface)}
                     onContextMenu={(event) => void handleTabContextMenu(event, surface)}
                     className={cn(
-                      "cursor-pointer group/tab flex h-6 max-w-36 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                      // min-w-16 keeps a short title's centre clear of the floating close button.
+                      "cursor-pointer group/tab relative flex h-6 max-w-36 min-w-16 shrink-0 items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
                       ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
                       active
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                     )}
                   >
-                    <PanelTabCloseButton
-                      label={`Close ${title}`}
-                      onClick={() => props.onCloseSurface(surface)}
-                    >
+                    <span className="relative flex size-4 shrink-0 items-center justify-center">
                       <SurfaceIcon
                         surface={surface}
                         sessions={props.previewSessions}
@@ -1237,11 +1238,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                       />
                       {pending ? (
                         <span
-                          className="absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full bg-current"
+                          className="absolute right-0 bottom-0 size-1.5 rounded-full bg-current"
                           aria-hidden
                         />
                       ) : null}
-                    </PanelTabCloseButton>
+                    </span>
                     {audio === "none" || !audioRuntimeTabId ? null : (
                       <Tooltip>
                         <TooltipTrigger
@@ -1301,7 +1302,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                 if (surface.kind === "device" && props.onRenameDevice)
                                   setRenamingDevice(surface.id);
                               }}
-                              className="cursor-pointer flex min-w-0 items-center"
+                              className={cn(
+                                "cursor-pointer flex min-w-0 flex-1 items-center",
+                                !active && panelTabTitleFadeClassName,
+                              )}
                               onClick={() => props.onActivate(surface)}
                             >
                               <span className="truncate">{title}</span>
@@ -1321,6 +1325,11 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         </TooltipPopup>
                       </Tooltip>
                     )}
+                    <PanelTabCloseButton
+                      label={`Close ${title}`}
+                      onClick={() => props.onCloseSurface(surface)}
+                      alwaysVisible={active}
+                    />
                   </SortableTab>
                 );
               })}

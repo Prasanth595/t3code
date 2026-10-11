@@ -44,7 +44,10 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
-import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import {
+  PanelTabCloseButton,
+  panelTabTitleFadeClassName,
+} from "~/components/ui/panel-tab-close-button";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
@@ -1815,30 +1818,33 @@ export default function ThreadTerminalDrawer({
                             <div
                               key={terminalId}
                               className={cn(
-                                "group/tab flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
+                                "group/tab relative flex h-6 w-full items-center gap-0.5 rounded-md pr-2 pl-1.5 text-xs",
                                 isActive
                                   ? "bg-accent text-foreground"
                                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
                               )}
                             >
+                              <span className="flex size-4 shrink-0 items-center justify-center">
+                                <TerminalSquare className="size-3" />
+                              </span>
+                              <button
+                                type="button"
+                                className={cn(
+                                  "flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left",
+                                  canOperateTerminal && !isActive && panelTabTitleFadeClassName,
+                                )}
+                                onClick={() => onActiveTerminalChange(terminalId)}
+                              >
+                                <span className="truncate">{terminalLabel}</span>
+                              </button>
                               {canOperateTerminal ? (
                                 <PanelTabCloseButton
                                   label={closeTerminalLabel}
                                   onClick={() => confirmCloseTerminal(terminalId)}
                                   tooltip={closeTerminalLabel}
-                                >
-                                  <TerminalSquare className="size-3 shrink-0" />
-                                </PanelTabCloseButton>
-                              ) : (
-                                <TerminalSquare className="size-3 shrink-0" />
-                              )}
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 text-left"
-                                onClick={() => onActiveTerminalChange(terminalId)}
-                              >
-                                <span className="truncate">{terminalLabel}</span>
-                              </button>
+                                  alwaysVisible={isActive}
+                                />
+                              ) : null}
                             </div>
                           );
                         })}
