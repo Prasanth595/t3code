@@ -592,7 +592,6 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
-
 });
 
 it.layer(layerOpenCodeTextGenerationExistingServerTest)(
