@@ -58,7 +58,7 @@ function memberKey(member: { environmentId: string; id: string }): string {
 }
 
 /** `project` is the Projects page shortcut: the new-thread defaults people change most. */
-export type ProjectSettingsCategory = "general" | "integrations" | "source-control" | "project";
+export type ProjectSettingsCategory = "general" | "source-control" | "project";
 
 export function ProjectSettingsPanel({
   projectKey,
