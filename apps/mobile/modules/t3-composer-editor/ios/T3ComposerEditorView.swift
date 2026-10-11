@@ -1,6 +1,5 @@
 import ExpoModulesCore
 import UIKit
-import UniformTypeIdentifiers
 
 private struct ComposerTokenPayload: Decodable {
   let type: String
@@ -206,7 +205,9 @@ private final class ComposerTextView: UITextView {
     if action == #selector(paste(_:)) {
       let pasteboard = UIPasteboard.general
       if pasteboard.hasImages ||
-        pasteboard.itemProviders.contains(where: Self.providesImage) {
+        pasteboard.itemProviders.contains(where: {
+          $0.canLoadObject(ofClass: UIImage.self)
+        }) {
         return true
       }
     }
@@ -223,7 +224,9 @@ private final class ComposerTextView: UITextView {
       onPasteContext?(context)
       return
     }
-    let imageProviders = pasteboard.itemProviders.filter(Self.providesImage)
+    let imageProviders = pasteboard.itemProviders.filter {
+      $0.canLoadObject(ofClass: UIImage.self)
+    }
     if !imageProviders.isEmpty {
       loadImages(from: imageProviders)
       return
@@ -287,51 +290,21 @@ private final class ComposerTextView: UITextView {
     replace(textRange, withText: "")
   }
 
-  /// Paste and drop share this check. `canLoadObject(ofClass: UIImage.self)`
-  /// only matches the few types `UIImage` registers as readable, so providers
-  /// that offer an image as another `public.image` subtype (a dragged screenshot
-  /// or Files item, HEIC) would otherwise be treated as non-image content.
-  static func providesImage(_ provider: NSItemProvider) -> Bool {
-    provider.canLoadObject(ofClass: UIImage.self) ||
-      provider.hasItemConformingToTypeIdentifier(UTType.image.identifier)
-  }
-
   func loadImages(from providers: [NSItemProvider]) {
     let group = DispatchGroup()
     let lock = NSLock()
     var images = [UIImage?](repeating: nil, count: providers.count)
 
-    func store(_ image: UIImage?, at index: Int) {
-      lock.lock()
-      images[index] = image
-      lock.unlock()
-    }
-
     for (index, provider) in providers.enumerated() {
       group.enter()
-      // loadDataRepresentation needs an identifier the provider registered, not
-      // the `public.image` supertype, so ask for its own image subtype.
-      let loadFromData = {
-        guard let type = provider.registeredContentTypes.first(where: { $0.conforms(to: .image) }) else {
-          group.leave()
+      provider.loadObject(ofClass: UIImage.self) { object, _ in
+        defer { group.leave() }
+        guard let image = object as? UIImage else {
           return
         }
-        provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
-          defer { group.leave() }
-          store(data.flatMap(UIImage.init(data:)), at: index)
-        }
-      }
-      guard provider.canLoadObject(ofClass: UIImage.self) else {
-        loadFromData()
-        continue
-      }
-      provider.loadObject(ofClass: UIImage.self) { object, _ in
-        if let image = object as? UIImage {
-          store(image, at: index)
-          group.leave()
-        } else {
-          loadFromData()
-        }
+        lock.lock()
+        images[index] = image
+        lock.unlock()
       }
     }
 
@@ -464,7 +437,7 @@ private final class ComposerTextView: UITextView {
   }
 }
 
-public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIGestureRecognizerDelegate {
+public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDropDelegate, UIDropInteractionDelegate, UIGestureRecognizerDelegate {
   private let textView = ComposerTextView()
   private let placeholderLabel = UILabel()
   private var value = ""
@@ -514,6 +487,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     clipsToBounds = false
     textView.delegate = self
     textView.textDropDelegate = self
+    textView.addInteraction(UIDropInteraction(delegate: self))
     textView.backgroundColor = .clear
     textView.textContainerInset = .zero
     textView.textContainer.lineFragmentPadding = 0
@@ -823,7 +797,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard !isReadOnly else {
       return UITextDropProposal(operation: .cancel)
     }
-    guard droppedImageProviders(in: drop) != nil else {
+    guard droppedImageProviders(in: drop.dropSession) != nil else {
       return drop.suggestedProposal
     }
 
@@ -842,16 +816,38 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     guard !isReadOnly else {
       return
     }
-    guard let imageProviders = droppedImageProviders(in: drop) else {
+    guard let imageProviders = droppedImageProviders(in: drop.dropSession) else {
       return
     }
     textView.loadImages(from: imageProviders)
   }
 
-  private func droppedImageProviders(in drop: UITextDropRequest) -> [NSItemProvider]? {
-    let providers = drop.dropSession.items.map(\.itemProvider)
+  // UITextView only hands text-like sessions to its text drop delegate, so an
+  // image-only drag (screenshot thumbnail, Photos) never reaches the methods
+  // above. This interaction accepts those; sessions the text view does take
+  // (e.g. image + file URL) still go through the text drop delegate.
+  public func dropInteraction(_ interaction: UIDropInteraction, canHandle session: UIDropSession) -> Bool {
+    droppedImageProviders(in: session) != nil
+  }
+
+  public func dropInteraction(
+    _ interaction: UIDropInteraction,
+    sessionDidUpdate session: UIDropSession
+  ) -> UIDropProposal {
+    UIDropProposal(operation: isReadOnly ? .cancel : .copy)
+  }
+
+  public func dropInteraction(_ interaction: UIDropInteraction, performDrop session: UIDropSession) {
+    guard !isReadOnly, let imageProviders = droppedImageProviders(in: session) else {
+      return
+    }
+    textView.loadImages(from: imageProviders)
+  }
+
+  private func droppedImageProviders(in session: UIDropSession) -> [NSItemProvider]? {
+    let providers = session.items.map(\.itemProvider)
     guard !providers.isEmpty,
-          providers.allSatisfy(ComposerTextView.providesImage) else {
+          providers.allSatisfy({ $0.canLoadObject(ofClass: UIImage.self) }) else {
       return nil
     }
     return providers
