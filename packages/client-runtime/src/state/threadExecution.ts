@@ -1,5 +1,6 @@
 import {
   latestRootProviderFailure,
+  promptlessContinuationRun,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -31,6 +32,8 @@ import {
   type ThreadRuntimeSummary,
 } from "./models.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+
+export const derivePromptlessContinuationRun = promptlessContinuationRun;
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);

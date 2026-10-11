@@ -278,6 +278,47 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestCrypto)),
   );
 
+  it.effect("continues a failed turn without a user prompt through V2 dispatch", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const supervisor = yield* makeSupervisor({ commands, projects: [] });
+      yield* startThreadTurn({
+        commandId: CommandId.make("continue-failed-turn"),
+        threadId: v2ThreadId,
+        manualContinuationOfRunId: RunId.make("failed-run"),
+        notification: { source: { kind: "system" }, outcome: "updated", summary: "Continued turn" },
+        message: {
+          messageId: MessageId.make("continue-notice"),
+          role: "user",
+          text: "",
+          attachments: [],
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        dispatchMode: "start",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      expect(commands).toEqual([
+        {
+          type: "message.dispatch",
+          commandId: "continue-failed-turn",
+          createdBy: "user",
+          creationSource: "web",
+          threadId: v2ThreadId,
+          messageId: "continue-notice",
+          manualContinuationOfRunId: "failed-run",
+          notification: {
+            source: { kind: "system" },
+            outcome: "updated",
+            summary: "Continued turn",
+          },
+          text: "",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        },
+      ]);
+    }).pipe(Effect.provide(layerTestCrypto)),
+  );
+
   it.effect("preserves plan implementation provenance on V2 runs", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];

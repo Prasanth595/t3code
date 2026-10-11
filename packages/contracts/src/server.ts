@@ -257,6 +257,7 @@ export const ServerProvider = Schema.Struct({
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),
   badgeLabel: Schema.optional(TrimmedNonEmptyString),
   continuation: Schema.optional(ServerProviderContinuation),
+  supportsPromptlessContinuation: Schema.optional(Schema.Boolean),
   showInteractionModeToggle: Schema.optional(Schema.Boolean),
   // The driver streams context window usage, so a started thread will have a
   // meter once its activities load. Clients reserve the meter's space on it.

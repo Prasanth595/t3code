@@ -77,6 +77,7 @@ const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
   reportsContextWindow: true,
+  supportsPromptlessContinuation: true,
 } as const;
 
 export interface CodexAppServerProviderSnapshot {

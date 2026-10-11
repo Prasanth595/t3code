@@ -80,6 +80,7 @@ import { fileRoutePathSegments } from "../files/filePath";
 import {
   ComposerActionButton,
   ComposerInlineControl,
+  ComposerToolbarButton,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
@@ -164,6 +165,8 @@ export interface ThreadComposerProps {
   readonly queueCount: number;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
+  readonly canContinueThread: boolean;
+  readonly isContinuingThread: boolean;
   readonly environmentId: EnvironmentId;
   readonly projectCwd: string | null;
   /** Why sending is blocked right now (shown as the send button's label), or null. */
@@ -193,6 +196,7 @@ export interface ThreadComposerProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
+  readonly onContinueThread: () => Promise<boolean>;
   /** `/usage-limits` resolves locally; the host decides where the report shows. Null clears it. */
   readonly onShowUsageLimits: (report: UsageLimitsReport | null) => void;
   /**
@@ -275,8 +279,22 @@ function SendActionButton(props: {
   readonly accessibilityLabel: string;
   readonly presentation: ComposerSendPresentation;
   readonly disabled: boolean;
+  readonly continuesThread: boolean;
   readonly onSend: (followUp?: ActiveTurnComposerAction) => void;
 }) {
+  if (props.continuesThread) {
+    return (
+      <ComposerToolbarButton
+        accessibilityLabel={props.accessibilityLabel}
+        label="Continue"
+        icon="arrow.clockwise"
+        variant="primary"
+        showChevron={false}
+        disabled={props.disabled}
+        onPress={() => props.onSend()}
+      />
+    );
+  }
   const { presentation } = props;
   const button = (
     <ComposerActionButton
@@ -386,6 +404,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  // Pasted text files and images both block submission until their attachment exists.
   const pendingPastedTextAttachmentCountRef = useRef(0);
   const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
@@ -422,7 +441,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       serverConfig: props.serverConfig,
       states: uploadStates,
     });
-  // Every send goes through the outbox; the label says whether it leaves now
+  // Prompted sends go through the outbox; the label says whether it leaves now
   // or waits (for the connection, an earlier queued message, or an upload).
   const sendPresentation = resolveComposerSendPresentation({
     editingQueuedMessage: queuedEdit !== null,
@@ -432,7 +451,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     deliveryDeferred:
       props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading,
   });
-  const sendLabel = sendPresentation.label;
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =
@@ -541,14 +559,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     states: uploadStates,
   });
   const contextImports = useAtomValue(composerContextImportsAtom);
+  const showContinueAction =
+    props.canContinueThread &&
+    !hasContent &&
+    !props.activeThreadBusy &&
+    queuedEdit === null &&
+    !contextImports[composerDraftKey] &&
+    pendingPastedTextAttachmentCount === 0;
+  const sendLabel = showContinueAction ? "Continue" : sendPresentation.label;
   const sendBlockedReason =
     (queuedEdit?.saving === true ? "Saving…" : null) ??
     props.sendBlockedReason ??
-    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted content" : null) ??
     attachmentBlockReason;
   const canSend =
-    (props.canOperateThread || props.connectionState !== "connected") &&
-    hasContent &&
+    (showContinueAction
+      ? props.canOperateThread && props.connectionState === "connected"
+      : (props.canOperateThread || props.connectionState !== "connected") && hasContent) &&
+    !props.isContinuingThread &&
     !contextImports[composerDraftKey] &&
     !voiceInput.blocksSubmission &&
     sendBlockedReason === null &&
@@ -610,6 +638,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const handleSend = useCallback(
     async (followUp?: ActiveTurnComposerAction) => {
       if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
+      if (showContinueAction && !canSend) return;
       // Typed out in full rather than picked from the menu. Attachments mean the
       // user is sending a prompt, so those go through as usual.
       if (
@@ -624,8 +653,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (inFlightThreadIdsRef.current.has(threadKey)) return;
       inFlightThreadIdsRef.current.add(threadKey);
       try {
-        const messageId = await onSendMessage(followUp);
-        if (messageId === null) {
+        const submitted = showContinueAction
+          ? await props.onContinueThread()
+          : (await onSendMessage(followUp)) !== null;
+        if (!submitted) {
           return;
         }
         // Sending a prompt starts agent work: arm the lock-screen card while the
@@ -648,6 +679,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       openUsageLimits,
       usageLimitsOffered,
       onSendMessage,
+      props.onContinueThread,
+      showContinueAction,
+      canSend,
       props.environmentId,
       props.environmentLabel,
       props.selectedThread.id,
@@ -940,7 +974,20 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 selection={composerMenu.selection}
                 onChangeText={props.onChangeDraftMessage}
                 onSelectionChange={composerMenu.onSelectionChange}
-                onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+                onPasteImages={(uris) => {
+                  pendingPastedTextAttachmentCountRef.current += 1;
+                  setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
+                  const finishAttachment = () => {
+                    pendingPastedTextAttachmentCountRef.current = Math.max(
+                      0,
+                      pendingPastedTextAttachmentCountRef.current - 1,
+                    );
+                    setPendingPastedTextAttachmentCount(
+                      pendingPastedTextAttachmentCountRef.current,
+                    );
+                  };
+                  void props.onNativePasteImages(uris).then(finishAttachment, finishAttachment);
+                }}
                 onPasteText={(paste) => {
                   const insertPaste = () => {
                     const insertion = replaceTextSelection({
@@ -1022,10 +1069,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       : undefined,
                   )
                 }
-                submitTitle={sendPresentation.label}
+                submitTitle={sendLabel}
                 alternateSubmitTitle={
                   sendPresentation.alternate === null
-                    ? sendPresentation.label
+                    ? sendLabel
                     : FOLLOW_UP_ACTION_LABEL[sendPresentation.alternate]
                 }
                 scrollEnabled={isExpanded}
@@ -1093,6 +1140,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   <SendActionButton
                     accessibilityLabel={sendBlockedReason ?? sendLabel}
                     presentation={sendPresentation}
+                    continuesThread={showContinueAction}
                     disabled={!canSend}
                     onSend={handleSend}
                   />
@@ -1188,6 +1236,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     <SendActionButton
                       accessibilityLabel={sendBlockedReason ?? sendLabel}
                       presentation={sendPresentation}
+                      continuesThread={showContinueAction}
                       disabled={!canSend}
                       onSend={handleSend}
                     />

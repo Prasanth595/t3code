@@ -1,6 +1,7 @@
 import type {
   OrchestrationV2ProviderFailure,
   OrchestrationV2Run,
+  OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -58,6 +59,57 @@ export function latestExecutedRun(
     if (latest === null || runRanAfter(run, latest)) latest = run;
   }
   return latest;
+}
+
+/** A promptless retry needs the original input in the thread the provider will resume. */
+export function promptlessContinuationRun(
+  projection: OrchestrationV2ThreadProjection,
+  supported: boolean,
+): OrchestrationV2Run | null {
+  if (
+    !supported ||
+    projection.thread.archivedAt !== null ||
+    projection.thread.deletedAt !== null ||
+    projection.runtimeRequests.some((request) => request.status === "pending") ||
+    projection.runs.some((run) =>
+      ["preparing", "starting", "running", "waiting"].includes(run.status),
+    )
+  )
+    return null;
+  const run = latestExecutedRun(projection.runs);
+  if (
+    run === null ||
+    (run.status !== "failed" && run.status !== "interrupted") ||
+    run.providerInstanceId !== projection.thread.providerInstanceId ||
+    run.providerThreadId !== projection.thread.activeProviderThreadId
+  )
+    return null;
+  const nativeThread = projection.providerThreads.find(
+    (thread) => thread.id === run.providerThreadId,
+  );
+  if (
+    nativeThread === undefined ||
+    nativeThread.ownerNodeId !== null ||
+    nativeThread.providerInstanceId !== run.providerInstanceId ||
+    nativeThread.nativeThreadRef?.strength !== "strong" ||
+    !nativeThread.nativeThreadRef.nativeId ||
+    nativeThread.status === "closed" ||
+    nativeThread.status === "archived"
+  )
+    return null;
+  return projection.providerTurns.some(
+    (turn) =>
+      turn.nodeId === run.rootNodeId &&
+      turn.providerThreadId === nativeThread.id &&
+      projection.attempts.some(
+        (attempt) =>
+          attempt.id === turn.runAttemptId &&
+          attempt.runId === run.id &&
+          attempt.nativeThreadId === nativeThread.nativeThreadRef?.nativeId,
+      ),
+  )
+    ? run
+    : null;
 }
 
 /**

@@ -4793,14 +4793,21 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
 });
 
 it.layer(layerTest)("usage-limit recovery", (it) => {
-  it.effect.each(["interrupted", "usage_limit"] as const)(
-    "manually resumes an %s run ahead of its queued message only once",
-    (reason) =>
+  it.effect.each([
+    "interrupted",
+    "usage_limit",
+    "promptless-provider_error",
+    "promptless-usage_limit",
+  ] as const)(
+    "manually resumes an %s run ahead of its held queue and rejects duplicate continuation requests",
+    (scenario) =>
       Effect.gen(function* () {
+        const promptless = scenario.startsWith("promptless-");
+        const reason = scenario.replace("promptless-", "");
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const events = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make(`manual-resume:${reason}`);
-        const projectId = ProjectId.make(`manual-resume:project:${reason}`);
+        const threadId = ThreadId.make(`manual-resume:${scenario}`);
+        const projectId = ProjectId.make(`manual-resume:project:${scenario}`);
         const now = yield* DateTime.now;
         const createdAt = DateTime.formatIso(now);
         yield* seedProject({
@@ -4812,7 +4819,7 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "thread.create",
-          commandId: CommandId.make(`manual-resume:create:${reason}`),
+          commandId: CommandId.make(`manual-resume:create:${scenario}`),
           threadId,
           projectId,
           title: "Interrupted thread",
@@ -4826,9 +4833,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`manual-resume:start:${reason}`),
+          commandId: CommandId.make(`manual-resume:start:${scenario}`),
           threadId,
-          messageId: MessageId.make(`manual-resume:start:${reason}`),
+          messageId: MessageId.make(`manual-resume:start:${scenario}`),
           text: "Start work.",
           attachments: [],
           dispatchMode: { type: "defer_start" },
@@ -4837,56 +4844,111 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         });
         yield* orchestrator.dispatch({
           type: "message.dispatch",
-          commandId: CommandId.make(`manual-resume:queue:${reason}`),
+          commandId: CommandId.make(`manual-resume:queue:${scenario}`),
           threadId,
-          messageId: MessageId.make(`manual-resume:queue:${reason}`),
+          messageId: MessageId.make(`manual-resume:queue:${scenario}`),
           text: "Follow up.",
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "user",
           creationSource: "web",
         });
-        const [source, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
-          OrchestrationV2Run,
-          OrchestrationV2Run,
-        ];
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const [source, queued] = initial.runs as [OrchestrationV2Run, OrchestrationV2Run];
         // A user stop holds the queue as the run ends (thread.turn.interrupt with
         // holdQueue). Without the hold, the terminal-run worker may start the
         // queued run before the resume below, depending on fiber scheduling.
         yield* events.write({
           events: [
             {
-              id: EventId.make(`manual-resume:hold:${reason}`),
+              id: EventId.make(`manual-resume:hold:${scenario}`),
               type: "run.updated",
               threadId,
               occurredAt: now,
               payload: { ...queued, queueHeld: true },
             },
             {
-              id: EventId.make(`manual-resume:stop:${reason}`),
+              id: EventId.make(`manual-resume:stop:${scenario}`),
               type: "run.updated",
               threadId,
               occurredAt: now,
               payload: {
                 ...source,
                 status: reason === "interrupted" ? "interrupted" : "failed",
+                ...(promptless ? { startedAt: now } : {}),
                 completedAt: now,
               },
             },
           ],
         });
+        if (promptless) {
+          const providerThread = initial.providerThreads.find(
+            (candidate) => candidate.id === source.providerThreadId,
+          )!;
+          const attempt = initial.attempts.find(
+            (candidate) => candidate.id === source.activeAttemptId,
+          )!;
+          const nativeThreadId = `native-${scenario}`;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`manual-resume:thread:${scenario}`),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...initial.thread, activeProviderThreadId: providerThread.id },
+              },
+              {
+                id: EventId.make(`manual-resume:provider-thread:${scenario}`),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...providerThread,
+                  status: "idle",
+                  nativeThreadRef: { driver, nativeId: nativeThreadId, strength: "strong" },
+                },
+              },
+              {
+                id: EventId.make(`manual-resume:attempt:${scenario}`),
+                type: "run-attempt.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...attempt, nativeThreadId },
+              },
+              {
+                id: EventId.make(`manual-resume:provider-turn:${scenario}`),
+                type: "provider-turn.updated",
+                threadId,
+                runId: source.id,
+                occurredAt: now,
+                payload: {
+                  id: ProviderTurnId.make(`manual-resume:provider-turn:${scenario}`),
+                  providerThreadId: providerThread.id,
+                  nodeId: source.rootNodeId!,
+                  runAttemptId: attempt.id,
+                  nativeTurnRef: { driver, nativeId: `turn-${scenario}`, strength: "strong" },
+                  ordinal: 1,
+                  status: "failed",
+                  startedAt: now,
+                  completedAt: now,
+                },
+              },
+            ],
+          });
+        }
         let scheduledResume: ReturnType<typeof limitRecoveryCommand> = null;
         if (reason === "usage_limit") {
           const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
           yield* events.write({
             events: [
               {
-                id: EventId.make(`manual-resume:error:${reason}`),
+                id: EventId.make(`manual-resume:error:${scenario}`),
                 type: "turn-item.updated",
                 threadId,
                 occurredAt: now,
                 payload: {
-                  id: TurnItemId.make(`manual-resume:error:${reason}`),
+                  id: TurnItemId.make(`manual-resume:error:${scenario}`),
                   type: "error",
                   threadId,
                   runId: source.id,
@@ -4926,21 +4988,110 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         }
         const resume = (suffix: string) => ({
           type: "message.dispatch" as const,
-          commandId: CommandId.make(`manual-resume:${suffix}:${reason}`),
+          commandId: CommandId.make(`manual-resume:${suffix}:${scenario}`),
           threadId,
-          messageId: MessageId.make(`manual-resume:${suffix}:${reason}`),
+          messageId: MessageId.make(`manual-resume:${suffix}:${scenario}`),
           manualContinuationOfRunId: source.id,
-          text: "Continue where you left off.",
+          text: promptless ? "" : "Continue where you left off.",
+          ...(promptless
+            ? {
+                notification: {
+                  source: { kind: "system" as const },
+                  outcome: "updated" as const,
+                  summary: "Continued turn",
+                },
+              }
+            : {}),
           attachments: [],
           dispatchMode: { type: "start_immediately" as const },
           createdBy: "user" as const,
           creationSource: "web" as const,
         });
+        if (promptless) {
+          assert.equal(
+            (yield* orchestrator
+              .dispatch({
+                ...resume("wrong-provider"),
+                modelSelection: { ...modelSelection, instanceId: alternateInstanceId },
+              })
+              .pipe(Effect.exit))._tag,
+            "Failure",
+          );
+          assert.equal(
+            (yield* orchestrator
+              .dispatch({
+                ...resume("missing-notice"),
+                notification: undefined,
+              })
+              .pipe(Effect.exit))._tag,
+            "Failure",
+          );
+          const capabilities = vi.spyOn(orchestrationAdapter, "getCapabilities").mockReturnValue(
+            Effect.succeed({
+              ...CodexProviderCapabilitiesV2,
+              turns: {
+                ...CodexProviderCapabilitiesV2.turns,
+                supportsPromptlessContinuation: false,
+              },
+            }),
+          );
+          try {
+            assert.equal(
+              (yield* orchestrator.dispatch(resume("unsupported")).pipe(Effect.exit))._tag,
+              "Failure",
+            );
+          } finally {
+            capabilities.mockRestore();
+          }
+          const attempt = initial.attempts.find(
+            (candidate) => candidate.id === source.activeAttemptId,
+          )!;
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`manual-resume:wrong-native:${scenario}`),
+                type: "run-attempt.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...attempt, nativeThreadId: "replacement-native-thread" },
+              },
+            ],
+          });
+          assert.equal(
+            (yield* orchestrator.dispatch(resume("wrong-native")).pipe(Effect.exit))._tag,
+            "Failure",
+          );
+          yield* events.write({
+            events: [
+              {
+                id: EventId.make(`manual-resume:restore-native:${scenario}`),
+                type: "run-attempt.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...attempt, nativeThreadId: `native-${scenario}` },
+              },
+            ],
+          });
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        }
         yield* orchestrator.dispatch(resume("first"));
         const after = yield* orchestrator.getThreadProjection(threadId);
         assert.lengthOf(after.runs, 3);
         assert.equal(after.runs[1]?.status, "queued");
         assert.equal(after.runs[2]?.status, "starting");
+        assert.equal(after.runs[2]?.manualContinuationOfRunId, promptless ? source.id : undefined);
+        if (promptless) {
+          const continuationMessage = after.messages.find(
+            (message) => message.id === after.runs[2]?.userMessageId,
+          );
+          assert.equal(continuationMessage?.text, "");
+          assert.equal(continuationMessage?.notification?.summary, "Continued turn");
+          assert.isTrue(
+            after.turnItems.some(
+              (item) => item.type === "notification" && item.runId === after.runs[2]?.id,
+            ),
+          );
+        }
         assert.equal(
           (yield* orchestrator.dispatch(resume("second")).pipe(Effect.exit))._tag,
           "Failure",

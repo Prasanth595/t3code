@@ -250,6 +250,7 @@ export const CodexProviderCapabilitiesV2 = {
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
+    supportsPromptlessContinuation: true,
     terminalStatusQuality: "strong",
   },
   streaming: {
@@ -6619,19 +6620,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             ),
           startTurn: (turnInput) => {
+            const promptless =
+              turnInput.restartContinuationOfRunId !== undefined ||
+              turnInput.manualContinuationOfRunId !== undefined;
             const goalCommand =
-              turnInput.message.attachments.length === 0 &&
-              turnInput.restartContinuationOfRunId === undefined
+              turnInput.message.attachments.length === 0 && !promptless
                 ? parseCodexGoalCommand(turnInput.message.text)
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
-              yield* startNativeTurn(
-                turnInput,
-                turnInput.restartContinuationOfRunId === undefined
-                  ? yield* toCodexInput(turnInput)
-                  : [],
-              );
+              yield* startNativeTurn(turnInput, promptless ? [] : yield* toCodexInput(turnInput));
             }).pipe(
               Effect.mapError(
                 (cause) =>

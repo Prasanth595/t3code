@@ -6,6 +6,7 @@ import type {
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  promptlessContinuationRun,
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -4517,13 +4518,33 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      let promptlessManualContinuation = false;
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
+        const promptless = command.text.trim().length === 0 && command.attachments.length === 0;
+        if (promptless && source !== undefined) {
+          const adapter = yield* providerAdapters
+            .get(source.providerInstanceId)
+            .pipe(mapDispatchError(command));
+          const capabilities = yield* adapter.getCapabilities().pipe(mapDispatchError(command));
+          promptlessManualContinuation =
+            promptlessContinuationRun(
+              projection,
+              capabilities.turns.supportsPromptlessContinuation === true,
+            )?.id === source.id &&
+            (command.modelSelection ?? projection.thread.modelSelection).instanceId ===
+              source.providerInstanceId &&
+            command.context === undefined &&
+            command.createdBy === "user" &&
+            command.notification?.source.kind === "system";
+        }
         if (
           command.dispatchMode.type !== "start_immediately" ||
           source === undefined ||
-          (source.status !== "interrupted" &&
+          (promptless && !promptlessManualContinuation) ||
+          (!promptlessManualContinuation &&
+            source.status !== "interrupted" &&
             !(source.status === "failed" && limited?.class === "usage_limit")) ||
           latestExecutedRun(projection.runs)?.id !== source.id ||
           projection.thread.archivedAt !== null ||
@@ -4721,10 +4742,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           dispatchMode = { type: "start_immediately" };
         }
       }
-      // A restart continuation resumes the interrupted turn, so it starts
-      // immediately rather than queueing like other wakes.
+      // Restart and validated manual continuations resume existing work,
+      // so they start immediately rather than queueing like other wakes.
       if (
         command.notification !== undefined &&
+        !promptlessManualContinuation &&
         (command.createdBy !== "agent" ||
           (command.creationSource !== "server" && command.creationSource !== "provider") ||
           (dispatchMode.type !== "queue_after_active" &&
@@ -5054,6 +5076,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...(promptlessManualContinuation && command.manualContinuationOfRunId !== undefined
+            ? { manualContinuationOfRunId: command.manualContinuationOfRunId }
+            : {}),
           ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         };
         const attempt: OrchestrationV2RunAttempt = {
@@ -5394,6 +5419,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.restartContinuationOfRunId === undefined
             ? {}
             : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...(promptlessManualContinuation && command.manualContinuationOfRunId !== undefined
+            ? { manualContinuationOfRunId: command.manualContinuationOfRunId }
+            : {}),
           ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
             ? { workspacePreparation: dispatchMode.workspaceStrategy }
             : {}),
@@ -6091,6 +6119,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...(command.restartContinuationOfRunId === undefined
           ? {}
           : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+        ...(promptlessManualContinuation && command.manualContinuationOfRunId !== undefined
+          ? { manualContinuationOfRunId: command.manualContinuationOfRunId }
+          : {}),
         ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
         ...wakeWorkStartedAt(projection.runs, command),
       };

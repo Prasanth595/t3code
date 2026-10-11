@@ -12,6 +12,7 @@ import {
   type ModelSelection,
   type NodeId,
   type OrchestrationV2Command,
+  type OrchestrationV2Notification,
   type OrchestrationV2CreationSource,
   type PlanId,
   type ProjectId,
@@ -168,6 +169,7 @@ interface StartThreadBootstrap {
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly manualContinuationOfRunId?: RunId;
+  readonly notification?: OrchestrationV2Notification;
   readonly message: {
     readonly messageId: MessageId;
     readonly role: "user";
@@ -703,6 +705,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ...(input.manualContinuationOfRunId === undefined
         ? {}
         : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
+      ...(input.notification === undefined ? {} : { notification: input.notification }),
       text: input.message.text,
       ...(context ? { context } : {}),
       attachments,

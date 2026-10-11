@@ -1428,6 +1428,9 @@ export const layer: Layer.Layer<
               : {
                   restartContinuationOfRunId: input.run.restartContinuationOfRunId,
                 }),
+            ...(input.run.manualContinuationOfRunId === undefined
+              ? {}
+              : { manualContinuationOfRunId: input.run.manualContinuationOfRunId }),
             attemptId: input.attemptId,
             rootNodeId: input.rootNode.id,
             providerThread: input.providerThread,

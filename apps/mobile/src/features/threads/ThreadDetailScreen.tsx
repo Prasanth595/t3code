@@ -199,6 +199,8 @@ export interface ThreadDetailScreenProps {
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
+  readonly canContinueThread: boolean;
+  readonly isContinuingThread: boolean;
   /** Set while a queued message is open in the composer for editing. */
   readonly queuedRunEdit: QueuedRunEdit | null;
   readonly composerDraftKey: string | null;
@@ -226,6 +228,7 @@ export interface ThreadDetailScreenProps {
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: (followUp?: ActiveTurnComposerAction) => Promise<MessageId | null>;
+  readonly onContinueThread: () => Promise<boolean>;
   readonly onReconnectEnvironment: () => void;
   /** Whether the model picker may offer providers other than this thread's. */
   readonly canSwitchThreadProvider: boolean;
@@ -1047,6 +1050,16 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     ],
   );
 
+  const handleContinueThread = useCallback(async () => {
+    const targetThreadKey = selectedThreadKey;
+    const continued = await props.onContinueThread();
+    if (continued && selectedThreadKeyRef.current === targetThreadKey) {
+      clearUsageLimitsFor(targetThreadKey);
+      composerEditorRef.current?.blur();
+    }
+    return continued;
+  }, [clearUsageLimitsFor, props.onContinueThread, selectedThreadKey]);
+
   const handleEditPendingMessage = useCallback(async (message: QueuedThreadMessage) => {
     try {
       if (
@@ -1443,6 +1456,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         queueCount={props.selectedThreadQueueCount}
                         activeThreadBusy={props.activeThreadBusy}
                         canStopThread={props.canStopThread}
+                        canContinueThread={props.canContinueThread}
+                        isContinuingThread={props.isContinuingThread}
                         environmentId={props.environmentId}
                         projectCwd={props.threadCwd ?? props.projectWorkspaceRoot}
                         // Follow-ups typed before the server creates the thread wait in
@@ -1475,6 +1490,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         onRemoveDraftImage={props.onRemoveDraftImage}
                         onStopThread={props.onStopThread}
                         onSendMessage={handleSendMessage}
+                        onContinueThread={handleContinueThread}
                         onShowUsageLimits={showUsageLimits}
                         canSwitchProvider={props.canSwitchThreadProvider}
                         onUpdateModelSelection={props.onUpdateThreadModelSelection}

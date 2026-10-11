@@ -98,6 +98,7 @@ import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/th
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
+  derivePromptlessContinuationRun,
   deriveReportedModelSelection,
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
@@ -2141,7 +2142,7 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
       true;
-  const resumableRunId = useMemo(() => {
+  const promptedResumableRunId = useMemo(() => {
     if (!isServerThread || serverProjection === null) return null;
     const run = latestExecutedRun(serverProjection.runs);
     if (run?.status === "interrupted") return run.id;
@@ -3276,6 +3277,22 @@ export default function ChatView(props: ChatViewProps) {
   const selectedProvider = selectedProviderEntry?.driverKind ?? requestedDriverKind;
   const activeProviderInstanceId = selectedProviderEntry?.instanceId ?? null;
   const activeProviderStatus = selectedProviderEntry?.snapshot ?? null;
+  const promptlessContinuationRun = useMemo(
+    () =>
+      serverProjection === null ||
+      activeProviderInstanceId !== serverProjection.thread.providerInstanceId
+        ? null
+        : derivePromptlessContinuationRun(
+            serverProjection,
+            activeProviderStatus?.supportsPromptlessContinuation === true,
+          ),
+    [
+      serverProjection,
+      activeProviderInstanceId,
+      activeProviderStatus?.supportsPromptlessContinuation,
+    ],
+  );
+  const resumableRunId = promptlessContinuationRun?.id ?? promptedResumableRunId;
   const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
     planModeEnabled: settings.planModeEnabled,
     provider: activeProviderStatus,
@@ -8713,6 +8730,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onResume = async () => {
     if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       (resumableRunId === null && !hasHeldQueuedRuns) ||
       isSendBusy ||
@@ -8751,11 +8769,20 @@ export default function ChatView(props: ChatViewProps) {
           input: {
             threadId,
             manualContinuationOfRunId: resumableRunId,
+            ...(promptlessContinuationRun
+              ? {
+                  notification: {
+                    source: { kind: "system" as const },
+                    outcome: "updated" as const,
+                    summary: "Continued turn",
+                  },
+                }
+              : {}),
             ...(modelSelection ? { modelSelection } : {}),
             message: {
               messageId: newMessageId(),
               role: "user",
-              text: "Continue where you left off.",
+              text: promptlessContinuationRun ? "" : "Continue where you left off.",
               attachments: [],
             },
             runtimeMode,
@@ -11694,6 +11721,9 @@ export default function ChatView(props: ChatViewProps) {
                                 isResuming
                               }
                               canResume={resumableRunId !== null || hasHeldQueuedRuns}
+                              resumeActionLabel={
+                                promptlessContinuationRun ? "Continue" : "Resume thread"
+                              }
                               isRevertingCheckpoint={isRevertingCheckpoint}
                               sendDisabledReason={
                                 !canOperateThread

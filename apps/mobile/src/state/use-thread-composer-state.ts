@@ -4,6 +4,7 @@ import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/shell";
 import {
+  derivePromptlessContinuationRun,
   deriveProviderSubagentStatus,
   deriveRunlessWorkStartedAt,
   deriveThreadActivityRun,
@@ -107,10 +108,14 @@ import {
   useSelectedThreadVisibleTurnItems,
 } from "../state/use-thread-detail";
 import { useThreadSelection } from "../state/use-thread-selection";
-import { enqueueThreadOutboxMessage } from "./thread-outbox";
+import { enqueueThreadOutboxMessage, threadOutboxManager } from "./thread-outbox";
 import { dispatchingQueuedMessageIdAtom, useThreadOutboxMessages } from "./use-thread-outbox";
 import { threadEnvironment } from "./threads";
 import { useAtomCommand } from "./use-atom-command";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 
 const EMPTY_QUEUE_WORKFLOW_ATOM = Atom.make<null>(null).pipe(
   Atom.withLabel("mobile-thread-queue-workflow:empty"),
@@ -201,6 +206,19 @@ export function useThreadComposerState() {
     label: "edit queued message",
     reportFailure: false,
   });
+  const startTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const resumeThreadQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, {
+    reportFailure: false,
+  });
+  const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
+    reportFailure: false,
+  });
+  const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
+    reportFailure: false,
+  });
+  const [continuingThreadKey, setContinuingThreadKey] = useState<string | null>(null);
+  const inFlightContinuationsRef = useRef(new Set<string>());
+  const acceptedContinuationsRef = useRef(new Set<string>());
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const savingQueuedEditRef = useRef(false);
   const pastedTextFileNamesRef = useRef<{ threadKey: string | null; names: Set<string> }>({
@@ -470,6 +488,170 @@ export function useThreadComposerState() {
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
     ? (selectedThreadRuntime?.activeRunId ?? null)
     : null;
+  const continuationRun = useMemo(
+    () =>
+      selectedThreadProjection
+        ? derivePromptlessContinuationRun(
+            selectedThreadProjection.projection,
+            selectedProvider?.supportsPromptlessContinuation === true,
+          )
+        : null,
+    [selectedThreadProjection, selectedProvider?.supportsPromptlessContinuation],
+  );
+  const canContinueThread =
+    continuationRun !== null &&
+    continuationRun.providerInstanceId === modelSelection?.instanceId &&
+    selectedThreadCreation === null &&
+    queuedRunEdit === null &&
+    !activeThreadBusy &&
+    selectedThreadQueueCount === 0 &&
+    draftMessage.trim().length === 0 &&
+    draftAttachments.length === 0 &&
+    (editedDraft?.context?.records.length ?? 0) === 0 &&
+    !acceptedContinuationsRef.current.has(`${selectedThreadKey}:${continuationRun.id}`);
+  const isContinuingThread =
+    selectedThreadKey !== null && continuingThreadKey === selectedThreadKey;
+
+  const onContinueThread = useCallback(async () => {
+    const thread = selectedThreadShell;
+    if (
+      thread === null ||
+      selectedThreadCreation !== null ||
+      selectedEnvironmentRuntime?.connectionState !== "connected" ||
+      !readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)
+    )
+      return false;
+    const threadKey = scopedThreadKey(thread.environmentId, thread.id);
+    const draft = getComposerDraftSnapshot(threadKey);
+    if (
+      inFlightContinuationsRef.current.has(threadKey) ||
+      getQueuedRunEdit(threadKey) !== null ||
+      draft.text.trim().length > 0 ||
+      draft.attachments.length > 0 ||
+      (draft.context?.records.length ?? 0) > 0 ||
+      appAtomRegistry.get(composerContextImportsAtom)[threadKey] ||
+      (appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom)[threadKey]?.length ??
+        0) > 0
+    )
+      return false;
+    const projection = appAtomRegistry.get(
+      environmentThreadDetails.threadAtom({
+        environmentId: thread.environmentId,
+        threadId: thread.id,
+      }),
+    )?.projection;
+    if (!projection) return false;
+    const selection = draft.modelSelection ?? projection.thread.modelSelection;
+    const config = selectedEnvironmentRuntime.serverConfig;
+    const provider = config?.providers.find((entry) => entry.instanceId === selection.instanceId);
+    const run = derivePromptlessContinuationRun(
+      projection,
+      provider?.supportsPromptlessContinuation === true,
+    );
+    if (
+      run === null ||
+      run.providerInstanceId !== selection.instanceId ||
+      acceptedContinuationsRef.current.has(`${threadKey}:${run.id}`) ||
+      isModelSelectionUnavailable(config, selection, thread.projectId)
+    )
+      return false;
+    inFlightContinuationsRef.current.add(threadKey);
+    setContinuingThreadKey(threadKey);
+    clearThreadComposerError(threadKey);
+    try {
+      const metadata = makeQueuedMessageMetadata();
+      const continuationRuntimeMode = draft.runtimeMode ?? projection.thread.runtimeMode;
+      const continuationInteractionMode = resolveProviderInteractionMode(
+        provider,
+        draft.interactionMode ?? projection.thread.interactionMode,
+      );
+      if (continuationRuntimeMode !== projection.thread.runtimeMode) {
+        const result = await setThreadRuntimeMode({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id, runtimeMode: continuationRuntimeMode },
+        });
+        if (result._tag === "Failure") {
+          setThreadComposerError(threadKey, "Could not update the runtime mode. Try again.");
+          return false;
+        }
+      }
+      if (continuationInteractionMode !== projection.thread.interactionMode) {
+        if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope))
+          return false;
+        const result = await setThreadInteractionMode({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id, interactionMode: continuationInteractionMode },
+        });
+        if (result._tag === "Failure") {
+          setThreadComposerError(threadKey, "Could not update the interaction mode. Try again.");
+          return false;
+        }
+      }
+      if (!readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)) return false;
+      const result = await startTurn({
+        environmentId: thread.environmentId,
+        input: {
+          commandId: CommandId.make(metadata.commandId),
+          creationSource: "mobile",
+          threadId: thread.id,
+          manualContinuationOfRunId: run.id,
+          message: {
+            messageId: MessageId.make(metadata.messageId),
+            role: "user",
+            text: "",
+            attachments: [],
+          },
+          notification: {
+            source: { kind: "system" },
+            outcome: "updated",
+            summary: "Continued turn",
+          },
+          modelSelection: selection,
+          runtimeMode: continuationRuntimeMode,
+          interactionMode: continuationInteractionMode,
+          createdAt: metadata.createdAt,
+          dispatchMode: "start",
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          const error = squashAtomCommandFailure(result);
+          setThreadComposerError(
+            threadKey,
+            error instanceof Error ? error.message : "Could not continue the turn. Try again.",
+          );
+        }
+        return false;
+      }
+      acceptedContinuationsRef.current.add(`${threadKey}:${run.id}`);
+      if (
+        projection.runs.some((queued) => queued.status === "queued" && queued.queueHeld === true)
+      ) {
+        const queueResult = await resumeThreadQueue({
+          environmentId: thread.environmentId,
+          input: { threadId: thread.id },
+        });
+        if (queueResult._tag === "Failure" && !isAtomCommandInterrupted(queueResult)) {
+          setThreadComposerError(
+            threadKey,
+            "Turn continued, but queued messages could not resume.",
+          );
+        }
+      }
+      return true;
+    } finally {
+      inFlightContinuationsRef.current.delete(threadKey);
+      setContinuingThreadKey((current) => (current === threadKey ? null : current));
+    }
+  }, [
+    selectedEnvironmentRuntime,
+    selectedThreadCreation,
+    selectedThreadShell,
+    setThreadRuntimeMode,
+    setThreadInteractionMode,
+    resumeThreadQueue,
+    startTurn,
+  ]);
 
   const cancelQueuedRunEdit = useCallback(() => {
     if (selectedThreadKey === null || savingQueuedEditRef.current) return;
@@ -1095,6 +1277,8 @@ export function useThreadComposerState() {
     runtimeMode,
     interactionMode,
     activeThreadBusy,
+    canContinueThread,
+    isContinuingThread,
     interruptibleRunId,
     onChangeDraftMessage,
     onPickDraftMedia,
@@ -1104,6 +1288,7 @@ export function useThreadComposerState() {
     onNativePasteText,
     onRemoveDraftImage,
     onSendMessage,
+    onContinueThread,
     onUpdateModelSelection,
     onUpdateRuntimeMode,
     onUpdateInteractionMode,

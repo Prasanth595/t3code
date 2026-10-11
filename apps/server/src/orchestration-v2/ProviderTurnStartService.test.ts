@@ -155,6 +155,7 @@ it("does not commit running state when inherited background routing cannot be re
 
 function makeLocalCommandHarness(input: {
   readonly text: string;
+  readonly manualContinuationOfRunId?: RunId;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
   readonly logoutFailure?: string;
@@ -200,6 +201,9 @@ function makeLocalCommandHarness(input: {
     completedAt: null,
     checkpointId: null,
     contextHandoffId: null,
+    ...(input.manualContinuationOfRunId === undefined
+      ? {}
+      : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
@@ -381,6 +385,7 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const ensureFallbackThread = vi.fn(() => Effect.succeed(providerThread));
   const resumeFallbackSession = {
     driver: providerThread.driver,
     resumeThread: () =>
@@ -391,7 +396,7 @@ function makeLocalCommandHarness(input: {
           cause: "native thread is gone",
         }),
       ),
-    ensureThread: () => Effect.succeed(providerThread),
+    ensureThread: ensureFallbackThread,
   };
   const open = vi.fn(() =>
     input.interruptOpen === true
@@ -532,6 +537,7 @@ function makeLocalCommandHarness(input: {
   );
   return {
     open,
+    ensureFallbackThread,
     writeIfRunCurrent,
     startRootRun,
     tryHandlePromptCommand,
@@ -735,6 +741,25 @@ effectIt.effect(
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
       expect(harness.events).toEqual([]);
     }),
+);
+
+effectIt.effect("refuses a fresh native session for a manual continuation", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "",
+      manualContinuationOfRunId: RunId.make("failed-native-run"),
+      historyReadFailureAfterFallback: new Error("replacement history must not be read"),
+    });
+
+    yield* harness.start;
+
+    expect(harness.ensureFallbackThread).not.toHaveBeenCalled();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { message: "native thread is gone" } },
+    ]);
+  }),
 );
 
 effectIt.effect("does not mistake a failed state read for a superseded run", () =>

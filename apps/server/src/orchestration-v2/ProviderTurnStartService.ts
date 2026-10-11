@@ -686,6 +686,11 @@ export const layer: Layer.Layer<
         if (resumed._tag === "Success") {
           return resumed.success;
         }
+        // An empty continuation needs this native history. A replacement
+        // session would receive neither the failed turn nor a new prompt.
+        if (run.manualContinuationOfRunId !== undefined) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
 
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
           driver: session.driver,
