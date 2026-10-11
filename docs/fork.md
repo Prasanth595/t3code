@@ -8,6 +8,7 @@ The installed app updates itself from the fork releases through the built-in upd
 - `.github/workflows/fork-release.yml` runs every day and on manual dispatch.
 - The workflow rebases the branch onto `pingdotgg/t3code` main and keeps the fork commits on top.
 - If the rebase or the typecheck fails, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
+- If any job fails, the `notify_agent` job posts the run to `T3_AGENT_WEBHOOK_URL`. That URL is a webhook scheduled task on a T3 server, which starts a repair agent. A manual run with `notify_agent=false` does not post. The agent uses that input on its own retries, so a failed retry does not start a loop.
 - Otherwise it pushes the branch and builds macOS arm64 (signed) and Windows x64 (unsigned).
 - It publishes a GitHub prerelease with `nightly-mac.yml` and `nightly.yml` for electron-updater.
 - `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
@@ -82,4 +83,5 @@ The script creates a prerelease on the fork. Installed fork apps offer it as an 
 | --------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `CSC_LINK`, `CSC_KEY_PASSWORD`                                                          | secret             | macOS signing certificate.                                                                                                                                                                |
 | `FORK_SYNC_TOKEN`                                                                       | secret             | Fine-grained token for this repository with Contents and Workflows read and write. Without it, the push fails when upstream changes a workflow file, and the push does not start Fork CI. |
+| `T3_AGENT_WEBHOOK_URL`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`                | secret, optional   | Webhook URL of the repair agent task, and the Cloudflare Access service token that the call needs. Without the URL, no agent is notified.                                                 |
 | `CLERK_PUBLISHABLE_KEY`, `CLERK_JWT_TEMPLATE`, `CLERK_CLI_OAUTH_CLIENT_ID`, `RELAY_URL` | variable, optional | T3 Connect config. Without them, the build has no T3 Connect.                                                                                                                             |

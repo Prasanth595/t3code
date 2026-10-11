@@ -8,6 +8,11 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      notify_agent:
+        description: Call the agent webhook if this run fails. The agent sets false on its own retries.
+        type: boolean
+        default: true
 
 concurrency:
   group: fork-release
@@ -317,3 +322,49 @@ jobs:
             --title "${{ needs.sync.outputs.name }}" \
             --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.sync.outputs.sha }}." \
             --prerelease
+
+  # Starts a repair agent on a T3 server through a scheduled-task webhook.
+  # Off until the T3_AGENT_WEBHOOK_URL secret is set. The URL is behind
+  # Cloudflare Access, so the call sends the CF_ACCESS_CLIENT_* service token.
+  notify_agent:
+    name: Notify repair agent
+    needs: [sync, build_bundle, desktop, release]
+    if: failure() && github.event.inputs.notify_agent != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Call agent webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.T3_AGENT_WEBHOOK_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          SYNC_RESULT: ${{ needs.sync.result }}
+          BUNDLE_RESULT: ${{ needs.build_bundle.result }}
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
+          RELEASE_RESULT: ${{ needs.release.result }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$WEBHOOK_URL" ]]; then
+            echo "T3_AGENT_WEBHOOK_URL is not set. No agent is notified."
+            exit 0
+          fi
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg event "$GITHUB_EVENT_NAME" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg sync "$SYNC_RESULT" \
+            --arg build_bundle "$BUNDLE_RESULT" \
+            --arg desktop "$DESKTOP_RESULT" \
+            --arg release "$RELEASE_RESULT" \
+            '{repository: $repository, branch: $branch, event: $event, run_url: $run_url, run_id: $run_id,
+              jobs: {sync: $sync, build_bundle: $build_bundle, desktop: $desktop, release: $release}}' \
+            > "$RUNNER_TEMP/payload.json"
+          cat "$RUNNER_TEMP/payload.json"
+          curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \
+            -X POST "$WEBHOOK_URL" \
+            -H "content-type: application/json" \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            --data-binary "@$RUNNER_TEMP/payload.json"
