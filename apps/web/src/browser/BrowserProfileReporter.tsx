@@ -46,18 +46,22 @@ export function BrowserProfileReporter() {
         readonly config: ServerConfig;
         readonly profiles: ReadonlyArray<BrowserProfile>;
         readonly defaultProfileId: string;
+        failures: number;
+        pending: boolean;
+        sent: boolean;
       }
     >(),
   );
-  /** Consecutive failed reports per connected environment. */
-  const failures = useRef(new Map<EnvironmentId, number>());
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The latest report pass, for a retry to run with current settings. */
   const sweep = useRef<() => void>(() => {});
 
   useEffect(
     () => () => {
+      sweep.current = () => {};
+      reported.current.clear();
       if (retryTimer.current !== null) clearTimeout(retryTimer.current);
+      retryTimer.current = null;
     },
     [],
   );
@@ -68,35 +72,35 @@ export function BrowserProfileReporter() {
       for (const environmentId of reported.current.keys()) {
         if (!connected.includes(environmentId)) reported.current.delete(environmentId);
       }
-      for (const environmentId of failures.current.keys()) {
-        if (!connected.includes(environmentId)) failures.current.delete(environmentId);
-      }
       for (const environmentId of connected) {
         const config = serverConfigs.get(environmentId);
         if (!config?.environment.capabilities.serverBrowser || !operable.has(environmentId))
           continue;
         const last = reported.current.get(environmentId);
-        if (
+        const unchanged =
           last?.config === config &&
           last.profiles === profiles &&
-          last.defaultProfileId === defaultProfileId
-        ) {
+          last.defaultProfileId === defaultProfileId;
+        if (unchanged && (last.pending || last.sent || last.failures > MAX_REPORT_RETRIES)) {
           continue;
         }
-        const entry = { config, profiles, defaultProfileId };
+        // A new report tuple gets its own retry budget.
+        const entry = unchanged
+          ? last
+          : { config, profiles, defaultProfileId, failures: 0, pending: false, sent: false };
+        entry.pending = true;
         reported.current.set(environmentId, entry);
         void report({ environmentId, input: { profiles, defaultProfileId } }).then((result) => {
+          // Disconnect, replacement, and unmount invalidate this completion.
+          if (reported.current.get(environmentId) !== entry) return;
+          entry.pending = false;
           if (result._tag === "Success") {
-            failures.current.delete(environmentId);
+            entry.sent = true;
+            entry.failures = 0;
             return;
           }
-          // A newer report replaced this one, which needs no retry.
-          if (isAtomCommandInterrupted(result) || reported.current.get(environmentId) !== entry) {
-            return;
-          }
-          reported.current.delete(environmentId);
-          const attempt = (failures.current.get(environmentId) ?? 0) + 1;
-          failures.current.set(environmentId, attempt);
+          if (isAtomCommandInterrupted(result)) return;
+          const attempt = ++entry.failures;
           if (attempt > MAX_REPORT_RETRIES || retryTimer.current !== null) return;
           retryTimer.current = setTimeout(() => {
             retryTimer.current = null;
