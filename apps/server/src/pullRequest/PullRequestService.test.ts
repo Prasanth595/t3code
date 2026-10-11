@@ -2425,6 +2425,132 @@ it.effect("routes a hosted reference to another repository through a project on 
   }),
 );
 
+it.effect(
+  "names the requesting project, not the one lending its credentials, for a pull request no checkout names",
+  () =>
+    Effect.gen(function* () {
+      const seen: string[] = [];
+      const service = yield* makeService({
+        // Listed first, so it is the project on the host that lends its credentials.
+        projects: [
+          project({
+            id: "unrelated",
+            title: "unrelated",
+            workspaceRoot: "/unrelated",
+            repository: "acme/unrelated",
+          }),
+          project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: (input) =>
+              Effect.sync(() => {
+                seen.push(input.cwd);
+                return hostedChangeRequest("Description");
+              }),
+            getChangeRequestSummary: (input) =>
+              Effect.sync(() => {
+                seen.push(input.cwd);
+                return changeRequest(1, "2026-07-02T00:00:00Z");
+              }),
+          }),
+        ],
+      });
+
+      // A link recorded before the repository was renamed from old-org/app to acme/app.
+      const reference = {
+        projectId: "app" as ProjectId,
+        host: "github.com",
+        repository: "old-org/app",
+        number: 1,
+      };
+      const detail = yield* service.detail(reference);
+      const summary = yield* service.summary(reference, { recoverTransientFailure: false });
+
+      // A hand-off checks the pull request out where it was asked from, which decides for itself
+      // whether it is a checkout of it.
+      assert.strictEqual(detail.projectId, "app");
+      assert.strictEqual(detail.projectTitle, "app");
+      assert.strictEqual(detail.workspaceRoot, "/app");
+      assert.strictEqual(detail.repository, "old-org/app");
+      assert.strictEqual(summary.projectId, "app");
+      // The reads still borrow the credentials of the project that lent them.
+      assert.deepStrictEqual([...new Set(seen)], ["/unrelated"]);
+    }),
+);
+
+it.effect(
+  "keeps each requesting project's checkout when two projects read one borrowed pull request",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "unrelated",
+            title: "unrelated",
+            workspaceRoot: "/unrelated",
+            repository: "acme/unrelated",
+          }),
+          project({ id: "web", title: "web", workspaceRoot: "/web", repository: "acme/web" }),
+          project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestSummary: () => Effect.succeed(changeRequest(7, "2026-07-02T00:00:00Z")),
+          }),
+        ],
+      });
+      const reference = { host: "github.com", repository: "acme/api", number: 7 };
+
+      // Both reads borrow the same project, so they share its persisted entry unless the entry
+      // also knows which project asked.
+      const fromWeb = yield* service.summary(
+        { ...reference, projectId: "web" as ProjectId },
+        { recoverTransientFailure: false },
+      );
+      const fromApp = yield* service.summary(
+        { ...reference, projectId: "app" as ProjectId },
+        { recoverTransientFailure: false },
+      );
+
+      assert.strictEqual(fromWeb.projectId, "web");
+      assert.strictEqual(fromApp.projectId, "app");
+    }),
+);
+
+it.effect(
+  "keeps the lending project as the target when the requesting project has no checkout on that host",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "unrelated",
+            title: "unrelated",
+            workspaceRoot: "/unrelated",
+            repository: "acme/unrelated",
+          }),
+          // No hosted remote, so it cannot read the pull request for a hand-off to check out.
+          project({ id: "scratch", title: "scratch", workspaceRoot: "/scratch" }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          }),
+        ],
+      });
+
+      const detail = yield* service.detail({
+        projectId: "scratch" as ProjectId,
+        host: "github.com",
+        repository: "acme/app",
+        number: 1,
+      });
+
+      assert.strictEqual(detail.projectId, "unrelated");
+    }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];
