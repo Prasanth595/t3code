@@ -163,7 +163,7 @@ export function describeUnavailableModelSelection(
   return isProjectDisabledOverride(config, selection.instanceId, projectId)
     ? {
         title: "Model turned off for this project",
-        detail: "Turn it back on in this project's provider settings, or choose another model.",
+        detail: "Turn it back on from web or desktop, or choose another model.",
       }
     : {
         title: "Antigravity model unavailable",
