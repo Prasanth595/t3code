@@ -98,10 +98,12 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
   // Bare MCP text blocks (`{ type: "text", text: "<json>" }`) carry the
   // result as a string with no envelope keys. Some ACP agents (CodeBuddy)
   // persist the block itself, so parse its text but keep the object when
-  // the text holds no result data. The text parses on an isolated budget so
-  // an oversized text field cannot invalidate outer metadata (e.g. a valid
-  // threadId) through the shared exceeded flag.
-  if (typeof value.text === "string") {
+  // the text holds no result data. The `type` gate keeps ordinary objects
+  // that happen to have a text note (e.g. `{ threadId, text: "{...}" }`)
+  // on the existing path so outer metadata is preserved. The text parses
+  // on an isolated budget so an oversized text field cannot invalidate
+  // outer metadata through the shared exceeded flag.
+  if (value.type === "text" && typeof value.text === "string") {
     const textBudget: ResultReadBudget = {
       remainingBytes: MAX_PARSED_BYTES,
       remainingNodes: MAX_ENVELOPE_NODES,

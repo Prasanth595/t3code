@@ -188,6 +188,10 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ threadId: "thread-1", text: "x".repeat(20_000) })).toEqual({
       threadId: "thread-1",
     });
+    // Ordinary objects with a JSON text note keep outer metadata.
+    expect(compactDynamicToolOutput({ threadId: "thread-1", text: '{"a":1}' })).toEqual({
+      threadId: "thread-1",
+    });
   });
 });
 
