@@ -1,4 +1,5 @@
 import {
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   type McpServerConfig,
@@ -9,12 +10,35 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   collectSkillRows,
   listMcpServerRows,
+  mergeEnvironmentSkillRows,
   mcpServerDraftFrom,
   mcpServerFromDraft,
   parseArgs,
   parseMcpServerJson,
   formatArgs,
+  skillAgents,
+  skillAvailability,
+  skillConflict,
+  skillBody,
+  skillRowDetails,
+  splitRowsBySource,
+  type SkillRow,
+  validateToolsSearch,
 } from "./toolsSettings.logic";
+
+describe("validateToolsSearch", () => {
+  it("opens a skill only on the Skills tab and a server only on the MCP tab", () => {
+    expect(validateToolsSearch({ skill: "review" })).toEqual({ skill: "review" });
+    expect(validateToolsSearch({ tab: "mcp", server: "github" })).toEqual({
+      tab: "mcp",
+      server: "github",
+    });
+    // A page from the other tab, or an empty name, opens nothing.
+    expect(validateToolsSearch({ server: "github" })).toEqual({});
+    expect(validateToolsSearch({ tab: "mcp", skill: "review" })).toEqual({ tab: "mcp" });
+    expect(validateToolsSearch({ tab: "mcp", server: "" })).toEqual({ tab: "mcp" });
+  });
+});
 
 const provider = (
   instanceId: string,
@@ -30,55 +54,95 @@ const provider = (
   }) as ServerProvider;
 
 describe("collectSkillRows", () => {
-  it("merges one skill across providers and folders, grouped by its most specific location", () => {
-    const rows = collectSkillRows(
+  const codexSkills: ServerProvider["skills"] = [
+    {
+      name: "frontend-design",
+      path: "/home/me/.agents/skills/frontend-design/SKILL.md",
+      scope: "user",
+      enabled: true,
+    },
+    {
+      name: "test-t3-app",
+      path: "/work/t3/.agents/skills/test-t3-app/SKILL.md",
+      scope: "repo",
+      enabled: true,
+    },
+    // A repository folder that happens to be called `plugins`.
+    {
+      name: "release",
+      path: "/work/t3/packages/plugins/.agents/skills/release/SKILL.md",
+      scope: "repo",
+      enabled: true,
+    },
+    // A plugin skill the provider reports with no scope.
+    {
+      name: "docs",
+      path: "/home/me/.claude/plugins/cache/acme/docs/skills/docs/SKILL.md",
+      enabled: true,
+    },
+  ];
+  const providers = [
+    provider("claudeAgent", [
+      {
+        name: "frontend-design",
+        path: "/home/me/.claude/skills/frontend-design/SKILL.md",
+        scope: "user",
+        enabled: true,
+      },
+    ]),
+    // Codex was launched in /work/other, whose repository skills it lists
+    // until a scan of the picked checkout arrives.
+    provider(
+      "codex",
       [
-        provider("claudeAgent", [
-          {
-            name: "frontend-design",
-            path: "/home/me/.claude/skills/frontend-design/SKILL.md",
-            scope: "user",
-            enabled: true,
-          },
-        ]),
-        provider("codex", [
-          {
-            name: "frontend-design",
-            path: "/home/me/.agents/skills/frontend-design/SKILL.md",
-            scope: "user",
-            enabled: true,
-          },
-          {
-            name: "test-t3-app",
-            path: "/work/t3/.agents/skills/test-t3-app/SKILL.md",
-            scope: "repo",
-            enabled: true,
-          },
-          // A repository folder that happens to be called `plugins`.
-          {
-            name: "release",
-            path: "/work/t3/packages/plugins/.agents/skills/release/SKILL.md",
-            scope: "repo",
-            enabled: true,
-          },
-          // A plugin skill the provider reports with no scope.
-          {
-            name: "docs",
-            path: "/home/me/.claude/plugins/cache/acme/docs/skills/docs/SKILL.md",
-            enabled: true,
-          },
-        ]),
-        provider("cursor", [], { enabled: false }),
+        ...codexSkills.filter((skill) => skill.scope !== "repo"),
+        {
+          name: "launch-folder-skill",
+          path: "/work/other/.agents/skills/launch-folder-skill/SKILL.md",
+          scope: "repo",
+          enabled: true,
+        },
       ],
-      null,
-    );
+      {
+        workspaceSnapshots: [
+          {
+            cwd: "/work/t3",
+            checkedAt: "2026-10-10T00:00:00.000Z",
+            slashCommands: [],
+            skills: codexSkills,
+          },
+        ],
+      },
+    ),
+    provider("cursor", [], { enabled: false }),
+  ];
+
+  it("merges one skill across providers and folders, grouped by its most specific location", () => {
     expect(
-      rows.map((row) => [row.name, row.group, row.paths.length, row.providers.length]),
+      collectSkillRows(providers, "/work/t3").map((row) => [
+        row.name,
+        row.group,
+        row.paths.length,
+        row.providers.length,
+      ]),
     ).toEqual([
       ["release", "project", 1, 1],
       ["test-t3-app", "project", 1, 1],
       ["frontend-design", "personal", 2, 2],
       ["docs", "plugin", 1, 1],
+    ]);
+  });
+
+  it("shows project skills only from a scan of the picked checkout", () => {
+    // No project picked: the launch folder's skills belong to no project here.
+    expect(collectSkillRows(providers, null).map((row) => row.name)).toEqual([
+      "frontend-design",
+      "docs",
+    ]);
+    // Before the checkout's scan arrives, nothing stands in for it.
+    expect(collectSkillRows(providers, "/work/elsewhere").map((row) => row.name)).toEqual([
+      "frontend-design",
+      "docs",
     ]);
   });
 
@@ -96,6 +160,162 @@ describe("collectSkillRows", () => {
     expect(collectSkillRows([provider("a", [skill(false)])], null)[0]?.disabledByProvider).toBe(
       true,
     );
+  });
+});
+
+describe("mergeEnvironmentSkillRows", () => {
+  const skillRow = (name: string, group: SkillRow["group"] = "personal"): SkillRow => ({
+    name,
+    description: undefined,
+    group,
+    paths: [`/h/.agents/skills/${name}/SKILL.md`],
+    providers: [],
+    disabledByProvider: false,
+  });
+  const mac = EnvironmentId.make("mac");
+  const nucbox = EnvironmentId.make("nucbox");
+
+  it("lists each skill once, shown from the first environment that has it", () => {
+    const merged = mergeEnvironmentSkillRows([
+      { environmentId: mac, rows: [skillRow("review"), skillRow("Notes")] },
+      {
+        environmentId: nucbox,
+        rows: [skillRow("notes"), skillRow("deploy"), skillRow("docs", "plugin")],
+      },
+    ]);
+    expect(merged.map((entry) => [entry.row.name, entry.environmentId, entry.on])).toEqual([
+      ["deploy", nucbox, [nucbox]],
+      ["Notes", mac, [mac, nucbox]],
+      ["review", mac, [mac]],
+    ]);
+  });
+});
+
+describe("skill row details", () => {
+  const row = (paths: ReadonlyArray<string>): SkillRow => ({
+    name: "review",
+    description: undefined,
+    group: "personal",
+    paths,
+    providers: [],
+    disabledByProvider: false,
+  });
+  const folder = (path: string, folderPath: string, hash: string, scripts = false) => ({
+    path,
+    folder: folderPath,
+    hash,
+    files: [],
+    filesTruncated: false,
+    scripts,
+  });
+
+  it("flags a conflict only when two folders hold different text", () => {
+    const linked = new Map([
+      // Claude reaches the same folder through its link.
+      [
+        "/h/.claude/skills/review/SKILL.md",
+        folder("/h/.claude/skills/review/SKILL.md", "/h/.agents/skills/review", "a"),
+      ],
+      [
+        "/h/.agents/skills/review/SKILL.md",
+        folder("/h/.agents/skills/review/SKILL.md", "/h/.agents/skills/review", "a"),
+      ],
+    ]);
+    expect(skillRowDetails(row([...linked.keys()]), linked).conflict).toBe(false);
+
+    const copies = new Map([
+      [
+        "/h/.claude/skills/review/SKILL.md",
+        folder("/h/.claude/skills/review/SKILL.md", "/h/.claude/skills/review", "a"),
+      ],
+      [
+        "/p/.agents/skills/review/SKILL.md",
+        folder("/p/.agents/skills/review/SKILL.md", "/p/.agents/skills/review", "b", true),
+      ],
+    ]);
+    const details = skillRowDetails(row([...copies.keys()]), copies);
+    expect(details.conflict).toBe(true);
+    expect(details.scripts).toBe(true);
+  });
+
+  it("knows nothing about a row whose folders weren't inspected", () => {
+    expect(skillRowDetails(row(["/x/SKILL.md"]), new Map())).toEqual({
+      folder: null,
+      copies: [],
+      scripts: false,
+      conflict: false,
+      installed: null,
+      removable: null,
+    });
+  });
+
+  it("splits rows by source, unsourced first, then by source name", () => {
+    const rows = [
+      { name: "tdd", source: "mattpocock/skills" },
+      { name: "mine", source: null },
+      { name: "deploy", source: "acme/tools" },
+      { name: "grill-me", source: "mattpocock/skills" },
+    ];
+    expect(
+      splitRowsBySource(rows, (entry) => entry.source).map((group) => [
+        group.source,
+        group.rows.map((entry) => entry.name),
+      ]),
+    ).toEqual([
+      [null, ["mine"]],
+      ["acme/tools", ["deploy"]],
+      ["mattpocock/skills", ["tdd", "grill-me"]],
+    ]);
+  });
+});
+
+describe("skill availability and attention", () => {
+  const agents = skillAgents([
+    provider("claudeAgent", [], { displayName: "Claude" }),
+    provider("codex", [], { displayName: "Codex" }),
+    provider("cursor", [], { displayName: "Cursor", enabled: false }),
+  ]);
+  const ref = (instanceId: string) => ({
+    instanceId: ProviderInstanceId.make(instanceId),
+    driver: ProviderDriverKind.make(instanceId),
+    displayName: instanceId,
+  });
+  const row = (group: SkillRow["group"], providers: ReadonlyArray<string>): SkillRow => ({
+    name: "review",
+    description: undefined,
+    group,
+    paths: [],
+    providers: providers.map(ref),
+    disabledByProvider: false,
+  });
+  const noDetails = skillRowDetails(row("personal", []), new Map());
+
+  it("counts only enabled agents, and says when every one loads a skill", () => {
+    expect(agents.map((agent) => agent.displayName)).toEqual(["Claude", "Codex"]);
+    expect(skillAvailability(row("personal", ["claudeAgent", "codex"]), agents).everyone).toBe(
+      true,
+    );
+    const partial = skillAvailability(row("personal", ["codex"]), agents);
+    expect([partial.everyone, partial.missing.map((agent) => agent.displayName)]).toEqual([
+      false,
+      ["Claude"],
+    ]);
+  });
+
+  it("flags only a name used by different skills, not one some agents don't load", () => {
+    expect(skillConflict(row("personal", ["codex"]), noDetails)).toBeNull();
+    expect(
+      skillConflict(row("personal", ["codex"]), {
+        ...noDetails,
+        copies: [noDetails.folder, noDetails.folder].filter((copy) => copy !== null),
+        conflict: true,
+      }),
+    ).toMatch(/^Different skills are named “review”/);
+  });
+
+  it("strips SKILL.md's header for the rendered view", () => {
+    expect(skillBody("---\nname: review\n---\n\n# Review\nBody")).toBe("# Review\nBody");
+    expect(skillBody("# No header")).toBe("# No header");
   });
 });
 

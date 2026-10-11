@@ -1,4 +1,5 @@
 import {
+  type EnvironmentId,
   isValidMcpServerName,
   type McpServerConfig,
   type McpServerProjectOverride,
@@ -8,26 +9,51 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderSkill,
+  type SkillFolderInfo,
 } from "@t3tools/contracts";
-import {
-  resolveProviderSkillSourceKind,
-  resolveProviderSkillsForCwd,
-} from "@t3tools/client-runtime/providerSkills";
+import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
 
 export type ToolsTab = "skills" | "mcp";
 
-export function validateToolsSearch(raw: Record<string, unknown>): { tab?: ToolsTab } {
-  return raw.tab === "mcp" || raw.tab === "skills" ? { tab: raw.tab } : {};
+/**
+ * `tab` picks the tab; `skill` is the skill whose page is open on the Skills
+ * tab, and `server` the MCP server whose page is open on the MCP servers tab.
+ */
+export function validateToolsSearch(raw: Record<string, unknown>): {
+  tab?: ToolsTab;
+  skill?: string;
+  server?: string;
+} {
+  const tab = raw.tab === "mcp" || raw.tab === "skills" ? raw.tab : undefined;
+  const skill =
+    tab !== "mcp" && typeof raw.skill === "string" && raw.skill.length > 0 ? raw.skill : undefined;
+  const server =
+    tab === "mcp" && typeof raw.server === "string" && raw.server.length > 0
+      ? raw.server
+      : undefined;
+  return {
+    ...(tab === undefined ? {} : { tab }),
+    ...(skill === undefined ? {} : { skill }),
+    ...(server === undefined ? {} : { server }),
+  };
 }
 
 /** Where a skill lives, the groups the Skills tab shows in order. */
 export type SkillGroupKind = "project" | "personal" | "plugin" | "system";
 
 export const SKILL_GROUP_LABELS: Readonly<Record<SkillGroupKind, string>> = {
-  project: "Repository",
-  personal: "Personal",
+  project: "This project",
+  personal: "Global",
   plugin: "Plugins",
   system: "Built in",
+};
+
+/** What each section means, beside its name. */
+export const SKILL_GROUP_HINTS: Readonly<Record<SkillGroupKind, string>> = {
+  project: "Lives in this repo",
+  personal: "In all your projects",
+  plugin: "From the agents' plugins",
+  system: "Ships with the agent",
 };
 
 export interface SkillProviderRef {
@@ -77,8 +103,9 @@ const isFilePath = (path: string) => path.startsWith("/") || /^[A-Za-z]:[\\/]/.t
 
 /**
  * The skills every enabled provider instance on one environment discovers,
- * for the checkout at `cwd` when one is given (falling back to each
- * provider's own launch directory until its snapshot for `cwd` arrives).
+ * for the checkout at `cwd` when one is given. A provider's own list is read
+ * in the folder it was launched from, so its project skills belong to no
+ * project picked here: they show only from a scan of `cwd`.
  * A skill reached from a project folder by any provider counts as a project
  * skill, so the group follows the most specific location.
  */
@@ -99,11 +126,15 @@ export function collectSkillRows(
   >();
   for (const provider of providers) {
     if (!provider.enabled) continue;
-    const skills = cwd === null ? provider.skills : resolveProviderSkillsForCwd(provider, cwd);
-    for (const skill of skills) {
+    const snapshot =
+      cwd === null
+        ? undefined
+        : provider.workspaceSnapshots?.find((candidate) => candidate.cwd === cwd);
+    for (const skill of snapshot?.skills ?? provider.skills) {
       const key = skill.name.trim().toLowerCase();
       if (key.length === 0) continue;
       const group = skillGroup(skill);
+      if (group === "project" && snapshot === undefined) continue;
       const ref: SkillProviderRef = {
         instanceId: provider.instanceId,
         driver: provider.driver,
@@ -149,6 +180,61 @@ export function collectSkillRows(
     );
 }
 
+/** One environment's skill rows, from that environment's providers and checkout. */
+export interface EnvironmentSkillRows {
+  readonly environmentId: EnvironmentId;
+  readonly rows: ReadonlyArray<SkillRow>;
+}
+
+/** A skill row across environments: shown from one of them, present on some. */
+export interface FleetSkillRow {
+  readonly row: SkillRow;
+  /** The environment whose copy the row, its details and its page show. */
+  readonly environmentId: EnvironmentId;
+  /** Every listed environment that has a skill by this name, in list order. */
+  readonly on: ReadonlyArray<EnvironmentId>;
+}
+
+/**
+ * Merge each environment's rows by skill name. A row shows the copy on the
+ * first environment listed that has it, so the primary environment goes
+ * first; `on` says where else the name is. Plugin and built-in skills belong
+ * to their agents, so only the first environment's are kept.
+ */
+export function mergeEnvironmentSkillRows(
+  environments: ReadonlyArray<EnvironmentSkillRows>,
+): ReadonlyArray<FleetSkillRow> {
+  const byName = new Map<
+    string,
+    { row: SkillRow; environmentId: EnvironmentId; on: EnvironmentId[] }
+  >();
+  for (const [index, { environmentId, rows }] of environments.entries()) {
+    for (const row of rows) {
+      const own = row.group === "project" || row.group === "personal";
+      if (!own && index > 0) continue;
+      const key = row.name.toLowerCase();
+      const existing = byName.get(key);
+      if (existing === undefined) {
+        byName.set(key, { row, environmentId, on: [environmentId] });
+      } else if (!existing.on.includes(environmentId)) {
+        existing.on.push(environmentId);
+      }
+    }
+  }
+  const order = environments.map((environment) => environment.environmentId);
+  return [...byName.values()]
+    .map(({ row, environmentId, on }) => ({
+      row,
+      environmentId,
+      on: on.toSorted((left, right) => order.indexOf(left) - order.indexOf(right)),
+    }))
+    .toSorted(
+      (left, right) =>
+        GROUP_ORDER.indexOf(left.row.group) - GROUP_ORDER.indexOf(right.row.group) ||
+        left.row.name.localeCompare(right.row.name),
+    );
+}
+
 export function groupSkillRows(
   rows: ReadonlyArray<SkillRow>,
 ): ReadonlyArray<{ readonly group: SkillGroupKind; readonly rows: ReadonlyArray<SkillRow> }> {
@@ -168,27 +254,186 @@ export function filterSkillRows(rows: ReadonlyArray<SkillRow>, query: string) {
   );
 }
 
-/** Whether `providers` covers only some of the enabled instances, so the row should name them. */
-export function skillReachesSomeProviders(row: SkillRow, enabledProviderCount: number): boolean {
-  return row.providers.length < enabledProviderCount;
+/** What the server knows about a row's folders: see `skills.inspect`. */
+export interface SkillRowDetails {
+  /** The copy shown first: the installed one, else the first found; null when none was inspected. */
+  readonly folder: SkillFolderInfo | null;
+  /** Each distinct folder holding a skill of this name, the shown one first. */
+  readonly copies: ReadonlyArray<SkillFolderInfo>;
+  /** Some copy holds a script an agent could run. */
+  readonly scripts: boolean;
+  /** Two copies of the name have different SKILL.md text. */
+  readonly conflict: boolean;
+  /** Set when the `skills` CLI installed the row's skill, so it can be updated. */
+  readonly installed: NonNullable<SkillFolderInfo["installed"]> | null;
+  /**
+   * The level to remove the skill from: where the CLI installed it, else
+   * where a copy sits in the agents' own skill folders. Null for a plugin's
+   * or an agent's built-in skill.
+   */
+  readonly removable: NonNullable<SkillFolderInfo["location"]> | null;
 }
 
-/** The environment's list with one skill switched. Sorted so equal lists compare equal. */
-export function withSkillDisabled(
-  disabledSkills: ReadonlyArray<string>,
-  name: string,
-  disabled: boolean,
-): ReadonlyArray<string> {
-  const next = new Set(
-    disabledSkills.filter((entry) => entry.toLowerCase() !== name.toLowerCase()),
+const NO_DETAILS: SkillRowDetails = {
+  folder: null,
+  copies: [],
+  scripts: false,
+  conflict: false,
+  installed: null,
+  removable: null,
+};
+
+export function skillRowDetails(
+  row: SkillRow,
+  folders: ReadonlyMap<string, SkillFolderInfo>,
+): SkillRowDetails {
+  const infos = row.paths.flatMap((path) => {
+    const info = folders.get(path);
+    return info === undefined ? [] : [info];
+  });
+  if (infos.length === 0) return NO_DETAILS;
+  // Two agents reaching one folder through a link report two paths for one copy.
+  const byFolder = new Map(infos.map((info) => [info.folder, info]));
+  const copies = [...byFolder.values()].toSorted(
+    (left, right) => Number(right.installed !== undefined) - Number(left.installed !== undefined),
   );
-  if (disabled) next.add(name);
-  return [...next].toSorted();
+  const installed = copies.find((info) => info.installed !== undefined)?.installed ?? null;
+  return {
+    folder: copies[0] ?? null,
+    copies,
+    scripts: copies.some((info) => info.scripts),
+    conflict: new Set(copies.map((info) => info.hash)).size > 1,
+    installed,
+    removable: installed?.target ?? copies.find((info) => info.location)?.location ?? null,
+  };
 }
 
-export function isSkillDisabled(disabledSkills: ReadonlyArray<string>, name: string): boolean {
-  const lowered = name.toLowerCase();
-  return disabledSkills.some((entry) => entry.toLowerCase() === lowered);
+/**
+ * A group's rows split by the source the `skills` CLI installed them from,
+ * so a pack of skills reads as one block with one switch. Rows with no
+ * recorded source come first, under no heading.
+ */
+export function splitRowsBySource<Row>(
+  rows: ReadonlyArray<Row>,
+  sourceOf: (row: Row) => string | null,
+): ReadonlyArray<{ readonly source: string | null; readonly rows: ReadonlyArray<Row> }> {
+  const bySource = new Map<string | null, Row[]>();
+  for (const row of rows) {
+    const source = sourceOf(row);
+    const list = bySource.get(source) ?? [];
+    list.push(row);
+    bySource.set(source, list);
+  }
+  return [...bySource.entries()]
+    .toSorted(([left], [right]) =>
+      left === null ? -1 : right === null ? 1 : left.localeCompare(right),
+    )
+    .map(([source, sourceRows]) => ({ source, rows: sourceRows }));
+}
+
+/** An enabled agent on the page, as its icon and name show it. */
+export interface SkillAgent {
+  readonly instanceId: ProviderInstanceId;
+  readonly driverKind: ProviderDriverKind;
+  readonly displayName: string;
+  readonly accentColor?: string | undefined;
+}
+
+export function skillAgents(providers: ReadonlyArray<ServerProvider>): ReadonlyArray<SkillAgent> {
+  return providers
+    .filter((provider) => provider.enabled)
+    .map((provider) => ({
+      instanceId: provider.instanceId,
+      driverKind: provider.driver,
+      displayName: provider.displayName ?? provider.instanceId,
+      ...(provider.accentColor === undefined ? {} : { accentColor: provider.accentColor }),
+    }));
+}
+
+/** Which enabled agents load a skill, and which don't. */
+export interface SkillAvailability {
+  /** Every enabled agent loads it, so the row shows one mark instead of every icon. */
+  readonly everyone: boolean;
+  readonly agents: ReadonlyArray<SkillAgent>;
+  readonly missing: ReadonlyArray<SkillAgent>;
+}
+
+export function skillAvailability(
+  row: SkillRow,
+  agents: ReadonlyArray<SkillAgent>,
+): SkillAvailability {
+  const loads = new Set(row.providers.map((provider) => provider.instanceId));
+  const present = agents.filter((agent) => loads.has(agent.instanceId));
+  const missing = agents.filter((agent) => !loads.has(agent.instanceId));
+  return { everyone: agents.length > 0 && missing.length === 0, agents: present, missing };
+}
+
+const joinNames = (names: ReadonlyArray<string>) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
+export function availabilityNote(value: SkillAvailability): string {
+  return value.everyone
+    ? "Available to all your agents"
+    : value.agents.length === 0
+      ? "No enabled agent loads this skill"
+      : `Not available to ${joinNames(value.missing.map((agent) => agent.displayName))}`;
+}
+
+/**
+ * What to do about a skill that needs a look, or null. Only a name used by
+ * different skills does: its one switch can't tell them apart, and removing
+ * or renaming a copy fixes it. Which agents load a skill is shown, not flagged.
+ */
+export function skillConflict(row: SkillRow, details: SkillRowDetails): string | null {
+  return details.conflict
+    ? `Different skills are named “${row.name}”, and its switch turns them all on or off. Remove or rename the copy you don't want.`
+    : null;
+}
+
+/** Rows with no recorded source show first; a pack collapses past this many rows. */
+export const SOURCE_GROUP_PREVIEW = 3;
+
+/** The tree's usual order (folders first, then names), with the root SKILL.md on top. */
+export function compareSkillFiles(
+  left: {
+    readonly path: string;
+    readonly isDirectory: boolean;
+    readonly segments: readonly string[];
+  },
+  right: {
+    readonly path: string;
+    readonly isDirectory: boolean;
+    readonly segments: readonly string[];
+  },
+): number {
+  const pinned = Number(right.path === "SKILL.md") - Number(left.path === "SKILL.md");
+  if (pinned !== 0) return pinned;
+  const shared = Math.min(left.segments.length, right.segments.length);
+  for (let depth = 0; depth < shared; depth += 1) {
+    const a = left.segments[depth] ?? "";
+    const b = right.segments[depth] ?? "";
+    if (a === b) continue;
+    const aFolder = depth < left.segments.length - 1 || left.isDirectory;
+    const bFolder = depth < right.segments.length - 1 || right.isDirectory;
+    if (aFolder !== bFolder) return aFolder ? -1 : 1;
+    return (
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }) || (a < b ? -1 : 1)
+    );
+  }
+  return left.segments.length - right.segments.length;
+}
+
+const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+/** SKILL.md without its header, for the rendered view. */
+export function skillBody(contents: string): string {
+  const match = FRONTMATTER.exec(contents);
+  return (match === null ? contents : contents.slice(match[0].length)).replace(
+    /^(?:[ \t]*\r?\n)*/,
+    "",
+  );
 }
 
 // ── MCP servers ────────────────────────────────────────────────────
