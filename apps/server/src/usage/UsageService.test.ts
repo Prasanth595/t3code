@@ -208,7 +208,7 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 const CURSOR_NOW = Date.parse("2026-08-02T12:00:00Z");
 const HOUR_MS = 60 * 60 * 1000;
 /** The service's cache retention, which the Cursor account cache always covers. */
-const CURSOR_RETENTION_MS = 92 * 24 * HOUR_MS;
+const CURSOR_RETENTION_MS = 368 * 24 * HOUR_MS;
 
 /**
  * Stands in for Cursor's dashboard API. Each read returns the account's events

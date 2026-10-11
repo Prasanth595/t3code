@@ -94,10 +94,11 @@ const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * The longest window the UI offers, 90 days, plus its `MTIME_SLACK_MS`, rounded
- * up. Older entries are pruned.
+ * A year of history plus `MTIME_SLACK_MS`, rounded up, so a custom range of up
+ * to a year is fully cached. Older entries are pruned; a longer range still
+ * reads the transcripts on disk.
  */
-const CACHE_RETENTION_DAYS = 92;
+const CACHE_RETENTION_DAYS = 368;
 
 /** Transcripts parsed at once. More gains little once the disk stays busy. */
 const TRANSCRIPT_READ_CONCURRENCY = 4;
