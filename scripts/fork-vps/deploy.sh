@@ -70,7 +70,8 @@ ln -sfn "$target" "$LINK"
 systemctl restart t3-server
 healthy=false
 for _ in $(seq 1 30); do
-  if [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3773/)" == 200 ]]; then
+  # A server that is still starting can accept a request and never answer it.
+  if [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:3773/)" == 200 ]]; then
     healthy=true
     break
   fi
