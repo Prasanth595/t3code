@@ -21,6 +21,7 @@ export type T3McpToolSummaryAction =
   | "thread-send"
   | "thread-wait"
   | "thread-interrupt"
+  | "workflow-stop"
   | "thread-configuration"
   | "thread-configure"
   | "thread-fork"
@@ -138,6 +139,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_read: tool(["Read", "Reading", "Read", "a T3 thread"], "thread-read"),
   t3_thread_send: tool(["Send", "Sending", "Sent", "to a T3 thread"], "thread-send"),
   t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a T3 thread"], "thread-wait"),
+  t3_workflow_stop: tool(
+    ["Stop", "Stopping", "Requested a stop for", "a workflow"],
+    "workflow-stop",
+  ),
   t3_thread_interrupt: tool(
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a T3 thread"],
     "thread-interrupt",
@@ -158,6 +163,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
     "browser",
   ),
+  preview_dialog: tool(
+    ["Respond", "Responding", "Responded", "to a preview browser dialog"],
+    "browser",
+    "browser",
+  ),
   preview_snapshot: tool(
     ["Take a snapshot of", "Taking a snapshot of", "Took a snapshot of", "the preview page"],
     "browser",
@@ -175,6 +185,26 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "browser",
   ),
   preview_type: tool(["Type", "Typing", "Typed", "in the preview browser"], "browser", "browser"),
+  preview_hover: tool(
+    ["Hover", "Hovering", "Hovered", "in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_select: tool(
+    ["Choose", "Choosing", "Chose", "an option in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_drag: tool(
+    ["Drag", "Dragging", "Dragged", "in the preview browser"],
+    "browser",
+    "browser",
+  ),
+  preview_upload: tool(
+    ["Upload", "Uploading", "Uploaded", "files to the preview browser"],
+    "browser",
+    "browser",
+  ),
   preview_scroll: tool(
     ["Scroll", "Scrolling", "Scrolled", "the preview browser"],
     "browser",
