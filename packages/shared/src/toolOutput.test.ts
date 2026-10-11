@@ -184,6 +184,10 @@ describe("compactDynamicToolOutput", () => {
     expect(compactDynamicToolOutput({ threadId: "thread-1", text: "Private note" })).toEqual({
       threadId: "thread-1",
     });
+    // An oversized text field never invalidates outer metadata.
+    expect(compactDynamicToolOutput({ threadId: "thread-1", text: "x".repeat(20_000) })).toEqual({
+      threadId: "thread-1",
+    });
   });
 });
 
