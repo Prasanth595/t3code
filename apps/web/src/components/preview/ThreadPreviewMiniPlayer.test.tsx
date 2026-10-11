@@ -131,6 +131,7 @@ const canvas = {
   clearPreview: vi.fn(),
   registerTimeline: vi.fn(),
   reportDetailsCard: vi.fn(),
+  detailsCardTopInset: 0,
 };
 
 function desktopState(
@@ -190,10 +191,21 @@ beforeEach(async () => {
   vi.stubGlobal(
     "ResizeObserver",
     class {
-      constructor(private readonly onResize: () => void) {}
-      observe() {
-        this.onResize();
+      constructor(private readonly onResize: (entries: readonly ResizeObserverEntry[]) => void) {}
+      observe(target: Element) {
+        queueMicrotask(() =>
+          this.onResize([
+            {
+              target,
+              contentRect: target.getBoundingClientRect(),
+              borderBoxSize: [],
+              contentBoxSize: [],
+              devicePixelContentBoxSize: [],
+            },
+          ]),
+        );
       }
+      unobserve() {}
       disconnect() {}
     },
   );
@@ -238,7 +250,8 @@ describe("floating browser navigation", () => {
       runtime: "server" as const,
     };
     await act(() => updatePreviewServerSnapshot(threadRef, serverSnapshot));
-    await act(() => vi.advanceTimersByTimeAsync(0));
+    await act(() => vi.runOnlyPendingTimersAsync());
+    await act(() => vi.runOnlyPendingTimersAsync());
     const socket = FakeSocket.current;
     const canvas = container.querySelector("canvas");
     await act(() =>
