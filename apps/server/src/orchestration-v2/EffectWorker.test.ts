@@ -87,7 +87,9 @@ function layerExecutorFor(input: {
   readonly failFirstStart?: Ref.Ref<boolean>;
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
-  readonly steerError?: ProviderTurnControlService.ProviderTurnControlError;
+  readonly steerError?:
+    | ProviderTurnControlService.ProviderTurnControlError
+    | ProviderTurnControlService.ProviderTurnControlBackgroundDeferredError;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
@@ -900,11 +902,9 @@ it.effect(
       };
       const layer = layerExecutorFor({
         events,
-        steerError: new ProviderTurnControlService.ProviderTurnControlError({
+        steerError: new ProviderTurnControlService.ProviderTurnControlBackgroundDeferredError({
           threadId,
-          operation: "steer",
           providerTurnId,
-          backgroundDeferred: true,
         }),
         threads: {
           getThreadRecords: <K extends ProjectionRecordField>() =>

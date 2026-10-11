@@ -240,7 +240,7 @@ export const layerExecutor: Layer.Layer<
                   Effect.gen(function* () {
                     if (
                       ((!("turnCompleted" in error) || !error.turnCompleted) &&
-                        !("backgroundDeferred" in error && error.backgroundDeferred)) ||
+                        !ProviderTurnControlService.isBackgroundDeferred(error)) ||
                       effect.request.type !== "provider-turn.steer"
                     ) {
                       return yield* error;
@@ -274,7 +274,7 @@ export const layerExecutor: Layer.Layer<
                       dispatchMode: {
                         type:
                           message.delegatedCompletion === undefined &&
-                          !("backgroundDeferred" in error && error.backgroundDeferred)
+                          !ProviderTurnControlService.isBackgroundDeferred(error)
                             ? "start_immediately"
                             : "queue_after_active",
                       },

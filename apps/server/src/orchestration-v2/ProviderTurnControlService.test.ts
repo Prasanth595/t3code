@@ -491,7 +491,7 @@ it.effect.each([
         assert.isTrue(
           yield* operation.pipe(
             Effect.match({
-              onFailure: (error) => error.backgroundDeferred === true,
+              onFailure: ProviderTurnControlService.isBackgroundDeferred,
               onSuccess: () => false,
             }),
           ),

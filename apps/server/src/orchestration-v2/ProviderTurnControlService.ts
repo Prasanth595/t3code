@@ -37,12 +37,22 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     operation: Schema.Literals(["interrupt", "restart", "steer"]),
     providerTurnId: ProviderTurnId,
     turnCompleted: Schema.optional(Schema.Boolean),
-    backgroundDeferred: Schema.optional(Schema.Literal(true)),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+/** A background message must wait, so the worker requeues it instead of failing. */
+export class ProviderTurnControlBackgroundDeferredError extends Schema.TaggedError<ProviderTurnControlBackgroundDeferredError>()(
+  "ProviderTurnControlBackgroundDeferredError",
+  {
+    threadId: ThreadId,
+    providerTurnId: ProviderTurnId,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
+export const isBackgroundDeferred = Schema.is(ProviderTurnControlBackgroundDeferredError);
 
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
@@ -58,7 +68,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
-  }) => Effect.Effect<void, ProviderTurnControlError>;
+  }) => Effect.Effect<void, ProviderTurnControlError | ProviderTurnControlBackgroundDeferredError>;
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
     readonly providerSessionId: ProviderSessionId;
@@ -163,11 +173,17 @@ export const layer: Layer.Layer<
               session: Option.none(),
             };
           }
+          if (input.operation === "steer" && context.message?.backgroundDelivery) {
+            return yield* new ProviderTurnControlBackgroundDeferredError({
+              threadId: input.threadId,
+              providerTurnId: input.providerTurnId,
+              cause: `Provider session ${input.providerSessionId} is not active.`,
+            });
+          }
           return yield* new ProviderTurnControlError({
             threadId: input.threadId,
             operation: input.operation,
             providerTurnId: input.providerTurnId,
-            ...(context.message?.backgroundDelivery ? { backgroundDeferred: true as const } : {}),
             cause: `Provider session ${input.providerSessionId} is not active.`,
           });
         }
@@ -352,11 +368,9 @@ export const layer: Layer.Layer<
               loaded.session.value.providerSession.capabilities.turns
                 .activeSteeringInterruptsTools === true
             )
-              return yield* new ProviderTurnControlError({
+              return yield* new ProviderTurnControlBackgroundDeferredError({
                 threadId: input.threadId,
-                operation: "steer",
                 providerTurnId: input.providerTurnId,
-                backgroundDeferred: true,
               });
           }
           yield* loaded.session.value
@@ -401,7 +415,7 @@ export const layer: Layer.Layer<
             );
         }).pipe(
           Effect.mapError((cause) =>
-            isProviderTurnControlError(cause)
+            isProviderTurnControlError(cause) || isBackgroundDeferred(cause)
               ? cause
               : new ProviderTurnControlError({
                   threadId: input.threadId,
