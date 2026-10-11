@@ -29,6 +29,20 @@ import * as PullRequestReviewGuideService from "./PullRequestReviewGuideService.
 import * as PullRequestService from "./PullRequestService.ts";
 
 const projectId = ProjectId.make("project-1");
+/** The test project is a checkout of the repository its pull requests come from. */
+const ACME_APP = {
+  canonicalKey: "github.com/acme/app",
+  locator: {
+    source: "git-remote" as const,
+    remoteName: "origin",
+    remoteUrl: "https://github.com/acme/app.git",
+  },
+  provider: "github",
+  displayName: "acme/app",
+  owner: "acme",
+  name: "app",
+};
+
 const reference: PullRequestRef = {
   projectId,
   host: "github.com",
@@ -151,6 +165,8 @@ const makeLayer = (input: {
   readonly enabled?: boolean;
   /** The head the host reports now, for a test that pushes between runs. */
   readonly currentHead?: Ref.Ref<string>;
+  /** The project's own repository; defaults to the one the test reference names. */
+  readonly identity?: typeof ACME_APP;
 }) =>
   PullRequestReviewGuideService.layer.pipe(
     Layer.provide(
@@ -181,7 +197,12 @@ const makeLayer = (input: {
     ),
     Layer.provide(
       Layer.succeed(ProjectService.ProjectService, {
-        getShell: () => Effect.succeedSome({ id: projectId, workspaceRoot: input.workspace }),
+        getShell: () =>
+          Effect.succeedSome({
+            id: projectId,
+            workspaceRoot: input.workspace,
+            repositoryIdentity: input.identity ?? ACME_APP,
+          }),
       } as unknown as ProjectService.ProjectService["Service"]),
     ),
     Layer.provide(
@@ -450,5 +471,34 @@ it.layer(layerBase, { excludeTestServices: true })("PullRequestReviewGuideServic
           assert.strictEqual(after.guide?.stops[0]?.title, "new head");
         }),
       ),
+  );
+
+  it.effect("refuses a pull request from a repository the project is not a checkout of", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const repositories = yield* makeRepositories;
+        const stored = yield* Deferred.make<void>();
+        const context = yield* Layer.build(
+          makeLayer({
+            ...repositories,
+            stored,
+            identity: {
+              ...ACME_APP,
+              canonicalKey: "github.com/acme/other",
+              displayName: "acme/other",
+              name: "other",
+            },
+            generate: () =>
+              Effect.die("a guide must not be written from another repository's checkout"),
+          }),
+        );
+        const service = Context.get(
+          context,
+          PullRequestReviewGuideService.PullRequestReviewGuideService,
+        );
+        const result = yield* Effect.flip(service.generate(reference));
+        assert.include(result.message, "in another repository");
+      }),
+    ),
   );
 });

@@ -21,6 +21,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 
 import {
   PullRequestOperationError,
@@ -30,10 +31,13 @@ import {
   type PullRequestReviewGuideResult,
   type PullRequestReviewGuideRun,
   type PullRequestStack,
+  ProjectId,
+  type RepositoryIdentity,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import type { ReviewGuideStackLayer } from "@t3tools/provider-core/server/textGeneration";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 
 import * as ServerConfig from "../config.ts";
 import * as PullRequestReviewGuides from "../persistence/PullRequestReviewGuides.ts";
@@ -87,6 +91,9 @@ const make = Effect.gen(function* () {
   const runs = yield* Ref.make<ReadonlyMap<string, PullRequestReviewGuideRun>>(new Map());
   // Names each run's private git refs; unique for the server's lifetime, like the runs map.
   let runCounter = 0;
+  // Claiming a run and storing a finished guide take turns, so a run that still owns its pull
+  // request when it checks is the one whose guide is stored: a newer claim cannot land between.
+  const ownership = yield* Semaphore.make(1);
 
   const keyFor = Effect.fn("PullRequestReviewGuideService.keyFor")(function* (
     input: PullRequestRef,
@@ -101,8 +108,36 @@ const make = Effect.gen(function* () {
         detail: "Could not identify this pull request's host.",
       });
     }
-    return { key, workspaceRoot: project.workspaceRoot };
+    return { key, workspaceRoot: project.workspaceRoot, identity: project.repositoryIdentity };
   });
+
+  /**
+   * A guide reads the change in a checkout fetched from the project's own remote, so the pull
+   * request has to be in that repository. One from another repository is refused rather than
+   * measured against commits that are not its own.
+   */
+  const requireOwnRepository = Effect.fn("PullRequestReviewGuideService.requireOwnRepository")(
+    function* (key: ThreadPullRequestKey, identity: RepositoryIdentity | null | undefined) {
+      const own =
+        identity == null
+          ? null
+          : pullRequestSyncKey(
+              {
+                projectId: ProjectId.make("own"),
+                number: key.number,
+                repository: sourceControlRepositorySelector(identity) ?? "",
+              },
+              identity,
+            );
+      if (own === null || own.host !== key.host || own.repository !== key.repository) {
+        return yield* new PullRequestOperationError({
+          operation: "generateReviewGuide",
+          detail:
+            "Guides are written from this project's checkout, and this pull request is in another repository. Write it from a project that is a checkout of that repository.",
+        });
+      }
+    },
+  );
 
   const readStored = (key: ThreadPullRequestKey) =>
     guides.get(key).pipe(
@@ -314,7 +349,11 @@ const make = Effect.gen(function* () {
     };
     // A newer run for this pull request, say after a push, owns its guide now; this one's result
     // is for an older head and is dropped rather than written over it.
-    if (yield* owns) yield* guides.put(key, guide);
+    yield* ownership.withPermits(1)(
+      Effect.gen(function* () {
+        if (yield* owns) yield* guides.put(key, guide);
+      }),
+    );
   });
 
   /** What a reader is told when a run fails; the full cause goes to the log. */
@@ -346,7 +385,8 @@ const make = Effect.gen(function* () {
         detail: "Review guides are off. Turn them on in Settings → Source Control.",
       });
     }
-    const { key, workspaceRoot } = yield* keyFor(input);
+    const { key, workspaceRoot, identity } = yield* keyFor(input);
+    yield* requireOwnRepository(key, identity);
     const runKey = keyString(key);
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
       concurrency: "unbounded",
@@ -364,13 +404,15 @@ const make = Effect.gen(function* () {
       startedAt: yield* nowIso,
     };
     // Claimed atomically, so two readers pressing Generate start one run between them.
-    const claimed = yield* Ref.modify(runs, (current) => {
-      const existing = current.get(runKey);
-      if (existing?._tag === "Running" && existing.headSha === currentHeadSha) {
-        return [existing, current] as const;
-      }
-      return [running, new Map(current).set(runKey, running)] as const;
-    });
+    const claimed = yield* ownership.withPermits(1)(
+      Ref.modify(runs, (current) => {
+        const existing = current.get(runKey);
+        if (existing?._tag === "Running" && existing.headSha === currentHeadSha) {
+          return [existing, current] as const;
+        }
+        return [running, new Map(current).set(runKey, running)] as const;
+      }),
+    );
     if (claimed !== running) return { guide: stored, run: claimed, currentHeadSha };
 
     // The run is identified by its own Running value: a later claim replaces it, and from then
