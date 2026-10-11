@@ -27,6 +27,7 @@ import * as Option from "effect/Option";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import { pullRequestSyncKey } from "../../../pullRequest/pullRequestSyncKey.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import {
@@ -167,17 +168,29 @@ function projectForPullRequest(
   target: { readonly host: string; readonly repository: string },
   preferred: OrchestrationProjectShell | undefined,
 ): OrchestrationProjectShell | undefined {
+  // The same rule the guide service uses: a pull request reads through a project whose checkout
+  // names it with the same host-level key, which also maps Azure DevOps' org/project/_git/repo.
   const matches = (project: OrchestrationProjectShell) => {
-    const { host } = projectHostAndProvider(project);
-    const repository =
+    const own = pullRequestSyncKey(
+      { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
+      project.repositoryIdentity ?? undefined,
+    );
+    const projectKey =
       project.repositoryIdentity == null
         ? null
-        : sourceControlRepositorySelector(project.repositoryIdentity);
+        : pullRequestSyncKey(
+            {
+              projectId: project.id,
+              repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? "",
+              number: 1,
+            },
+            project.repositoryIdentity,
+          );
     return (
-      host !== null &&
-      repository !== null &&
-      host.toLowerCase() === target.host.toLowerCase() &&
-      repository.toLowerCase() === target.repository.toLowerCase()
+      own !== null &&
+      projectKey !== null &&
+      own.host === projectKey.host &&
+      own.repository === projectKey.repository
     );
   };
   if (preferred !== undefined && matches(preferred)) return preferred;
