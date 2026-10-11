@@ -195,6 +195,7 @@ export function SettingInheritance({
         target,
         environment: { ...environment, serverConfig: environment.serverConfig },
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
+        unsupported: target.unsupportedSettingKeys?.has(key) === true,
         layers: settingInheritanceLayers(target, environment.serverConfig.settings, key),
       },
     ];
@@ -227,7 +228,7 @@ export function SettingInheritance({
       </Tooltip>
       <PopoverPopup align="start" width="md" padding="none">
         <div className="divide-y divide-border/60">
-          {chains.map(({ target, environment, machine, layers }) => (
+          {chains.map(({ target, environment, machine, unsupported, layers }) => (
             <section
               key={`${target.environmentId}:${target.projectId ?? ""}`}
               className="px-3 py-2.5"
@@ -236,43 +237,49 @@ export function SettingInheritance({
                 <EnvironmentMachineIcon aria-hidden kind={machine} className="size-3.5 shrink-0" />
                 <span className="min-w-0 truncate">{target.label}</span>
               </h4>
-              <ol role="list" className="text-sm">
-                {layers.map((layer) => (
-                  <li
-                    key={layer.key}
-                    className={cn(
-                      "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1",
-                      layer.effective && "bg-foreground/[0.06]",
-                    )}
-                  >
-                    <span
+              {unsupported ? (
+                <p className="px-2 py-1 text-sm text-muted-foreground">
+                  Not supported. Update T3 Code on this environment to use this setting.
+                </p>
+              ) : (
+                <ol role="list" className="text-sm">
+                  {layers.map((layer) => (
+                    <li
+                      key={layer.key}
                       className={cn(
-                        "min-w-0 truncate",
-                        layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
+                        "grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 rounded-md px-2 py-1",
+                        layer.effective && "bg-foreground/[0.06]",
                       )}
                     >
-                      {layer.key === "environment" ? "Environment" : layer.label}
-                    </span>
-                    <span
-                      className={cn(
-                        "flex items-center gap-1.5 tabular-nums",
-                        layer.effective
-                          ? "text-foreground"
-                          : layer.set
-                            ? "text-muted-foreground"
-                            : "text-muted-foreground/60",
-                      )}
-                    >
-                      <span className="max-w-32 truncate">{layer.value}</span>
-                      {layer.effective ? (
-                        <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
-                      ) : (
-                        <span aria-hidden className="size-3.5 shrink-0" />
-                      )}
-                    </span>
-                  </li>
-                ))}
-              </ol>
+                      <span
+                        className={cn(
+                          "min-w-0 truncate",
+                          layer.effective ? "font-medium text-foreground" : "text-muted-foreground",
+                        )}
+                      >
+                        {layer.key === "environment" ? "Environment" : layer.label}
+                      </span>
+                      <span
+                        className={cn(
+                          "flex items-center gap-1.5 tabular-nums",
+                          layer.effective
+                            ? "text-foreground"
+                            : layer.set
+                              ? "text-muted-foreground"
+                              : "text-muted-foreground/60",
+                        )}
+                      >
+                        <span className="max-w-32 truncate">{layer.value}</span>
+                        {layer.effective ? (
+                          <CheckIcon aria-hidden className="size-3.5 shrink-0 text-primary" />
+                        ) : (
+                          <span aria-hidden className="size-3.5 shrink-0" />
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
               {(() => {
                 const overriding = overridingProjects.filter(
                   (project) => project.environmentId === target.environmentId,

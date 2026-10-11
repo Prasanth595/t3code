@@ -32,6 +32,7 @@ import {
   listProjectOverrides,
   type ProjectOverrideEntry,
   scopedSettingsAreMixed,
+  scopedSettingsUnsupportedTargets,
   scopedSettingsSource,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
@@ -310,6 +311,13 @@ export function SettingsRow({
   const environmentWide = isProjectScope && serverScoped && scopedKeys.length === 0;
   const mixed =
     mixedOverride ?? (context !== null && scopedSettingsAreMixed(context.targets, settingKeys));
+  const unsupportedTargets =
+    context && serverScoped ? scopedSettingsUnsupportedTargets(context.targets, settingKeys) : [];
+  const unsupportedLabels = [...new Set(unsupportedTargets.map(({ label }) => label))].join(", ");
+  const unsupportedEverywhere =
+    context !== null &&
+    context.targets.length > 0 &&
+    unsupportedTargets.length === context.targets.length;
   const source =
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
@@ -410,7 +418,9 @@ export function SettingsRow({
         )
       : environmentWide && control
         ? inertControl("Environment-wide setting. Select an environment to change it.")
-        : control;
+        : unsupportedEverywhere && control
+          ? inertControl(`Update T3 Code on ${unsupportedLabels} to use this setting.`)
+          : control;
   // Server rows get an indicator beside the title that opens the resolution
   // chain per target at every scope; client rows keep a plain status only.
   const customized =
@@ -439,7 +449,11 @@ export function SettingsRow({
     context && serverScoped && settingKeys.length > 0 ? (
       <SettingInheritance
         state={inheritance.state}
-        summary={inheritance.summary}
+        summary={
+          unsupportedLabels
+            ? `${inheritance.summary} · Not supported on ${unsupportedLabels}`
+            : inheritance.summary
+        }
         targets={context.targets}
         environments={context.connectedEnvironments}
         keys={settingKeys}

@@ -133,6 +133,12 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   worktreesDirectory: Schema.optionalKey(Schema.Boolean),
   /** Server persists the opt-in for continuing interrupted threads after restarts. */
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
+  /** Every server settings key this server stores. Older servers decode
+      unknown keys away and still report success, and clients decode missing
+      keys to their defaults, so this is how a client tells "not supported
+      here" from "left at the default". Absent on servers from before it
+      shipped, which clients learn about from dropped writes instead. */
+  settingsKeys: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
   /** Server resolves a project's `providerInstances` override entry. Older
