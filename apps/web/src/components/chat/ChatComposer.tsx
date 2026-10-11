@@ -117,6 +117,7 @@ import {
   composerFileNeedsReattach,
   composerDraftHasUserContent,
   composerTargetKey,
+  composerUndoHistoryKey,
   hydrateImagesFromPersisted,
   useComposerDraftStore,
   useComposerThreadDraft,
@@ -6518,6 +6519,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         detectTrigger?: boolean;
       }) => {
         const promptForState = options?.prompt ?? promptRef.current;
+        if (promptForState === "") composerEditorRef.current?.resetUndoHistory();
         const cursor = clampCollapsedComposerCursor(
           promptForState,
           options?.cursor ?? 0,
@@ -7492,6 +7494,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                             activeComposerMenuItem.id,
                           )
                         : undefined
+                    }
+                    historyScopeKey={
+                      questionAttachmentTarget
+                        ? composerTargetKey(questionAttachmentTarget)
+                        : composerUndoHistoryKey({
+                            routeThreadRef,
+                            routeDraftId: draftId,
+                            composerDraftTarget,
+                          })
                     }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
