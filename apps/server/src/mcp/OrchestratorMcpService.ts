@@ -2326,6 +2326,14 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
+              // A retry only replays the recorded thread.create result, so the
+              // project's current provider instance, resolved fresh above to
+              // allow the retry through, can differ from what was actually
+              // created. Read the recorded selection back before it drives
+              // anything else.
+              const resolvedModelSelection = isRetryOfAcceptedCreation
+                ? (yield* loadProjection(threadId)).thread.modelSelection
+                : target.modelSelection;
               if (request.prompt !== undefined) {
                 yield* threadManagement
                   .dispatch({
@@ -2347,7 +2355,7 @@ const make = Effect.gen(function* () {
                     }),
                     text: request.prompt,
                     attachments: [],
-                    modelSelection: target.modelSelection,
+                    modelSelection: resolvedModelSelection,
                     dispatchMode: { type: "start_immediately" },
                   })
                   .pipe(
@@ -2391,8 +2399,8 @@ const make = Effect.gen(function* () {
                 title: projection.thread.title,
                 createdBy: projection.thread.createdBy,
                 creationSource: projection.thread.creationSource,
-                providerInstanceId: target.modelSelection.instanceId,
-                model: target.modelSelection.model,
+                providerInstanceId: resolvedModelSelection.instanceId,
+                model: resolvedModelSelection.model,
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },
