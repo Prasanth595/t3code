@@ -686,6 +686,18 @@ describe("pull request guide tools", () => {
     }),
   );
 
+  it.effect("reports a run for a new head as started, not as the older run it replaced", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        running: { _tag: "Running", headSha: "head-old", startedAt: "2026-10-11T00:00:00.000Z" },
+      });
+      const result = yield* harness.call("write_pull_request_guides", {
+        pullRequests: [{ repository: "t3tools/t3code", number: 6 }],
+      });
+      expect(result.guides.map((guide) => guide.outcome)).toEqual(["started"]);
+    }),
+  );
+
   it.effect("reads a stored guide and says when a push left it behind", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();

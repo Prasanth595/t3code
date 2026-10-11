@@ -458,13 +458,20 @@ const make = Effect.gen(function* () {
                 };
               }
               const reference = guideReference(entry.project, entry.target);
-              // A run already going for this head is joined; asking first tells the two apart.
+              // Generate returns the run it started, or the one for this head it joined. The same
+              // run before and after means it joined; a run for a new head is a new start.
               const before = yield* reviewGuides.get(reference).pipe(Effect.option);
-              const wasRunning = Option.isSome(before) && before.value.run?._tag === "Running";
+              const previous = Option.isSome(before) ? before.value.run : null;
               return yield* reviewGuides.generate(reference).pipe(
-                Effect.map(() => ({
+                Effect.map((result) => ({
                   ...identity,
-                  outcome: wasRunning ? ("running" as const) : ("started" as const),
+                  outcome:
+                    previous?._tag === "Running" &&
+                    result.run?._tag === "Running" &&
+                    previous.headSha === result.run.headSha &&
+                    previous.startedAt === result.run.startedAt
+                      ? ("running" as const)
+                      : ("started" as const),
                   detail: null,
                 })),
                 Effect.catch((error) =>
