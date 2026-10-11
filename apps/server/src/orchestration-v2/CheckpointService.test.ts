@@ -1,6 +1,5 @@
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
-import * as TestClock from "effect/testing/TestClock";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
@@ -108,14 +107,15 @@ it.effect.each([false, true, "interrupt"] as const)(
 );
 
 it.effect.each([
-  ["capture", "timeout"],
+  ["capture", "failure"],
   ["capture", "interrupt"],
-  ["baseline", "timeout"],
+  ["baseline", "failure"],
   ["baseline", "interrupt"],
 ] as const)("releases workspace lock after %s/%s and admits a later baseline", ([stage, mode]) =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const cleaned = yield* Deferred.make<void>();
+    const fail = yield* Deferred.make<void>();
     const nextStarted = yield* Deferred.make<void>();
     let captures = 0;
     const scope: OrchestrationV2CheckpointScope = {
@@ -143,7 +143,22 @@ it.effect.each([
               Effect.suspend(() =>
                 ++captures === 1
                   ? Deferred.succeed(started, undefined).pipe(
-                      Effect.andThen(Effect.never),
+                      Effect.andThen(
+                        mode === "failure"
+                          ? Deferred.await(fail).pipe(
+                              Effect.andThen(
+                                Effect.fail(
+                                  new VcsProcessTimeoutError({
+                                    operation: "GitVcsDriver.checkpoints.captureCheckpoint",
+                                    command: "git",
+                                    cwd: scope.cwd,
+                                    timeoutMs: 30000,
+                                  }),
+                                ),
+                              ),
+                            )
+                          : Effect.never,
+                      ),
                       Effect.ensuring(Deferred.succeed(cleaned, undefined)),
                     )
                   : Deferred.succeed(nextStarted, undefined).pipe(Effect.asVoid),
@@ -157,14 +172,21 @@ it.effect.each([
       const first = yield* (
         stage === "baseline"
           ? service.captureBaseline({ scope, ordinalWithinScope: 0 })
-          : service.capture({
-              scope,
-              ordinalWithinScope: 1,
-              runId: scope.runId!,
-              nodeId: scope.nodeId!,
-              appRunOrdinal: 1,
-              capturedAt: scope.createdAt,
-            })
+          : service
+              .capture({
+                scope,
+                ordinalWithinScope: 1,
+                runId: scope.runId!,
+                nodeId: scope.nodeId!,
+                appRunOrdinal: 1,
+                capturedAt: scope.createdAt,
+              })
+              .pipe(
+                Effect.tap((checkpoint) =>
+                  Effect.sync(() => assert.equal(checkpoint.status, "error")),
+                ),
+                Effect.asVoid,
+              )
       ).pipe(Effect.forkChild);
       yield* Deferred.await(started);
       const next = yield* service
@@ -173,12 +195,16 @@ it.effect.each([
           ordinalWithinScope: 1,
         })
         .pipe(Effect.forkChild);
-      // The second operation waits behind the first for its entire deadline,
-      // then gets a fresh budget once admitted rather than timing out in queue.
-      if (mode === "timeout") yield* TestClock.adjust("2 minutes");
+      // A subprocess timeout or cancellation must finish cleanup before releasing
+      // the workspace to another thread. No new total-operation deadline is used.
+      if (mode === "failure") yield* Deferred.succeed(fail, undefined);
       if (mode === "interrupt") yield* Fiber.interrupt(first);
       const exit = yield* Fiber.await(first);
-      assert.equal(exit._tag, "Failure");
+      if (stage === "capture" && mode === "failure") {
+        assert.isTrue(Exit.isSuccess(exit));
+      } else {
+        assert.equal(exit._tag, "Failure");
+      }
       yield* Deferred.await(cleaned);
       yield* Deferred.await(nextStarted);
       yield* Fiber.join(next);
