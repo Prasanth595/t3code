@@ -208,7 +208,8 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped();
+      // Real path: macOS temp folders sit behind the /var -> /private/var link.
+      const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
       const prefix = path.join(root, "bunx-tools");
       const packageRoot = path.join(prefix, "lib/node_modules/t3");
       const entry = path.join(packageRoot, "dist/bin.mjs");
@@ -239,7 +240,8 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped();
+      // Real path: macOS temp folders sit behind the /var -> /private/var link.
+      const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
       const prefix = path.join(root, "bunx-tools");
       const packageRoot = path.join(prefix, "lib/node_modules/t3");
       const launcher = path.join(packageRoot, "bin/t3.js");
