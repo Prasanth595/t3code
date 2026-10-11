@@ -2439,6 +2439,29 @@ code {
   box-shadow: var(--theme-shadow);
 }
 
+/* Banners above the composer read their shape from variables, so the
+   rounded-none and border-t-0 resets on stacked attachments still apply. */
+:root[data-theme-radius] :is([data-composer-banner-surface], [data-slot="composer-banner-peek"]) {
+  --composer-banner-radius: var(--radius);
+}
+:root[data-theme-border-width] [data-composer-banner-surface] {
+  --composer-banner-border-width: var(--theme-border-width);
+}
+/* The host also wraps the banner dock, so its shadow sticks out beside the
+   narrower banner. With an attached banner, the main surface and the banner
+   cast the shadow instead. */
+:root[data-theme-shadow]
+  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
+  [data-slot="composer-host"] {
+  box-shadow: none;
+}
+:root[data-theme-shadow]
+  [data-slot="composer-shell"]:has([data-composer-banner-surface="attached"])
+  [data-chat-composer-main-surface],
+:root[data-theme-shadow] [data-composer-banner-surface]::before {
+  box-shadow: var(--theme-shadow);
+}
+
 /* Raised surfaces and solid buttons take the theme shadow. */
 :root[data-theme-shadow]
   :is(

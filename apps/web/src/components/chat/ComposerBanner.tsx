@@ -15,6 +15,10 @@ const surfaceColors = cn(
   "[html[data-theme-id]_&]:[--chat-composer-attached-surface:var(--app-theme-surface-raised)]",
 );
 
+// Themes override these on the surface, so stacked attachments keep their own resets.
+const surfaceShape =
+  "[--composer-banner-radius:var(--radius-2xl)] [--composer-banner-border-width:1px] [--composer-banner-action-radius:max(0px,calc(var(--composer-banner-radius)-var(--spacing)))]";
+
 const neutralOutline = cn(
   "[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--contrast-foreground)_8%,transparent))]",
   "dark:[--chat-composer-attached-outline:var(--chat-composer-outline,color-mix(in_srgb,var(--color-white)_5%,transparent))]",
@@ -49,6 +53,7 @@ function Surface({
       data-variant={variant}
       className={cn(
         surfaceColors,
+        surfaceShape,
         "relative isolate border-0 bg-transparent shadow-none [--chat-composer-attached-tint:transparent]",
         variantColors[variant],
         // The mask cut-off (1rem) bleeds one pixel past the seam (1rem + 1px): Chromium
@@ -56,9 +61,9 @@ function Surface({
         // off the device-pixel grid, and the composer's surface starts exactly there.
         // The composer's own glass covers the extra row, so the overlap never shows.
         placement === "attached"
-          ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-2xl before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4"
-          : "[--chat-composer-attachment-overlap:0px] before:rounded-2xl",
-        "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border before:border-(--chat-composer-attached-outline)",
+          ? "[--chat-composer-attachment-overlap:calc(1rem+1px)] before:rounded-t-(--composer-banner-radius) before:mask-t-from-transparent before:mask-t-from-4 before:mask-t-to-black before:mask-t-to-4"
+          : "[--chat-composer-attachment-overlap:0px] before:rounded-(--composer-banner-radius)",
+        "before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:border-(length:--composer-banner-border-width) before:border-(--chat-composer-attached-outline)",
         "before:bg-(--chat-composer-attached-surface)/(--glass-opacity) before:bg-linear-to-b before:from-(--chat-composer-attached-tint) before:to-(--chat-composer-attached-tint) before:backdrop-blur-(--glass-blur) before:backdrop-saturate-(--glass-saturation)",
         "before:shadow-composer dark:before:shadow-composer-dark",
         "dark:supports-[(backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px))]:before:bg-composer-seam-above",
@@ -90,8 +95,9 @@ function Peek({
       data-slot="composer-banner-peek"
       className={cn(
         surfaceColors,
+        surfaceShape,
         neutralOutline,
-        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-md",
+        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-(--composer-banner-radius) border border-b-0 shadow-md",
         "bg-(--chat-composer-attached-surface)/(--glass-opacity) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
         "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-attached-surface)",
         "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
@@ -166,14 +172,14 @@ function Root({
         density === "spacious" && "px-3 [--composer-banner-padding-block:--spacing(3)]",
         width === "content" ? "w-fit max-w-full flex-none" : "@container",
         // The first row's last action sits in the banner's corner: its outer corner follows the
-        // banner's curve (2xl minus the 1 spacing inset), and floating banners curve below too.
+        // banner's curve (the banner radius minus the 1 spacing inset), and floating banners curve below too.
         // Actions may also arrive grouped in one wrapper element (usage-limit recovery).
-        "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
-        "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-xl",
-        "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-xl",
+        "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-(--composer-banner-action-radius)",
+        "[&>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-se-(--composer-banner-action-radius)",
+        "[&>:first-child>[data-composer-banner-row]:first-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-se-(--composer-banner-action-radius)",
         placement === "floating" && [
-          "[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-ee-xl",
-          "[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-ee-xl",
+          "[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>[data-slot=button]:last-child]:rounded-ee-(--composer-banner-action-radius)",
+          "[&>[data-composer-banner-row]:only-child>[data-slot=composer-banner-actions]>:last-child>[data-slot=button]:last-of-type]:rounded-ee-(--composer-banner-action-radius)",
         ],
         className,
       )}
