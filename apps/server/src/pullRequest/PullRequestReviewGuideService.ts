@@ -398,6 +398,9 @@ const make = Effect.gen(function* () {
     const { key, workspaceRoot, identity } = yield* keyFor(input);
     yield* requireOwnRepository(key, identity);
     const runKey = keyString(key);
+    // A press asks for the head as it is now, not a read shared from the last minute, so a guide
+    // is never started for a commit the pull request has already moved past.
+    yield* pullRequests.invalidate({ reference: input });
     const [detail, stored] = yield* Effect.all([pullRequests.detail(input), readStored(key)], {
       concurrency: "unbounded",
     });

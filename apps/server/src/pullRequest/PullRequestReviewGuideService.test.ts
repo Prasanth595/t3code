@@ -192,6 +192,7 @@ const makeLayer = (input: {
             : Ref.get(input.currentHead)
           ).pipe(Effect.map((head) => detail(input.workspace, head))),
         activity: () => Effect.succeed(activity),
+        invalidate: () => Effect.void,
         stack: () => Effect.succeed(stack(input)),
       } as unknown as PullRequestService.PullRequestService["Service"]),
     ),
