@@ -13,8 +13,8 @@ import * as Effect from "effect/Effect";
 
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
-import { CursorProviderCapabilitiesV2 } from "./Adapters/CursorAdapterV2.ts";
-import { GrokProviderCapabilitiesV2 } from "./Adapters/GrokAdapterV2.ts";
+import { CursorProviderCapabilitiesV2 } from "@t3tools/provider-cursor/testing";
+import { GrokProviderCapabilitiesV2 } from "@t3tools/provider-grok/testing";
 import * as CommandPolicy from "./CommandPolicy.ts";
 
 const commandId = CommandId.make("command-policy-test");

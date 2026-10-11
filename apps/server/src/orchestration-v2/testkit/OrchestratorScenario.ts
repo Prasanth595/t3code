@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import * as Orchestrator from "../Orchestrator.ts";
-import type { ProviderReplayGate } from "./ProviderReplayGate.testkit.ts";
+import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 
 export type OrchestratorV2ScenarioStep =
   | {
@@ -166,6 +166,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "prepared-run.progress":
     case "prepared-run.fail":
     case "prepared-run.retry":
+    case "subagent.stop":
     case "run.interrupt":
     case "queued-message.promote-to-steer":
     case "queue.resume":
@@ -208,8 +209,18 @@ function scenarioCommands(scenario: OrchestratorV2Scenario): ReadonlyArray<Orche
   );
 }
 
+// A request is projected before the turn item that renders it. Responding in
+// that gap resolves the request without resolving its item, so wait for both.
 const findPendingRuntimeRequest = (projection: OrchestrationV2ThreadProjection) =>
-  projection.runtimeRequests.find((request) => request.status === "pending");
+  projection.runtimeRequests.find(
+    (request) =>
+      request.status === "pending" &&
+      projection.turnItems.some(
+        (item) =>
+          (item.type === "approval_request" || item.type === "user_input_request") &&
+          item.requestId === request.id,
+      ),
+  );
 
 const hasActiveRun = (projection: OrchestrationV2ThreadProjection) =>
   projection.runs.some((run) =>
