@@ -1290,28 +1290,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     [thread.environmentId, thread.id],
   );
   const threadKey = scopedThreadKey(threadRef);
-  const prefetch = useCallback(() => {
-    if (props.isActive || isRenaming) return;
-    void prefetchEnvironmentThread.run(appAtomRegistry, {
-      environmentId: threadRef.environmentId,
-      input: threadRef.threadId,
-    });
-  }, [isRenaming, props.isActive, threadRef]);
-  const prefetchOnPointerDown = useCallback(
-    (event: ReactPointerEvent) => {
-      // A press overlaps the request with the click; hover and selection must
-      // not download histories the user may never open.
-      if (
-        event.button !== 0 ||
-        event.shiftKey ||
-        (isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey) ||
-        (event.target as HTMLElement).closest("button, a, input")
-      )
-        return;
-      prefetch();
-    },
-    [prefetch],
-  );
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   useEffect(() => {
     if (!canOperateThread && isRenaming) onCancelRename();
@@ -1920,7 +1898,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
-                onPointerDown={prefetchOnPointerDown}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -2086,7 +2063,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
-              onPointerDown={prefetchOnPointerDown}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -3287,6 +3263,11 @@ export default function Sidebar() {
   // starting a session un-settles server-side.
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
+      // Confirm navigation before loading data: pointer presses can become drags.
+      void prefetchEnvironmentThread.run(appAtomRegistry, {
+        environmentId: threadRef.environmentId,
+        input: threadRef.threadId,
+      });
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
         clearSelection();
       }
