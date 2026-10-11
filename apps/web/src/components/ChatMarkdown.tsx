@@ -13,7 +13,12 @@ import {
 } from "@t3tools/shared/markdownLinks";
 import { isAbsolutePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
-import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationOperateScope,
+  ProjectReadFileError,
+} from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -77,6 +82,7 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   Children,
@@ -196,7 +202,8 @@ import { useAtomQueryRunner } from "../state/use-atom-query-runner";
 import { projectEnvironment } from "../state/projects";
 import {
   claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
+  needsLiteralWorkspaceFileCheck,
+  normalizeWorkspaceLookupPath,
   pickWorkspaceBasenameMatch,
   WORKSPACE_BASENAME_LOOKUP_LIMIT,
 } from "../workspaceBasenameLookup";
@@ -287,6 +294,7 @@ export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const isProjectReadFileError = Schema.is(ProjectReadFileError);
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -2347,6 +2355,10 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
   });
+  const readWorkspaceFile = useAtomQueryRunner(projectEnvironment.readFile, {
+    reportFailure: false,
+    refresh: true,
+  });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
@@ -2570,12 +2582,28 @@ function useChatMarkdownState({
       openPreview,
     });
   };
+  const literalWorkspaceFileExists = async (workspaceRelativePath: string) => {
+    if (!cwd || environmentId === null) {
+      return false;
+    }
+    const result = await readWorkspaceFile({
+      environmentId,
+      input: { cwd, relativePath: workspaceRelativePath },
+    });
+    if (result._tag === "Success") return true;
+    const cause = squashAtomCommandFailure(result);
+    return (
+      isProjectReadFileError(cause) &&
+      (cause.failure === "binary_file" || cause.failure === "path_not_file")
+    );
+  };
   const findWorkspaceBasenameMatch = async (workspaceRelativePath: string) => {
+    const lookupPath = normalizeWorkspaceLookupPath(workspaceRelativePath);
     if (
       !cwd ||
       environmentId === null ||
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
-      !needsWorkspaceBasenameLookup(workspaceRelativePath)
+      !lookupPath
     ) {
       return null;
     }
@@ -2583,22 +2611,30 @@ function useChatMarkdownState({
       environmentId,
       input: {
         cwd,
-        query: workspaceRelativePath,
+        query: lookupPath,
         limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
         kind: "file",
       },
     });
-    return result._tag === "Success"
-      ? pickWorkspaceBasenameMatch(workspaceRelativePath, result.value.entries)
-      : null;
+    if (result._tag !== "Success") return null;
+    const match = pickWorkspaceBasenameMatch(lookupPath, result.value.entries);
+    if (
+      needsLiteralWorkspaceFileCheck(lookupPath, match) &&
+      (await literalWorkspaceFileExists(lookupPath))
+    ) {
+      // Keep an existing literal path ahead of a different indexed hit.
+      return null;
+    }
+    return match;
   };
+  // Chip paths are relative to the agent's cwd, so workspace opens use the index.
   const openFileInPanel = (panelPath: string, line: number | undefined) => {
     if (!threadRef) return;
     // Claimed on every open so a synchronous one supersedes a lookup already
     // in flight.
-    const isLatestLookup = claimWorkspaceBasenameLookup();
+    const isLatestLookup = claimWorkspaceBasenameLookup(scopedThreadKey(threadRef));
     const openAt = (path: string) => useRightPanelStore.getState().openFile(threadRef, path, line);
-    if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
+    if (!cwd || environmentId === null || isAbsolutePath(panelPath)) {
       openAt(panelPath);
       return;
     }
@@ -2615,6 +2651,28 @@ function useChatMarkdownState({
       : null;
     const filePath = match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath;
     return revealFileInFileManager(filePath);
+  };
+  const openMarkdownFileInEditor = async (fileLinkMeta: MarkdownFileLinkMeta) => {
+    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
+    const match = workspaceRelativePath
+      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
+      : null;
+    if (!match || !cwd) {
+      return openInPreferredEditor(fileLinkMeta.targetPath);
+    }
+    const withPosition = fileLinkMeta.line
+      ? `${match}:${fileLinkMeta.line}${fileLinkMeta.column ? `:${fileLinkMeta.column}` : ""}`
+      : match;
+    return openInPreferredEditor(resolvePathLinkTarget(withPosition, cwd));
+  };
+  const openMarkdownFileInBrowser = async (fileLinkMeta: MarkdownFileLinkMeta) => {
+    const workspaceRelativePath = fileLinkMeta.workspaceRelativePath;
+    const match = workspaceRelativePath
+      ? await findWorkspaceBasenameMatch(workspaceRelativePath)
+      : null;
+    return openMarkdownFileInPreview(
+      match && cwd ? resolvePathLinkTarget(match, cwd) : fileLinkMeta.filePath,
+    );
   };
   const fileLinkChip = (
     fileLinkMeta: MarkdownFileLinkMeta,
@@ -2650,7 +2708,7 @@ function useChatMarkdownState({
         copyMarkdown={copyMarkdown}
         theme={resolvedTheme}
         threadRef={threadRef}
-        {...(canUseShellActions ? { onOpen: openInPreferredEditor } : {})}
+        {...(canUseShellActions ? { onOpen: () => openMarkdownFileInEditor(fileLinkMeta) } : {})}
         onOpenInPanel={openFileInPanel}
         onOpenMedia={
           threadRef && canPreviewMedia
@@ -2669,7 +2727,7 @@ function useChatMarkdownState({
           canOperatePreview &&
           isPreviewAvailableFor(threadRef.environmentId) &&
           isBrowserPreviewFile(fileLinkMeta.filePath)
-            ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+            ? () => openMarkdownFileInBrowser(fileLinkMeta)
             : undefined
         }
       />
