@@ -295,14 +295,14 @@ const exchangeToken = Effect.fn("cloud.cli_token.exchange")(function* (
   params: Record<string, string>,
 ) {
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
-  const response = yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
+  return yield* HttpClientRequest.post(metadata.tokenEndpoint).pipe(
     HttpClientRequest.bodyUrlParams(params),
     httpClient.execute,
+    Effect.flatMap((response) => readTokenResponse(response, params)),
     // The caller maps a timeout into its own failure path: refresh falls back
     // to a fresh login, login reports an authorization error.
     Effect.timeout(CLOUD_CLI_OAUTH_HTTP_TIMEOUT),
   );
-  return yield* readTokenResponse(response, params);
 });
 
 const makePkceRequest = Effect.gen(function* () {
@@ -400,11 +400,11 @@ export const deviceAuthorizationLogin = Effect.fn("cloud.cli_token.device_author
         scope: metadata.scopes.join(" "),
       }),
       httpClient.execute,
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)),
       Effect.timeout(CLOUD_CLI_OAUTH_HTTP_TIMEOUT),
       Effect.catchTag("TimeoutError", (cause) =>
         Effect.fail(new CloudCliAuthorizationError({ cause })),
       ),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(DeviceAuthorizationResponse)),
     );
     // Clerk's advertised lifetime and interval are authoritative.
     const expiresIn = Duration.seconds(authorization.expires_in);
