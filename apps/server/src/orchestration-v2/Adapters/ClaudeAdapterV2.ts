@@ -7607,7 +7607,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 [],
             ).filter(
               ([, time]) =>
-                time === null || DateTime.toEpochMillis(DateTime.makeUnsafe(time)) > completedAtMillis,
+                time === null ||
+                DateTime.toEpochMillis(DateTime.makeUnsafe(time)) > completedAtMillis,
             );
             const resetAt =
               resetTimes.length > 0 &&
