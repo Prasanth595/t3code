@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -485,4 +486,34 @@ it.effect(
         assert.equal(yield* Ref.get(faviconScans), 1);
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
+);
+
+it.effect("traces a lookup as one span rather than one per cache read", () =>
+  Effect.gen(function* () {
+    const service = yield* ProjectEnrichment.ProjectEnrichmentService;
+    const names: Array<string> = [];
+    const tracer = Tracer.make({
+      span: (options) => {
+        names.push(options.name);
+        return new Tracer.NativeSpan(options);
+      },
+    });
+
+    yield* service.getAvailable("/repo").pipe(Effect.withTracer(tracer));
+
+    assert.deepEqual(names, ["ProjectEnrichmentService.getAvailable"]);
+  }).pipe(
+    Effect.provide(
+      layer(
+        Layer.merge(
+          Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+            resolve: (workspaceRoot) => Effect.succeed(identity(workspaceRoot)),
+          }),
+          Layer.succeed(ProjectFaviconResolver.ProjectFaviconResolver, {
+            resolvePath: () => Effect.succeed(null),
+          }),
+        ),
+      ),
+    ),
+  ),
 );
