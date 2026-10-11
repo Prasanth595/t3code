@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 
 export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSource")(function* (
   instanceId: ProviderInstanceId,
+  clientId: string,
   access: Effect.Effect<
     { readonly accessToken: string; readonly clientId: string },
     ProviderSetupError
@@ -35,12 +36,18 @@ export const makeCodexManagedTokenSource = Effect.fn("makeCodexManagedTokenSourc
               response.writeHead(401).end();
               return;
             }
+            // The capability belongs to the launch account, not whichever
+            // account a holder of its secret names in a later request.
+            if (request.headers["x-t3-codex-account"] !== clientId) {
+              response.writeHead(409).end();
+              return;
+            }
             const abort = new AbortController();
             response.once("close", () => abort.abort());
             void runPromise(access, { signal: abort.signal }).then(
               (credentials) => {
                 if (response.destroyed) return;
-                if (request.headers["x-t3-codex-account"] !== credentials.clientId) {
+                if (credentials.clientId !== clientId) {
                   response.writeHead(409).end();
                   return;
                 }

@@ -1,5 +1,6 @@
 import { resolveManagedCodexHomeLayout } from "./CodexManagedHome.ts";
 import { CodexSettings, ProviderSetupError, type ProviderInstanceId } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -33,6 +34,8 @@ const managedCodexLaunchArgs = (invocation: SelfInvocation) =>
     'model_providers.openai_token_sharing.base_url="https://api.openai.com/v1"',
     'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
     "features.api_key_model_discovery=true",
+    "features.multi_agent=false",
+    "features.multi_agent_v2=false",
     `model_providers.openai_token_sharing.auth.command=${JSON.stringify(invocation.command)}`,
     `model_providers.openai_token_sharing.auth.args=${JSON.stringify(selfInvocationArgs(invocation, [codexManagedTokenCommandName]))}`,
     "model_providers.openai_token_sharing.auth.timeout_ms=25000",
@@ -63,10 +66,13 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
   });
   const launchArgs = managedCodexLaunchArgs(yield* resolveSelfInvocation());
   const scope = yield* Scope.Scope;
-  const tokenSource = yield* makeCodexManagedTokenSource(options.instanceId, auth.access).pipe(
-    Effect.provideService(Scope.Scope, scope),
-    Effect.cached,
-  );
+  const tokenSources = yield* Cache.make({
+    capacity: Number.POSITIVE_INFINITY,
+    lookup: (clientId: string) =>
+      makeCodexManagedTokenSource(options.instanceId, clientId, auth.access).pipe(
+        Effect.provideService(Scope.Scope, scope),
+      ),
+  });
   const homeLayout = yield* resolveManagedCodexHomeLayout(
     config.stateDir,
     options.instanceId,
@@ -85,7 +91,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
       ),
     );
     const credentials = yield* auth.access;
-    const source = yield* tokenSource;
+    const source = yield* Cache.get(tokenSources, credentials.clientId);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),

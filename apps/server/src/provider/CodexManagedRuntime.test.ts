@@ -32,6 +32,7 @@ it.effect("closes the managed credential bridge with its provider scope", () =>
   Effect.gen(function* () {
     const source = yield* makeCodexManagedTokenSource(
       ProviderInstanceId.make("closed-codex"),
+      "dummy-account",
       Effect.succeed({ accessToken: "dummy-token", clientId: "dummy-account" }),
     ).pipe(Effect.scoped);
     const reached = yield* Effect.promise(() =>
@@ -100,6 +101,7 @@ it.effect.each(
         getOrCreateRandom: () => Effect.die("unused"),
       });
       let leases = 0;
+      let renewals = 0;
       const executable = {
         executablePath:
           source === "managed" ? "/isolated/tools/codex/0.156.1/bin/codex" : "/user/bin/codex",
@@ -195,12 +197,13 @@ it.effect.each(
           assert.equal(yield* requestToken, "dummy-owned-access");
           const expired = { ...JSON.parse(json), expiresAt: 0 };
           yield* store.set(new TextEncoder().encode(JSON.stringify(expired)));
-          // A provider status read renews the saved token, as in the report.
-          assert.equal((yield* runtime.auth.access).accessToken, "dummy-renewed-access");
+          // The credential commands themselves must renew an expired token,
+          // even when no provider status read runs first.
           assert.deepEqual(
             yield* Effect.all([requestToken, requestToken], { concurrency: "unbounded" }),
             ["dummy-renewed-access", "dummy-renewed-access"],
           );
+          assert.strictEqual(renewals, 1);
           assert.isUndefined(effective.environment.ACCESS_TOKEN);
           assert.notInclude(JSON.stringify(effective.environment), "dummy-owned-access");
           const rejected = yield* Effect.promise(() =>
@@ -212,6 +215,7 @@ it.effect.each(
               JSON.stringify({
                 ...expired,
                 clientId: "another-account",
+                accessToken: "dummy-other-account-access",
                 expiresAt: (yield* Clock.currentTimeMillis) + 3_600_000,
               }),
             ),
@@ -226,6 +230,32 @@ it.effect.each(
           );
           assert.equal(switched.status, 409);
           assert.equal(yield* Effect.promise(() => switched.text()), "");
+          // A child holding the old bridge secret cannot expand its authority
+          // by naming the account that is now selected in T3.
+          const forged = yield* Effect.promise(() =>
+            fetch(effective.environment.T3CODE_MANAGED_CODEX_AUTH_URL!, {
+              headers: {
+                Authorization: `Bearer ${effective.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET}`,
+                "X-T3-Codex-Account": "another-account",
+              },
+            }),
+          );
+          assert.equal(forged.status, 409);
+          assert.equal(yield* Effect.promise(() => forged.text()), "");
+          const replacement = yield* runtime.resolve;
+          assert.notEqual(
+            replacement.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET,
+            effective.environment.T3CODE_MANAGED_CODEX_AUTH_SECRET,
+          );
+          const replacementToken = yield* Effect.promise(async () => {
+            const { stdout } = await NodeUtil.promisify(NodeChildProcess.execFile)(
+              authSetting("command"),
+              authSetting("args"),
+              { env: replacement.environment, timeout: 25_000 },
+            );
+            return stdout;
+          });
+          assert.equal(replacementToken, "dummy-other-account-access");
           assert.isUndefined(effective.environment.OPENAI_API_KEY);
           assert.isUndefined(effective.environment.OPENAI_BASE_URL);
           assert.isUndefined(effective.environment.T3CODE_CODEX_LAUNCH_ARGS);
@@ -239,6 +269,8 @@ it.effect.each(
             'model_providers.openai_token_sharing.model_catalog_url="https://api.openai.com/v1/models"',
           );
           assert.include(args, "features.api_key_model_discovery=true");
+          assert.include(args, "features.multi_agent=false");
+          assert.include(args, "features.multi_agent_v2=false");
           assert.notInclude(effective.config.launchArgs, "model_catalog_json");
           assert.notInclude(effective.config.launchArgs, "x-openai-chatpass-test");
           assert.include(args, "model_providers.openai_token_sharing.supports_websockets=false");
@@ -271,6 +303,7 @@ it.effect.each(
                   "https://auth.openai.com/api/accounts/oauth/token",
                 ].includes(request.url),
               );
+              if (request.url.endsWith("/token")) renewals++;
               return HttpClientResponse.fromWeb(
                 request,
                 request.url.endsWith("/revoke")
