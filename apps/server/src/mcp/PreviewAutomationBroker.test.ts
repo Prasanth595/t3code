@@ -1531,11 +1531,13 @@ it.effect("keeps each thread's current tab when threads share a provider session
       yield* broker.invoke({ scope, operation: "open", input: {} });
       yield* broker.invoke({ scope: otherThread, operation: "snapshot", input: {} });
       yield* broker.invoke({ scope, operation: "snapshot", input: {} });
+      yield* broker.invoke({ scope: otherThread, operation: "snapshot", input: {} });
 
       expect(routed.map(({ threadId, tabId }) => [threadId, tabId])).toEqual([
         ["thread-1", undefined],
         ["thread-2", undefined],
         ["thread-1", "tab-thread-1"],
+        ["thread-2", "tab-thread-2"],
       ]);
       // Each thread's agent owns its own tabs and tab budget.
       expect(routed[0]!.agentSessionId).not.toBe(routed[1]!.agentSessionId);
