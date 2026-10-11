@@ -2,9 +2,12 @@ name: Fork Release
 
 # Rebases this fork onto upstream main, then publishes a nightly-channel
 # release on the fork that the in-app updater (electron-updater) follows.
+# A push to main releases it. The daily cron picks up upstream changes.
 # See docs/fork.md.
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -14,6 +17,8 @@ on:
         type: boolean
         default: true
 
+# One run at a time. A newer push replaces a waiting run, and a running
+# run finishes, so its force-push never races another sync.
 concurrency:
   group: fork-release
   cancel-in-progress: false
@@ -35,6 +40,7 @@ jobs:
       issues: write
     outputs:
       sha: ${{ steps.push.outputs.sha }}
+      released: ${{ steps.released.outputs.released }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       name: ${{ steps.version.outputs.name }}
@@ -87,12 +93,49 @@ jobs:
           # The fork only carries small patches, so a typecheck is the release
           # gate. The CI workflow runs the full tests on pushes to main.
 
+      # A merge to main during this run makes the lease fail. Then rebase the
+      # new main, typecheck it and push again, instead of failing the run.
       - id: push
         name: Push rebased branch
         run: |
           set -euo pipefail
-          git push --force-with-lease="${GITHUB_REF_NAME}:${{ steps.rebase.outputs.before }}" origin "HEAD:${GITHUB_REF_NAME}"
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          before="${{ steps.rebase.outputs.before }}"
+          for attempt in 1 2 3; do
+            if git push --force-with-lease="${GITHUB_REF_NAME}:${before}" origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "${GITHUB_REF_NAME} moved during the run (attempt ${attempt}). Rebasing the new ${GITHUB_REF_NAME}."
+            git fetch origin "${GITHUB_REF_NAME}"
+            before="$(git rev-parse FETCH_HEAD)"
+            git reset --hard "$before"
+            if ! git rebase upstream/main > "$RUNNER_TEMP/rebase.log" 2>&1; then
+              cat "$RUNNER_TEMP/rebase.log"
+              git rebase --abort
+              exit 1
+            fi
+            vp run typecheck
+          done
+          echo "${GITHUB_REF_NAME} kept moving; giving up after 3 attempts." >&2
+          exit 1
+
+      # The sync push itself starts a push run for the same commit. That run,
+      # and a cron run with no new commits, find the release and stop here.
+      - id: released
+        name: Check for an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sha="${{ steps.push.outputs.sha }}"
+          existing="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 30 --json tagName,name \
+            --jq "[.[] | select(.name | contains(\"(${sha:0:12})\"))][0].tagName // empty")"
+          if [[ -n "$existing" ]]; then
+            echo "Commit ${sha} is already released as ${existing}."
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # Same version scheme as upstream nightlies: <base>-nightly.<UTC date>.<run number>.
       # The date and the run number only grow, so each fork release is newer than the last.
@@ -134,6 +177,7 @@ jobs:
   build_bundle:
     name: Build JS bundle
     needs: [sync]
+    if: needs.sync.outputs.released != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -173,8 +217,12 @@ jobs:
     needs: [sync, build_bundle]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    permissions:
+      contents: write
+    # Each platform publishes its own files, so the Mac release does not wait
+    # for the slower Windows build, and a Windows failure does not stop it.
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
           - label: macOS arm64
@@ -208,8 +256,27 @@ jobs:
           path: apps
 
       # The resource monitor build needs the Spectre-mitigated MSVC libraries.
-      - name: Install Spectre-mitigated MSVC libs
+      # The Visual Studio Installer takes minutes, so cache the library folder.
+      - id: spectre
+        name: Find Spectre-mitigated MSVC lib folder
         if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $installPath = & $vswhere -products * -latest -property installationPath
+          $msvc = Get-ChildItem "$installPath\VC\Tools\MSVC" | Sort-Object Name | Select-Object -Last 1
+          "path=$($msvc.FullName)\lib\spectre" >> $env:GITHUB_OUTPUT
+          "key=msvc-spectre-${env:ImageOS}-${env:ImageVersion}-$($msvc.Name)" >> $env:GITHUB_OUTPUT
+
+      - id: spectre_cache
+        if: matrix.platform == 'win'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.spectre.outputs.path }}
+          key: ${{ steps.spectre.outputs.key }}
+
+      - name: Install Spectre-mitigated MSVC libs
+        if: matrix.platform == 'win' && steps.spectre_cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -223,6 +290,12 @@ jobs:
             Write-Error "Visual Studio Installer failed"
             exit 1
           }
+
+      - if: matrix.platform == 'win' && steps.spectre_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.spectre.outputs.path }}
+          key: ${{ steps.spectre.outputs.key }}
 
       # electron-builder only signs with a trusted identity. The self-made
       # certificate is its own root, so trust it on the runner for code signing.
@@ -282,53 +355,34 @@ jobs:
           done
           ls -la release-publish
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
-          path: release-publish/*
-          if-no-files-found: error
-
-  release:
-    name: Publish GitHub release
-    needs: [sync, desktop]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: desktop-*
-          merge-multiple: true
-          path: release-assets
-
-      # One platform build per channel manifest, so no manifest merge is needed.
-      # Add scripts/merge-update-manifests.ts when a second arch joins a platform.
-      - name: Check updater manifests
-        run: |
-          set -euo pipefail
-          ls -la release-assets
-          test -s release-assets/nightly-mac.yml
-          test -s release-assets/nightly.yml
-
-      - name: Publish release
+      # The first platform to finish creates the release, the other adds its files.
+      # Each platform has its own updater manifest: nightly-mac.yml and nightly.yml.
+      - name: Publish to the release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || 'nightly.yml' }}
         run: |
           set -euo pipefail
-          gh release create "${{ needs.sync.outputs.tag }}" release-assets/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --target "${{ needs.sync.outputs.sha }}" \
-            --title "${{ needs.sync.outputs.name }}" \
-            --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.sync.outputs.sha }}." \
-            --prerelease
+          test -s "release-publish/$MANIFEST"
+          tag="${{ needs.sync.outputs.tag }}"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 &&
+            gh release create "$tag" release-publish/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "${{ needs.sync.outputs.sha }}" \
+              --title "${{ needs.sync.outputs.name }}" \
+              --notes "Fork build of ${UPSTREAM_REPOSITORY} main plus fork commits, from ${{ needs.sync.outputs.sha }}." \
+              --prerelease; then
+            exit 0
+          fi
+          gh release upload "$tag" release-publish/* --repo "$GITHUB_REPOSITORY" --clobber
 
   # Starts a repair agent on a T3 server through a scheduled-task webhook.
   # Off until the T3_AGENT_WEBHOOK_URL secret is set. The URL is behind
   # Cloudflare Access, so the call sends the CF_ACCESS_CLIENT_* service token.
   notify_agent:
     name: Notify repair agent
-    needs: [sync, build_bundle, desktop, release]
+    needs: [sync, build_bundle, desktop]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -341,7 +395,6 @@ jobs:
           SYNC_RESULT: ${{ needs.sync.result }}
           BUNDLE_RESULT: ${{ needs.build_bundle.result }}
           DESKTOP_RESULT: ${{ needs.desktop.result }}
-          RELEASE_RESULT: ${{ needs.release.result }}
         run: |
           set -euo pipefail
           if [[ -z "$WEBHOOK_URL" ]]; then
@@ -357,9 +410,8 @@ jobs:
             --arg sync "$SYNC_RESULT" \
             --arg build_bundle "$BUNDLE_RESULT" \
             --arg desktop "$DESKTOP_RESULT" \
-            --arg release "$RELEASE_RESULT" \
             '{repository: $repository, branch: $branch, event: $event, run_url: $run_url, run_id: $run_id,
-              jobs: {sync: $sync, build_bundle: $build_bundle, desktop: $desktop, release: $release}}' \
+              jobs: {sync: $sync, build_bundle: $build_bundle, desktop: $desktop}}' \
             > "$RUNNER_TEMP/payload.json"
           cat "$RUNNER_TEMP/payload.json"
           curl --fail-with-body --silent --show-error --retry 3 --retry-all-errors \

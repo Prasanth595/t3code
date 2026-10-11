@@ -5,12 +5,14 @@ The installed app updates itself from the fork releases through the built-in upd
 
 ## How it works
 
-- `.github/workflows/fork-release.yml` runs every day and on manual dispatch.
+- `.github/workflows/fork-release.yml` runs on each push to main, every day for upstream changes, and on manual dispatch. One run runs at a time.
 - The workflow rebases the branch onto `pingdotgg/t3code` main and keeps the fork commits on top.
 - If the rebase or the typecheck fails, the workflow comments on the issue "Fork release: upstream sync failed" and stops.
 - If any job fails, the `notify_agent` job posts the run to `T3_AGENT_WEBHOOK_URL`. That URL is a webhook scheduled task on a T3 server, which starts a repair agent. A manual run with `notify_agent=false` does not post. The agent uses that input on its own retries, so a failed retry does not start a loop.
-- Otherwise it pushes the branch and builds macOS arm64 (signed) and Windows x64 (unsigned).
-- It publishes a GitHub prerelease with `nightly-mac.yml` and `nightly.yml` for electron-updater.
+- Otherwise it pushes the branch. If main moved during the run, it rebases the new main and pushes again.
+- If the commit already has a release, the run stops there. The sync push itself starts such a run.
+- It builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done. The Mac release does not wait for Windows, and a Windows failure does not block it.
+- The release carries `nightly-mac.yml` and `nightly.yml` for electron-updater. Until the Windows build adds `nightly.yml`, Windows apps find no update in the new release.
 - `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
 
 The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and the data directory `~/.t3`.
@@ -68,6 +70,8 @@ scripts/fork-desktop-mac.sh
 The script writes the signed ZIP and `nightly-mac.yml` to `release/`. It skips the DMG, which only a first manual install uses.
 
 ## Install a local build on this Mac
+
+A local build is the fast way to test a change on this Mac. It does not replace the normal flow: merge the change to main, and its CI release reaches every machine in minutes.
 
 ```sh
 scripts/fork-desktop-mac.sh --install
