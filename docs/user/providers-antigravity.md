@@ -49,7 +49,17 @@ ambient `GEMINI_API_KEY` and Google credential variables do not override them.
 Changing the method stops the instance's sessions. Sign out before replacing an
 account.
 
-## Runtime installation
+## Runtime mode and installation
+
+T3 Code supports flexible runtime modes for Antigravity, configurable in **Settings > Providers > Antigravity**:
+
+- **Auto** (default): Automatically detects whether a local Google Antigravity CLI (`agy` or `agy.exe`) is already installed on your system or in standard installation directories (e.g. `~/.antigravity/bin`, AppData, or global npm directories). If detected, it connects seamlessly without requiring a separate downloaded ACP binary. If no local CLI is found, it automatically falls back to the managed ACP server.
+- **Direct CLI (`cli`)**: Connects directly to your local `agy` command-line binary via streaming JSON. This mode uses your local Antigravity CLI credentials and models directly.
+  > [!NOTE]
+  > The CLI streaming bridge mode is provided for convenience and local setups. It may be subject to future deprecation if Google standardizes purely on the Agent Client Protocol (`agy_acp_server`).
+- **ACP Server (`acp`)**: Uses Google's official Antigravity ACP runtime (`agy_acp_server`), either managed or custom.
+
+### Managed installation
 
 Managed installation supports Apple Silicon macOS, Linux x64 or ARM64, and Windows
 x64 or ARM64. Intel Macs can connect to a supported remote environment. Allow
@@ -62,9 +72,8 @@ Extract the ACP executable and its `localharness_external` helper into the same
 directory, at the same version. Make both executable on macOS or Linux; Windows
 uses `.exe` files.
 
-Set **Binary path** to the ACP executable on the environment and update it yourself.
-Leave the field blank to use the managed runtime, or a compatible executable on
-`PATH` if no managed runtime is installed.
+Set **Binary path** to the ACP executable or `agy` CLI binary on the environment.
+Leave the field blank to use automatic discovery or the managed runtime.
 
 ## Models and threads
 

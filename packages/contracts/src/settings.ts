@@ -729,11 +729,34 @@ export const AntigravityAuthMethod = Schema.Literals(
 );
 export type AntigravityAuthMethod = typeof AntigravityAuthMethod.Type;
 
+export const ANTIGRAVITY_RUNTIME_MODES = [
+  { value: "auto", label: "Auto (Detect local CLI or Managed ACP)" },
+  { value: "cli", label: "Native Antigravity CLI (agy)" },
+  { value: "acp", label: "ACP Server (Managed download)" },
+] as const satisfies ReadonlyArray<ProviderSettingsFormOption>;
+export const AntigravityRuntimeMode = Schema.Literals(
+  ANTIGRAVITY_RUNTIME_MODES.map((mode) => mode.value),
+);
+export type AntigravityRuntimeMode = typeof AntigravityRuntimeMode.Type;
+
 export const AntigravitySettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    runtimeMode: AntigravityRuntimeMode.pipe(
+      Schema.withDecodingDefault(Effect.succeed("auto" as const)),
+      Schema.annotateKey({
+        title: "Runtime mode",
+        description:
+          "Choose between the native Antigravity CLI (agy) or Google ACP agent server. (Note: if Google deprecates CLI stream-json in future, ACP remains available).",
+        providerSettingsForm: {
+          control: "select",
+          options: ANTIGRAVITY_RUNTIME_MODES,
+          clearWhenEmpty: "omit",
+        },
+      }),
     ),
     authMethod: AntigravityAuthMethod.pipe(
       Schema.withDecodingDefault(Effect.succeed("oauth-personal" as const)),
@@ -781,7 +804,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Binary path",
-        description: "Custom ACP executable. Leave empty to select automatically.",
+        description: "Custom executable (agy or ACP). Leave empty to select automatically.",
         providerSettingsForm: { placeholder: "Automatic", clearWhenEmpty: "persist" },
       }),
     ),
@@ -790,7 +813,7 @@ export const AntigravitySettings = makeProviderSettingsSchema(
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
     ),
   },
-  { order: ["authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
+  { order: ["runtimeMode", "authMethod", "apiKey", "gcpProject", "gcpLocation", "binaryPath"] },
 );
 export type AntigravitySettings = typeof AntigravitySettings.Type;
 

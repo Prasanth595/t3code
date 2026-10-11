@@ -103,13 +103,18 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       source: "managed",
       version: name,
       managedVersionDirectory: directory,
+      runtimeMode: "acp",
     } satisfies AntigravityInstallation.AntigravityExecutable;
   });
 
   const first = yield* makeExecutable("runtime 'one");
   const second = yield* makeExecutable("runtime two");
   const signedOut = yield* makeExecutable("runtime signed-out", true);
-  const controls = { selected: first, failResolution: false, beforeAcquire: Effect.void };
+  const controls: {
+    selected: AntigravityInstallation.AntigravityExecutable;
+    failResolution: boolean;
+    beforeAcquire: Effect.Effect<void>;
+  } = { selected: first, failResolution: false, beforeAcquire: Effect.void };
   const acquisitions: Array<{ binaryPath: string | undefined; path: string | undefined }> = [];
   const releases: Array<string | null> = [];
   const launches: Array<{
@@ -549,6 +554,26 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
       expect(snapshot.version).toBe(h.first.version);
       expect(h.launches).toEqual([]);
       expect(h.acquisitions).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("supports cli runtime mode without requiring managed binary installation", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        enabled: true,
+        config: { runtimeMode: "cli" },
+      });
+      h.controls.selected = {
+        executablePath: "C:\\tools\\agy.exe",
+        harnessPath: "",
+        source: "path",
+        version: "1.2.14",
+        managedVersionDirectory: null,
+        runtimeMode: "cli",
+      };
+      const snapshot = yield* h.instance.snapshot.refresh;
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.version).toBe("1.2.14");
     }).pipe(Effect.scoped),
   );
 });

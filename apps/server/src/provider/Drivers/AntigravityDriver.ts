@@ -42,6 +42,8 @@ import {
   makeAntigravityAcpRuntime,
   type AntigravityAcpRuntimeInput,
 } from "../acp/AntigravityAcpSupport.ts";
+import { makeAntigravityCliRuntime } from "../acp/AntigravityCliRuntime.ts";
+import { discoverAntigravityCliModels } from "./AntigravityCliModels.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
@@ -182,7 +184,7 @@ export const AntigravityDriver: ProviderDriver<
           });
         }
         const executable = yield* installation
-          .acquire(settings.binaryPath, processEnvironment)
+          .acquire(settings.binaryPath, processEnvironment, settings.runtimeMode)
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -194,6 +196,17 @@ export const AntigravityDriver: ProviderDriver<
                 }),
             ),
           );
+
+        if (executable.runtimeMode === "cli") {
+          return yield* makeAntigravityCliRuntime({
+            executablePath: executable.executablePath,
+            cwd: input.cwd,
+            resumeSessionId: input.resumeSessionId,
+            baseEnv: withAgentDeviceEnvironment(processEnvironment, input),
+            childProcessSpawner: spawner,
+          });
+        }
+
         const profile = yield* prepareAntigravityProfile({
           profileDirectory,
           baseEnv: processEnvironment,
@@ -501,6 +514,23 @@ export const AntigravityDriver: ProviderDriver<
               }),
         ),
       );
+
+      if (enabled) {
+        yield* Effect.forkScoped(
+          installation.resolve(settings.binaryPath, processEnvironment, settings.runtimeMode).pipe(
+            Effect.flatMap((executable) =>
+              executable.runtimeMode === "cli"
+                ? discoverAntigravityCliModels({
+                    executablePath: executable.executablePath,
+                    environment: processEnvironment,
+                    spawner,
+                  })
+                : Effect.void,
+            ),
+            Effect.ignore,
+          ),
+        );
+      }
 
       return {
         instanceId,

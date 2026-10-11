@@ -4,6 +4,8 @@ import * as Schema from "effect/Schema";
 import type { CommandId, ProjectId } from "./baseSchemas.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import {
+  AntigravitySettings,
+  ANTIGRAVITY_RUNTIME_MODES,
   ClientSettingsSchema,
   ClientSettingsPatch,
   ClaudeSettings,
@@ -22,6 +24,7 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
+const decodeAntigravitySettings = Schema.decodeUnknownSync(AntigravitySettings);
 
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
@@ -1182,5 +1185,26 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch({ migrateModelPreferences: input })).toEqual({
       migrateModelPreferences: input,
     });
+  });
+});
+
+describe("AntigravitySettings", () => {
+  it("defaults runtimeMode to auto", () => {
+    const settings = decodeAntigravitySettings({});
+    expect(settings.runtimeMode).toBe("auto");
+    expect(settings.enabled).toBe(false);
+  });
+
+  it.each(["auto", "cli", "acp"] as const)("accepts runtimeMode '%s'", (runtimeMode) => {
+    const settings = decodeAntigravitySettings({ runtimeMode });
+    expect(settings.runtimeMode).toBe(runtimeMode);
+  });
+
+  it("rejects invalid runtimeMode", () => {
+    expect(() => decodeAntigravitySettings({ runtimeMode: "invalid-mode" })).toThrow();
+  });
+
+  it("defines expected form options", () => {
+    expect(ANTIGRAVITY_RUNTIME_MODES.map((m) => m.value)).toEqual(["auto", "cli", "acp"]);
   });
 });

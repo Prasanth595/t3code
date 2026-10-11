@@ -359,7 +359,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           profiles.add(profile);
           const helper = command.args[0] === "-e";
           // The runtime unpacks straight into the disposable profile.
-          if (!helper) expect(command.options.env?.TMPDIR).toBe(profile);
+          if (!helper) {
+            const tempEnv = command.options.env?.TEMP ?? command.options.env?.TMPDIR;
+            expect(tempEnv).toBe(profile);
+          }
           const output = yield* Queue.unbounded<Uint8Array>();
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(
@@ -974,4 +977,51 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
     expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
   });
+
+  it.effect("resolves native CLI mode with custom or discovered agy executable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" });
+      const cliPath = path.join(baseDir, hostPlatform === "win32" ? "agy.exe" : "agy");
+      yield* fs.writeFileString(cliPath, "#!/bin/sh\nexit 0\n");
+      if (hostPlatform !== "win32") {
+        yield* fs.chmod(cliPath, 0o755);
+      }
+      const { installation } = yield* makeHarness();
+
+      // Explicit binaryPath in CLI mode
+      const resolvedExplicit = yield* installation.resolve(cliPath, undefined, "cli");
+      expect(resolvedExplicit.runtimeMode).toBe("cli");
+      expect(resolvedExplicit.executablePath).toBe(yield* fs.realPath(cliPath));
+
+      // Error when CLI is missing in CLI mode
+      const missing = path.join(baseDir, "nonexistent-agy");
+      const error = yield* installation.resolve(missing, undefined, "cli").pipe(Effect.flip);
+      expect(error.operation).toBe("resolve");
+      expect(error.detail).toContain("missing or not executable");
+    }),
+  );
+
+  it.effect("auto mode prioritizes CLI when available and falls back to ACP", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-auto-test-" });
+      const cliPath = path.join(baseDir, hostPlatform === "win32" ? "agy.exe" : "agy");
+      yield* fs.writeFileString(cliPath, "#!/bin/sh\nexit 0\n");
+      if (hostPlatform !== "win32") {
+        yield* fs.chmod(cliPath, 0o755);
+      }
+      const { installation } = yield* makeHarness({ previous: true });
+
+      // Override with CLI resolves to CLI
+      const resolvedCli = yield* installation.resolve(cliPath, undefined, "auto");
+      expect(resolvedCli.runtimeMode).toBe("cli");
+
+      // In ACP mode, override pointing to CLI fails because it requires localharness sibling
+      const errorAcp = yield* installation.resolve(cliPath, undefined, "acp").pipe(Effect.flip);
+      expect(errorAcp.operation).toBe("resolve");
+    }),
+  );
 });
