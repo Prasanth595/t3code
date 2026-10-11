@@ -138,7 +138,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       yield* persist("pending");
     }
     if (input.deferInline) {
-      // Compaction APIs cannot accept an inline transcript. Keep it available
+      // Compaction and native continuation cannot accept an inline transcript. Keep it available
       // for the next ordinary turn when native injection is unsupported.
       yield* Effect.forEach(pending, input.persist, { discard: true });
       return { context: "", delivered: Effect.void, unsent: Effect.void };

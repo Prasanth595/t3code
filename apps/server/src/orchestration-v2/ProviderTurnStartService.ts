@@ -251,12 +251,13 @@ export const layer: Layer.Layer<
                     source.status === "interrupted" ||
                     (source.status === "completed" &&
                       handoff.delivery === undefined &&
-                      projection.messages.some(
-                        (message) =>
-                          message.id === source.userMessageId &&
-                          message.attachments.length === 0 &&
-                          message.text.trim().toLowerCase() === "/compact",
-                      ))),
+                      (source.manualContinuationOfRunId !== undefined ||
+                        projection.messages.some(
+                          (message) =>
+                            message.id === source.userMessageId &&
+                            message.attachments.length === 0 &&
+                            message.text.trim().toLowerCase() === "/compact",
+                        )))),
               ))),
       );
       const nativeForkTransfer = projection.contextTransfers.find(
@@ -1125,7 +1126,7 @@ export const layer: Layer.Layer<
                 ];
           const delivery = yield* deliverContextHandoffs({
             handoffs: [...effectiveHandoffs, ...retryHandoff],
-            deferInline: compact,
+            deferInline: compact || turnInput.manualContinuationOfRunId !== undefined,
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
               return handoffBudget({

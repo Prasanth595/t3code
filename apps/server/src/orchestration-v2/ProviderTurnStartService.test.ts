@@ -2,6 +2,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextHandoffId,
+  EventId,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -158,6 +160,7 @@ function makeLocalCommandHarness(input: {
   readonly manualContinuationOfRunId?: RunId;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
+  readonly turnStartHistory?: OrchestrationV2ThreadProjection["turnItems"];
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   /** Opens the session, then fails loading its provider thread. */
@@ -464,29 +467,30 @@ function makeLocalCommandHarness(input: {
           }),
         ),
   );
-  const writeIfRunCurrent = vi.fn(({ events: incoming, activeAttemptId, expectedStatus }) =>
-    "writeFailure" in input
-      ? Effect.fail(
-          new EventSink.EventSinkWriteError({
-            eventCount: incoming.length,
-            cause: input.writeFailure,
-          }),
-        )
-      : Effect.sync(() => {
-          const current = projection.runs.find((candidate) => candidate.id === runId);
-          const committed =
-            current !== undefined &&
-            current.activeAttemptId === activeAttemptId &&
-            current.status === expectedStatus;
-          if (committed) {
-            for (const event of incoming) {
-              expect(isDomainEvent(event)).toBe(true);
-              events.push(event);
-              projection = ProjectionStore.applyToProjection(projection, event);
+  const writeIfRunCurrent = vi.fn(
+    ({ events: incoming, runId: targetRunId, activeAttemptId, expectedStatus }) =>
+      "writeFailure" in input
+        ? Effect.fail(
+            new EventSink.EventSinkWriteError({
+              eventCount: incoming.length,
+              cause: input.writeFailure,
+            }),
+          )
+        : Effect.sync(() => {
+            const current = projection.runs.find((candidate) => candidate.id === targetRunId);
+            const committed =
+              current !== undefined &&
+              current.activeAttemptId === activeAttemptId &&
+              current.status === expectedStatus;
+            if (committed) {
+              for (const event of incoming) {
+                expect(isDomainEvent(event)).toBe(true);
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
             }
-          }
-          return { committed, storedEvents: [] };
-        }),
+            return { committed, storedEvents: [] };
+          }),
   );
   const layer = ProviderTurnStart.layer.pipe(
     Layer.provide(
@@ -494,7 +498,18 @@ function makeLocalCommandHarness(input: {
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({
           prepareProviderHandoff: () => Effect.die("history read must fail first"),
         }),
-        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        Layer.mock(EventSink.EventSinkV2)({
+          writeIfRunCurrent,
+          write: ({ events: incoming }) =>
+            Effect.sync(() => {
+              for (const event of incoming) {
+                expect(isDomainEvent(event)).toBe(true);
+                events.push(event);
+                projection = ProjectionStore.applyToProjection(projection, event);
+              }
+              return [];
+            }),
+        }),
         IdAllocator.layer,
         FileSystem.layerNoop({}),
         Layer.mock(GitWorkflow.GitWorkflowService)({}),
@@ -519,12 +534,14 @@ function makeLocalCommandHarness(input: {
               ),
             }),
           getTurnStartHistory: () =>
-            Effect.fail(
-              new ProjectionStore.ProjectionStoreReadError({
-                threadId,
-                cause: input.historyReadFailureAfterFallback,
-              }),
-            ),
+            input.turnStartHistory === undefined
+              ? Effect.fail(
+                  new ProjectionStore.ProjectionStoreReadError({
+                    threadId,
+                    cause: input.historyReadFailureAfterFallback,
+                  }),
+                )
+              : Effect.succeed(input.turnStartHistory),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
@@ -545,6 +562,7 @@ function makeLocalCommandHarness(input: {
     oldInstanceId,
     newInstanceId,
     attemptId,
+    layer,
     projection: () => projection,
     start: Effect.gen(function* () {
       yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({ threadId, runId });
@@ -760,6 +778,227 @@ effectIt.effect("refuses a fresh native session for a manual continuation", () =
       { type: "error", failure: { message: "native thread is gone" } },
     ]);
   }),
+);
+
+effectIt.effect(
+  "defers inline handoff history until a prompted turn after manual continuation",
+  () =>
+    Effect.gen(function* () {
+      const sourceRunId = RunId.make("failed-native-run");
+      const harness = makeLocalCommandHarness({
+        text: "",
+        manualContinuationOfRunId: sourceRunId,
+        turnStartHistory: [],
+      });
+      const initial = harness.projection();
+      const run = initial.runs[0]!;
+      const now = initial.updatedAt;
+      const providerThread = {
+        ...initial.providerThreads[0]!,
+        nativeThreadRef: {
+          driver: ProviderDriverKind.make("codex"),
+          nativeId: "native-continuation-handoff",
+          strength: "strong" as const,
+        },
+      };
+      const handoff = {
+        id: ContextHandoffId.make("manual-continuation-handoff"),
+        threadId: run.threadId,
+        targetRunId: run.id,
+        fromProviderThreadIds: [],
+        toProviderThreadId: providerThread.id,
+        coveredRunOrdinals: { from: 1, to: 1 },
+        strategy: "fork_delta_summary" as const,
+        status: "ready" as const,
+        summaryMessageId: null,
+        summaryText: "The fork found the failing request in the session loader.",
+        createdByProviderInstanceId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      yield* harness.writeIfRunCurrent({
+        runId: run.id,
+        activeAttemptId: run.activeAttemptId,
+        expectedStatus: "starting",
+        events: [
+          {
+            id: EventId.make("manual-handoff-native-thread"),
+            type: "provider-thread.updated",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: providerThread,
+          },
+          {
+            id: EventId.make("manual-handoff-ready"),
+            type: "context-handoff.updated",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: handoff,
+          },
+        ],
+      });
+      const nativeStartTurn = vi.fn<
+        (input: ProviderAdapter.ProviderAdapterV2TurnInput) => Effect.Effect<void>
+      >(() => Effect.void);
+      const injectHistory = vi.fn(() => Effect.succeed(false));
+      harness.open.mockReturnValue(
+        Effect.succeed({
+          driver: providerThread.driver,
+          providerSession: {
+            id: providerThread.providerSessionId,
+            driver: providerThread.driver,
+            providerInstanceId: providerThread.providerInstanceId,
+            status: "ready",
+            cwd: "/tmp/native-account-command",
+            model: null,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: now,
+            updatedAt: now,
+            lastError: null,
+          },
+          resumeThread: () => Effect.succeed(providerThread),
+          injectHistory,
+          startTurn: nativeStartTurn,
+        } as never),
+      );
+      harness.startRootRun.mockImplementation((started) =>
+        started.session
+          .startTurn({
+            appThread: started.appThread,
+            threadId: started.run.threadId,
+            runId: started.run.id,
+            runOrdinal: started.run.ordinal,
+            providerTurnOrdinal: started.providerTurnOrdinal,
+            ...(started.run.manualContinuationOfRunId === undefined
+              ? {}
+              : { manualContinuationOfRunId: started.run.manualContinuationOfRunId }),
+            attemptId: started.attemptId,
+            rootNodeId: started.rootNode.id,
+            providerThread: started.providerThread,
+            message: started.message,
+            modelSelection: started.modelSelection,
+            runtimePolicy: started.runtimePolicy,
+          })
+          .pipe(Effect.orDie),
+      );
+
+      yield* harness.start;
+
+      expect(injectHistory).toHaveBeenCalledOnce();
+      expect(nativeStartTurn.mock.calls[0]?.[0]).toMatchObject({
+        manualContinuationOfRunId: sourceRunId,
+        message: { text: "", attachments: [] },
+      });
+      expect(harness.projection().contextHandoffs[0]?.delivery).toBeUndefined();
+      expect(
+        harness.events.some(
+          (event) =>
+            event.type === "context-handoff.updated" && event.payload.delivery?.status === "inline",
+        ),
+      ).toBe(false);
+
+      const continued = harness.projection().runs[0]!;
+      const { manualContinuationOfRunId: _continuedRunId, ...promptedRun } = continued;
+      const nextRun = {
+        ...promptedRun,
+        id: RunId.make("prompt-after-manual-continuation"),
+        ordinal: 3,
+        userMessageId: MessageId.make("message-after-manual-continuation"),
+        rootNodeId: NodeId.make("root-after-manual-continuation"),
+        activeAttemptId: RunAttemptId.make("attempt-after-manual-continuation"),
+        status: "starting" as const,
+        startedAt: null,
+        completedAt: null,
+      };
+      const nextCheckpointScope = {
+        ...initial.checkpointScopes[0]!,
+        id: CheckpointScopeId.make("scope-after-manual-continuation"),
+        runId: nextRun.id,
+        nodeId: nextRun.rootNodeId,
+      };
+      yield* harness.writeIfRunCurrent({
+        runId: continued.id,
+        activeAttemptId: continued.activeAttemptId,
+        expectedStatus: "running",
+        events: [
+          {
+            id: EventId.make("manual-handoff-completed"),
+            type: "run.updated",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: { ...continued, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make("manual-handoff-next-run"),
+            type: "run.created",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: nextRun,
+          },
+          {
+            id: EventId.make("manual-handoff-next-attempt"),
+            type: "run-attempt.updated",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: {
+              ...initial.attempts[0]!,
+              id: nextRun.activeAttemptId,
+              runId: nextRun.id,
+              rootNodeId: nextRun.rootNodeId,
+            },
+          },
+          {
+            id: EventId.make("manual-handoff-next-node"),
+            type: "node.updated",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: {
+              ...initial.nodes[0]!,
+              id: nextRun.rootNodeId,
+              runId: nextRun.id,
+              rootNodeId: nextRun.rootNodeId,
+              checkpointScopeId: nextCheckpointScope.id,
+            },
+          },
+          {
+            id: EventId.make("manual-handoff-next-checkpoint-scope"),
+            type: "checkpoint-scope.created",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: nextCheckpointScope,
+          },
+          {
+            id: EventId.make("manual-handoff-next-message"),
+            type: "message.updated",
+            threadId: run.threadId,
+            occurredAt: now,
+            payload: {
+              ...initial.messages[0]!,
+              id: nextRun.userMessageId,
+              runId: nextRun.id,
+              nodeId: nextRun.rootNodeId,
+              text: "Apply the fork's finding.",
+            },
+          },
+        ],
+      });
+      yield* Effect.gen(function* () {
+        yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).start({
+          threadId: nextRun.threadId,
+          runId: nextRun.id,
+        });
+      }).pipe(Effect.provide(harness.layer));
+
+      expect(injectHistory).toHaveBeenCalledTimes(2);
+      const nextInput = nativeStartTurn.mock.calls[1]?.[0];
+      expect(nextInput?.manualContinuationOfRunId).toBeUndefined();
+      expect(nextInput?.message.text).toContain(handoff.summaryText);
+      expect(nextInput?.message.text).toContain("Apply the fork's finding.");
+      expect(harness.projection().contextHandoffs[0]?.delivery).toMatchObject({
+        nativeThreadId: providerThread.nativeThreadRef.nativeId,
+        status: "inline",
+      });
+    }),
 );
 
 effectIt.effect("does not mistake a failed state read for a superseded run", () =>

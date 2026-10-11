@@ -78,6 +78,8 @@ interface RestartAdapterState {
     readonly model: string;
     readonly cwd: string | null;
     readonly attemptId: string;
+    readonly message: ProviderAdapter.ProviderAdapterV2TurnInput["message"];
+    readonly manualContinuationOfRunId: RunId | undefined;
   }>;
   readonly closedSessionCount: number;
   readonly failedReplacementOpen: boolean;
@@ -224,6 +226,8 @@ function makeRestartAdapter(
                     model: input.modelSelection.model,
                     cwd: input.runtimePolicy.cwd,
                     attemptId: input.attemptId,
+                    message: input.message,
+                    manualContinuationOfRunId: input.manualContinuationOfRunId,
                   },
                 ],
               }));
@@ -388,7 +392,7 @@ function makeCompletingHandoffAdapter(
   };
 }
 
-it.live("retries a failed selection restart session open before completing", () =>
+it.live("preserves prompted steering after continuation and retries a failed session open", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace("selection-restart-lifecycle");
@@ -401,6 +405,15 @@ it.live("retries a failed selection restart session open before completing", () 
         failedReplacementOpen: false,
       });
       const layerRegistry = ProviderAdapterRegistry.layerSingle(makeRestartAdapter(state));
+      const steeringAttachments = [
+        {
+          type: "image" as const,
+          id: "steering-screenshot",
+          name: "image.png",
+          mimeType: "image/png",
+          sizeBytes: 10,
+        },
+      ];
 
       const result = yield* Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -452,10 +465,60 @@ it.live("retries a failed selection restart session open before completing", () 
         yield* worker.drain();
         const activeProjection = yield* orchestrator.getThreadProjection(threadId);
         assert.isTrue(activeProjection.providerTurns.some((turn) => turn.status === "running"));
-        const activeRunId = activeProjection.runs[0]?.id;
-        if (activeRunId === undefined) {
+        const sourceRunId = activeProjection.runs[0]?.id;
+        if (sourceRunId === undefined) {
           return yield* Effect.die("active restart test run is missing");
         }
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("command:selection-restart:stop"),
+          threadId,
+          runId: sourceRunId,
+          holdQueue: true,
+        });
+        yield* worker.drain();
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).runs[0]?.status,
+          "interrupted",
+        );
+        const continuing = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+          })
+          .pipe(
+            Stream.map((stored) => stored.event),
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("command:selection-restart:continue"),
+          threadId,
+          messageId: MessageId.make("message:selection-restart:continue"),
+          manualContinuationOfRunId: sourceRunId,
+          notification: {
+            source: { kind: "system" },
+            outcome: "updated",
+            summary: "Continued turn",
+          },
+          text: "",
+          attachments: [],
+          modelSelection: initialSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Fiber.join(continuing);
+        yield* worker.drain();
+        const continuedProjection = yield* orchestrator.getThreadProjection(threadId);
+        const activeRunId = continuedProjection.runs.at(-1)!.id;
+        assert.equal(continuedProjection.runs.at(-1)?.manualContinuationOfRunId, sourceRunId);
 
         const completed = yield* eventSink
           .stream({
@@ -479,7 +542,7 @@ it.live("retries a failed selection restart session open before completing", () 
           threadId,
           messageId: MessageId.make("message:selection-restart:second"),
           text: "second",
-          attachments: [],
+          attachments: steeringAttachments,
           modelSelection: replacementSelection,
           dispatchMode: { type: "restart_active", targetRunId: activeRunId },
         });
@@ -488,6 +551,8 @@ it.live("retries a failed selection restart session open before completing", () 
         return {
           projection: yield* orchestrator.getThreadProjection(threadId),
           captured: yield* Ref.get(state),
+          sourceRunId,
+          activeRunId,
         };
       }).pipe(
         Effect.provide(
@@ -499,24 +564,32 @@ it.live("retries a failed selection restart session open before completing", () 
       );
       const { projection, captured } = result;
 
-      assert.lengthOf(projection.runs, 1);
-      assert.lengthOf(projection.attempts, 2);
+      assert.lengthOf(projection.runs, 2);
+      assert.lengthOf(projection.attempts, 3);
       assert.deepEqual(
         projection.attempts.map((attempt) => attempt.status),
-        ["superseded", "completed"],
+        ["interrupted", "superseded", "completed"],
       );
       assert.deepEqual(
         projection.providerTurns.map((turn) => turn.status),
-        ["interrupted", "completed"],
+        ["interrupted", "interrupted", "completed"],
       );
       assert.isFalse(
         projection.turnItems.some(
-          (item) => item.type === "run_interrupt_request" || item.type === "run_interrupt_result",
+          (item) =>
+            item.runId === result.activeRunId &&
+            (item.type === "run_interrupt_request" || item.type === "run_interrupt_result"),
         ),
         "selection restart supersede must not project hard-Stop interrupt items",
       );
       assert.equal(projection.runs.at(-1)?.modelSelection.model, replacementSelection.model);
       assert.equal(projection.runs.at(-1)?.status, "completed");
+      assert.isUndefined(projection.runs.at(-1)?.manualContinuationOfRunId);
+      assert.equal(captured.started[1]?.manualContinuationOfRunId, result.sourceRunId);
+      assert.equal(captured.started[1]?.message.text, "");
+      assert.equal(captured.started[2]?.message.text, "second");
+      assert.deepEqual(captured.started[2]?.message.attachments, steeringAttachments);
+      assert.isUndefined(captured.started[2]?.manualContinuationOfRunId);
       assert.isTrue(captured.failedReplacementOpen);
       // The old pooled process remains available to its other threads; this
       // thread moved to a freshly allocated replacement session.
@@ -532,6 +605,7 @@ it.live("retries a failed selection restart session open before completing", () 
       assert.deepEqual(
         captured.started.map((turn) => [turn.model, turn.cwd]),
         [
+          [initialSelection.model, cwd],
           [initialSelection.model, cwd],
           [replacementSelection.model, cwd],
         ],
