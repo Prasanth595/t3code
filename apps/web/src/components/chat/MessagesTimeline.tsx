@@ -5380,7 +5380,7 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
       {entries.map((entry) => (
         <ChatMarkdown
           key={entry.id}
-          className="text-foreground"
+          className="chat-markdown-reasoning text-secondary-label"
           text={entry.detail ?? ""}
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
