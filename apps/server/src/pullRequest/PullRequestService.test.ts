@@ -2551,6 +2551,47 @@ it.effect(
     }),
 );
 
+it.effect("refreshes a borrowed pull request after a turn in the project that asked for it", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "unrelated",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "acme/unrelated",
+        }),
+        project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequestSummary: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return changeRequest(7, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const reference = {
+      projectId: "app" as ProjectId,
+      host: "github.com",
+      repository: "acme/api",
+      number: 7,
+    };
+
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 1);
+    // The read borrows another project's checkout but is cached as the asking project's, whose
+    // turn is the one that may have changed the pull request.
+    yield* service.refreshAfterTurn(reference.projectId);
+    yield* service.summary(reference, { recoverTransientFailure: false });
+    assert.strictEqual(reads, 2);
+  }),
+);
+
 it.effect("routes Azure reads and writes through the requested organization's checkout", () =>
   Effect.gen(function* () {
     const seen: string[] = [];

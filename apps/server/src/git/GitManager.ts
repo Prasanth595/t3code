@@ -348,6 +348,16 @@ function splitRepositoryKey(key: string): { readonly host: string; readonly path
   return { host: key.slice(0, slash), path: key.slice(slash + 1) };
 }
 
+/** An HTTP or HTTPS URL's port, empty for its scheme's default, or null for any other URL. */
+function httpPort(url: string): string | null {
+  try {
+    const { protocol, port } = new URL(url);
+    return protocol === "http:" || protocol === "https:" ? port : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether a remote names the repository at `repositoryKey`. A dotless SSH host is an
  * `~/.ssh/config` alias such as `git@github-work:`, which stands for a host it does not name, so
@@ -380,17 +390,23 @@ export function isPullRequestCheckout(
   ) {
     return true;
   }
+  // Keys leave the port out, but over HTTP it can tell two installs on one host apart. An SSH
+  // port says nothing about the web one.
+  const remotePort = httpPort(remoteUrl);
+  if (remotePort !== null && remotePort !== httpPort(pullRequest.url)) return false;
   const remoteKey = canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl));
-  // Forks live on their base's host.
+  // Forks live on their base's host. A Forgejo install mounted below its host's root serves them
+  // over HTTP below that mount too, which the head's `owner/name` leaves out.
+  const base = splitRepositoryKey(baseKey);
+  const mount =
+    remotePort !== null && parseChangeRequestUrl(pullRequest.url)?.authority !== undefined
+      ? base.path.replace(/[^/]+\/[^/]+$/u, "")
+      : "";
   const head = resolveHeadRepositoryNameWithOwner(pullRequest);
   return (
     namesRepository(remoteUrl, remoteKey, baseKey) ||
     (head !== null &&
-      namesRepository(
-        remoteUrl,
-        remoteKey,
-        `${splitRepositoryKey(baseKey).host}/${head.toLowerCase()}`,
-      ))
+      namesRepository(remoteUrl, remoteKey, `${base.host}/${mount}${head.toLowerCase()}`))
   );
 }
 
