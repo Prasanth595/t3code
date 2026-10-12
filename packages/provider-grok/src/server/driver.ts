@@ -31,10 +31,12 @@ import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIden
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { discoverGrokSkills } from "./skills.ts";
 import {
+  homebrewOwnershipFromCommandPath,
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
+  resolveHomebrewProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -48,28 +50,43 @@ const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm's `latest` tracks Grok's stable channel, the one `grok update` installs
 // by default, so the registry stays the source for "latest".
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` finds the installer that owns the binary itself, so the
-// resolved executable is its own updater. It installs under `GROK_HOME`, so it
-// runs with the instance's environment. No executable means nothing to update,
-// not "whatever is on PATH".
+// A Homebrew cask (`grok-build`) is upgraded by brew: `grok update` would
+// install a second copy under `GROK_HOME` and leave the cask's binary behind.
+// Otherwise `grok update` finds the installer that owns the binary itself, so
+// the resolved executable is its own updater. It installs under `GROK_HOME`,
+// so it runs with the instance's environment. No executable means nothing to
+// update, not "whatever is on PATH".
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: (context) =>
-    Effect.succeed(
-      context
-        ? makeProviderMaintenanceCapabilities({
+    Effect.gen(function* () {
+      if (!context) {
+        return makeManualOnlyProviderMaintenanceCapabilities({
+          provider: DRIVER_KIND,
+          packageName: GROK_NPM_PACKAGE,
+        });
+      }
+      const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
+      const homebrewCapabilities = homebrew
+        ? yield* resolveHomebrewProviderMaintenance({
             provider: DRIVER_KIND,
             packageName: GROK_NPM_PACKAGE,
-            updateExecutable: context.resolvedCommandPath,
-            updateArgs: ["update"],
-            updateLockKey: "grok",
-            platform: context.platform,
+            ownership: homebrew,
             env: context.env,
           })
-        : makeManualOnlyProviderMaintenanceCapabilities({
-            provider: DRIVER_KIND,
-            packageName: GROK_NPM_PACKAGE,
-          }),
-    ),
+        : null;
+      return (
+        homebrewCapabilities ??
+        makeProviderMaintenanceCapabilities({
+          provider: DRIVER_KIND,
+          packageName: GROK_NPM_PACKAGE,
+          updateExecutable: context.resolvedCommandPath,
+          updateArgs: ["update"],
+          updateLockKey: "grok",
+          platform: context.platform,
+          env: context.env,
+        })
+      );
+    }),
 };
 
 export type GrokDriverEnv =

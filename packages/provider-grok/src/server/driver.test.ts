@@ -6,6 +6,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -39,6 +41,52 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
 const noSpawner = ChildProcessSpawner.make(() =>
   Effect.die("Disabled Grok must not spawn a process"),
 );
+
+/** Answers every spawn with `onSpawn`'s stdout and records `[command, ...args]`. */
+function brewSpawner(
+  spawned: Array<ReadonlyArray<string>>,
+  onSpawn: (args: ReadonlyArray<string>) => string,
+) {
+  return ChildProcessSpawner.make((command) => {
+    const { command: executable, args } = command as unknown as {
+      readonly command: string;
+      readonly args: ReadonlyArray<string>;
+    };
+    spawned.push([executable, ...args]);
+    return Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.encodeText(Stream.make(onSpawn(args))),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      }),
+    );
+  });
+}
+
+/** `<root>/Caskroom/grok-build/1.0.50/<binary>` linked from `<root>/bin/grok`, with `<root>/bin/brew`. */
+const makeCaskInstall = Effect.fn("makeCaskInstall")(function* (root: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const caskBinary = path.join(root, "Caskroom", "grok-build", "1.0.50", "grok-1.0.50");
+  const brewPath = path.join(root, "bin", "brew");
+  const linkPath = path.join(root, "bin", "grok");
+  yield* fs.makeDirectory(path.dirname(caskBinary), { recursive: true });
+  yield* fs.makeDirectory(path.dirname(brewPath), { recursive: true });
+  for (const executable of [caskBinary, brewPath]) {
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+  }
+  yield* fs.symlink(caskBinary, linkPath);
+  return { brewPath, linkPath };
+});
 
 // The `#!/bin/sh` stub below cannot be resolved as an executable on Windows.
 const windowsHost = HostProcess.Platform.defaultValue() === "win32";
@@ -76,6 +124,81 @@ it.layer(layerTest)("GrokDriver", (it) => {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner),
       Effect.scoped,
     ),
+  );
+
+  it.effect.skipIf(windowsHost)("upgrades a Homebrew cask install with brew, not grok update", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.realPath(
+        yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-cask-" }),
+      );
+      const { brewPath, linkPath } = yield* makeCaskInstall(root);
+      const spawned: Array<ReadonlyArray<string>> = [];
+
+      const instance = yield* GrokDriver.create({
+        instanceId: ProviderInstanceId.make("grok-cask"),
+        displayName: "Grok test",
+        enabled: false,
+        environment: [],
+        config: { ...GrokDriver.defaultConfig(), binaryPath: linkPath },
+      }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          brewSpawner(spawned, (args) =>
+            args[0] === "--prefix"
+              ? `${root}\n`
+              : JSON.stringify({ casks: [{ version: "1.0.50" }] }),
+          ),
+        ),
+      );
+
+      const capabilities = yield* instance.snapshot.resolveMaintenance();
+      expect(spawned).toEqual([
+        [brewPath, "--prefix"],
+        [brewPath, "info", "--json=v2", "grok-build"],
+      ]);
+      // The advisory compares against the cask, which trails npm's `latest`.
+      expect(capabilities.latestVersion).toBe("1.0.50");
+      expect(capabilities.update).toMatchObject({
+        command: "brew upgrade --cask grok-build",
+        executable: brewPath,
+        args: ["upgrade", "--cask", "grok-build"],
+        lockKey: "homebrew",
+      });
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "keeps grok update when the cask is not under the resolved brew's prefix",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-foreign-cask-" }),
+        );
+        const { linkPath } = yield* makeCaskInstall(root);
+
+        const instance = yield* GrokDriver.create({
+          instanceId: ProviderInstanceId.make("grok-foreign-cask"),
+          displayName: "Grok test",
+          enabled: false,
+          environment: [],
+          config: { ...GrokDriver.defaultConfig(), binaryPath: linkPath },
+        }).pipe(
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            brewSpawner([], () => "/opt/homebrew\n"),
+          ),
+        );
+
+        const capabilities = yield* instance.snapshot.resolveMaintenance();
+        expect(capabilities.latestVersion).toBeUndefined();
+        expect(capabilities.update).toMatchObject({
+          executable: linkPath,
+          args: ["update"],
+          lockKey: "grok",
+        });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("stays manual-only when the configured executable does not exist", () =>
