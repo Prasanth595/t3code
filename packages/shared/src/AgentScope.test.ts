@@ -2,10 +2,12 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { describe, expect, it, vi } from "@effect/vitest";
 
-import { AGENT_OOM_SCORE_ADJ, agentScopeCommand } from "./AgentScope.ts";
+import { AGENT_OOM_SCORE_ADJ, SCOPE_WATCH_SCRIPT, agentScopeCommand } from "./AgentScope.ts";
 import * as HostProcess from "./HostProcess.ts";
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeCommand", () => {
@@ -137,4 +139,41 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
       }
     },
   );
+
+  describe("scope watcher started after its agent already exited", () => {
+    const deadPid = () => NodeChildProcess.spawnSync("true").pid;
+    const runWatcher = (serverPid: number) => {
+      const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-scope-watch-"));
+      try {
+        const log = NodePath.join(dir, "calls");
+        const systemctl = NodePath.join(dir, "systemctl");
+        NodeFS.writeFileSync(systemctl, `#!/bin/sh\necho "$@" >> "${log}"\n`, { mode: 0o755 });
+        const result = NodeChildProcess.spawnSync(
+          "/bin/sh",
+          [
+            "-c",
+            SCOPE_WATCH_SCRIPT,
+            "watch",
+            String(serverPid),
+            systemctl,
+            "a.scope",
+            String(deadPid()),
+          ],
+          { timeout: 5_000 },
+        );
+        const calls = NodeFS.existsSync(log) ? NodeFS.readFileSync(log, "utf8") : "";
+        return { status: result.status, calls };
+      } finally {
+        NodeFS.rmSync(dir, { recursive: true, force: true });
+      }
+    };
+
+    it("stops the scope when the server is gone too", () => {
+      expect(runWatcher(deadPid())).toEqual({ status: 0, calls: "--user stop a.scope\n" });
+    });
+
+    it("leaves the scope alone while the server is alive", () => {
+      expect(runWatcher(process.pid)).toEqual({ status: 0, calls: "" });
+    });
+  });
 });
