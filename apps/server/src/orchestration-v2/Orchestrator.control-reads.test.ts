@@ -89,6 +89,15 @@ it.effect(
       (message_id, thread_id, run_id, node_id, role, streaming, created_at, updated_at, payload_json)
       VALUES ('obsolete', ${threadId}, NULL, NULL, 'assistant', 0, ${DateTime.formatIso(now)}, ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
       assert.equal((yield* Effect.exit(projections.getThreadProjection(threadId)))._tag, "Failure");
+      const beforeDiscovery = yield* orchestrator.getPullRequestDiscoverySnapshot({
+        threadId,
+        unsettledOnly: false,
+      });
+      assert.equal(beforeDiscovery.threads[0]?.id, threadId);
+      assert.equal(
+        beforeDiscovery.snapshotSequence,
+        yield* orchestrator.getThreadEventSequence(threadId),
+      );
       yield* orchestrator.dispatch({
         type: "queue.resume",
         commandId: CommandId.make("resume-empty-queue"),
@@ -100,6 +109,12 @@ it.effect(
         threadId,
         title: "After",
       });
+      const afterDiscovery = yield* orchestrator.getPullRequestDiscoverySnapshot({
+        threadId,
+        unsettledOnly: false,
+      });
+      assert.equal(afterDiscovery.threads[0]?.branch, null);
+      assert.isAbove(afterDiscovery.snapshotSequence, beforeDiscovery.snapshotSequence);
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("mode-control"),

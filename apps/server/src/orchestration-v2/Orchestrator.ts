@@ -108,6 +108,7 @@ import {
   type ProjectionRecords,
   type ProjectionCheckpointContext,
   type ShellSnapshotOptions,
+  type ProjectionPullRequestDiscoveryThread,
 } from "./ProjectionStore.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -360,6 +361,15 @@ export interface OrchestratorV2Shape {
   readonly getThreadEventSequence: (
     threadId: ThreadId,
   ) => Effect.Effect<number, OrchestratorV2Error>;
+  readonly getPullRequestDiscoverySnapshot: (
+    options: Parameters<ProjectionStoreV2["Service"]["getPullRequestDiscoverySnapshot"]>[0],
+  ) => Effect.Effect<
+    {
+      readonly snapshotSequence: number;
+      readonly threads: ReadonlyArray<ProjectionPullRequestDiscoveryThread>;
+    },
+    OrchestratorV2Error
+  >;
   readonly streamStoredEvents: Stream.Stream<OrchestrationV2StoredEvent, OrchestratorV2Error>;
   readonly streamStoredEventsFrom: (input?: {
     readonly threadId?: ThreadId;
@@ -11391,6 +11401,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
     getShellSnapshot: (options) =>
       projectionStore.getShellSnapshot(options).pipe(Effect.mapError(shellProjectionError)),
+    getPullRequestDiscoverySnapshot: (options) =>
+      projectionStore
+        .getPullRequestDiscoverySnapshot(options)
+        .pipe(Effect.mapError(shellProjectionError)),
     readShellSnapshot: (options) =>
       projectionStore
         .readShellSnapshot(options)
@@ -11526,6 +11540,13 @@ const layerUnavailable: Layer.Layer<OrchestratorV2> = Layer.succeed(
         }),
       ),
     getShellSnapshot: () =>
+      Effect.fail(
+        new OrchestratorProjectionError({
+          threadId: ThreadId.make("thread:shell"),
+          cause: "Orchestration V2 live runtime is not configured.",
+        }),
+      ),
+    getPullRequestDiscoverySnapshot: () =>
       Effect.fail(
         new OrchestratorProjectionError({
           threadId: ThreadId.make("thread:shell"),

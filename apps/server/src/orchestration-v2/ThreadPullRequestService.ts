@@ -6,7 +6,6 @@ import {
   CommandId,
   type OrchestrationProjectShell,
   type OrchestrationV2DomainEvent,
-  type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
@@ -28,6 +27,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import type { ProjectionPullRequestDiscoveryThread } from "./ProjectionStore.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
   ThreadPullRequestServiceV2,
@@ -107,10 +107,14 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const pendingBackfill = new Map<ThreadId, number>();
 
-  const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
+  const finishBackfill = (
+    threads: ReadonlyArray<Pick<ProjectionPullRequestDiscoveryThread, "id">>,
+  ) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
   };
-  const failBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
+  const failBackfill = (
+    threads: ReadonlyArray<Pick<ProjectionPullRequestDiscoveryThread, "id">>,
+  ) => {
     for (const thread of threads) {
       const remaining = pendingBackfill.get(thread.id);
       if (remaining === undefined) continue;
@@ -120,24 +124,16 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * A sweep for one thread reads only that thread's shell, not every thread's.
+   * Discovery reads thread metadata, not run histories or shell item counts.
    * Finished runs and checkpoints queue one of these each. A sweep over all
    * threads reads only active, unsettled ones, since discovery skips the rest;
    * backfill looks up settled threads, so its passes read every active thread.
    */
   const readThreadSnapshot = ({ threadId, backfill }: RefreshRequest) =>
-    threadId === null
-      ? orchestrator.getShellSnapshot({
-          location: "active",
-          unsettledOnly: !(backfill || pendingBackfill.size > 0),
-        })
-      : Effect.gen(function* () {
-          // Read the sequence first. The thread is then at least this new, so a
-          // sync guarded by the sequence is rejected rather than missing a change.
-          const snapshotSequence = yield* orchestrator.getThreadEventSequence(threadId);
-          const thread = yield* orchestrator.getThreadShell(threadId);
-          return { snapshotSequence, threads: thread === null ? [] : [thread] };
-        });
+    orchestrator.getPullRequestDiscoverySnapshot({
+      ...(threadId === null ? {} : { threadId }),
+      unsettledOnly: threadId === null && !(backfill || pendingBackfill.size > 0),
+    });
 
   const synchronize = Effect.fn("ThreadPullRequestServiceV2.synchronize")(function* (
     request: RefreshRequest,

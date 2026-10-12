@@ -338,6 +338,20 @@ export interface ShellSnapshotOptions {
   readonly unsettledOnly?: boolean;
 }
 
+export type ProjectionPullRequestDiscoveryThread = Pick<
+  OrchestrationV2AppThread,
+  | "id"
+  | "projectId"
+  | "branch"
+  | "worktreePath"
+  | "archivedAt"
+  | "settledOverride"
+  | "settledAt"
+  | "branchPullRequest"
+  | "linkedPullRequest"
+  | "pullRequests"
+>;
+
 export interface ProjectionStoreV2Shape {
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -414,6 +428,16 @@ export interface ProjectionStoreV2Shape {
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
+  readonly getPullRequestDiscoverySnapshot: (options: {
+    readonly threadId?: ThreadId;
+    readonly unsettledOnly: boolean;
+  }) => Effect.Effect<
+    {
+      readonly snapshotSequence: number;
+      readonly threads: ReadonlyArray<ProjectionPullRequestDiscoveryThread>;
+    },
+    ProjectionStoreV2Error
+  >;
   readonly getTurnStartContext: (
     threadId: ThreadId,
     runId: RunId,
@@ -5584,6 +5608,47 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    const getPullRequestDiscoverySnapshot: ProjectionStoreV2Shape["getPullRequestDiscoverySnapshot"] =
+      ({ threadId, unsettledOnly }) =>
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              const sequenceRows = yield* sql<{ readonly snapshot_sequence: number | null }>`
+                SELECT MAX(sequence) AS snapshot_sequence FROM orchestration_events
+                WHERE application_event_version = 2 AND aggregate_kind = 'thread'${
+                  threadId === undefined ? sql`` : sql` AND stream_id = ${threadId}`
+                }
+              `;
+              const rows = yield* sql<PayloadRow>`
+                SELECT payload_json FROM orchestration_v2_projection_threads
+                WHERE deleted_at IS NULL
+                  AND json_extract(payload_json, '$.archivedAt') IS NULL${
+                    threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`
+                  }${
+                    unsettledOnly
+                      ? sql` AND json_extract(payload_json, '$.settledAt') IS NULL AND json_extract(payload_json, '$.settledOverride') IS NOT 'settled'`
+                      : sql``
+                  }
+                ORDER BY updated_at ASC, thread_id ASC
+              `;
+              return { rows, snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0 };
+            }),
+          )
+          .pipe(
+            Effect.flatMap(({ rows, snapshotSequence }) =>
+              Effect.forEach(rows, (row) => decodeThreadPayload(row.payload_json)).pipe(
+                Effect.map((threads) => ({
+                  snapshotSequence,
+                  threads: threads.map((thread) => ({
+                    ...thread,
+                    pullRequests: threadPullRequestsOf(thread),
+                  })),
+                })),
+              ),
+            ),
+            Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+          );
+
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = (
       threadId,
     ) =>
@@ -5946,6 +6011,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread,
       getSettlementCandidates,
       getThreadsWithPullRequests,
+      getPullRequestDiscoverySnapshot,
       getThreadProjection,
       getTurnStartContext,
       getTurnStartHistory,
@@ -6093,6 +6159,33 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 DateTime.toEpochMillis(left.updatedAt) - DateTime.toEpochMillis(right.updatedAt) ||
                 left.id.localeCompare(right.id),
             );
+        }),
+      getPullRequestDiscoverySnapshot: ({ threadId, unsettledOnly }) =>
+        Effect.gen(function* () {
+          const snapshotSequence = yield* Ref.get(sequence);
+          const state = yield* Ref.get(replayState);
+          const threads = [...state.projections.values()]
+            .map((projection) => projection.thread)
+            .filter(
+              (thread) =>
+                thread.deletedAt === null &&
+                thread.archivedAt === null &&
+                (threadId === undefined || thread.id === threadId) &&
+                (!unsettledOnly ||
+                  (thread.settledAt === null && thread.settledOverride !== "settled")),
+            )
+            .toSorted(
+              (left, right) =>
+                DateTime.toEpochMillis(left.updatedAt) - DateTime.toEpochMillis(right.updatedAt) ||
+                left.id.localeCompare(right.id),
+            );
+          return {
+            snapshotSequence,
+            threads: threads.map((thread) => ({
+              ...thread,
+              pullRequests: threadPullRequestsOf(thread),
+            })),
+          };
         }),
       getThreadsWithPullRequests: (threadId) =>
         Ref.get(replayState).pipe(

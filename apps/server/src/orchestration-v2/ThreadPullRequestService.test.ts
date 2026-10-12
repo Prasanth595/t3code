@@ -169,7 +169,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     };
   };
 
-  it.effect("an event for one thread reads that thread's shell, not every thread's", () =>
+  it.effect("an event for one thread reads only that thread's discovery metadata", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const thread = threadShell("updated-thread");
@@ -183,19 +183,18 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         const layerDependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromPubSub(events),
-            getShellSnapshot: (options) =>
-              Queue.offer(reads, options ?? {}).pipe(
+            getPullRequestDiscoverySnapshot: (options) =>
+              Queue.offer(
+                reads,
+                options.threadId ?? { location: "active", unsettledOnly: options.unsettledOnly },
+              ).pipe(
                 Effect.as({
-                  schemaVersion: 2,
                   snapshotSequence: 1,
-                  threads: [thread, other],
-                  archivedThreads: [],
+                  threads:
+                    options.threadId === undefined
+                      ? [thread, other]
+                      : [thread, other].filter((candidate) => candidate.id === options.threadId),
                 }),
-              ),
-            getThreadEventSequence: () => Effect.succeed(1),
-            getThreadShell: (threadId) =>
-              Queue.offer(reads, threadId).pipe(
-                Effect.as([thread, other].find((candidate) => candidate.id === threadId) ?? null),
               ),
           }),
           Layer.mock(ProjectStore.ProjectStoreV2)({
@@ -276,14 +275,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         const layerDependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.never,
-            getShellSnapshot: (options) =>
-              Queue.offer(reads, options ?? {}).pipe(
+            getPullRequestDiscoverySnapshot: (options) =>
+              Queue.offer(reads, { location: "active", unsettledOnly: options.unsettledOnly }).pipe(
                 Effect.as({
-                  schemaVersion: 2,
                   snapshotSequence: 1,
                   // The fake honors unsettledOnly like the store does.
                   threads: options?.unsettledOnly ? [] : [settled],
-                  archivedThreads: [],
                 }),
               ),
           }),
