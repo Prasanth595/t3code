@@ -162,6 +162,7 @@ export const make = Effect.gen(function* () {
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      const scope = yield* Scope.Scope;
       const context = yield* Effect.context<ElectronWindow.ElectronWindow>();
       const runPromise = Effect.runPromiseWith(context);
 
@@ -206,14 +207,19 @@ export const make = Effect.gen(function* () {
         if (!destination) return false;
         void runPromise(
           Effect.gen(function* () {
-            const mainWindow = yield* electronWindow.currentMainOrFirst;
-            if (Option.isNone(mainWindow)) return;
-            yield* Effect.promise(() => mainWindow.value.loadURL(destination));
-            yield* electronWindow.reveal(mainWindow.value);
+            const currentWindow = yield* electronWindow.currentMainOrFirst;
+            // configure runs before Electron is ready and before the main window
+            // exists. Keep cold auth returns alive until startup creates it.
+            const mainWindow = Option.isSome(currentWindow)
+              ? currentWindow.value
+              : yield* electronWindow.waitForMain;
+            yield* Effect.promise(() => mainWindow.loadURL(destination));
+            yield* electronWindow.reveal(mainWindow);
           }).pipe(
             Effect.catchCause((cause) =>
               Effect.logWarning("Could not return to provider setup", cause),
             ),
+            Effect.forkIn(scope),
           ),
         );
         return true;

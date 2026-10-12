@@ -486,6 +486,12 @@ it.effect.each([
     "https://app.t3.codes/env-1/thread-1?prompt=Continue",
   ].map((value) => ({ kind: "open-url", timing: "cold", value, expected: value })),
   {
+    kind: "open-url",
+    timing: "cold",
+    value: "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
+    expected: "t3code-dev://app/settings/providers?instanceId=work",
+  },
+  {
     kind: "open-file",
     timing: "cold",
     value: "/tmp/report #1.html",
@@ -524,6 +530,12 @@ it.effect.each([
     const probeStarted = yield* Deferred.make<void>();
     const finishProbe = yield* Deferred.make<void>();
     const delivered = yield* Deferred.make<void>();
+    const mainWindowAvailable = yield* Deferred.make<Electron.BrowserWindow>();
+    const authWaiting = yield* Deferred.make<void>();
+    const authReturned = yield* Deferred.make<void>();
+    const authReturn = value.startsWith("t3code-dev://app/");
+    let hasWindow = !authReturn;
+    const loaded: string[] = [];
     const webContents = Object.assign(new NodeEvents.EventEmitter(), {
       isDestroyed: () => false,
       send: (channel: string, url: string) => {
@@ -531,10 +543,21 @@ it.effect.each([
         received.push(url);
       },
     });
-    const window = { webContents } as unknown as Electron.BrowserWindow;
+    const window = {
+      webContents,
+      loadURL: async (url: string) => {
+        loaded.push(url);
+      },
+    } as unknown as Electron.BrowserWindow;
     const electronWindow = {
-      currentMainOrFirst: Effect.succeed(Option.some(window)),
-      reveal: () => Deferred.succeed(delivered, undefined).pipe(Effect.asVoid),
+      currentMainOrFirst: Effect.sync(() => (hasWindow ? Option.some(window) : Option.none())),
+      waitForMain: Deferred.succeed(authWaiting, undefined).pipe(
+        Effect.andThen(Deferred.await(mainWindowAvailable)),
+      ),
+      reveal: () =>
+        Deferred.succeed(loaded.length > 0 ? authReturned : delivered, undefined).pipe(
+          Effect.asVoid,
+        ),
     } as unknown as ElectronWindow.ElectronWindow["Service"];
     const shellEnvironment = DesktopShellEnvironment.DesktopShellEnvironment.of({
       installIntoProcess: Deferred.succeed(probeStarted, undefined).pipe(
@@ -557,18 +580,25 @@ it.effect.each([
         appEvents.emit(kind, event, value);
         appEvents.emit("open-url", event, nextLink);
       }
-      const expectedLinks = timing === "cold" ? [expected, nextLink] : [expected];
+      const expectedLinks =
+        timing === "cold" ? (authReturn ? [nextLink] : [expected, nextLink]) : [expected];
       assert.deepEqual(received, []);
       yield* Deferred.succeed(finishProbe, undefined);
       yield* Fiber.join(startup);
       assert.deepEqual(received, []);
+      if (authReturn) yield* Deferred.await(authWaiting);
+      assert.deepEqual(loaded, []);
+      hasWindow = true;
+      yield* Deferred.succeed(mainWindowAvailable, window);
+      if (authReturn) yield* Deferred.await(authReturned);
       yield* webLinks.setRendererReady(true);
       if (timing === "warm") {
         appEvents.emit(kind, event, value);
         yield* Deferred.await(delivered);
       }
       assert.deepEqual(received, expectedLinks);
-      assert.equal(event.preventDefault.mock.calls.length, expectedLinks.length);
+      assert.equal(event.preventDefault.mock.calls.length, timing === "cold" ? 2 : 1);
+      assert.deepEqual(loaded, authReturn ? [expected] : []);
       yield* webLinks.setRendererReady(true);
       assert.deepEqual(received, expectedLinks);
       // Unrelated events must neither be claimed nor replay a queued page.
@@ -576,6 +606,7 @@ it.effect.each([
       appEvents.emit("open-url", unrelated, "mailto:hello@example.com");
       appEvents.emit("open-file", unrelated, "/tmp/report.txt");
       assert.equal(unrelated.preventDefault.mock.calls.length, 0);
+      assert.deepEqual(loaded, authReturn ? [expected] : []);
       assert.deepEqual(received, expectedLinks);
     }).pipe(
       Effect.scoped,
