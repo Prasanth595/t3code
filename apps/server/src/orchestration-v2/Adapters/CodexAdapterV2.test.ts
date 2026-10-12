@@ -9425,13 +9425,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
     );
 
-    it.effect("does not carry an item's paths into a later turn that reuses its id", () =>
+    it.effect("drops a turn's cached paths when the turn ends", () =>
       Effect.gen(function* () {
-        const secondTurnId = "file-approval-second-turn";
         const secondPrompt = "Edit again.";
+        // turn/start request, its response and turn/started, reusing the first native turn id.
         const secondTurnStart = codexReplayPreamble({
           nativeThreadId,
-          nativeTurnId: secondTurnId,
+          nativeTurnId,
           prompt: secondPrompt,
         }).slice(-3);
         const { harness, answerNext, nextTerminal } = yield* startApprovalTurn(
@@ -9441,10 +9441,11 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             fileChange("started", nativeTurnId, "patch-a", [addA]),
             ...approval({ id: 0, turnId: nativeTurnId, itemId: "patch-a" }),
             turnCompleted(nativeTurnId),
+            // The turn/start request and response carry the next JSON-RPC id.
             ...secondTurnStart.slice(0, 2).map((entry) => withReplayRequestId(entry, 4)),
             ...secondTurnStart.slice(2),
-            ...approval({ id: 1, turnId: secondTurnId, itemId: "patch-a" }),
-            turnCompleted(secondTurnId),
+            ...approval({ id: 1, turnId: nativeTurnId, itemId: "patch-a" }),
+            turnCompleted(nativeTurnId),
           ],
         );
         const first = yield* answerNext;
