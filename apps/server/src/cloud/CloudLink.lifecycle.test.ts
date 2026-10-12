@@ -1,3 +1,6 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
+import * as NodeCrypto from "node:crypto";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -452,6 +455,83 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(requests).toEqual([]);
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  describe("applyRelayConfig", () => {
+    const cloudMintPublicKey = NodeCrypto.generateKeyPairSync("ed25519")
+      .publicKey.export({ type: "spki", format: "pem" })
+      .toString();
+    const relayConfig = (
+      endpointRuntime: {
+        readonly providerKind: "cloudflare_tunnel";
+        readonly connectorToken: string;
+        readonly tunnelId: string;
+      } | null,
+    ) => ({
+      relayUrl: "https://relay.example.test",
+      cloudUserId: "user-123",
+      environmentCredential: "environment-credential",
+      cloudMintPublicKey,
+      endpointRuntime,
+    });
+    const desiredMode = (values: Map<string, Uint8Array>) => {
+      const value = values.get(CLOUD_CLI_DESIRED_LINK_SECRET);
+      return value === undefined ? null : new TextDecoder().decode(value);
+    };
+
+    // Settings turns exposure off by relinking publish-only through the web
+    // client; the next startup reconciles to the CLI-desired mode.
+    it.effect("keeps a CLI-desired link publish-only after a web publish-only relink", () => {
+      const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        yield* link.applyRelayConfig(relayConfig(null));
+        expect(desiredMode(values)).toBe("publish_only");
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    });
+
+    it.effect("keeps a CLI-desired link managed after a web managed relink", () => {
+      const { store, values } = makeMemorySecretStore([
+        [RELAY_URL_SECRET, "https://relay.example.test"],
+        [CLOUD_CLI_DESIRED_LINK_SECRET, "publish_only"],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        yield* link.applyRelayConfig(
+          relayConfig({
+            providerKind: "cloudflare_tunnel",
+            connectorToken: "new-token",
+            tunnelId: "new-tunnel",
+          }),
+        );
+        expect(desiredMode(values)).toBe("managed");
+      }).pipe(
+        provideReleaseHarness({
+          store,
+          applyConfigCalls,
+          requests,
+          respond: () => Response.json({ status: "ready" }),
+        }),
+      );
+    });
+
+    it.effect("does not record a CLI desire for a web-only link", () => {
+      const { store, values } = makeMemorySecretStore();
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        const link = yield* CloudLink.CloudLink;
+        yield* link.applyRelayConfig(relayConfig(null));
+        expect(desiredMode(values)).toBeNull();
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    });
   });
 
   it.effect("keeps the tunnel when shutdown hands off to a pending update", () => {
