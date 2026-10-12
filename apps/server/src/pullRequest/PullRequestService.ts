@@ -1845,7 +1845,7 @@ export const make = Effect.gen(function* () {
           Effect.map((value) =>
             previewFields({
               ...value,
-              projectId: project.project.id,
+              projectId: (project.checkout ?? project.project).id,
               repository: project.repository,
             }),
           ),

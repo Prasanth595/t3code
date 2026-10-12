@@ -2464,11 +2464,14 @@ it.effect(
         repository: "old-org/app",
         number: 1,
       };
+      // Read before the detail, which a later preview would be drawn from instead.
+      const preview = yield* service.preview(reference);
       const detail = yield* service.detail(reference);
       const summary = yield* service.summary(reference, { recoverTransientFailure: false });
 
       // A hand-off checks the pull request out where it was asked from, which decides for itself
       // whether it is a checkout of it.
+      assert.strictEqual(preview.projectId, "app");
       assert.strictEqual(detail.projectId, "app");
       assert.strictEqual(detail.projectTitle, "app");
       assert.strictEqual(detail.workspaceRoot, "/app");
