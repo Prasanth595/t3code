@@ -50,7 +50,8 @@ export function useEnvironmentThread(
   return state;
 }
 
-const isRunning = (status: string) =>
+/** A thread or run status that has an agent working right now. */
+export const isRunning = (status: string) =>
   status === "preparing" || status === "starting" || status === "running";
 
 type KeptThreads = ReadonlyMap<EnvironmentId, ReadonlySet<ThreadId>>;
