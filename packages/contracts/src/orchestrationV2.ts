@@ -3194,7 +3194,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
    * thread still shows on that provider thread is no longer reported by any
    * provider process, so it is marked interrupted. Only the stopped turn's run
    * and older runs are settled; a later run's work is its own. A subagent target
-   * limits repair to that task and its runless child work.
+   * limits repair to that task and its runless child work, using a confirmed
+   * provider outcome. Older targeted commands without an outcome do not settle work.
    */
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),
@@ -3202,7 +3203,19 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
-    subagent: Schema.optional(Schema.Struct({ id: NodeId, stoppedAt: Schema.DateTimeUtc })),
+    subagent: Schema.optional(
+      Schema.Struct({
+        id: NodeId,
+        stoppedAt: Schema.DateTimeUtc,
+        outcome: Schema.optional(
+          Schema.Struct({
+            status: Schema.Literals(["completed", "failed", "cancelled"]),
+            completedAt: Schema.DateTimeUtc,
+            result: Schema.NullOr(Schema.String),
+          }),
+        ),
+      }),
+    ),
   }),
   /**
    * Stop for one thread, whatever it is doing: interrupts its running turn, holds its queue,

@@ -8918,6 +8918,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       if (command.subagent !== undefined) {
+        const outcome = command.subagent.outcome;
+        // Neither a stop request nor an elapsed timeout proves the task ended.
+        if (outcome === undefined) return;
         const subagent = projection.subagents.find((task) => task.id === command.subagent?.id);
         if (
           subagent?.origin !== "provider_native" ||
@@ -8936,7 +8939,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const ended = yield* endOrphanedNativeSubagent({
           projection,
           subagentId: subagent.id,
-          status: "cancelled",
+          result: outcome.result,
+          status: outcome.status,
+          completedAt: outcome.completedAt,
           now,
           emitted: yield* Ref.get(events),
           allocateEventId,
@@ -8957,7 +8962,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               threadId: subagent.childThreadId,
               providerInstanceId: subagent.providerInstanceId,
               projection: child,
-              status: "cancelled",
+              status: outcome.status,
+              completedAt: outcome.completedAt,
               now,
               emitted: yield* Ref.get(events),
               allocateEventId,
@@ -9066,7 +9072,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const providerSessionId = providerThread.providerSessionId;
       const nativeTaskId = subagent.nativeTaskRef.nativeId;
       const now = yield* DateTime.now;
-      // The provider reports the outcome; the effect repairs a missing notification.
+      // The effect can repair stale projections only after the provider confirms an outcome.
       yield* emit(
         events,
         command,

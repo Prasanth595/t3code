@@ -847,13 +847,24 @@ it.effect("a native subagent stop does not settle its owner's background work", 
       events,
       interrupt: (input) => {
         assert.equal(input.subagent?.nativeTaskId, "native-task");
-        return Ref.update(events, (current) => [...current, "stop-child"]);
+        return Ref.update(events, (current) => [...current, "stop-child"]).pipe(
+          Effect.as({
+            status: "cancelled" as const,
+            completedAt: now,
+            result: "Stopped by Claude",
+          }),
+        );
       },
       threads: {
         dispatch: (command) => {
           assert.equal(command.type, "thread.background-work.settle");
           if (command.type === "thread.background-work.settle") {
             assert.equal(command.subagent?.id, "subagent");
+            assert.deepEqual(command.subagent?.outcome, {
+              status: "cancelled",
+              completedAt: now,
+              result: "Stopped by Claude",
+            });
           }
           return Ref.update(events, (current) => [...current, "settle-child"]).pipe(
             Effect.as({ sequence: 1, storedEvents: [] }),

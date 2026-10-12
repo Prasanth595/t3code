@@ -4806,6 +4806,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const confirmedSubagentOutcome = (task: OrchestrationV2Subagent | undefined) => {
+          if (
+            task === undefined ||
+            task.completedAt === null ||
+            (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled")
+          )
+            return;
+          return { status: task.status, completedAt: task.completedAt, result: task.result };
+        };
+
         const discardBufferedSubagentStarts = (
           nativeThreadId: string,
           taskId: string,
@@ -6728,6 +6738,40 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 message,
                 activeContext: null,
               });
+              // Wake delivery must not delay a known child's actual outcome.
+              // Record wake evidence first, while the child is still running.
+              const registered = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+              const settled = settledTurnByNativeThread.get(liveQuery.nativeThreadId);
+              const hasBufferedStart =
+                (yield* Ref.get(wakeBuffers))
+                  .get(liveQuery.nativeThreadId)
+                  ?.messages.some(
+                    (entry) =>
+                      entry.type === "system" &&
+                      entry.subtype === "task_started" &&
+                      entry.task_id === message.task_id,
+                  ) ?? false;
+              // Starts and workflow transcripts still need the continuation's
+              // context. A pending Stop must receive its native outcome now.
+              const canApplyOutcome =
+                subagentStopOutcomes.has(message.task_id) ||
+                (!hasBufferedStart && registered?.task.workflow === undefined);
+              if (registered !== undefined && settled !== undefined && canApplyOutcome) {
+                yield* discardBufferedSubagentStarts(
+                  liveQuery.nativeThreadId,
+                  message.task_id,
+                  message,
+                );
+                yield* updateClaudeSubagentNode({
+                  context: settled,
+                  taskId: message.task_id,
+                  ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
+                  workflowFrame: message,
+                  result: message.summary,
+                  status: claudeTaskOutcome(message.status),
+                  onlyIfRunningInRun: registered.task.runId,
+                });
+              }
             } else {
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -9011,55 +9055,68 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const existing = yield* Ref.get(queryContext);
             const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId;
             const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
-            // A projected running task can already be terminal in the registry.
-            if (nativeThreadId != null) {
-              yield* discardBufferedSubagentStarts(nativeThreadId, input.nativeTaskId);
+            if (subagent?.task.threadId !== input.providerThread.appThreadId) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent has no known owning task to confirm its outcome.",
+              });
             }
-            if (subagent === undefined || subagent.task.status !== "running") return;
-            const active = yield* Ref.get(activeTurn);
-            const context =
-              active?.nativeThreadId === nativeThreadId
-                ? active
-                : nativeThreadId == null
-                  ? undefined
-                  : settledTurnByNativeThread.get(nativeThreadId);
-            const outcome = yield* Deferred.make<void>();
+            if (
+              input.requestedAt !== undefined &&
+              subagent.task.startedAt !== null &&
+              DateTime.toEpochMillis(subagent.task.startedAt) >
+                DateTime.toEpochMillis(input.requestedAt)
+            )
+              return;
+            const confirmed = confirmedSubagentOutcome(subagent.task);
+            if (confirmed !== undefined) {
+              if (nativeThreadId != null)
+                yield* discardBufferedSubagentStarts(nativeThreadId, input.nativeTaskId);
+              return confirmed;
+            }
+            if (
+              existing === null ||
+              existing.nativeThreadId !== nativeThreadId ||
+              existing.subagentsFromEarlierProcesses.has(subagent) ||
+              existing.query.stopTask === undefined
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent has no live owning query with task stopping support.",
+              });
+            }
+            const outcome =
+              subagentStopOutcomes.get(input.nativeTaskId) ?? (yield* Deferred.make<void>());
             subagentStopOutcomes.set(input.nativeTaskId, outcome);
-            yield* Effect.gen(function* () {
-              if (
-                existing !== null &&
-                existing.nativeThreadId === nativeThreadId &&
-                subagent.task.threadId === input.providerThread.appThreadId &&
-                !existing.subagentsFromEarlierProcesses.has(subagent) &&
-                existing.query.stopTask !== undefined
-              ) {
-                yield* existing.query
-                  .stopTask(input.nativeTaskId)
-                  .pipe(
-                    Effect.andThen(Deferred.await(outcome)),
-                    Effect.timeout("2 seconds"),
-                    Effect.ignore,
-                  );
-              }
-              const current = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
-              if (
-                context !== undefined &&
-                context !== null &&
-                current?.task.startedAt === subagent.task.startedAt
-              ) {
-                if (nativeThreadId != null) {
-                  yield* discardBufferedSubagentStarts(nativeThreadId, input.nativeTaskId);
-                }
-                yield* updateClaudeSubagentNode({
-                  context,
-                  taskId: input.nativeTaskId,
-                  status: "cancelled",
-                  onlyIfRunningInRun: subagent.task.runId,
-                });
-              }
-            }).pipe(
-              Effect.ensuring(Effect.sync(() => subagentStopOutcomes.delete(input.nativeTaskId))),
+            yield* existing.query.stopTask(input.nativeTaskId).pipe(
+              Effect.andThen(Deferred.await(outcome)),
+              Effect.timeout("2 seconds"),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail:
+                      "Claude subagent Stop was not confirmed by a terminal task notification.",
+                    cause,
+                  }),
+              ),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  if (subagentStopOutcomes.get(input.nativeTaskId) === outcome)
+                    subagentStopOutcomes.delete(input.nativeTaskId);
+                }),
+              ),
             );
+            const terminal = confirmedSubagentOutcome(
+              (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId)?.task,
+            );
+            if (terminal === undefined) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "Claude subagent resumed before its Stop outcome could be confirmed.",
+              });
+            }
+            return terminal;
           }),
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {

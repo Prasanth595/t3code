@@ -8885,93 +8885,205 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     [true, "no notification"],
     [false, "stop fails"],
     [false, "stop hangs"],
-  ] as const)("settles a native subagent when owner settled %s and %s", ([ownerSettled, failure]) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const requested = yield* Deferred.make<void>();
-        const harness = yield* makeWakeHarnessWithOptions({
-          stopTask: () =>
-            Deferred.succeed(requested, undefined).pipe(
-              Effect.andThen(
-                failure === "stop fails"
-                  ? Effect.fail(
-                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
-                        method: "stopTask",
-                        cause: "Task is no longer live",
-                      }),
-                    )
-                  : failure === "stop hangs"
-                    ? Effect.never
-                    : Effect.void,
+  ] as const)(
+    "does not settle an unconfirmed native subagent Stop, owner settled %s and %s",
+    ([ownerSettled, failure]) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const requested = yield* Deferred.make<void>();
+          const harness = yield* makeWakeHarnessWithOptions({
+            stopTask: () =>
+              Deferred.succeed(requested, undefined).pipe(
+                Effect.andThen(
+                  failure === "stop fails"
+                    ? Effect.fail(
+                        new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                          method: "stopTask",
+                          cause: "Task is no longer live",
+                        }),
+                      )
+                    : failure === "stop hangs"
+                      ? Effect.never
+                      : Effect.void,
+                ),
               ),
-            ),
-          interrupt: Effect.die("Stopping a subagent must not interrupt its owner"),
-        });
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
+            interrupt: Effect.die("Stopping a subagent must not interrupt its owner"),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-stop-no-outcome"),
+              text: "Start an audit.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId: "agent-no-outcome",
+              toolUseId: "toolu-no-outcome",
+              uuid: "00000000-0000-4000-8000-000000004101",
+            }),
+          );
+          const launched = yield* Queue.take(harness.subagentReceipts);
+          if (ownerSettled) {
+            yield* harness.offerAndWait(
+              makeResultFrame({
+                uuid: "00000000-0000-4000-8000-000000004102",
+                result: "Audit launched.",
+              }),
+            );
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          const stopping = yield* harness.runtime.stopSubagent!({
             providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-stop-no-outcome"),
-            text: "Start an audit.",
-            attachments: [],
-          }),
-        );
-        yield* harness.offerAndWait(
-          makeSubagentTaskStartedFrame({
-            taskId: "agent-no-outcome",
-            toolUseId: "toolu-no-outcome",
-            uuid: "00000000-0000-4000-8000-000000004101",
-          }),
-        );
-        const launched = yield* Queue.take(harness.subagentReceipts);
-        if (ownerSettled) {
+            nativeTaskId: "agent-no-outcome",
+          }).pipe(Effect.exit, Effect.forkScoped);
+          yield* Deferred.await(requested);
+          yield* TestClock.adjust("2 seconds");
+          const stopResult = yield* Fiber.join(stopping);
+          assert.isTrue(Exit.isFailure(stopResult));
+          const updates = harness.events.filter((event) => event.type === "subagent.updated");
+          assert.equal(updates.at(-1)?.subagent.status, "running");
+          assert.isNull(updates.at(-1)?.subagent.completedAt);
+          const childRoot = harness.events.findLast(
+            (event) =>
+              event.type === "node.updated" &&
+              event.node.threadId === launched.subagent.childThreadId &&
+              event.node.kind === "root_turn",
+          );
+          assert.equal(
+            childRoot?.type === "node.updated" ? childRoot.node.status : undefined,
+            "running",
+          );
+          const item = harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "subagent" &&
+              event.turnItem.subagentId === launched.subagent.id,
+          );
+          assert.equal(
+            item?.type === "turn_item.updated" ? item.turnItem.status : undefined,
+            "running",
+          );
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.lengthOf(harness.terminalEvents(), ownerSettled ? 1 : 0);
+          // The task remains live, and its actual later outcome still clears it.
+          yield* harness.offerAndWait(
+            makeSubagentNotificationFrame({
+              taskId: "agent-no-outcome",
+              toolUseId: "toolu-no-outcome",
+              summary: "Actual completed audit.",
+              uuid: "00000000-0000-4000-8000-000000004103",
+            }),
+          );
+          const completed = yield* Queue.take(harness.subagentReceipts);
+          assert.equal(completed.subagent.status, "completed");
+          assert.isNotNull(completed.subagent.completedAt);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect.each(["completed", "failed", "stopped"] as const)(
+    "applies an idle native subagent %s notification before replay and confirms its real outcome",
+    (status) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let stopCalls = 0;
+          const harness = yield* makeWakeHarnessWithOptions({
+            stopTask: () =>
+              Effect.sync(() => {
+                stopCalls++;
+              }),
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-idle-outcome"),
+              text: "Run an audit.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId: "idle-outcome",
+              toolUseId: "toolu-idle-outcome",
+              uuid: "00000000-0000-4000-8000-000000004201",
+            }),
+          );
+          yield* Queue.take(harness.subagentReceipts);
           yield* harness.offerAndWait(
             makeResultFrame({
-              uuid: "00000000-0000-4000-8000-000000004102",
+              uuid: "00000000-0000-4000-8000-000000004202",
               result: "Audit launched.",
             }),
           );
           yield* Queue.take(harness.terminalReceipts);
-        }
-        const stopping = yield* harness.runtime.stopSubagent!({
-          providerThread: harness.providerThread,
-          nativeTaskId: "agent-no-outcome",
-        }).pipe(Effect.forkScoped);
-        yield* Deferred.await(requested);
-        yield* TestClock.adjust("2 seconds");
-        yield* Fiber.join(stopping);
-        const cancelled = yield* Queue.take(harness.subagentReceipts);
-        assert.equal(cancelled.subagent.status, "cancelled");
-        assert.isNotNull(cancelled.subagent.completedAt);
-        const childRoot = harness.events.findLast(
-          (event) =>
-            event.type === "node.updated" &&
-            event.node.threadId === launched.subagent.childThreadId &&
-            event.node.kind === "root_turn",
-        );
-        assert.equal(
-          childRoot?.type === "node.updated" ? childRoot.node.status : undefined,
-          "cancelled",
-        );
-        const item = harness.events.findLast(
-          (event) =>
-            event.type === "turn_item.updated" &&
-            event.turnItem.type === "subagent" &&
-            event.turnItem.subagentId === launched.subagent.id,
-        );
-        assert.equal(
-          item?.type === "turn_item.updated" ? item.turnItem.status : undefined,
-          "cancelled",
-        );
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        assert.lengthOf(harness.terminalEvents(), ownerSettled ? 1 : 0);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          yield* TestClock.adjust("1 second");
+          const completedAt = yield* DateTime.now;
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              ...makeSubagentNotificationFrame({
+                taskId: "idle-outcome",
+                toolUseId: "toolu-idle-outcome",
+                summary: "Actual provider outcome.",
+                uuid: "00000000-0000-4000-8000-000000004203",
+              }),
+              status,
+            }),
+          );
+          const completed = yield* Queue.take(harness.subagentReceipts);
+          const expected = status === "stopped" ? "cancelled" : status;
+          assert.equal(completed.subagent.status, expected);
+          assert.equal(
+            DateTime.toEpochMillis(completed.subagent.completedAt!),
+            DateTime.toEpochMillis(completedAt),
+          );
+          assert.lengthOf(harness.offeredMessages, 1);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          // Stop repairs a phantom using the recorded outcome, without another native stop.
+          const outcome = yield* harness.runtime.stopSubagent!({
+            providerThread: harness.providerThread,
+            nativeTaskId: "idle-outcome",
+          });
+          assert.deepEqual(outcome, {
+            status: expected,
+            completedAt: completed.subagent.completedAt!,
+            result: "Actual provider outcome.",
+          });
+          assert.equal(stopCalls, 0);
+          yield* TestClock.adjust("1 second");
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId: "idle-outcome",
+              toolUseId: "toolu-idle-resume",
+              uuid: "00000000-0000-4000-8000-000000004204",
+            }),
+          );
+          // A retried Stop from before this resume must not stop the new task.
+          assert.isUndefined(
+            yield* harness.runtime.stopSubagent!({
+              providerThread: harness.providerThread,
+              nativeTaskId: "idle-outcome",
+              requestedAt: completedAt,
+            }),
+          );
+          assert.equal(stopCalls, 0);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
         ),
       ),
-    ),
   );
 
   it.effect.each([
@@ -10600,7 +10712,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             () => events.filter((event) => event.type === "turn.terminal").length === 2,
             "user turn terminal after replace",
           );
-          assert.isTrue(yield* hasPendingBackgroundWork);
+          // The actual completion was applied while idle, before wake replay.
+          assert.isFalse(yield* hasPendingBackgroundWork);
+          assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
           assert.lengthOf(continuationRequests, 1);
 
           yield* Queue.offer(

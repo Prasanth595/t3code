@@ -603,8 +603,15 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each(["missing session", "provider no-op", "provider error"] as const)(
-  "a native child stop repairs a %s without settling its owner or sibling",
+it.effect.each([
+  "missing session",
+  "provider no-op",
+  "provider error",
+  "completed",
+  "failed",
+  "cancelled",
+] as const)(
+  "a native child Stop only settles a confirmed %s outcome and preserves its owner and sibling",
   (providerState) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -728,6 +735,14 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
       const stateBefore = yield* threadState(threadId);
       const eventStore = yield* EventStore.EventStoreV2;
       const afterSequence = yield* eventStore.latestSequence({ threadId });
+      const confirmedStatus =
+        providerState === "completed" || providerState === "failed" || providerState === "cancelled"
+          ? providerState
+          : null;
+      const confirmedOutcome =
+        confirmedStatus === null
+          ? undefined
+          : { status: confirmedStatus, completedAt: now, result: "Actual provider outcome" };
       const commandId = CommandId.make("stop-native-child");
       yield* orchestrator.dispatch({
         type: "subagent.stop",
@@ -762,8 +777,9 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
         }),
       );
       assert.isTrue(Exit.isFailure(unrelated));
-      // Only execute Stop's durable effect. There is no live provider session
-      // and therefore no terminal notification to ingest.
+      // The provider outcome predates the delayed projection repair.
+      yield* TestClock.adjust("1 second");
+      // Only execute Stop's durable effect, with no terminal event ingestion.
       yield* sql`DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${commandId}`;
       if (providerState === "missing session") {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -775,7 +791,7 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
         const [stopEffect] = yield* outbox.listByCommandId(commandId);
         assert.isDefined(stopEffect);
         let stopCalls = 0;
-        yield* EffectWorker.OrchestrationEffectExecutorV2.use((executor) =>
+        const execution = yield* EffectWorker.OrchestrationEffectExecutorV2.use((executor) =>
           executor.execute(stopEffect!),
         ).pipe(
           Effect.provide(
@@ -794,7 +810,7 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
                             operation: "interrupt",
                             cause: "Task no longer exists",
                           })
-                        : Effect.void;
+                        : Effect.succeed(confirmedOutcome);
                     },
                   }),
                   Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
@@ -808,11 +824,50 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
               ),
             ),
           ),
+          Effect.exit,
         );
         assert.equal(stopCalls, 1);
+        assert.equal(Exit.isFailure(execution), providerState === "provider error");
       }
       const settled = yield* orchestrator.getThreadProjection(threadId);
       const cancelled = settled.subagents.find((task) => task.id === subagent.id)!;
+      if (confirmedOutcome === undefined) {
+        const events = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
+        assert.isFalse(
+          events.some(
+            ({ event }) =>
+              (event.type === "subagent.updated" ||
+                event.type === "node.updated" ||
+                event.type === "turn-item.updated") &&
+              ["completed", "failed", "cancelled", "interrupted"].includes(event.payload.status),
+          ),
+        );
+        assert.equal(cancelled.status, "running");
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(childRoot.threadId)).nodes.find(
+            (node) => node.id === childRoot.id,
+          )?.status,
+          "running",
+        );
+        assert.deepEqual(yield* threadState(threadId), stateBefore);
+        // Old targeted commands with no provider evidence must also remain harmless.
+        yield* orchestrator.dispatch({
+          type: "thread.background-work.settle",
+          commandId: CommandId.make("unconfirmed-legacy-stop"),
+          threadId,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          subagent: { id: subagent.id, stoppedAt: now },
+        });
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+            (task) => task.id === subagent.id,
+          )?.status,
+          "running",
+        );
+        return;
+      }
+
       // Cached clients resume from this sequence, so all lifecycle repairs
       // must be stored in the parent stream, not just applied to projections.
       const repaired = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
@@ -820,7 +875,7 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
         (event.type === "subagent.updated" ||
           event.type === "node.updated" ||
           event.type === "turn-item.updated") &&
-        event.payload.status === "cancelled"
+        event.payload.status === confirmedStatus
           ? [event]
           : [],
       );
@@ -831,20 +886,28 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
       ]);
       for (const event of terminal) {
         assert.equal(event.nodeId, subagent.id);
-        assert.isNotNull(event.payload.completedAt);
+        assert.equal(
+          DateTime.toEpochMillis(event.payload.completedAt!),
+          DateTime.toEpochMillis(confirmedOutcome!.completedAt),
+        );
         if (event.type === "subagent.updated" || event.type === "turn-item.updated") {
           assert.isDefined(event.payload.updatedAt);
         }
       }
 
-      assert.equal(cancelled.status, "cancelled");
+      assert.equal(cancelled.status, confirmedStatus);
       assert.isNotNull(cancelled.completedAt);
       assert.equal(
+        DateTime.toEpochMillis(cancelled.completedAt!),
+        DateTime.toEpochMillis(confirmedOutcome!.completedAt),
+      );
+      assert.equal(cancelled.result, confirmedOutcome!.result);
+      assert.equal(
         settled.turnItems.find((candidate) => candidate.id === item.id)?.status,
-        "cancelled",
+        confirmedStatus,
       );
       const child = yield* orchestrator.getThreadProjection(childRoot.threadId);
-      assert.equal(child.nodes.find((node) => node.id === childRoot.id)?.status, "cancelled");
+      assert.equal(child.nodes.find((node) => node.id === childRoot.id)?.status, confirmedStatus);
       assert.isNotNull(child.nodes.find((node) => node.id === childRoot.id)?.completedAt);
       assert.equal(settled.subagents.find((task) => task.id === sibling.id)?.status, "running");
       assert.deepEqual(yield* threadState(threadId), stateBefore);
@@ -866,7 +929,7 @@ it.effect.each(["missing session", "provider no-op", "provider error"] as const)
         threadId,
         providerThreadId: providerThread.id,
         providerTurnId,
-        subagent: { id: subagent.id, stoppedAt: now },
+        subagent: { id: subagent.id, stoppedAt: now, outcome: confirmedOutcome },
       });
       assert.equal(
         (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
