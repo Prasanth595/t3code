@@ -5,7 +5,9 @@ import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
@@ -635,6 +637,156 @@ it.effect("separates overlapping unpinned permission reads after a saved account
     ]);
     expect(requests.every((request) => request.url.endsWith("/graphql"))).toBe(true);
   }),
+);
+
+it.effect.each([false, true])(
+  "starts fresh reads after a stack rebase (partial failure: %s)",
+  (partialFailure) =>
+    Effect.gen(function* () {
+      const detailStarted = yield* Deferred.make<void>();
+      const runsStarted = yield* Deferred.make<void>();
+      const freshRunsStarted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let pushed = false;
+      let rebases = 0;
+      let pushes = 0;
+      const input = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+      mockedExecute.mockImplementation((call) =>
+        Effect.gen(function* () {
+          if (call.kind === "rest" && call.path.includes("/stacks?")) {
+            return output(
+              encodeJson([
+                {
+                  number: 50,
+                  url: "https://api.github.com/repos/acme/web/stacks/50",
+                  base: { ref: "main" },
+                  pull_requests: [
+                    { number: 7, head: { ref: "feature", sha: "abc123" }, state: "open" },
+                    { number: 8, head: { ref: "top", sha: "def456" }, state: "open" },
+                  ],
+                },
+              ]),
+            );
+          }
+          if (call.operation === "runGitHubStackAction") {
+            return output(
+              encodeJson({
+                data: {
+                  repository: {
+                    pr7: {
+                      headRepository: { viewerPermission: "WRITE" },
+                      maintainerCanModify: false,
+                    },
+                    pr8: {
+                      headRepository: { viewerPermission: "WRITE" },
+                      maintainerCanModify: false,
+                    },
+                  },
+                },
+              }),
+            );
+          }
+          if (call.kind === "graphql" && call.query.includes("headRefName: $head")) {
+            if (pushed) yield* Deferred.await(freshRunsStarted);
+            return output(encodeJson(heads(pushed ? [] : [7])));
+          }
+          const beforePush = !pushed;
+          if (beforePush) {
+            yield* Deferred.succeed(call.kind === "rest" ? runsStarted : detailStarted, undefined);
+            yield* Deferred.await(release);
+          }
+          if (call.kind === "rest" && !beforePush) {
+            yield* Deferred.succeed(freshRunsStarted, undefined);
+          }
+          return output(
+            encodeJson(
+              call.kind === "rest"
+                ? workflowRuns(beforePush ? [10] : [])
+                : coreResponse({ headRefOid: beforePush ? "abc123" : "new-sha" }),
+            ),
+          );
+        }),
+      );
+      const cli = yield* GitHubPullRequestApi.make.pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            mockApi.pipe(Layer.provide(GitHubQuota.layer), Layer.provide(NodeCrypto.layer)),
+            FileSystem.layerNoop({
+              makeTempDirectoryScoped: () => Effect.succeed("/scratch"),
+            }),
+            TestSourceControlHost.layer({
+              process: {
+                run: (request) =>
+                  Effect.sync(() => {
+                    expect(request.command).toBe("git");
+                    expect(request.operation).toBe("cascadeRebaseStack");
+                    if (request.args[0] === "push") {
+                      pushed = true;
+                      pushes++;
+                    }
+                    const conflict =
+                      request.args[0] === "rebase" &&
+                      request.args[1] !== "--abort" &&
+                      ++rebases === 2 &&
+                      partialFailure;
+                    return TestSourceControlHost.processOutput(
+                      ["rev-parse", "merge-base"].includes(request.args[0]!) ? "new-sha\n" : "",
+                      { exitCode: ChildProcessSpawner.ExitCode(conflict ? 1 : 0) },
+                    );
+                  }),
+              },
+            }),
+          ),
+        ),
+      );
+      const workflowInput = {
+        ...input,
+        headSha: "abc123",
+        headBranch: "feat/page",
+        headRepositoryOwner: "octocat",
+        isCrossRepository: true as const,
+      };
+      const olderDetail = yield* cli.getPullRequestDetail(input).pipe(Effect.forkChild);
+      const olderRuns = yield* cli
+        .listWorkflowRunsRequiringApproval(workflowInput)
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(detailStarted);
+      yield* Deferred.await(runsStarted);
+      const action = yield* cli
+        .runPullRequestAction({
+          ...input,
+          number: 8,
+          stackNumber: 50,
+          action: "update-branch",
+          expectedStackHeads: [
+            { number: 7, headSha: "abc123" },
+            { number: 8, headSha: "def456" },
+          ],
+        })
+        .pipe(Effect.result);
+      expect(action._tag).toBe(partialFailure ? "Failure" : "Success");
+      if (partialFailure) {
+        expect(action).toMatchObject({
+          failure: { _tag: "GitHubStackRebaseFailedError", completed: 1 },
+        });
+      }
+      expect(pushes).toBe(partialFailure ? 1 : 2);
+      expect((yield* cli.getPullRequestDetail(input)).headSha).toBe("new-sha");
+      expect(
+        yield* cli.listWorkflowRunsRequiringApproval(workflowInput).pipe(Effect.result),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "GitHubWorkflowApprovalRefusedError", reason: "head-not-unique" },
+      });
+      // The stack action still needs only its membership and permission reads.
+      expect(
+        mockedExecute.mock.calls.filter(([call]) => call.operation === "runGitHubStackAction"),
+      ).toHaveLength(2);
+      expect(mockedExecute.mock.calls).toHaveLength(8);
+      yield* Deferred.succeed(release, undefined);
+      expect((yield* Fiber.join(olderDetail)).headSha).toBe("abc123");
+      expect((yield* Fiber.join(olderRuns)).map((run) => run.id)).toEqual([10]);
+    }),
 );
 
 layer("GitHubPullRequestApi.layer", (it) => {

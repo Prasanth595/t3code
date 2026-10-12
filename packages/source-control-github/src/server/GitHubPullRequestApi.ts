@@ -2600,6 +2600,7 @@ export const make = Effect.gen(function* () {
     runPullRequestAction: (input) => {
       if (input.stackNumber !== undefined)
         return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
+          Effect.ensuring(forgetReads),
           Effect.provideService(GitHubApi.GitHubApi, api),
           Effect.provideService(SourceControlHost.SourceControlHost, sourceControlHost),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
