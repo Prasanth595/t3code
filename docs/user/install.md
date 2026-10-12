@@ -59,6 +59,22 @@ node apps/server/dist/bin.mjs
 `t3 update` and the background service do not apply to a server run this way;
 update it with `git pull` and a rebuild.
 
+### Oracle Linux (UEK8)
+
+Oracle's UEK8 kernel can refuse to start the `t3` command with `ENOEXEC`
+("Exec format error"). The command is a single executable, and UEK8 rejects
+one whose `PT_NOTE` segment is larger than 4 MB. The desktop app is unaffected.
+
+Boot Oracle's RHCK, or any mainline-based kernel, instead of UEK8. You can also
+build from source the same way as Intel Macs above and run
+`node apps/server/dist/bin.mjs`.
+
+`readelf -l` on the `t3` file lists the cause as the `NOTE` row whose file size
+is above 4 MB. Lowering that header's `p_filesz` to 4 MB, and leaving `p_memsz`
+unchanged, lets the same file start. Apply the edit again after every update.
+The limit is described in
+[oracle/linux-uek#46](https://github.com/oracle/linux-uek/issues/46).
+
 ## Desktop app
 
 Download a release from [GitHub Releases](https://github.com/pingdotgg/t3code/releases),

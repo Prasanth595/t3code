@@ -6,7 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect, it } from "vite-plus/test";
 
-import { legacyCliLauncherScript } from "./legacyCliLauncher.ts";
+import { legacyCliLauncherScript, linuxCliExecFormatErrorHint } from "./legacyCliLauncher.ts";
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- This test launches a real host executable.
 const hostPlatform = NodeOS.platform();
@@ -60,3 +60,92 @@ process.send({ args: process.argv.slice(2) });
     }
   },
 );
+
+async function writeLauncherFixture(prefix: string, executableBody: string) {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), prefix));
+  const entry = NodePath.join(root, "node_modules/t3/dist/bin.mjs");
+  const executable = NodePath.join(root, `node_modules/@t3code/t3-${hostPlatform}-${hostArch}/t3`);
+  await NodeFSP.mkdir(NodePath.dirname(entry), { recursive: true });
+  await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(NodePath.dirname(executable), "package.json"),
+    '{"type":"commonjs"}',
+  );
+  await NodeFSP.writeFile(entry, legacyCliLauncherScript());
+  await NodeFSP.writeFile(executable, executableBody, { mode: 0o755 });
+  return { root, entry };
+}
+
+it.skipIf(hostPlatform === "win32")(
+  "does not hint at UEK8 when the platform executable exits 126",
+  async () => {
+    const { root, entry } = await writeLauncherFixture(
+      "t3-legacy-exit-126-",
+      "#!/bin/sh\nexit 126\n",
+    );
+    const child = NodeChildProcess.fork(entry, ["--version"], { silent: true });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    try {
+      const [code] = await NodeEvents.EventEmitter.once(child, "exit");
+      expect(code).toBe(126);
+      expect(stderr).not.toContain("UEK8");
+      expect(stderr).not.toContain(linuxCliExecFormatErrorHint);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        const exit = NodeEvents.EventEmitter.once(child, "exit");
+        child.kill("SIGTERM");
+        await exit;
+      }
+      await NodeFSP.rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+it.skipIf(hostPlatform !== "linux")("hints at UEK8 only when spawn reports ENOEXEC", async () => {
+  const { root, entry } = await writeLauncherFixture("t3-legacy-enoexec-", "#!/bin/sh\nexit 0\n");
+  const preload = NodePath.join(root, "enoexec-preload.cjs");
+  await NodeFSP.writeFile(
+    preload,
+    [
+      '"use strict";',
+      'const childProcess = require("node:child_process");',
+      'const { EventEmitter } = require("node:events");',
+      "childProcess.spawn = () => {",
+      "  const child = new EventEmitter();",
+      "  child.kill = () => {};",
+      "  child.connected = false;",
+      '  const error = new Error("spawn ENOEXEC");',
+      '  error.code = "ENOEXEC";',
+      '  process.nextTick(() => child.emit("error", error));',
+      "  return child;",
+      "};",
+      "",
+    ].join("\n"),
+  );
+  const child = NodeChildProcess.fork(entry, ["--version"], {
+    silent: true,
+    execArgv: ["--require", preload],
+  });
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  try {
+    const [code] = await NodeEvents.EventEmitter.once(child, "exit");
+    expect(code).toBe(1);
+    expect(stderr).toContain("spawn ENOEXEC");
+    expect(stderr).toContain(linuxCliExecFormatErrorHint);
+    expect(stderr).toContain("readelf -l");
+    expect(stderr).toContain("https://github.com/oracle/linux-uek/issues/46");
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) {
+      const exit = NodeEvents.EventEmitter.once(child, "exit");
+      child.kill("SIGTERM");
+      await exit;
+    }
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});

@@ -19,7 +19,10 @@
  * bundleDependencies needs an arborist tree these flattened installs are
  * not), whereas `npm publish <tarball>` uploads the bytes as given.
  */
-import { legacyCliLauncherScript } from "@t3tools/shared/legacyCliLauncher";
+import {
+  legacyCliLauncherScript,
+  linuxCliExecFormatErrorHint,
+} from "@t3tools/shared/legacyCliLauncher";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -190,7 +193,9 @@ export function npmLauncherPackageManifest(
 /**
  * The launcher every `npx t3` runs. Plain CommonJS with no dependencies so it
  * loads on any Node that npm itself runs on; the real work happens in the
- * single-executable it execs.
+ * single-executable it execs. A Linux `ENOEXEC` from that spawn appends
+ * {@link linuxCliExecFormatErrorHint}. Exit status 126 does not, because the
+ * executable can exit 126 on its own.
  */
 export const NPM_LAUNCHER_SCRIPT = `#!/usr/bin/env node
 "use strict";
@@ -218,13 +223,16 @@ try {
 }
 
 const executable = join(packageDir, process.platform === "win32" ? "t3.exe" : "t3");
+const linuxHint = ${JSON.stringify(`${linuxCliExecFormatErrorHint}\n`)};
 const result = spawnSync(executable, process.argv.slice(2), { stdio: "inherit" });
 if (result.error) {
-  process.stderr.write("t3: failed to start " + executable + ": " + result.error.message + "\\n");
-  process.exit(1);
+  let message = "t3: failed to start " + executable + ": " + result.error.message + "\\n";
+  if (process.platform === "linux" && result.error.code === "ENOEXEC") message += linuxHint;
+  process.stderr.write(message, () => process.exit(1));
+} else {
+  // A child killed by a signal has no status; report it the way a shell would.
+  process.exit(result.status ?? 128 + (constants.signals[result.signal] || 1));
 }
-// A child killed by a signal has no status; report it the way a shell would.
-process.exit(result.status ?? 128 + (constants.signals[result.signal] || 1));
 `;
 
 const runCommand = Effect.fn("runCommand")(function* (

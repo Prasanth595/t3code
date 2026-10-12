@@ -208,7 +208,18 @@ else
   step "Extracting T3 Code..."
   tar -xzf "${staging}/${archive}" -C "$staging" --strip-components=1
   rm -f "${staging}/${archive}" "${staging}/SHA256SUMS"
-  "${staging}/t3" --version >/dev/null || fail "the downloaded executable does not run"
+  # --version stdout is noise. Leave stderr attached so a startup failure stays
+  # visible. Status 126 is how a shell reports a failed exec (UEK8's ENOEXEC);
+  # the program can also exit 126, so the hint is a likely cause, not proof.
+  # Keep the hint aligned with linuxCliExecFormatErrorHint.
+  smoke_status=0
+  "${staging}/t3" --version >/dev/null || smoke_status=$?
+  if [ "$smoke_status" -ne 0 ]; then
+    if [ "$platform" = linux ] && [ "$smoke_status" -eq 126 ]; then
+      fail "the downloaded executable does not run (exit status ${smoke_status}). This can be caused by an Oracle Linux UEK8 kernel rejecting a Node single-executable whose PT_NOTE is larger than 4 MB (ENOEXEC). The executable can also exit 126 on its own. Boot Oracle RHCK or a mainline-based kernel, or build from source and run node apps/server/dist/bin.mjs. readelf -l shows the oversized NOTE header. https://github.com/oracle/linux-uek/issues/46"
+    fi
+    fail "the downloaded executable does not run (exit status ${smoke_status})"
+  fi
   printf '%s\n' "$version" > "${staging}/.install-complete"
 
   rm -rf "$target_dir"
