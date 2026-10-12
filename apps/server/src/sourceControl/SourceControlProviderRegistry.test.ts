@@ -706,8 +706,13 @@ it.effect("notices a CLI login made outside the app once the verdict expires", (
 it.effect("asks again as soon as settings change", () =>
   Effect.gen(function* () {
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
+    const handled = yield* Deferred.make<void>();
+    // The registry reads past the change only once it has handled it.
     const github = yield* makeSignInRegistry(
-      Stream.fromSubscription(yield* PubSub.subscribe(changes)),
+      Stream.fromSubscription(yield* PubSub.subscribe(changes)).pipe(
+        Stream.take(1),
+        Stream.concat(Stream.fromEffectDrain(Deferred.succeed(handled, undefined))),
+      ),
     );
 
     assert.strictEqual(yield* github.resolveKind, "unknown");
@@ -715,8 +720,7 @@ it.effect("asks again as soon as settings change", () =>
     github.signIn();
     assert.strictEqual(yield* github.resolveKind, "unknown");
     yield* PubSub.publish(changes, DEFAULT_SERVER_SETTINGS);
-    yield* Effect.yieldNow;
-    yield* Effect.yieldNow;
+    yield* Deferred.await(handled);
     assert.strictEqual(yield* github.resolveKind, "github");
     assert.deepStrictEqual(github.hosts, ["git.example.internal", "git.example.internal"]);
   }),
