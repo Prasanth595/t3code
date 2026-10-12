@@ -112,7 +112,7 @@ describe("window capture failures", () => {
     expect(pendingStarts.size).toBe(0);
   });
 
-  it("keeps global failures dismissing all active and pending captures", async () => {
+  it("dismisses animations on ID-less failures while preserving capture sound markers", async () => {
     const target = DraftId.make("snap-shot-draft");
     let resolveTarget: ((target: DraftId) => void) | undefined;
     const targetReady = new Promise<DraftId>((resolve) => {
@@ -128,7 +128,7 @@ describe("window capture failures", () => {
     await newerStart;
 
     expect(getPendingSnapShotAnimations()).toEqual([]);
-    expect(soundedIds.size).toBe(0);
+    expect(soundedIds).toEqual(new Set(["older", "newer"]));
     expect(pendingStarts.size).toBe(0);
   });
 });

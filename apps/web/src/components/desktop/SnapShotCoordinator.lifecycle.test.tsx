@@ -219,6 +219,23 @@ it("stops waiting for the pinned shell when a capture fails", async () => {
   expect(bridge.readSnapShot).not.toHaveBeenCalled();
 });
 
+it("preserves an older pinned capture wait across an ID-less shortcut failure", async () => {
+  route.playSound = true;
+  await mount(threadA);
+  await act(async () => bridge.emit({ type: "requested", id: pendingCapture.id }));
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  await act(async () => bridge.emit({ type: "failed" }));
+  const listsBeforeShell = bridge.listPendingSnapShots.mock.calls.length;
+
+  await act(async () => appAtomRegistry.set(shellState.threadAAvailable, true));
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(listsBeforeShell + 1);
+  expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(pendingCapture.id);
+  expect(playSnapShotSound).toHaveBeenCalledTimes(1);
+});
+
 it("keeps the committed route after an earlier target resolution is abandoned", async () => {
   await mount(null);
   const project = scopeProjectRef(environmentId, ProjectId.make("default-project"));

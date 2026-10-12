@@ -116,7 +116,6 @@ export function dismissFailedSnapShot(
     void dismissSnapShotAnimation(id);
   } else {
     pendingStarts.clear();
-    soundedIds.clear();
     dismissAllSnapShotAnimations();
   }
 }
@@ -497,8 +496,10 @@ export function SnapShotCoordinator() {
           void drain();
           return;
         case "failed": {
-          stopWaitingForThreadShell(event.id);
-          if (event.id) captureTargetsRef.current.delete(event.id);
+          if (event.id) {
+            stopWaitingForThreadShell(event.id);
+            captureTargetsRef.current.delete(event.id);
+          }
           dismissFailedSnapShot(
             event.id,
             soundedCaptureIdsRef.current,
