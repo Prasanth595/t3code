@@ -105,11 +105,10 @@ function resolveThreadAwarenessPhaseV2(
     case "waiting":
       return "running";
     case "completed":
-      if (thread.settleWhenIdleAt != null || thread.settledOverride === "settled") return null;
+      if (thread.settledOverride === "settled") return null;
       // Work that will wake the agent keeps the run going; a dev server does not.
-      return backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
-        ? "running"
-        : "completed";
+      if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return "running";
+      return thread.settleWhenIdleAt != null ? null : "completed";
     case "failed":
       return "failed";
     case "idle":

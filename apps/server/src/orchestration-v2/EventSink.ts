@@ -199,10 +199,11 @@ type ThreadRowEvent = Extract<
 const carriesThread = (event: OrchestrationV2DomainEvent): event is ThreadRowEvent =>
   event.type.startsWith("thread.");
 
-/** A question or approval, a provider error, a failed run, or a run stopped
-    after it started hands a filed thread back to the user. A queued run the
-    server drops before it starts was never the user's to see. */
+/** A question, approval, error or explicit Stop hands a filed thread back to
+    the user, including Stop before a run starts or during background work.
+    A queued run the server drops before it starts does not. */
 const returnsFiledThread = (event: OrchestrationV2DomainEvent): boolean =>
+  (event.type === "turn-item.updated" && event.payload.type === "run_interrupt_request") ||
   (event.type === "runtime-request.updated" && event.payload.status === "pending") ||
   (event.type === "provider-session.updated" && event.payload.status === "error") ||
   (event.type === "run.updated" &&

@@ -539,7 +539,7 @@ const holdQueue = (f: Effect.Success<ReturnType<typeof fixture>>) =>
     return queued;
   });
 
-it.effect("a held automatic run does not keep a filed thread, and settling cancels it", () =>
+it.effect("a held automatic run cannot hide background work or prevent settlement", () =>
   Effect.gen(function* () {
     const f = yield* fixture();
     yield* bindProviderThread(f);
@@ -563,6 +563,13 @@ it.effect("a held automatic run does not keep a filed thread, and settling cance
     });
     const [held] = yield* holdQueue(f);
     yield* f.setRun("completed");
+    yield* f.setBackground("dynamic_tool", "running");
+    assert.isNotEmpty(
+      (yield* f.projections.getSettlementCandidates(f.threadId, true))[0]?.pendingBackgroundTasks,
+    );
+    assert.equal((yield* Effect.exit(f.fulfill()))._tag, "Failure");
+    assert.isNotNull((yield* f.read()).settleWhenIdleAt);
+    yield* f.setBackground("dynamic_tool", "completed");
     yield* f.fulfill();
     assert.equal((yield* f.read()).settledOverride, "settled");
     const { runs } = yield* f.orchestrator.getThreadProjection(f.threadId);

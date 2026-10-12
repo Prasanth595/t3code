@@ -79,6 +79,20 @@ describe("projectThreadAwarenessV2", () => {
     ).toMatchObject({ phase: "running", headline: "Agent is working" });
   });
 
+  it("keeps filed background work visible until it finishes", () => {
+    expect(
+      projectThreadAwarenessV2({
+        environmentId: "env-1" as EnvironmentId,
+        project,
+        thread: v2Thread({
+          status: "completed",
+          settleWhenIdleAt: updatedAt,
+          pendingBackgroundTasks: [{ taskId: "child", kind: "subagent" }],
+        }),
+      }),
+    ).toMatchObject({ phase: "running" });
+  });
+
   it.each(["running", "completed", "failed"] as const)(
     "does not publish %s subagent activity",
     (status) => {

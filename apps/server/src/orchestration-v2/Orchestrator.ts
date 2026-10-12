@@ -2681,7 +2681,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (settleMode !== "automatic" &&
           backgroundWorkHoldsCompletion(
             derivePendingBackgroundWork({
-              latestRun: projection.runs.at(-1),
+              latestRun: projection.runs.findLast((run) => run.status !== "queued"),
               providerThreads: projection.providerThreads,
               turnItems: projection.turnItems,
               activeProviderThreadId: thread.activeProviderThreadId,
