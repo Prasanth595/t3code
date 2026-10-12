@@ -571,6 +571,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
           resource: input.resource,
         });
       }
+      // Lets a client reveal the stored file on the host.
+      sourcePath = attachmentPath;
       // Generic files carry their extension inside the attachment id (that
       // shape resolves the on-disk path); images do not. Videos and images
       // render inline. Other generic files download unless a viewer requests

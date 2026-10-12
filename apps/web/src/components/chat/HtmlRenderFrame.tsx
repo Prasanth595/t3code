@@ -8,6 +8,7 @@ import {
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { ArtifactOpenMenu } from "../../nofun/ArtifactOpenMenu";
 import { markNofunArtifact } from "../../nofun/artifactPanel";
 import { PinHtmlRenderButton } from "../../nofun/shelf/PinHtmlRenderButton";
 
@@ -113,6 +114,13 @@ export function HtmlRenderFrame(props: {
                 environmentId={props.environmentId}
                 threadId={props.pinThreadId}
                 htmlRender={props.htmlRender}
+              />
+            )}
+            {props.htmlRender.display === undefined ? null : (
+              <ArtifactOpenMenu
+                environmentId={props.environmentId}
+                htmlRender={props.htmlRender}
+                variant="glass"
               />
             )}
             {props.onOpen === undefined ? null : (

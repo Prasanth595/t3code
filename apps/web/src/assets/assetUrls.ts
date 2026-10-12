@@ -32,10 +32,14 @@ export function useAssetUrlState(
   );
 }
 
-export function useAssetUrlRefresh(
+/**
+ * Mints a fresh signed URL on demand, with the host path the server chose to
+ * serve when it reports one. Nothing is requested until the caller invokes it.
+ */
+export function useAssetUrlResolver(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
-): () => Promise<string | null> {
+): () => Promise<{ readonly url: string; readonly sourcePath?: string } | null> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
   const refresh = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -46,8 +50,21 @@ export function useAssetUrlRefresh(
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
     const result = await refresh({ environmentId, input: { resource } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+    const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+    if (url === null) return null;
+    return {
+      url,
+      ...(result.value.sourcePath === undefined ? {} : { sourcePath: result.value.sourcePath }),
+    };
   }, [environmentId, resource, refresh, httpBaseUrl]);
+}
+
+export function useAssetUrlRefresh(
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
+): () => Promise<string | null> {
+  const resolve = useAssetUrlResolver(environmentId, resource);
+  return useCallback(async () => (await resolve())?.url ?? null, [resolve]);
 }
 
 export function useAssetUrls(

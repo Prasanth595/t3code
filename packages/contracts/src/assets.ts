@@ -81,6 +81,8 @@ export type AssetImageDimensions = typeof AssetImageDimensions.Type;
 export const AssetCreateUrlResult = Schema.Struct({
   relativeUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
   expiresAt: Schema.Number,
+  /** The host path behind the URL when it is not the one asked for (a favicon fallback), or
+      the stored file of an attachment, which clients reveal in the host's file manager. */
   sourcePath: Schema.optional(
     TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
   ),

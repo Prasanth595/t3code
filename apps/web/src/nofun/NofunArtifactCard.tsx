@@ -6,14 +6,16 @@ import type { ChatFileAttachment } from "~/types";
 
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
+import { Group, GroupSeparator } from "../components/ui/group";
+import { ArtifactOpenMenu } from "./ArtifactOpenMenu";
 import { nofunArtifactAttachment } from "./artifactDisplay";
 import { PersonaAvatar, usePersonaIdentity } from "./persona";
 import { PinHtmlRenderButton } from "./shelf/PinHtmlRenderButton";
 
 /**
- * A No Fun artifact as a compact row in the thread: title, badge, and an Open
- * button for the side panel. The whole card opens it, like the frame's
- * "Open in panel" button.
+ * A No Fun artifact as a compact row in the thread: title, badge, and a split
+ * Open button (side panel; the menu adds browser and file manager). The whole
+ * card opens it, like the frame's "Open in panel" button.
  */
 export function NofunArtifactCard(props: {
   readonly environmentId: EnvironmentId;
@@ -66,11 +68,25 @@ export function NofunArtifactCard(props: {
             htmlRender={props.htmlRender}
           />
         )}
-        {props.onOpen === undefined ? null : (
-          <Button size="xs" variant="outline" onClick={open}>
-            <PanelRightOpenIcon className="size-3.5" />
-            Open
-          </Button>
+        {props.onOpen === undefined ? (
+          <ArtifactOpenMenu
+            environmentId={props.environmentId}
+            htmlRender={props.htmlRender}
+            variant="outline"
+          />
+        ) : (
+          <Group aria-label="Open artifact">
+            <Button size="xs" variant="outline" onClick={open}>
+              <PanelRightOpenIcon className="size-3.5" />
+              Open
+            </Button>
+            <GroupSeparator />
+            <ArtifactOpenMenu
+              environmentId={props.environmentId}
+              htmlRender={props.htmlRender}
+              variant="outline"
+            />
+          </Group>
         )}
       </span>
     </div>
