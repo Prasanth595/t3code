@@ -1502,9 +1502,10 @@ export function deriveMessagesTimelineRows(input: {
       } else if ((entry.attempt?.id ?? null) !== tailAttemptId) {
         break;
       }
-      activeToolEntries.unshift(entry);
+      activeToolEntries.push(entry);
     }
   }
+  activeToolEntries.reverse();
   const visibleActiveToolEntries = activeToolEntries.filter((entry) =>
     workEntryIsVisibleInGroup(entry.entry, true),
   );
