@@ -369,11 +369,11 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
           Effect.orElseSucceed(() => ({ provider: null, settled: false })),
         );
     };
-    const verdicts = yield* Effect.forEach(input.specs, ask);
-    // The first claim wins. It is settled only if every integration before it answered, since one
-    // that could not ask might have claimed first.
+    // The first claim wins, so integrations after it are not asked. It is settled only if every
+    // integration before it answered, since one that could not ask might have claimed first.
     let settled = true;
-    for (const verdict of verdicts) {
+    for (const spec of input.specs) {
+      const verdict = yield* ask(spec);
       settled &&= verdict.settled;
       if (verdict.provider !== null) return { provider: verdict.provider, settled };
     }

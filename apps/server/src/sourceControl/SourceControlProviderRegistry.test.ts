@@ -466,8 +466,9 @@ it.effect.each([
     assert.strictEqual(handle.provider.kind, SourceControlProviderKind.make(scenario.expected));
     assert.strictEqual(handle.context?.provider.baseUrl, "https://code.example.test");
     assert.deepStrictEqual(hosts, ["code.example.test"]);
-    // Recognition goes through the credential layer; gh is only one of its sources.
-    assert.notInclude(commands, "gh");
+    // Recognition goes through the credential layer; gh is only one of its sources. Once GitHub
+    // claims the host, glab and the other integrations after it are not asked.
+    assert.deepStrictEqual(commands, scenario.expected === "github" ? [] : ["glab"]);
   }),
 );
 
@@ -543,7 +544,13 @@ const missingCli = (command: string, cwd: string) =>
 it.effect("asks the hosting CLIs once for every checkout of an unclaimed host", () =>
   Effect.gen(function* () {
     // No hosting CLI is installed and GitHub holds no credential, so every integration answers no.
-    const makeUnclaimedRegistry = (beforeSpawn: Effect.Effect<void>) =>
+    const makeUnclaimedRegistry = (
+      beforeSpawn: Effect.Effect<void>,
+      failure: (
+        command: string,
+        cwd: string,
+      ) => VcsProcessSpawnError | VcsProcessTimeoutError = missingCli,
+    ) =>
       Effect.gen(function* () {
         const commands: Array<string> = [];
         const logins: Array<string> = [];
@@ -553,7 +560,7 @@ it.effect("asks the hosting CLIs once for every checkout of an unclaimed host", 
           process: {
             run: ({ command, cwd }) => {
               commands.push(command);
-              return beforeSpawn.pipe(Effect.andThen(Effect.fail(missingCli(command, cwd))));
+              return beforeSpawn.pipe(Effect.andThen(Effect.fail(failure(command, cwd))));
             },
           },
           githubApi: {
@@ -601,11 +608,19 @@ it.effect("asks the hosting CLIs once for every checkout of an unclaimed host", 
     assert.deepStrictEqual(sequential.logins, ["fj", "tea"]);
     assert.deepStrictEqual(sequential.hosts, ["git.example.internal"]);
 
-    // Checkouts that ask at the same time wait for the first one's probes.
+    // Checkouts that ask at the same time wait for the first one's probes. glab times out, so the
+    // answer is not kept and only waiting on the pending lookup explains a single spawn.
     const spawned = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     const concurrent = yield* makeUnclaimedRegistry(
       Deferred.succeed(spawned, undefined).pipe(Effect.andThen(Deferred.await(release))),
+      (command, cwd) =>
+        new VcsProcessTimeoutError({
+          operation: "source-control.discovery.refine-unknown-remote",
+          command,
+          cwd,
+          timeoutMs: 5_000,
+        }),
     );
     const lookups = yield* Effect.forEach(
       checkouts,
@@ -621,6 +636,12 @@ it.effect("asks the hosting CLIs once for every checkout of an unclaimed host", 
       checkouts.map((checkout) => checkout.remoteUrl),
     );
     assert.deepStrictEqual(concurrent.commands, ["glab"]);
+    // Nothing was kept, so a later lookup asks again.
+    yield* resolveCheckout(concurrent.registry, {
+      cwd: "/d",
+      remoteUrl: "https://git.example.internal/team/d.git",
+    });
+    assert.deepStrictEqual(concurrent.commands, ["glab", "glab"]);
   }),
 );
 
