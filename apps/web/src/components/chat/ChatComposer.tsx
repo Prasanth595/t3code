@@ -3160,6 +3160,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       }
       const records: ComposerContextRecord[] = [
+        ...composerThreadContexts.filter((record) => wanted.has(record.contextId)),
         ...composerTerminalContexts
           .filter((c) => wanted.has(terminalContextReference(c).contextId))
           .map(terminalContextRecord),
@@ -3201,6 +3202,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerPreviewAnnotations,
       composerReviewComments,
       composerTerminalContexts,
+      composerThreadContexts,
       environmentId,
       uploadsByImageId,
     ],
@@ -4951,6 +4953,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Context chips keep their links in the prompt; the payloads behind them travel as
     // records so the restore can resolve every chip.
     const stashedRecords: ComposerContextRecord[] = [
+      ...composerThreadContexts,
       ...composerTerminalContextsRef.current.map(terminalContextRecord),
       ...composerReviewComments.map(reviewCommentContextRecord),
       ...composerPreviewAnnotations.map((annotation) =>
@@ -5062,6 +5065,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef.current = "";
       clearComposerDraftPromptAndImages(stashTarget);
       clearComposerDraftTerminalContexts(stashTarget);
+      setComposerDraftThreadContexts(stashTarget, []);
       for (const comment of composerReviewComments) {
         removeComposerDraftReviewComment(stashTarget, comment.id);
       }
@@ -5163,12 +5167,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     clearComposerDraftPromptAndImages,
     clearComposerDraftTerminalContexts,
+    setComposerDraftThreadContexts,
     setComposerDraftPrompt,
     setComposerTrigger,
     composerDraftTarget,
     composerFilesRef,
     composerImagesRef,
     composerTerminalContextsRef,
+    composerThreadContexts,
     composerReviewComments,
     composerPreviewAnnotations,
     removeComposerDraftReviewComment,
