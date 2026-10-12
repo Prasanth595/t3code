@@ -443,7 +443,7 @@ export const make = Effect.gen(function* () {
       complete:
         Option.isSome(details) &&
         after === null &&
-        counted.every(
+        withDetails(files, counted).every(
           (file) => file.binary || (file.additions !== undefined && file.deletions !== undefined),
         ),
       changedFiles: files.length,
