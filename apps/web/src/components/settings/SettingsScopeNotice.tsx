@@ -20,7 +20,8 @@ export function SettingsScopeNotice({
   targetId?: string;
   eligibleEnvironmentIds?: readonly EnvironmentId[];
 }) {
-  const { selectScope, search, groups } = useSettingsScope();
+  // Every environment's checkouts, so the notice can always offer another one.
+  const { selectScope, search, allGroups: groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();

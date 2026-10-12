@@ -197,6 +197,17 @@ describe("settings scope project menu", () => {
       ]);
     });
 
+    it("still offers every environment's checkouts once a machine narrows the groups", () => {
+      const { allGroups } = resolveSettingsScopeSearch({
+        rawSearch: { project: "shared", machine: laptop.environmentId },
+        singleEnvironment: false,
+        environments: connected,
+        primaryEnvironmentId: laptop.environmentId,
+        groupsFor,
+      });
+      expect(allGroups).toBe(groups);
+    });
+
     it("keeps every environment's groups when no machine is chosen", () => {
       const { search, groups: resolved } = resolveSettingsScopeSearch({
         rawSearch: { project: "shared" },
