@@ -37,6 +37,7 @@ export interface SettlementPullRequest {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const SAFETY_SWEEP_INTERVAL = "15 minutes";
 
 function toMillis(value: DateTime.Utc | null | undefined): number | null {
   return value == null ? null : DateTime.toEpochMillis(value);
@@ -636,7 +637,7 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* worker.enqueue(undefined);
         yield* worker.drain;
-      }).pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.asVoid),
+      }).pipe(Effect.repeat(Schedule.spaced(SAFETY_SWEEP_INTERVAL)), Effect.asVoid),
     );
     yield* forkParked(
       Stream.runForEach(settingsChanges, (settings) => {

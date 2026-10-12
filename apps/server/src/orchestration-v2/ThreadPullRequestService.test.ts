@@ -169,6 +169,36 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     };
   };
 
+  const metadataUpdated = (thread: OrchestrationV2ThreadShell): OrchestrationV2DomainEvent => ({
+    type: "thread.metadata-updated",
+    id: EventId.make(`event:metadata:${thread.id}`),
+    threadId: thread.id,
+    occurredAt: NOW,
+    payload: {
+      createdBy: thread.createdBy,
+      creationSource: thread.creationSource,
+      id: thread.id,
+      projectId: thread.projectId,
+      title: thread.title,
+      providerInstanceId: thread.providerInstanceId,
+      modelSelection: thread.modelSelection,
+      runtimeMode: thread.runtimeMode,
+      interactionMode: thread.interactionMode,
+      branch: thread.branch,
+      worktreePath: thread.worktreePath,
+      activeProviderThreadId: thread.activeProviderThreadId,
+      lineage: thread.lineage,
+      forkedFrom: null,
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    },
+  });
+
   it.effect("an event for one thread reads that thread's shell, not every thread's", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -222,35 +252,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           // Startup backfill reads every active thread.
           expect(yield* Queue.take(reads)).toEqual({ location: "active", unsettledOnly: false });
           yield* service.drain;
-          yield* PubSub.publish(events, {
-            type: "thread.metadata-updated",
-            id: EventId.make("event:metadata"),
-            threadId: thread.id,
-            occurredAt: NOW,
-            payload: {
-              createdBy: thread.createdBy,
-              creationSource: thread.creationSource,
-              id: thread.id,
-              projectId: thread.projectId,
-              title: thread.title,
-              providerInstanceId: thread.providerInstanceId,
-              modelSelection: thread.modelSelection,
-              runtimeMode: thread.runtimeMode,
-              interactionMode: thread.interactionMode,
-              branch: thread.branch,
-              worktreePath: thread.worktreePath,
-              activeProviderThreadId: thread.activeProviderThreadId,
-              lineage: thread.lineage,
-              forkedFrom: null,
-              createdAt: thread.createdAt,
-              updatedAt: thread.updatedAt,
-              archivedAt: null,
-              settledOverride: null,
-              settledAt: null,
-              lastVisitedAt: null,
-              deletedAt: null,
-            },
-          });
+          yield* PubSub.publish(events, metadataUpdated(thread));
           expect(yield* Queue.take(reads)).toBe(thread.id);
           yield* service.drain;
           expect(yield* Queue.size(reads)).toBe(0);
@@ -319,4 +321,134 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       }),
     ),
   );
+
+  it.effect("periodic passes back off idle threads while events still sync at once", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(DateTime.toEpochMillis(NOW));
+        const idle = {
+          ...threadShell("idle-thread"),
+          branch: "feature/idle",
+          updatedAt: DateTime.subtract(NOW, { days: 2 }),
+        };
+        const project: OrchestrationProjectShell = {
+          id: ProjectId.make("project-1"),
+          title: "Project",
+          workspaceRoot: "/workspace/project",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-08-01T00:00:00.000Z",
+          updatedAt: "2026-08-01T00:00:00.000Z",
+        };
+        const activation = yield* Deferred.make<void>();
+        const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
+        const fullReads = yield* Queue.unbounded<void>();
+        const lookups = yield* Queue.unbounded<string>();
+        const layerDependencies = Layer.mergeAll(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            streamDomainEvents: Stream.fromPubSub(events),
+            getShellSnapshot: () =>
+              Queue.offer(fullReads, undefined).pipe(
+                Effect.as({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  threads: [idle],
+                  archivedThreads: [],
+                }),
+              ),
+            getThreadEventSequence: () => Effect.succeed(1),
+            getThreadShell: (threadId) => Effect.succeed(threadId === idle.id ? idle : null),
+          }),
+          Layer.mock(ProjectStore.ProjectStoreV2)({
+            listShells: () => Effect.succeed([project]),
+          }),
+          Layer.mock(GitManager.GitManager)({
+            branchPullRequest: ({ branch }) => Queue.offer(lookups, branch).pipe(Effect.as(null)),
+          }),
+          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+            resolve: () =>
+              Effect.succeed({
+                canonicalKey: "github.com/pingdotgg/t3code",
+                locator: {
+                  source: "git-remote" as const,
+                  remoteName: "origin",
+                  remoteUrl: "git@github.com:pingdotgg/t3code.git",
+                },
+                provider: "github" as const,
+                displayName: "pingdotgg/t3code",
+                owner: "pingdotgg",
+                name: "t3code",
+              }),
+          }),
+          Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+          Layer.succeed(
+            Crypto.Crypto,
+            Crypto.make({
+              randomBytes: (size) => new Uint8Array(size).fill(1),
+              digest: (_algorithm, data) => Effect.succeed(data),
+            }),
+          ),
+          FileSystem.layerNoop({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadPullRequestService.make;
+          const drainLookups = service.drain.pipe(
+            Effect.andThen(Queue.clear(lookups)),
+            Effect.map((branches) => [...branches]),
+          );
+          const nextPass = TestClock.adjust("1 minute").pipe(
+            Effect.andThen(Queue.take(fullReads)),
+            Effect.andThen(drainLookups),
+          );
+          yield* service.start();
+          yield* Deferred.succeed(activation, undefined);
+          yield* Queue.take(fullReads);
+          expect(yield* drainLookups).toEqual(["feature/idle"]);
+
+          for (let minute = 1; minute <= 7; minute++) {
+            expect(yield* nextPass).toEqual([]);
+          }
+          yield* PubSub.publish(events, metadataUpdated(idle));
+          expect(yield* Queue.take(lookups)).toBe("feature/idle");
+          yield* service.drain;
+
+          for (let minute = 8; minute < 22; minute++) {
+            expect(yield* nextPass).toEqual([]);
+          }
+          expect(yield* nextPass).toEqual(["feature/idle"]);
+        }).pipe(Effect.provide(layerDependencies));
+      }),
+    ),
+  );
+});
+
+describe("isPullRequestCheckDue", () => {
+  const MINUTE = 60_000;
+  const due = (idleMinutes: number, sinceCheckMinutes: number | undefined) =>
+    ThreadPullRequestService.isPullRequestCheckDue({
+      now: 1_000 * MINUTE,
+      lastCheckedAt:
+        sinceCheckMinutes === undefined ? undefined : (1_000 - sinceCheckMinutes) * MINUTE,
+      lastActivityAt: (1_000 - idleMinutes) * MINUTE,
+    });
+
+  it("checks a never-checked thread", () => {
+    expect(due(999, undefined)).toBe(true);
+  });
+
+  it("checks an active thread every minute", () => {
+    expect(due(0, 1)).toBe(true);
+    expect(due(0, 0.5)).toBe(false);
+  });
+
+  it("waits a quarter of the idle time", () => {
+    expect(due(40, 9)).toBe(false);
+    expect(due(40, 10)).toBe(true);
+  });
+
+  it("caps the wait at 15 minutes", () => {
+    expect(due(2 * 24 * 60, 14)).toBe(false);
+    expect(due(2 * 24 * 60, 15)).toBe(true);
+  });
 });

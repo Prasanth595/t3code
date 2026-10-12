@@ -12,8 +12,10 @@ import {
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -90,6 +92,27 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const MIN_RECHECK_MS = 60_000;
+const MAX_RECHECK_MS = 15 * 60_000;
+
+export function isPullRequestCheckDue(input: {
+  readonly now: number;
+  readonly lastCheckedAt: number | undefined;
+  readonly lastActivityAt: number;
+}): boolean {
+  if (input.lastCheckedAt === undefined) return true;
+  const idle = input.now - input.lastActivityAt;
+  const interval = Math.min(MAX_RECHECK_MS, Math.max(MIN_RECHECK_MS, idle / 4));
+  return input.now - input.lastCheckedAt >= interval;
+}
+
+const lastActivityAt = (
+  thread: Pick<OrchestrationV2ThreadShell, "updatedAt" | "latestUserMessageAt">,
+) =>
+  Math.max(
+    DateTime.toEpochMillis(thread.updatedAt),
+    thread.latestUserMessageAt === null ? 0 : DateTime.toEpochMillis(thread.latestUserMessageAt),
+  );
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -106,6 +129,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const pendingBackfill = new Map<ThreadId, number>();
+  const lastCheckedAt = new Map<ThreadId, number>();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -167,14 +191,30 @@ export const make = Effect.gen(function* () {
     for (const threadId of checkedIds) {
       if (!visibleThreadIds.has(threadId)) pendingBackfill.delete(threadId);
     }
+    const now = yield* Clock.currentTimeMillis;
+    if (request.threadId === null) {
+      const snapshotIds = new Set(threadSnapshot.threads.map((thread) => thread.id));
+      for (const threadId of lastCheckedAt.keys()) {
+        if (!snapshotIds.has(threadId)) lastCheckedAt.delete(threadId);
+      }
+    }
     const threads = threadSnapshot.threads.filter(
       (thread) =>
         thread.archivedAt === null &&
         ((thread.settledOverride !== "settled" && thread.settledAt === null) ||
           request.threadId !== null ||
           pendingBackfill.has(thread.id)) &&
-        (thread.branch !== null || thread.branchPullRequest != null),
+        (thread.branch !== null || thread.branchPullRequest != null) &&
+        (request.threadId !== null ||
+          request.backfill === true ||
+          pendingBackfill.has(thread.id) ||
+          isPullRequestCheckDue({
+            now,
+            lastCheckedAt: lastCheckedAt.get(thread.id),
+            lastActivityAt: lastActivityAt(thread),
+          })),
     );
+    for (const thread of threads) lastCheckedAt.set(thread.id, now);
     const groups = Map.groupBy(threads, (thread) =>
       JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
     );

@@ -1272,6 +1272,30 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
       }),
     ),
   );
+
+  it.effect("the timer sweep runs every 15 minutes, not every minute", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({ snapshot: makeSnapshot([makeThread("idle")]) });
+
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          yield* Ref.set(fixture.candidateReads, []);
+
+          yield* TestClock.adjust("14 minutes");
+          yield* service.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.candidateReads), []);
+
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* service.drain;
+          assert.deepStrictEqual(yield* Ref.get(fixture.candidateReads), [undefined]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
 });
 
 describe("isSnoozed", () => {

@@ -728,6 +728,7 @@ function makeManager(input?: {
   serverSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
+  gitOperations?: string[];
   /** Seeds the V2 stores the per-project settings lookup reads. */
   seed?: Effect.Effect<
     void,
@@ -745,30 +746,39 @@ function makeManager(input?: {
 
   const layerServerSettings = ServerSettings.ServerSettingsService.layerTest(input?.serverSettings);
 
-  const layerVcsDriver = input?.gitConfigReads
-    ? Layer.effect(
-        GitVcsDriver.GitVcsDriver,
-        GitVcsDriver.make.pipe(
-          Effect.map((service) =>
-            GitVcsDriver.GitVcsDriver.of({
-              ...service,
-              readConfigValue: (cwd, key) =>
-                Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
-                  Effect.andThen(service.readConfigValue(cwd, key)),
-                ),
-            }),
+  const layerVcsDriver =
+    input?.gitConfigReads || input?.gitOperations
+      ? Layer.effect(
+          GitVcsDriver.GitVcsDriver,
+          GitVcsDriver.make.pipe(
+            Effect.map((service) =>
+              GitVcsDriver.GitVcsDriver.of({
+                ...service,
+                execute: (executeInput) =>
+                  Effect.sync(() => input.gitOperations?.push(executeInput.operation)).pipe(
+                    Effect.andThen(service.execute(executeInput)),
+                  ),
+                resolveDefaultBranchName: (cwd, remoteName) =>
+                  Effect.sync(() => input.gitOperations?.push("resolveDefaultBranchName")).pipe(
+                    Effect.andThen(service.resolveDefaultBranchName(cwd, remoteName)),
+                  ),
+                readConfigValue: (cwd, key) =>
+                  Effect.sync(() => input.gitConfigReads?.push(key)).pipe(
+                    Effect.andThen(service.readConfigValue(cwd, key)),
+                  ),
+              }),
+            ),
           ),
-        ),
-      ).pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(layerServerConfig),
-      )
-    : GitVcsDriver.layer.pipe(
-        Layer.provideMerge(VcsProcess.layer),
-        Layer.provideMerge(NodeServices.layer),
-        Layer.provideMerge(layerServerConfig),
-      );
+        ).pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(layerServerConfig),
+        )
+      : GitVcsDriver.layer.pipe(
+          Layer.provideMerge(VcsProcess.layer),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(layerServerConfig),
+        );
   const layerSourceControlRegistry = Layer.effect(
     SourceControlProviderRegistry.SourceControlProviderRegistry,
     Effect.gen(function* () {
@@ -1280,8 +1290,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         },
       });
 
-      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/origin-once" });
-      gitConfigReads.length = 0;
       const pullRequest = yield* manager.branchPullRequest({
         cwd: repoDir,
         branch: "feature/origin-once",
@@ -1994,6 +2002,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         "git@github.com:new-owner/new-repository.git",
         replacementRemoteDir,
       );
+      yield* TestClock.adjust("61 seconds");
 
       const second = yield* manager.branchPullRequest({
         cwd: repoDir,
@@ -2121,6 +2130,138 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* lookupAll;
       expect(prListCalls()).toHaveLength(7);
       expect(prListCalls().slice(-2).join("\n")).not.toContain("--head feature/open-pr");
+    }),
+  );
+
+  const repositoryFactsReads = (gitOperations: ReadonlyArray<string>) =>
+    gitOperations
+      .filter(
+        (operation) =>
+          operation.startsWith("GitManager.branchPullRequest.") ||
+          operation === "resolveDefaultBranchName",
+      )
+      .toSorted();
+  const allRepositoryFactsReads = [
+    "GitManager.branchPullRequest.branchRefs",
+    "GitManager.branchPullRequest.remoteConfig",
+    "GitManager.branchPullRequest.remotes",
+    "resolveDefaultBranchName",
+  ];
+
+  it.effect("branch PR lookups read a repository's git facts once per minute", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      const branches = ["feature/facts-a", "feature/facts-b", "feature/facts-c"];
+      for (const branch of branches) {
+        yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      const gitOperations: string[] = [];
+      const { manager, ghCalls } = yield* makeManager({ gitOperations });
+      const lookupAll = Effect.forEach(branches, (branch) =>
+        manager.branchPullRequest({ cwd: repoDir, branch }),
+      );
+      const prListCalls = () => ghCalls.filter((call) => call.startsWith("pr list "));
+
+      yield* lookupAll;
+      expect(repositoryFactsReads(gitOperations)).toEqual(allRepositoryFactsReads);
+      expect(prListCalls()).toHaveLength(3);
+
+      gitOperations.length = 0;
+      yield* lookupAll;
+      expect(repositoryFactsReads(gitOperations)).toEqual([]);
+
+      yield* TestClock.adjust("61 seconds");
+      gitOperations.length = 0;
+      expect(yield* lookupAll).toEqual([null, null, null]);
+      expect(repositoryFactsReads(gitOperations)).toEqual(allRepositoryFactsReads);
+      expect(prListCalls()).toHaveLength(3);
+    }),
+  );
+
+  it.effect("invalidateStatus and refresh make branch PR lookup re-read git facts", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/facts-refresh"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/facts-refresh"]);
+      const gitOperations: string[] = [];
+      const { manager } = yield* makeManager({ gitOperations });
+      const lookup = (options?: { refresh: boolean }) =>
+        manager.branchPullRequest({ cwd: repoDir, branch: "feature/facts-refresh" }, options);
+
+      yield* lookup();
+      gitOperations.length = 0;
+      yield* manager.invalidateStatus(repoDir);
+      yield* lookup();
+      expect(repositoryFactsReads(gitOperations)).toEqual(allRepositoryFactsReads);
+
+      gitOperations.length = 0;
+      yield* lookup({ refresh: true });
+      expect(repositoryFactsReads(gitOperations)).toEqual(allRepositoryFactsReads);
+
+      gitOperations.length = 0;
+      yield* lookup();
+      expect(repositoryFactsReads(gitOperations)).toEqual([]);
+    }),
+  );
+
+  it.effect("a branch first looked up after a remote is repointed sees the new remote", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      for (const branch of ["feature/before-repoint", "feature/after-repoint"]) {
+        yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:old-owner/old-repository.git",
+        remoteDir,
+      );
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            "feature/after-repoint": encodeCliJson([
+              {
+                number: 501,
+                title: "After repoint",
+                url: "https://github.com/new-owner/new-repository/pull/501",
+                baseRefName: "main",
+                headRefName: "feature/after-repoint",
+                state: "OPEN",
+                updatedAt: "2026-04-07T15:00:00Z",
+              },
+            ]),
+          },
+        },
+      });
+
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/before-repoint" });
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:new-owner/new-repository.git",
+        remoteDir,
+      );
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/after-repoint",
+      });
+
+      expect(pullRequest).toMatchObject({
+        number: 501,
+        repositoryKey: "github.com/new-owner/new-repository",
+      });
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
     }),
   );
 
