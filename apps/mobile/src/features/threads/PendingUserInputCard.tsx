@@ -28,6 +28,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
+import { markdownAccessibility } from "../../lib/markdownAccessibility";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -102,6 +103,26 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const questions = useMemo(
+    () =>
+      props.pendingUserInput.questions.map((question) => ({
+        question,
+        options: question.options.map((option) => {
+          const label = markdownAccessibility(option.label);
+          const description =
+            option.description && option.description !== option.label
+              ? markdownAccessibility(option.description)
+              : null;
+          const links = [...label.links, ...(description?.links ?? [])];
+          return {
+            option,
+            label: [label.label, description?.label].filter(Boolean).join(". "),
+            links: links.map((link, index) => ({ ...link, name: `open-link-${index}` })),
+          };
+        }),
+      })),
+    [props.pendingUserInput.questions],
+  );
   const styles = useMarkdownPreviewStyles();
   const theme = useUniwindTheme();
   const textStyles = useMemo(() => {
@@ -330,7 +351,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             run to continue.
           </Text>
         ) : null}
-        {props.pendingUserInput.questions.map((question) => {
+        {questions.map(({ question, options }) => {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
@@ -343,7 +364,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 textStyle={textStyles.question}
               />
               <View className="gap-2">
-                {question.options.map((option) => {
+                {options.map(({ option, label, links }) => {
                   const optionValue = option.value ?? option.label.trim();
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
@@ -352,7 +373,20 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                     <Pressable
                       key={optionValue}
                       accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
+                      accessibilityLabel={label}
                       accessibilityState={{ checked: selected, disabled: responseDisabled }}
+                      accessibilityActions={links.map((link) => ({
+                        name: link.name,
+                        label: `Open ${link.label}`,
+                      }))}
+                      onAccessibilityAction={(event) => {
+                        const link = links.find(
+                          (link) => link.name === event.nativeEvent.actionName,
+                        );
+                        if (link) onLinkPress(link.href);
+                      }}
+                      // Pressability suppresses the answer tap after a handled long press.
+                      onLongPress={() => undefined}
                       disabled={responseDisabled}
                       className={cn(
                         "min-h-12 w-full rounded-2xl border px-3.5 py-3",
