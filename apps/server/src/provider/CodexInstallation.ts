@@ -713,10 +713,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             .pipe(Effect.ignore);
         }
       }
-      const remaining = yield* fs
-        .readDirectory(managedDirectory)
-        .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
-      if (remaining.length === 0) {
+      // An unreadable directory is not an empty one; never delete on a failed read.
+      const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
+      if (Option.isSome(remaining) && remaining.value.length === 0) {
         yield* fs.remove(managedDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
       }
     }
