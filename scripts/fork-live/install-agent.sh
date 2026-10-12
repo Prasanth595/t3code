@@ -7,6 +7,9 @@ live="${1:?Usage: install-agent.sh <live server folder>}"
 readonly LABEL=com.t3code.fork-live-build
 plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 
+# The agent runs this copy. Each build replaces it with the builder of that build.
+cp "$(dirname "$0")/build.sh" "$live/build.sh"
+
 cat >"$plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -14,7 +17,7 @@ cat >"$plist" <<PLIST
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>$live/current/scripts/fork-live/build.sh</string></array>
+  <array><string>/bin/bash</string><string>$live/build.sh</string></array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>

@@ -9,7 +9,7 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 
 - `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge and pushes it as a fast-forward. If main moved during the run, it merges the new main and pushes again.
 - If the merge conflicts or the typecheck fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
-- `.github/workflows/fork-release.yml` builds the desktop apps. It runs when a push to main changes the app shell (`apps/desktop`, icons, build config, dependencies), once a day, and on manual dispatch. If the commit already has a release, it stops early. Server and web changes reach the machines without a release, see "Live server updates" and "Deploy to the VPS".
+- `.github/workflows/fork-release.yml` builds the desktop apps. It runs when a push to main changes the app shell (`apps/desktop` without its tests, icons, build config, dependencies), once a day, and on manual dispatch. If the commit already has a release, it stops early. Server and web changes reach the machines without a release, see "Live server updates" and "Deploy to the VPS".
 - The release builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
 - The release carries `nightly-mac.yml` and `nightly.yml` for electron-updater. Until the Windows build adds `nightly.yml`, Windows apps find no update in the new release.
 - If a sync or a release fails, its `notify_agent` job runs `scripts/fork-notify-agent.sh`. The script posts the run to `T3_AGENT_WEBHOOK_URL`, a webhook scheduled task on a T3 server that starts a repair agent. A manual run with `notify_agent=false` does not post. A failure right after a failure of the same workflow does not post either, because the agent that the first failure started watches the next run.
@@ -96,8 +96,8 @@ The script creates a prerelease on the fork. Installed fork apps offer it as an 
 Most fork changes are server and web code. They reach the Mac without a new app and without an app restart.
 
 - The setting `T3CODE_DESKTOP_LIVE_SERVER_DIR` names a live server folder. It is off when unset.
-- With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a` or `<folder>/b`, two worktrees of this repository.
-- `scripts/fork-live/build.sh` runs every minute. When fork main has a new commit, it builds it in the folder that `current` does not point to. Then it writes `<folder>/ready.json` with the path, commit, subject and build time.
+- With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a`, `<folder>/b` or `<folder>/c`, three worktrees of this repository.
+- `scripts/fork-live/build.sh` runs every minute, from the copy `<folder>/build.sh`. Each successful build replaces that copy, so a builder fix applies at once. When fork main has a new commit, it builds it in the folder that neither runs nor is on offer. Then it writes `<folder>/ready.json` with the path, commit, subject and build time. Thus a build on offer stays complete until you install it or a newer build replaces it.
 - The update button offers the ready build as `live <commit>`. A full app update always comes first.
 - Install moves the `current` link, restarts the server and reloads the windows. If the new server does not start, the link goes back and the previous server starts again.
 - A failed build shows a macOS notification. The app keeps its current server.

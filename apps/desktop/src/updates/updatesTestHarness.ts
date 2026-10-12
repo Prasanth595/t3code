@@ -37,6 +37,9 @@ export interface UpdatesHarnessOptions {
   readonly platform?: NodeJS.Platform;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
+  /** Files and links by path, for the live server folder. A test can change them. */
+  readonly files?: Map<string, string>;
+  readonly links?: Map<string, string>;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -213,9 +216,11 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   // disk I/O that would outrun the tests' settle loops.
   const updateRestartMarkers = new Set<string>();
   const layerFileSystem = FileSystem.layerNoop({
-    readFileString: (path) =>
-      path === "/missing/resources/package-type" && options.packageType !== undefined
-        ? Effect.succeed(options.packageType)
+    readFileString: (path) => {
+      const content =
+        path === "/missing/resources/package-type" ? options.packageType : options.files?.get(path);
+      return content !== undefined
+        ? Effect.succeed(content)
         : Effect.fail(
             PlatformError.systemError({
               module: "FileSystem",
@@ -223,7 +228,21 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
               _tag: "NotFound",
               pathOrDescriptor: path,
             }),
-          ),
+          );
+    },
+    readLink: (path) => {
+      const target = options.links?.get(path);
+      return target !== undefined
+        ? Effect.succeed(target)
+        : Effect.fail(
+            PlatformError.systemError({
+              module: "FileSystem",
+              method: "readLink",
+              _tag: "NotFound",
+              pathOrDescriptor: path,
+            }),
+          );
+    },
     makeDirectory: () => Effect.void,
     writeFileString: (path) =>
       Effect.sync(() => {

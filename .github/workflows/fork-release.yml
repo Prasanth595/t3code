@@ -12,6 +12,7 @@ on:
     # The app shell: Electron code, build config, icons and native dependencies.
     paths:
       - apps/desktop/**
+      - "!apps/desktop/**/*.test.ts"
       - assets/**
       - package.json
       - pnpm-lock.yaml

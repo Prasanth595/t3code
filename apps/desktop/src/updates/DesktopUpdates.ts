@@ -6,6 +6,7 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
+  isLiveServerUpdateVersion,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -751,20 +752,30 @@ export const make = Effect.gen(function* () {
     return { accepted: true, completed: true, failed: false };
   });
 
-  /** A live install when the downloaded update is the offered live build, otherwise none. */
+  /**
+   * Handles every install of a live version; none means the downloaded update is
+   * a full app update. A live version never reaches the full-update path: that
+   * path stops the server and waits for a quit that never comes.
+   */
   const installOfferedLiveBuild = Effect.fn("desktop.updates.installOfferedLiveBuild")(function* (
     expectedVersion: string | undefined,
   ) {
-    if (Option.isNone(config.liveServerDir)) return Option.none();
+    const state = yield* Ref.get(updateStateRef);
+    if (!isLiveServerUpdateVersion(state.downloadedVersion)) return Option.none();
+    const refused = Option.some({ accepted: false, completed: false, failed: false });
+    if (Option.isNone(config.liveServerDir)) return refused;
     const liveServerDir = config.liveServerDir.value;
     const liveBuild = yield* DesktopLiveServer.readOfferedLiveBuild(liveServerFiles, liveServerDir);
-    const state = yield* Ref.get(updateStateRef);
     if (
       Option.isNone(liveBuild) ||
       state.downloadedVersion !== DesktopLiveServer.liveBuildVersion(liveBuild.value) ||
       (expectedVersion !== undefined && expectedVersion !== state.downloadedVersion)
     ) {
-      return Option.none();
+      // The builder replaced or removed the offered build. Show what is ready now.
+      yield* updateState((current) =>
+        DesktopLiveServer.reduceDesktopUpdateStateOnLiveBuild(current, liveBuild),
+      );
+      return refused;
     }
     if (!(yield* tryStartUpdateAction("install"))) {
       return Option.some({ accepted: false, completed: false, failed: false });
