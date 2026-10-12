@@ -823,6 +823,17 @@ it.effect.each([
     }),
     runs: 1,
   },
+  // The record for this host may be in the part cut off at the output limit.
+  {
+    name: "another host, in output cut short",
+    output: {
+      ...processOutput(`other.example.internal
+  ✓ Logged in to other.example.internal as gitlab-user
+`),
+      stdoutTruncated: true,
+    },
+    runs: 2,
+  },
 ])("keeps a glab decline only when glab answered in full: $name", (scenario) =>
   Effect.gen(function* () {
     const commands: Array<string> = [];

@@ -358,7 +358,9 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
               context,
               auth,
             });
-            return { provider: provider ?? null, settled: provider !== undefined };
+            // Output cut at the limit may have lost the part that answers for this remote.
+            const complete = !auth.stdoutTruncated && !auth.stderrTruncated;
+            return { provider: provider ?? null, settled: provider !== undefined && complete };
           }),
           // A CLI that is not installed answers no for every checkout.
           Effect.catchIf(isMissingExecutable, () =>
