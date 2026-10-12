@@ -75,7 +75,6 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
-  useReducer,
   useRef,
   useState,
   type KeyboardEvent,
@@ -89,7 +88,13 @@ import { useDesktopLocalBootstraps } from "../connection/useDesktopLocalBootstra
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
-import { useClientSettings } from "../hooks/useSettings";
+import {
+  queueWorkspaceFocusFromPalette,
+  restoreWorkspaceFocusFromPalette,
+  requestWorkspaceFocus,
+  SETTINGS_SEARCH_FOCUS_EVENT,
+} from "../lib/workspaceFocus";
+import { useClientSettings, persistClientSettingsPatch } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
@@ -177,9 +182,9 @@ import {
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
   RECENT_THREAD_LIMIT,
-  reduceCommandPaletteUiState,
   type SearchOverlayMode,
 } from "./CommandPalette.logic";
+import { useCommandPaletteState } from "./CommandPalette.state";
 import { orderItemsByPreferredIds, sortLogicalProjectsForSidebar } from "./Sidebar.logic";
 import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteContent } from "./CommandPaletteContent";
@@ -472,19 +477,15 @@ function projectFavicon(project: Project) {
 
 export function CommandPalette({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
-    open: false,
-    mode: "command",
-    openIntent: null,
-  });
-  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), []);
+  const { state, dispatch, getReturnFocus } = useCommandPaletteState();
+  const setOpen = useCallback((open: boolean) => dispatch({ _tag: "SetOpen", open }), [dispatch]);
   const toggleMode = useCallback(
     (mode: SearchOverlayMode) => dispatch({ _tag: "ToggleMode", mode }),
-    [],
+    [dispatch],
   );
-  const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), []);
-  const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), []);
-  const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
+  const openAddProject = useCallback(() => dispatch({ _tag: "OpenAddProject" }), [dispatch]);
+  const openNewThreadIn = useCallback(() => dispatch({ _tag: "OpenNewThreadIn" }), [dispatch]);
+  const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), [dispatch]);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { theme, themeHalves, resolvedTheme, appearanceMode, setAppearanceMode } = useTheme();
   const composerHandleRef = useRef<ChatComposerHandle | null>(null);
@@ -568,7 +569,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         event.preventDefault();
         event.stopPropagation();
         setOpen(false);
-        void navigate({ to: "/usage" });
+        void navigate({ to: "/usage" }).then(() => requestWorkspaceFocus({ area: "usage" }));
         return;
       }
       const mode = overlayModeForCommand(command);
@@ -583,6 +584,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [
     appearanceMode,
+    dispatch,
     keybindings,
     navigate,
     previewOpen,
@@ -612,7 +614,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen(true);
         }
       }),
-    [openAddProject, openNewThreadIn, setOpen],
+    [dispatch, openAddProject, openNewThreadIn, setOpen],
   );
 
   return (
@@ -633,6 +635,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           {children}
         </div>
         <CommandPaletteDialog
+          getReturnFocus={getReturnFocus}
           mode={state.mode}
           openIntent={state.openIntent}
           setOpen={setOpen}
@@ -645,6 +648,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
 }
 
 function CommandPaletteDialog(props: {
+  readonly getReturnFocus: () => HTMLElement | boolean;
   readonly mode: SearchOverlayMode;
   readonly openIntent: CommandPaletteOpenIntent | null;
   readonly setOpen: (open: boolean) => void;
@@ -667,7 +671,11 @@ function CommandPaletteDialog(props: {
       data-palette-mode={props.mode}
       data-testid="command-palette"
       finalFocus={() => {
-        composerHandleRef?.current?.focusAtEnd();
+        if (restoreWorkspaceFocusFromPalette()) return false;
+        if (props.getReturnFocus() === false) return false;
+        const composer = composerHandleRef?.current;
+        if (!composer) return props.getReturnFocus();
+        composer.focusAtEnd();
         return false;
       }}
       onBackdropPointerDown={() => {
@@ -2243,6 +2251,7 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({ to: "/pull-requests", search: readPullRequestListPreferences() });
+        requestWorkspaceFocus({ area: "pull-requests" });
       },
     });
   }
@@ -2256,8 +2265,35 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+      requestWorkspaceFocus({ area: "usage" });
     },
   });
+
+  for (const mode of ["auto", "on", "off"] as const) {
+    const title = `Accessible mode: ${mode === "auto" ? "Auto" : mode === "on" ? "On" : "Off"}${clientSettings.accessibilitySupport === mode ? " (current)" : ""}`;
+    actionItems.push({
+      kind: "action",
+      value: `action:accessible-mode:${mode}`,
+      title,
+      searchTerms: [title, "accessibility", "screen reader", "navigation hints"],
+      icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+      run: async () => persistClientSettingsPatch({ accessibilitySupport: mode }),
+    });
+  }
+  for (const direction of [1, -1] as const) {
+    const title = direction === 1 ? "Focus Next Workspace Area" : "Focus Previous Workspace Area";
+    actionItems.push({
+      kind: "action",
+      value: `action:workspace-focus:${direction}`,
+      title,
+      searchTerms: [title, "accessibility", "navigation", "focus", "F6"],
+      icon: <MonitorIcon className={ITEM_ICON_CLASS} />,
+      shortcutCommand: direction === 1 ? "workspace.focusNext" : "workspace.focusPrevious",
+      run: async () => {
+        queueWorkspaceFocusFromPalette(direction);
+      },
+    });
+  }
 
   actionItems.push({
     kind: "action",
@@ -2267,6 +2303,7 @@ function OpenCommandPaletteDialog(props: {
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/settings" });
+      window.dispatchEvent(new Event(SETTINGS_SEARCH_FOCUS_EVENT));
     },
   });
 

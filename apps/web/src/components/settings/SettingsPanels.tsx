@@ -1,3 +1,4 @@
+import { AccessibilitySettings } from "./AccessibilitySettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
@@ -2261,6 +2262,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <AccessibilitySettings />
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow

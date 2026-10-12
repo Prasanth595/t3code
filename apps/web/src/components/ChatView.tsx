@@ -1,3 +1,7 @@
+import { useWorkspaceArea } from "./WorkspaceNavigation";
+import { useWorkspacePanelFocus } from "../hooks/useWorkspacePanelFocus";
+import { useWorkspaceFocusRecovery } from "../hooks/useWorkspaceFocusRecovery";
+import { requestWorkspaceContentFocus, requestWorkspaceFocus } from "../lib/workspaceFocus";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -1970,6 +1974,8 @@ export default function ChatView(props: ChatViewProps) {
     () => legendListRef.current?.getScrollableNode() ?? null,
     [],
   );
+  const conversationArea = useWorkspaceArea("conversation", 1, "Conversation");
+  const composerArea = useWorkspaceArea("composer", 2, "Message input");
   const [composerOverlayElement, setComposerOverlayElement] = useState<HTMLDivElement | null>(null);
   // Space the timeline keeps clear above its end. Tracks the overlay while the
   // composer is expanded and holds that height while it rests, so the resting
@@ -2358,6 +2364,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const previewPanelOpen = activeRightPanelKind === "preview" && browserAvailable;
   const rightPanelOpen = rightPanelState.isOpen;
+  useWorkspacePanelFocus(activeThreadRef);
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
     usePanelAnimationSettings();
   const activeTerminalDrawerPresence = usePanelPresence(
@@ -2395,6 +2402,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
+  useWorkspaceFocusRecovery("[data-chat-column-maximized-away]", rightPanelMaximized, "panel");
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
@@ -6054,8 +6062,13 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, closePreviewPanel, rightPanelOpen]);
   const toggleThreadPanel = useCallback(() => {
     if (!activeThreadRef) return;
+    if (threadPanelPresentation === "inline") {
+      if (!threadPanelOpen) requestWorkspaceFocus({ area: "details" });
+      else if (document.activeElement?.closest('[data-workspace-area="details"]'))
+        requestWorkspaceContentFocus();
+    }
     useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
-  }, [activeThreadRef, threadPanelPresentation]);
+  }, [activeThreadRef, threadPanelPresentation, threadPanelOpen]);
   // A thread started for a link the OS opened shows its browser maximized, like a browser window.
   useEffect(() => {
     if (!canMaximizeRightPanel) return;
@@ -6065,10 +6078,11 @@ export default function ChatView(props: ChatViewProps) {
   }, [canMaximizeRightPanel, routeThreadKey, routeThreadRef]);
   const toggleRightPanelMaximized = useCallback(() => {
     if (!canMaximizeRightPanel) return;
+    if (!rightPanelMaximized) requestWorkspaceFocus({ area: "panel" });
     setMaximizedRightPanelThreadKey((threadKey) =>
       threadKey === routeThreadKey ? null : routeThreadKey,
     );
-  }, [canMaximizeRightPanel, routeThreadKey]);
+  }, [canMaximizeRightPanel, routeThreadKey, rightPanelMaximized]);
   const cleanupRightPanelSurfaces = useCallback(
     (surfaces: readonly RightPanelSurface[]) => {
       if (!activeThreadRef) return;
@@ -6858,8 +6872,8 @@ export default function ChatView(props: ChatViewProps) {
     };
   }, [activeThread?.id, focusComposer, terminalUiState.terminalOpen]);
 
-  // Tabbing back into the app lands focus wherever it last was, often the right panel or the
-  // body. Put it in the composer unless something that takes typing already holds it. The
+  // Tabbing back into the app lands focus wherever it last was. Put it in the composer when
+  // no workspace area or input already holds it, preserving deliberate keyboard navigation. The
   // drawer terminal owns keyboard input while it is open, so it opts out here; a right panel
   // terminal is a surface and is recognized by the predicate instead. Mobile is left alone so
   // returning to the app does not raise the keyboard.
@@ -11323,6 +11337,8 @@ export default function ChatView(props: ChatViewProps) {
           rightPanelMaximized ? "w-0 flex-none" : "flex-1",
         )}
         data-chat-column-maximized-away={rightPanelMaximized ? "true" : "false"}
+        inert={rightPanelMaximized}
+        aria-hidden={rightPanelMaximized ? true : undefined}
       >
         {/* Top bar */}
         <header
@@ -11424,7 +11440,10 @@ export default function ChatView(props: ChatViewProps) {
               />
             </div>
             {/* Messages Wrapper */}
-            <div className="relative flex min-h-0 flex-1 flex-col bg-background">
+            <div
+              {...conversationArea}
+              className="relative flex min-h-0 flex-1 flex-col bg-background outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+            >
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
@@ -11554,6 +11573,7 @@ export default function ChatView(props: ChatViewProps) {
 
             {/* Input bar — centered for an empty draft, docked after sending. */}
             <div
+              {...composerArea}
               ref={setComposerOverlayElement}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"

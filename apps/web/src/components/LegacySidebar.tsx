@@ -1,3 +1,4 @@
+import { useSidebarTree } from "../hooks/useSidebarTree";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { Spinner } from "~/components/ui/spinner";
@@ -323,6 +324,7 @@ function buildThreadJumpLabelMap(input: {
 }
 
 interface SidebarThreadRowProps {
+  navigationParent?: string | undefined;
   thread: SidebarThreadSummary;
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
@@ -559,6 +561,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   );
   const handleRowKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
+      if (event.target !== event.currentTarget) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       navigateToThread(threadRef);
@@ -738,8 +741,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       {/* A thread row is the legacy sidebar's own control (a focusable div that hosts nested
           links and buttons), not a SidebarMenuSubButton, so it owns its look here. */}
       <div
-        role="button"
-        tabIndex={0}
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={threadKey}
+        data-sidebar-parent={props.navigationParent}
+        aria-label={thread.title}
+        aria-current={isActive ? "page" : undefined}
         data-active={isActive}
         data-slot="sidebar-menu-sub-button"
         data-sidebar="menu-sub-button"
@@ -1076,6 +1083,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
 
   return (
     <SidebarMenuSub
+      role="presentation"
       ref={attachThreadListAutoAnimateRef}
       className="mx-0.5 my-0 w-full translate-x-0 overflow-hidden sm:mx-1"
     >
@@ -1096,6 +1104,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
             <SidebarThreadRow
               key={threadKey}
               thread={thread}
+              navigationParent={projectExpanded ? `project:${projectKey}` : undefined}
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
               openPullRequestsInRightPanel={openPullRequestsInRightPanel}
@@ -1128,6 +1137,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarMenuSubItem className="w-full">
           <SidebarMenuSubButton
             render={showMoreButtonRender}
+            role="treeitem"
+            tabIndex={-1}
+            data-sidebar-row={`project:${projectKey}:more`}
+            data-sidebar-parent={`project:${projectKey}`}
             data-thread-selection-safe
             size="sm"
             onClick={() => {
@@ -1145,6 +1158,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarMenuSubItem className="w-full">
           <SidebarMenuSubButton
             render={showLessButtonRender}
+            role="treeitem"
+            tabIndex={-1}
+            data-sidebar-row={`project:${projectKey}:less`}
+            data-sidebar-parent={`project:${projectKey}`}
             data-thread-selection-safe
             size="sm"
             onClick={() => {
@@ -2457,6 +2474,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           className={isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : undefined}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+          role="treeitem"
+          tabIndex={-1}
+          data-sidebar-row={`project:${project.projectKey}`}
+          aria-expanded={projectExpanded}
+          aria-label={project.displayName}
           onPointerDownCapture={handleProjectButtonPointerDownCapture}
           onClick={handleProjectButtonClick}
           onKeyDown={handleProjectButtonKeyDown}
@@ -2540,6 +2562,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
+                  data-sidebar-action-for={`project:${project.projectKey}`}
                   data-testid="new-thread-button"
                   className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                   onClick={handleCreateThreadClick}
@@ -3047,6 +3070,18 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectsLength,
   } = props;
 
+  const { ref: attachSidebarTree, ...sidebarTree } = useSidebarTree();
+  const attachTreeRef = useCallback(
+    (node: HTMLUListElement | null) => {
+      attachProjectListAutoAnimateRef(node);
+      const dispose = attachSidebarTree(node);
+      return () => {
+        dispose?.();
+        attachProjectListAutoAnimateRef(null);
+      };
+    },
+    [attachProjectListAutoAnimateRef, attachSidebarTree],
+  );
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
       updateSettings({ sidebarProjectSortOrder: sortOrder });
@@ -3150,7 +3185,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             onDragEnd={handleProjectDragEnd}
             onDragCancel={handleProjectDragCancel}
           >
-            <SidebarMenu>
+            <SidebarMenu {...sidebarTree} ref={attachSidebarTree}>
               <SortableContext
                 items={sortedProjects.map((project) => project.projectKey)}
                 strategy={verticalListSortingStrategy}
@@ -3189,7 +3224,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             </SidebarMenu>
           </DndContext>
         ) : (
-          <SidebarMenu ref={attachProjectListAutoAnimateRef}>
+          <SidebarMenu {...sidebarTree} ref={attachTreeRef}>
             {sortedProjects.map((project) => (
               <SidebarProjectListRow
                 key={project.projectKey}

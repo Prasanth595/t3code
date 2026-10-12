@@ -1,3 +1,4 @@
+import { useSidebarTree } from "../hooks/useSidebarTree";
 import { type EnvironmentId } from "@t3tools/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
@@ -811,6 +812,9 @@ function SidebarSectionHeader(props: {
       className={cn("mx-0.5 h-8", props.className)}
     >
       <CollapsibleSectionHeader
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={`shelf:${shelf}`}
         onClick={props.toggle.onToggle}
         expanded={props.toggle.expanded}
         tone={
@@ -900,8 +904,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   return (
     <li className="list-none py-0.5">
       <div
-        role="button"
-        tabIndex={0}
+        role="treeitem"
+        tabIndex={-1}
+        data-sidebar-row={`draft:${draftId}`}
         aria-label={accessibility.label}
         aria-current={accessibility.current}
         data-testid="sidebar-draft-row"
@@ -1105,6 +1110,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
+  navigationParent?: string | undefined;
   // Settled rows un-settle, snoozed rows wake, and cards settle.
   variantAction: SidebarSweepAction;
   // False on environments whose server predates thread.settle/unsettle:
@@ -1806,8 +1812,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             render={
               <div
                 ref={rowRef}
-                role="button"
-                tabIndex={0}
+                role="treeitem"
+                tabIndex={-1}
+                data-sidebar-row={threadKey}
+                data-sidebar-parent={props.navigationParent}
                 aria-label={accessibility.label}
                 aria-current={accessibility.current}
                 data-testid="sidebar-row-slim"
@@ -1971,8 +1979,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           render={
             <div
               ref={rowRef}
-              role="button"
-              tabIndex={0}
+              role="treeitem"
+              tabIndex={-1}
+              data-sidebar-row={threadKey}
+              data-sidebar-parent={props.navigationParent}
               aria-label={accessibility.label}
               aria-current={accessibility.current}
               data-testid="sidebar-row-card"
@@ -2383,6 +2393,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
+  const { ref: attachSidebarTree, ...sidebarTree } = useSidebarTree();
   const projects = useProjects();
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
@@ -3454,6 +3465,18 @@ export default function Sidebar() {
     listMotionRef.current = node === null ? null : createSidebarListMotion(node);
     listMotionRef.current?.update(false);
   }, []);
+
+  const attachTreeRef = useCallback(
+    (node: HTMLUListElement | null) => {
+      attachListMotionRef(node);
+      const dispose = attachSidebarTree(node);
+      return () => {
+        dispose?.();
+        attachListMotionRef(null);
+      };
+    },
+    [attachListMotionRef, attachSidebarTree],
+  );
 
   // Hold the chosen section and order until every key write arrives. This
   // also covers first-time ordering, which assigns keys to keyless neighbors.
@@ -5232,12 +5255,8 @@ export default function Sidebar() {
                 <SidebarDragLifecycle onUnmount={cancelThreadDrag} />
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
-                    ref={attachListMotionRef}
-                    // VoiceOver treats an exposed list as an interaction boundary,
-                    // which hides its rows from ordinary linear navigation. A
-                    // presentational list also makes its implicit listitems
-                    // presentational while preserving every descendant control.
-                    role="presentation"
+                    {...sidebarTree}
+                    ref={attachTreeRef}
                     className={cn(
                       "relative flex flex-col gap-px",
                       sidebarListItems.length > 0 && "flex-1",
@@ -5271,6 +5290,13 @@ export default function Sidebar() {
                             key={`${threadKey}:${rowVariant}`}
                             thread={thread}
                             variant={rowVariant}
+                            navigationParent={
+                              section === "working" ||
+                              section === "snoozed" ||
+                              section === "settled"
+                                ? `shelf:${section}`
+                                : undefined
+                            }
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
                               section === "snoozed"
@@ -5533,6 +5559,10 @@ export default function Sidebar() {
                       <li className="list-none">
                         <button
                           type="button"
+                          role="treeitem"
+                          tabIndex={-1}
+                          data-sidebar-row="settled:more"
+                          data-sidebar-parent="shelf:settled"
                           onClick={showMoreSettled}
                           className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground/55 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
                         >

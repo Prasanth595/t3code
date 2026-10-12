@@ -9,7 +9,9 @@ import {
 } from "react";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 
+import { WorkspaceNavigation, useWorkspaceArea } from "./WorkspaceNavigation";
 import { isElectron } from "../env";
+import { SETTINGS_SEARCH_FOCUS_EVENT } from "../lib/workspaceFocus";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
 import {
   isRichTextBoldShortcut,
@@ -224,6 +226,7 @@ function ProjectProjectionRetention() {
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
+  const sidebarArea = useWorkspaceArea("sidebar", 0, "Threads");
   const navigate = useNavigate();
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const { active: panelAnimationsActive, durationMs: panelAnimationDurationMs } =
@@ -295,7 +298,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         const isSettingsRoute = /^\/settings(\/|$)/.test(pathname);
         if (!isSettingsRoute) {
           void navigate({ to: "/settings" });
-        }
+        } else window.dispatchEvent(new Event(SETTINGS_SEARCH_FOCUS_EVENT));
       }
     });
 
@@ -318,6 +321,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
           side="left"
           collapsible="offcanvas"
           data-app-sidebar=""
+          {...sidebarArea}
           role="navigation"
           aria-label={isOnSettings ? "Settings" : "Threads"}
           resizable={{
@@ -345,6 +349,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         {children}
         <SidebarControl />
         <NavigationHistoryShortcuts />
+        <WorkspaceNavigation />
         <MainAppLocationTracker />
       </SidebarProvider>
     </PanelAnimationSuppressionProvider>
