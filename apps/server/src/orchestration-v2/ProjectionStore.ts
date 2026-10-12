@@ -5619,8 +5619,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   threadId === undefined ? sql`` : sql` AND stream_id = ${threadId}`
                 }
               `;
-              const rows = yield* sql<PayloadRow>`
-                SELECT payload_json FROM orchestration_v2_projection_threads
+              const rows = yield* sql<PayloadRow & { readonly thread_id: string }>`
+                SELECT thread_id, payload_json FROM orchestration_v2_projection_threads
                 WHERE deleted_at IS NULL
                   AND json_extract(payload_json, '$.archivedAt') IS NULL${
                     threadId === undefined ? sql`` : sql` AND thread_id = ${threadId}`
@@ -5635,8 +5635,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }),
           )
           .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectionStoreReadError({
+                  threadId: threadId ?? ThreadId.make("thread:pull-request-discovery"),
+                  cause,
+                }),
+            ),
             Effect.flatMap(({ rows, snapshotSequence }) =>
-              Effect.forEach(rows, (row) => decodeThreadPayload(row.payload_json)).pipe(
+              Effect.forEach(rows, (row) =>
+                decodeThreadPayload(row.payload_json).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectionStoreReadError({
+                        threadId: ThreadId.make(row.thread_id),
+                        cause,
+                      }),
+                  ),
+                ),
+              ).pipe(
                 Effect.map((threads) => ({
                   snapshotSequence,
                   threads: threads.map((thread) => ({
@@ -5646,7 +5663,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 })),
               ),
             ),
-            Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
           );
 
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] = (

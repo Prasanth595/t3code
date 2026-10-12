@@ -157,3 +157,42 @@ it.effect("SQL discovery reads no run, message, item or fork history", () =>
     assert.isTrue(statements.some((query) => query.includes("MAX(sequence)")));
   }).pipe(Effect.provide(sqlLayer)),
 );
+
+it.effect("SQL discovery identifies the thread whose metadata cannot decode", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const id = yield* createThread("malformed-metadata");
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{}' WHERE thread_id = ${id}`;
+    const error = yield* Effect.flip(
+      store.getPullRequestDiscoverySnapshot({ unsettledOnly: false }),
+    );
+    assert.equal(error._tag, "ProjectionStoreReadError");
+    if (error._tag === "ProjectionStoreReadError") {
+      assert.equal(error.threadId, id);
+      assert.isDefined(error.cause);
+    }
+  }).pipe(Effect.provide(sqlLayer)),
+);
+
+it.effect("SQL discovery reports read failures with single-thread or sweep context", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const id = yield* createThread("read-failure");
+    yield* sql`DROP TABLE orchestration_v2_projection_threads`;
+    for (const threadId of [undefined, id]) {
+      const error = yield* Effect.flip(
+        store.getPullRequestDiscoverySnapshot({
+          ...(threadId === undefined ? {} : { threadId }),
+          unsettledOnly: false,
+        }),
+      );
+      assert.equal(error._tag, "ProjectionStoreReadError");
+      if (error._tag === "ProjectionStoreReadError") {
+        assert.equal(error.threadId, threadId ?? ThreadId.make("thread:pull-request-discovery"));
+        assert.isDefined(error.cause);
+      }
+    }
+  }).pipe(Effect.provide(sqlLayer)),
+);
