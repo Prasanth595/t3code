@@ -368,6 +368,7 @@ export const make = Effect.gen(function* () {
               );
         const detail: ProviderChangeRequestDetail = {
           ...toChangeRequest(pullRequest),
+          ...(pullRequest.headSha === undefined ? {} : { headSha: pullRequest.headSha }),
           body: pullRequest.body,
           changedFiles,
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
