@@ -793,6 +793,11 @@ function OpenCommandPaletteDialog(props: {
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
   const [cloneLookupError, setCloneLookupError] = useState<string | null>(null);
+  const invalidatePendingCloneLookup = useCallback(() => {
+    cloneLookupGeneration.current += 1;
+    setIsRemoteProjectLookingUp(false);
+    setCloneLookupError(null);
+  }, []);
   const projectGroupingSettings = useMemo(
     () => selectProjectGroupingSettings(clientSettings),
     [clientSettings],
@@ -1435,8 +1440,8 @@ function OpenCommandPaletteDialog(props: {
 
   function popView(): void {
     browseNavigation.invalidate();
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
-    setCloneLookupError(null);
     setNewProjectFlow(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
@@ -1452,7 +1457,7 @@ function OpenCommandPaletteDialog(props: {
   function handleQueryChange(nextQuery: string): void {
     browseNavigation.invalidate();
     clearTypedHighlight();
-    setCloneLookupError(null);
+    invalidatePendingCloneLookup();
     setQuery(nextQuery);
     if (nextQuery === "" && currentView?.initialQuery) {
       popView();
@@ -1477,6 +1482,7 @@ function OpenCommandPaletteDialog(props: {
             : Promise.resolve(),
         () => {
           setAddProjectEnvironmentId(environmentId);
+          invalidatePendingCloneLookup();
           setAddProjectCloneFlow(null);
           pushPaletteView(view);
         },
@@ -1488,13 +1494,14 @@ function OpenCommandPaletteDialog(props: {
       getBrowseCwdForEnvironment,
       prefetchBrowsePath,
       pushPaletteView,
+      invalidatePendingCloneLookup,
     ],
   );
 
   const startAddProjectClone = useCallback(
     (environmentId: EnvironmentId, source: AddProjectRemoteSource): void => {
       setAddProjectEnvironmentId(environmentId);
-      setCloneLookupError(null);
+      invalidatePendingCloneLookup();
       setAddProjectCloneFlow({ step: "repository", environmentId, source });
       pushPaletteView({
         addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
@@ -1502,7 +1509,7 @@ function OpenCommandPaletteDialog(props: {
         initialQuery: "",
       });
     },
-    [pushPaletteView],
+    [invalidatePendingCloneLookup, pushPaletteView],
   );
 
   /** Folder that holds an environment's name-only projects, or null when it has none. */
@@ -1516,6 +1523,7 @@ function OpenCommandPaletteDialog(props: {
   const startNewProject = useCallback(
     (environmentId: EnvironmentId, sourcesEnvironmentId: EnvironmentId | null): void => {
       setAddProjectEnvironmentId(environmentId);
+      invalidatePendingCloneLookup();
       setAddProjectCloneFlow(null);
       setNewProjectFlow({ environmentId, sourcesEnvironmentId });
       setNewProjectPublishes(false);
@@ -1525,7 +1533,7 @@ function OpenCommandPaletteDialog(props: {
         groups: [],
       });
     },
-    [pushPaletteView],
+    [invalidatePendingCloneLookup, pushPaletteView],
   );
 
   const openSourceControlSettings = useCallback(() => {
@@ -1663,6 +1671,7 @@ function OpenCommandPaletteDialog(props: {
         return;
       }
       setAddProjectEnvironmentId(environmentId);
+      invalidatePendingCloneLookup();
       setAddProjectCloneFlow(null);
       pushPaletteView({
         addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
@@ -1678,6 +1687,7 @@ function OpenCommandPaletteDialog(props: {
       browseEnvironmentId,
       buildAddProjectSourceGroups,
       environments,
+      invalidatePendingCloneLookup,
       pushPaletteView,
       sourceControlDiscovery.data,
     ],
@@ -1764,16 +1774,14 @@ function OpenCommandPaletteDialog(props: {
   useLayoutEffect(() => {
     if (openIntent?.kind !== "search") return;
     browseNavigation.invalidate();
-    cloneLookupGeneration.current += 1;
-    setIsRemoteProjectLookingUp(false);
-    setCloneLookupError(null);
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     setViewStack([]);
     setLinkedThreadSearch(openIntent);
     setQuery(openIntent.query);
     clearOpenIntent();
-  }, [browseNavigation, clearOpenIntent, openIntent]);
+  }, [browseNavigation, clearOpenIntent, invalidatePendingCloneLookup, openIntent]);
 
   useLayoutEffect(() => {
     if (openIntent?.kind !== "add-project") {
@@ -1789,6 +1797,7 @@ function OpenCommandPaletteDialog(props: {
     }
     clearOpenIntent();
     browseNavigation.invalidate();
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     setViewStack([]);
@@ -1798,7 +1807,14 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
-  }, [clearOpenIntent, browseNavigation, openIntent, projectThreadItems, pushPaletteView]);
+  }, [
+    clearOpenIntent,
+    browseNavigation,
+    invalidatePendingCloneLookup,
+    openIntent,
+    projectThreadItems,
+    pushPaletteView,
+  ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -2124,9 +2140,7 @@ function OpenCommandPaletteDialog(props: {
     if (openIntent?.kind !== "change-theme") return;
     clearOpenIntent();
     browseNavigation.invalidate();
-    cloneLookupGeneration.current += 1;
-    setIsRemoteProjectLookingUp(false);
-    setCloneLookupError(null);
+    invalidatePendingCloneLookup();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
     setViewStack([]);
@@ -2134,7 +2148,13 @@ function OpenCommandPaletteDialog(props: {
       addonIcon: <PaletteIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "themes", label: "Change theme", items: [] }],
     });
-  }, [browseNavigation, clearOpenIntent, openIntent, pushPaletteView]);
+  }, [
+    browseNavigation,
+    clearOpenIntent,
+    invalidatePendingCloneLookup,
+    openIntent,
+    pushPaletteView,
+  ]);
 
   actionItems.push({
     kind: "action",

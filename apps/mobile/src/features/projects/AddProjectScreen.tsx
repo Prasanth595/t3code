@@ -783,11 +783,20 @@ export function AddProjectRepositoryScreen(props: {
   const [repositoryInput, setRepositoryInput] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lookupGeneration = useRef(0);
+
+  const updateRepositoryInput = useCallback((nextInput: string) => {
+    lookupGeneration.current += 1;
+    setIsSubmitting(false);
+    setError(null);
+    setRepositoryInput(nextInput);
+  }, []);
 
   const lookupRepository = useCallback(async () => {
     if (!environment || repositoryInput.trim().length === 0 || isSubmitting) return;
     setError(null);
     setIsSubmitting(true);
+    const startedGeneration = ++lookupGeneration.current;
     const provider = addProjectRemoteSourceProvider(source);
     if (!provider) {
       const remoteUrl = normalizePastedCloneUrl(repositoryInput);
@@ -811,6 +820,8 @@ export function AddProjectRepositoryScreen(props: {
         repository: repositoryInput.trim(),
       },
     });
+    if (startedGeneration !== lookupGeneration.current) return;
+    setIsSubmitting(false);
     if (AsyncResult.isFailure(result)) {
       setError(sourceControlRepositoryErrorMessage(Cause.squash(result.cause)));
     } else {
@@ -825,7 +836,6 @@ export function AddProjectRepositoryScreen(props: {
         }),
       );
     }
-    setIsSubmitting(false);
   }, [environment, isSubmitting, lookupRepositoryQuery, repositoryInput, navigation, source]);
 
   return (
@@ -836,7 +846,7 @@ export function AddProjectRepositoryScreen(props: {
           <TextInput
             className="h-12 min-h-12 rounded-[24px] px-4 py-0 text-base leading-snug"
             value={repositoryInput}
-            onChangeText={setRepositoryInput}
+            onChangeText={updateRepositoryInput}
             autoCapitalize="none"
             autoCorrect={false}
             placeholder={
