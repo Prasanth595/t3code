@@ -18,8 +18,8 @@ import {
 } from "@t3tools/source-control-core/server/discovery";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
-/** What `glab auth status` prints when no host is logged in. */
-const NO_GITLAB_LOGIN_PATTERN = /no gitlab instances have been authenticated with glab/iu;
+/** What `glab auth status` prints when no host is logged in; older glab says "instance has". */
+const NO_GITLAB_LOGIN_PATTERN = /no gitlab instances? (?:has|have) been authenticated with glab/iu;
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
   Schema.fromJsonString(

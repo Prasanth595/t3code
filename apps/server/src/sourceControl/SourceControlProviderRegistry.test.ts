@@ -812,6 +812,40 @@ it.effect("does not keep a decline for a host glab could not confirm", () =>
   }),
 );
 
+it.effect.each([
+  { name: "no login, in current glab's words", output: noGitLabLogin, runs: 1 },
+  {
+    name: "no login, in older glab's words",
+    output: processOutput("", {
+      stderr:
+        "No GitLab instance has been authenticated with glab. Run `glab auth login` to authenticate.\n",
+      exitCode: ChildProcessSpawner.ExitCode(1),
+    }),
+    runs: 1,
+  },
+])("keeps a glab decline only when glab answered in full: $name", (scenario) =>
+  Effect.gen(function* () {
+    const commands: Array<string> = [];
+    const registry = yield* makeRegistry({
+      remotes: [],
+      process: {
+        run: ({ command }) => {
+          commands.push(command);
+          return Effect.succeed(scenario.output);
+        },
+      },
+    });
+    for (const cwd of ["/a", "/b"]) {
+      const handle = yield* registry.resolveHandle({
+        cwd,
+        context: unknownRemote("https://git.example.internal/team/a.git"),
+      });
+      assert.strictEqual(handle.provider.kind, "unknown");
+    }
+    assert.strictEqual(commands.length, scenario.runs);
+  }),
+);
+
 it.effect("keeps Forgejo mounts on one host apart", () =>
   Effect.gen(function* () {
     const logins: Array<string> = [];
