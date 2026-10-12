@@ -209,6 +209,47 @@ describe("AcpRegistrySupport", () => {
         platformTarget: "darwin-aarch64",
       }),
     ).toBeUndefined();
+    expect(
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
+        agent: makeAgent({
+          binary: {
+            "windows-x86_64": {
+              archive: archiveUrl,
+              cmd: "./bin/example-agent-x64.exe",
+              args: ["acp"],
+            },
+          },
+        }),
+        preference: "auto",
+        platformTarget: "windows-aarch64",
+      }),
+    ).toMatchObject({
+      kind: "binary",
+      binaryTarget: { cmd: "./bin/example-agent-x64.exe" },
+    });
+    expect(
+      AcpRegistrySupport.resolveAcpRegistryDistribution({
+        agent: makeAgent({
+          binary: {
+            "windows-aarch64": {
+              archive: archiveUrl,
+              cmd: "./bin/example-agent-arm64.exe",
+              args: ["acp"],
+            },
+            "windows-x86_64": {
+              archive: archiveUrl,
+              cmd: "./bin/example-agent-x64.exe",
+              args: ["acp"],
+            },
+          },
+        }),
+        preference: "auto",
+        platformTarget: "windows-aarch64",
+      }),
+    ).toMatchObject({
+      kind: "binary",
+      binaryTarget: { cmd: "./bin/example-agent-arm64.exe" },
+    });
   });
 
   it.effect("resolves a local command on the selected environment without the registry", () => {
