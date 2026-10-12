@@ -36,6 +36,7 @@ import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textG
 import { ProviderDriverError } from "@t3tools/provider-core/server/errors";
 import { openCodeUsageReader, type OpenCodeUsageReaderEnv } from "./usage.ts";
 import { readOpenCodeGoUsageLimits } from "./usageLimits.ts";
+import { loadOpenCode2Catalog } from "./openCode2Catalog.ts";
 import {
   checkOpenCodeProviderStatus,
   loadOpenCode2Workspace,
@@ -169,6 +170,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateThreadTitle(input),
         v2: v2.generateThreadTitle(input),
       }),
+    generateReviewGuide: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.generateReviewGuide(input),
+        v2: v2.generateReviewGuide(input),
+      }),
   };
 }
 
@@ -206,7 +212,7 @@ export const OpenCodeDriver: ProviderDriver<
       const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const crypto = yield* Crypto.Crypto;
       const host = yield* ProviderHost.ProviderHost;
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -305,18 +311,8 @@ export const OpenCodeDriver: ProviderDriver<
         ),
       });
       const loadOpenCode2Models = yield* makeOpenCode2ModelLoader(
-        openCode2Server.withConnection((connection) =>
-          connection.client.model.list({ location: { directory: host.paths.cwd } }).pipe(
-            Effect.map((models) => models.data),
-            Effect.mapError(
-              (cause) =>
-                new OpenCodeRuntime.OpenCodeRuntimeError({
-                  operation: "model.list",
-                  detail: "The OpenCode server could not list its models.",
-                  cause,
-                }),
-            ),
-          ),
+        openCode2Server.withConnection(({ client }) =>
+          loadOpenCode2Catalog(client, host.paths.cwd),
         ),
       );
       // A 2.x server lists skills and commands per directory, so one server
