@@ -1,3 +1,56 @@
+# Yarden-zamir fork of T3 Code
+
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Every fork behavior in the app is a setting, and each setting is off by default. Details and setup: [docs/fork.md](docs/fork.md).
+
+## Fork features
+
+**Remote access**
+
+- **Cloudflare Access login:** the server accepts the Cloudflare Access JWT as the owner login (`cloudflareAccessTeamDomain`, `cloudflareAccessAud`, `cloudflareAccessSubjects`).
+- **Request headers per environment:** a saved environment sends its own headers, for example a Cloudflare Access service token. Edit them in Settings > Connections.
+- **Tunnel pairing:** a desktop server that listens on loopback makes pairing links with its tunnel URL (`tunnelPairingEnabled`, `tunnelPairingUrl`).
+- **Trusted sibling environments:** trusted browser origins get credentialed CORS and cookies, so one browser page pairs the other hosts (`trustedBrowserOrigins`).
+
+**Updates and releases**
+
+- **Fork releases:** signed nightly desktop builds with a self-made certificate. A release builds when the app shell changes, and once a day.
+- **Live server updates:** the desktop app runs its server and web client from a live folder. The update button offers a new main commit in blue, and only the server restarts (`T3CODE_DESKTOP_LIVE_SERVER_DIR`).
+- **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
+- **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`).
+- **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
+- **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.
+- **VPS deploy:** the VPS follows fork main and switches only when no agent runs.
+
+**Agents**
+
+- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message. Subagents get their own message (`recoverInterruptedTurns`).
+- **Background work details:** background work notifications name their tasks and output files, and a popover shows the details with links (`backgroundWorkDetails`).
+- **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).
+- **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
+
+**Scripts and terminal**
+
+- **Global scripts:** scripts for every project, pinned script buttons, and a run in background option (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
+- **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`, `confirmTerminalClose`).
+
+**Themes and look**
+
+- **Theme style:** published themes can set shape, fonts, a canvas pattern and user CSS.
+- **Lightning icon:** the fork app uses its own icon on every nightly icon file.
+
+**Command line and MCP**
+
+- **`t3 tool`:** `t3 tool list`, `describe` and `call` run T3 MCP tools from the command line.
+- **Open workspace with a checkout:** the desktop open-workspace request accepts a checkout.
+
+## Fork fixes
+
+- Themes: border width and radius flow through Tailwind tokens. Composer backdrop, outline and banners follow the theme radius. One theme shadow for nested surfaces and for split buttons.
+- MCP: `schedule_task`, `t3_project_create` and `t3_project_update` read and write the project model, environment mode, auto-pull and actions through project settings.
+- Desktop updates: the updater never downgrades, so a local build stays installed. A live update never falls through to quit-and-install. The server recovers when quit-and-install does not quit.
+
+---
+
 # T3 Code
 
 T3 Code is an "agent harness control surface". It enables control of the agents on your machine with a best-in-class mobile app ([iOS](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824), [Android](https://play.google.com/store/apps/details?id=com.t3tools.t3code)), [web app](https://app.t3.codes) and [Electron-based desktop app](https://t3.codes).
