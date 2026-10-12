@@ -527,6 +527,7 @@ describe("environment query lifecycle", () => {
             suspendOnWaiting: true,
           }),
         ).toBe("recovered");
+        expect(observed.some(AsyncResult.isFailure)).toBe(false);
       }),
     ),
   );
