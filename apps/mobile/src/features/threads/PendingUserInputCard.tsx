@@ -1,6 +1,9 @@
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import type { SelectableMarkdownTextProps } from "../../native/SelectableMarkdownText.types";
+import type { DocumentAssetsEvent } from "react-native-enriched-markdown";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -28,7 +31,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
-import { markdownAccessibility } from "../../lib/markdownAccessibility";
+import { markdownAccessibilityLabel } from "../../lib/markdownAccessibility";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -103,54 +106,33 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
-  const questions = useMemo(
-    () =>
-      props.pendingUserInput.questions.map((question) => ({
-        question,
-        options: question.options.map((option) => {
-          const label = markdownAccessibility(option.label);
-          const description =
-            option.description && option.description !== option.label
-              ? markdownAccessibility(option.description)
-              : null;
-          const targets = [...label.targets, ...(description?.targets ?? [])];
-          return {
-            option,
-            label: [label.label, description?.label].filter(Boolean).join(". "),
-            targets: targets.map((target, index) => ({ ...target, name: `open-target-${index}` })),
-          };
-        }),
-      })),
-    [props.pendingUserInput.questions],
-  );
   const styles = useMarkdownPreviewStyles();
   const theme = useUniwindTheme();
+  const questionTextRole = useScaledTextRole("body");
+  const optionTextRole = useScaledTextRole("footnote");
   const textStyles = useMemo(() => {
     const base = styles.nativeTextStyle;
     return {
-      question: { ...base, color: theme["--color-foreground"], fontSize: 16, lineHeight: 22 },
+      question: { ...base, ...questionTextRole, color: theme["--color-foreground"] },
       label: {
         ...base,
         color: theme["--color-foreground-secondary"],
         fontFamily: base.boldFontFamily,
-        fontSize: 14,
-        lineHeight: 20,
+        ...optionTextRole,
       },
       selectedLabel: {
         ...base,
         color: theme["--color-foreground"],
         fontFamily: base.boldFontFamily,
-        fontSize: 14,
-        lineHeight: 20,
+        ...optionTextRole,
       },
       description: {
         ...base,
         color: theme["--color-foreground-muted"],
-        fontSize: 14,
-        lineHeight: 20,
+        ...optionTextRole,
       },
     };
-  }, [styles.nativeTextStyle, theme]);
+  }, [styles.nativeTextStyle, theme, questionTextRole, optionTextRole]);
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
   const onLinkPress = useThreadMarkdownLinkPress({
@@ -351,7 +333,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             run to continue.
           </Text>
         ) : null}
-        {questions.map(({ question, options }) => {
+        {props.pendingUserInput.questions.map((question) => {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
@@ -364,57 +346,30 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 textStyle={textStyles.question}
               />
               <View className="gap-2">
-                {options.map(({ option, label, targets }) => {
+                {question.options.map((option) => {
                   const optionValue = option.value ?? option.label.trim();
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
                     option.description !== option.label ? option.description : undefined;
                   return (
-                    <Pressable
-                      key={optionValue}
-                      accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
-                      accessibilityLabel={label}
-                      accessibilityState={{ checked: selected, disabled: responseDisabled }}
-                      accessibilityActions={targets.map((target) => ({
-                        name: target.name,
-                        label: `Open ${target.label}`,
-                      }))}
-                      onAccessibilityAction={(event) => {
-                        const target = targets.find(
-                          (target) => target.name === event.nativeEvent.actionName,
-                        );
-                        if (target) onLinkPress(target.href, target.kind === "image");
-                      }}
-                      // Pressability suppresses the answer tap after a handled long press.
-                      onLongPress={() => undefined}
+                    <PendingUserInputOption
+                      key={JSON.stringify([optionValue, option.label, description])}
+                      option={option}
+                      multiSelect={question.multiSelect}
+                      selected={selected}
                       disabled={responseDisabled}
-                      className={cn(
-                        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
-                        selected ? "border-primary bg-primary/10" : "border-border bg-input",
-                      )}
-                      onPress={() =>
+                      markdownProps={markdownProps}
+                      labelTextStyle={selected ? textStyles.selectedLabel : textStyles.label}
+                      descriptionTextStyle={textStyles.description}
+                      onOpenTarget={onLinkPress}
+                      onSelect={() =>
                         props.onSelectOption(
                           props.pendingUserInput.requestId,
                           question,
                           optionValue,
                         )
                       }
-                    >
-                      <View className="min-w-0 flex-1 gap-0.5">
-                        <SelectableMarkdownText
-                          {...markdownProps}
-                          markdown={option.label}
-                          textStyle={selected ? textStyles.selectedLabel : textStyles.label}
-                        />
-                        {description ? (
-                          <SelectableMarkdownText
-                            {...markdownProps}
-                            markdown={description}
-                            textStyle={textStyles.description}
-                          />
-                        ) : null}
-                      </View>
-                    </Pressable>
+                    />
                   );
                 })}
               </View>
@@ -482,5 +437,89 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
         card
       )}
     </View>
+  );
+}
+
+function PendingUserInputOption(props: {
+  readonly option: ThreadUserInputQuestion["options"][number];
+  readonly multiSelect: boolean;
+  readonly selected: boolean;
+  readonly disabled: boolean;
+  readonly markdownProps: Pick<
+    SelectableMarkdownTextProps,
+    "onLinkPress" | "onImagePress" | "resolveImageSource" | "marginTop" | "marginBottom"
+  >;
+  readonly labelTextStyle: SelectableMarkdownTextProps["textStyle"];
+  readonly descriptionTextStyle: SelectableMarkdownTextProps["textStyle"];
+  readonly onOpenTarget: ReturnType<typeof useThreadMarkdownLinkPress>;
+  readonly onSelect: () => void;
+}) {
+  const [labelAssets, setLabelAssets] = useState<DocumentAssetsEvent["assets"]>([]);
+  const [descriptionAssets, setDescriptionAssets] = useState<DocumentAssetsEvent["assets"]>([]);
+  const onLabelAssets = useCallback(
+    ({ assets }: DocumentAssetsEvent) => setLabelAssets(assets),
+    [],
+  );
+  const onDescriptionAssets = useCallback(
+    ({ assets }: DocumentAssetsEvent) => setDescriptionAssets(assets),
+    [],
+  );
+  const description =
+    props.option.description !== props.option.label ? props.option.description : undefined;
+  const label = useMemo(
+    () =>
+      [
+        markdownAccessibilityLabel(props.option.label),
+        description ? markdownAccessibilityLabel(description) : undefined,
+      ]
+        .filter(Boolean)
+        .join(". "),
+    [props.option.label, description],
+  );
+  const targets = useMemo(
+    () =>
+      [...labelAssets, ...descriptionAssets].map((asset, index) => ({
+        asset,
+        name: `open-target-${index}`,
+        label: `Open ${asset.altText || asset.title || asset.url}`,
+      })),
+    [labelAssets, descriptionAssets],
+  );
+  return (
+    <Pressable
+      accessibilityRole={props.multiSelect ? "checkbox" : "radio"}
+      accessibilityLabel={label}
+      accessibilityState={{ checked: props.selected, disabled: props.disabled }}
+      accessibilityActions={targets.map(({ name, label }) => ({ name, label }))}
+      onAccessibilityAction={(event) => {
+        const target = targets.find((target) => target.name === event.nativeEvent.actionName);
+        if (target) props.onOpenTarget(target.asset.url, target.asset.kind === "image");
+      }}
+      // Pressability suppresses the answer tap after a handled long press.
+      onLongPress={() => undefined}
+      disabled={props.disabled}
+      className={cn(
+        "min-h-12 w-full rounded-2xl border px-3.5 py-3",
+        props.selected ? "border-primary bg-primary/10" : "border-border bg-input",
+      )}
+      onPress={props.onSelect}
+    >
+      <View className="min-w-0 flex-1 gap-0.5">
+        <SelectableMarkdownText
+          {...props.markdownProps}
+          markdown={props.option.label}
+          textStyle={props.labelTextStyle}
+          onDocumentAssets={onLabelAssets}
+        />
+        {description ? (
+          <SelectableMarkdownText
+            {...props.markdownProps}
+            markdown={description}
+            textStyle={props.descriptionTextStyle}
+            onDocumentAssets={onDescriptionAssets}
+          />
+        ) : null}
+      </View>
+    </Pressable>
   );
 }
