@@ -97,36 +97,48 @@ export const publishPlatformsThenLauncher = <E, R, R2>(input: {
     yield* input.publish(input.launcherTarball);
   });
 
+// How `npm config get` prints a value npm treats as unset.
+const unsetNpmConfigValues = new Set(["", "undefined", "null", "false"]);
+const npmConfigValue = (printed: string | undefined) =>
+  printed === undefined || unsetNpmConfigValues.has(printed) ? undefined : printed;
+
 /**
- * The registry `npm publish` sends `@t3code` packages to, picked from the
- * output of `npm config list --json` the way npm-registry-fetch's
- * `pickRegistry` does: `@t3code:registry`, then the registry of the configured
- * `scope`, then `registry`, then npm's default. An empty or non-string value
- * counts as unset, as it does in npm. Fails unless the pick is an http or https
- * URL, so a config the probe cannot use stops the publish before any upload.
+ * The registry `npm publish` sends `@t3code` packages to, picked the way
+ * npm-registry-fetch's `pickRegistry` does: `@t3code:registry`, then the
+ * registry of the configured `scope`, then `registry`, then npm's default.
+ * `configGet` returns what `npm config get <keys>` prints: the bare value for
+ * one key, `key=value` lines for several. Fails unless the pick is an http or
+ * https URL, so a config the probe cannot use stops the publish before any
+ * upload.
  */
-export const npmPublishRegistry = Effect.fn("npmPublishRegistry")(function* (
-  config: Readonly<Record<string, unknown>>,
-) {
-  const setting = (key: string) => {
-    const value = config[key];
-    return typeof value === "string" && value !== "" ? value : undefined;
-  };
-  const scope = setting("scope")?.replace(/^@?/, "@");
-  const registry =
-    setting("@t3code:registry") ??
-    (scope === undefined ? undefined : setting(`${scope}:registry`)) ??
-    setting("registry") ??
-    "https://registry.npmjs.org/";
-  const { protocol } = yield* Effect.try({
-    try: () => new URL(registry),
-    catch: (cause) => new ServerCliNpmRegistryInvalidError({ cause }),
+export const npmPublishRegistry = <E, R>(
+  configGet: (keys: ReadonlyArray<string>) => Effect.Effect<string, E, R>,
+) =>
+  Effect.gen(function* () {
+    const printed = yield* configGet(["@t3code:registry", "scope", "registry"]);
+    const config = new Map(
+      printed.split(/\r?\n/).map((line) => {
+        const at = line.indexOf("=");
+        return [line.slice(0, at), line.slice(at + 1)];
+      }),
+    );
+    const scope = npmConfigValue(config.get("scope"))?.replace(/^@?/, "@");
+    const registry =
+      npmConfigValue(config.get("@t3code:registry")) ??
+      (scope === undefined
+        ? undefined
+        : npmConfigValue((yield* configGet([`${scope}:registry`])).trim())) ??
+      npmConfigValue(config.get("registry")) ??
+      "https://registry.npmjs.org/";
+    const { protocol } = yield* Effect.try({
+      try: () => new URL(registry),
+      catch: (cause) => new ServerCliNpmRegistryInvalidError({ cause }),
+    });
+    if (protocol !== "http:" && protocol !== "https:") {
+      return yield* new ServerCliNpmRegistryInvalidError({});
+    }
+    return registry;
   });
-  if (protocol !== "http:" && protocol !== "https:") {
-    return yield* new ServerCliNpmRegistryInvalidError({});
-  }
-  return registry;
-});
 
 const NpmVersionMetadata = Schema.Struct({
   dist: Schema.Struct({ tarball: Schema.String }),

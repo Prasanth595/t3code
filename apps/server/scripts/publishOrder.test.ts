@@ -258,44 +258,73 @@ it.effect("skips the readiness check on a dry run", () =>
 const t3Registry = "https://t3.example.com/";
 const mirrorRegistry = "https://mirror.example.com/";
 const configuredRegistry = "https://npm.example.com/";
+const configKeys = "@t3code:registry scope registry";
 
-// Configs shaped like `npm config list --json` output.
+// What `npm config get @t3code:registry scope registry` prints.
+const printedConfig = (t3code: string, scope: string, registry = configuredRegistry) =>
+  `@t3code:registry=${t3code}\nscope=${scope}\nregistry=${registry}\n`;
+
+// A fake `npm config get` that records the keys of each call and prints the
+// next of `printed`.
+const fakeConfigGet = (...printed: ReadonlyArray<string>) => {
+  const reads: Array<string> = [];
+  const configGet = (keys: ReadonlyArray<string>) =>
+    Effect.sync(() => {
+      reads.push(keys.join(" "));
+      return printed[reads.length - 1] ?? "";
+    });
+  return { reads, configGet };
+};
+
 it.effect.each([
-  { config: "sets no @t3code registry", settings: { registry: configuredRegistry } },
+  { config: "leaves @t3code:registry unset", printed: [printedConfig("undefined", "")] },
+  { config: "sets @t3code:registry empty", printed: [printedConfig("", "")] },
+  { config: "sets @t3code:registry to null", printed: [printedConfig("null", "")] },
+  { config: "sets @t3code:registry to false", printed: [printedConfig("false", "")] },
   {
-    config: "sets an empty @t3code registry",
-    settings: { "@t3code:registry": "", registry: configuredRegistry },
-  },
-  {
-    config: "sets a @t3code registry",
-    settings: {
-      "@t3code:registry": t3Registry,
-      scope: "@mirror",
-      "@mirror:registry": mirrorRegistry,
-      registry: configuredRegistry,
-    },
+    config: "sets @t3code:registry and a scope",
+    printed: [printedConfig(t3Registry, "@mirror")],
     expected: t3Registry,
   },
   {
+    config: "sets @t3code:registry to a URL with = in it",
+    printed: [printedConfig(`${t3Registry}x?a=b`, "")],
+    expected: `${t3Registry}x?a=b`,
+  },
+  {
     config: "sets a scope",
-    settings: {
-      scope: "@mirror",
-      "@mirror:registry": mirrorRegistry,
-      registry: configuredRegistry,
-    },
+    printed: [printedConfig("undefined", "@mirror"), `${mirrorRegistry}\n`],
     expected: mirrorRegistry,
+    scopeRead: "@mirror:registry",
   },
   {
     config: "sets a scope without its @",
-    settings: { scope: "mirror", "@mirror:registry": mirrorRegistry, registry: configuredRegistry },
+    printed: [printedConfig("undefined", "mirror"), `${mirrorRegistry}\n`],
     expected: mirrorRegistry,
+    scopeRead: "@mirror:registry",
   },
-  { config: "sets nothing", settings: {}, expected: "https://registry.npmjs.org/" },
+  {
+    config: "sets a scope with no registry",
+    printed: [printedConfig("undefined", "@mirror"), "undefined\n"],
+    scopeRead: "@mirror:registry",
+  },
+  {
+    config: "sets nothing",
+    printed: [printedConfig("undefined", "", "undefined")],
+    expected: "https://registry.npmjs.org/",
+  },
 ])("picks the registry npm publishes to when the config $config", (test) =>
   Effect.gen(function* () {
-    const picked = yield* npmPublishRegistry(test.settings);
+    const fake = fakeConfigGet(...test.printed);
+
+    const picked = yield* npmPublishRegistry(fake.configGet);
 
     assert.strictEqual(picked, test.expected ?? configuredRegistry);
+    // The scope's registry is read only when the pick depends on it.
+    assert.deepStrictEqual(
+      fake.reads,
+      test.scopeRead === undefined ? [configKeys] : [configKeys, test.scopeRead],
+    );
   }),
 );
 
@@ -306,9 +335,9 @@ it.effect.each([
   { value: "an ftp URL", registry: "ftp://user@npm.example.com/" },
 ])("rejects $value as the registry npm publishes to", (test) =>
   Effect.gen(function* () {
-    const error = yield* npmPublishRegistry({ "@t3code:registry": test.registry }).pipe(
-      Effect.flip,
-    );
+    const fake = fakeConfigGet(printedConfig(test.registry, ""));
+
+    const error = yield* npmPublishRegistry(fake.configGet).pipe(Effect.flip);
 
     assert.strictEqual(error._tag, "ServerCliNpmRegistryInvalidError");
     assert.strictEqual(error.cause instanceof TypeError, test.unparsable === true);

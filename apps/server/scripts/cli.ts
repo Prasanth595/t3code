@@ -6,7 +6,6 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -21,7 +20,6 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
-  ServerCliNpmRegistryInvalidError,
 } from "./cliErrors.ts";
 import {
   checkNpmVersionInstallable,
@@ -49,16 +47,15 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
   }
 });
 
-const decodeNpmConfig = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
-);
-
-// The npm config `npm publish` run in `cwd` sees: the same .npmrc files and
-// npm_config_* variables. npm leaves out auth settings and any value it would
-// redact, such as a URL with a password or a UUID in it.
-const readNpmConfig = Effect.fn("readNpmConfig")(function* (cwd: string) {
+// What `npm config get <keys>` prints in `cwd`, where `npm publish` runs, so
+// it reads the same .npmrc files and npm_config_* variables. npm exits non-zero
+// rather than print a protected value, such as a registry URL with a password.
+const npmConfigGet = Effect.fn("npmConfigGet")(function* (
+  cwd: string,
+  keys: ReadonlyArray<string>,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const spawnCommand = yield* resolveSpawnCommand("npm", ["config", "list", "--json"]);
+  const spawnCommand = yield* resolveSpawnCommand("npm", ["config", "get", ...keys]);
   const child = yield* spawner.spawn(
     ChildProcess.make(spawnCommand.command, spawnCommand.args, {
       cwd,
@@ -67,7 +64,7 @@ const readNpmConfig = Effect.fn("readNpmConfig")(function* (cwd: string) {
       shell: spawnCommand.shell,
     }),
   );
-  const [json, exitCode] = yield* Effect.all(
+  const [printed, exitCode] = yield* Effect.all(
     [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
     { concurrency: "unbounded" },
   );
@@ -79,9 +76,7 @@ const readNpmConfig = Effect.fn("readNpmConfig")(function* (cwd: string) {
       exitCode,
     });
   }
-  return yield* decodeNpmConfig(json).pipe(
-    Effect.mapError((cause) => new ServerCliNpmRegistryInvalidError({ cause })),
-  );
+  return printed;
 }, Effect.scoped);
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
@@ -269,7 +264,7 @@ const publishCmd = Command.make(
       // read before any upload. A dry run checks nothing.
       const registry = config.dryRun
         ? ""
-        : yield* npmPublishRegistry(yield* readNpmConfig(packagesDir));
+        : yield* npmPublishRegistry((keys) => npmConfigGet(packagesDir, keys));
 
       const args = ["publish", "--access", config.access, "--tag", config.tag];
       if (config.provenance) args.push("--provenance");
