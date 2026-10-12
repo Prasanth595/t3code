@@ -26,9 +26,7 @@ function cursorSdkResultDetail(result: RunResult): string {
     case "cancelled":
       return "Cursor SDK request was cancelled.";
     case "error":
-      return result.error?.message
-        ? `Cursor SDK request failed: ${result.error.message}`
-        : "Cursor SDK request finished with an error.";
+      return "Cursor SDK request finished with an error.";
     case "finished":
       return "Cursor SDK returned empty output.";
   }
