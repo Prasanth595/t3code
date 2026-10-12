@@ -455,6 +455,7 @@ import {
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
+import { pageAnswers, useAppOverlayStore, waitForPage } from "./AppOverlay";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type PinnedScriptsTarget, usePinnedScriptsTargetStore } from "./PinnedScripts";
 import { useRemoteOpenState } from "~/remoteOpen";
@@ -4985,6 +4986,15 @@ export default function ChatView(props: ChatViewProps) {
         previewPresentation?: "panel" | "floating";
       },
     ) => {
+      // An overlay action whose page already answers needs no terminal at all.
+      const overlayUrl =
+        script.previewOverlay && script.previewUrl
+          ? resolveDiscoveredServerUrl(environmentId, script.previewUrl)
+          : null;
+      if (overlayUrl !== null && (await pageAnswers(overlayUrl))) {
+        useAppOverlayStore.getState().toggle(overlayUrl, script.name);
+        return;
+      }
       if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
       if (options?.rememberAsLastInvoked !== false) {
         setLastInvokedScriptByProjectId((current) => {
@@ -4996,7 +5006,8 @@ export default function ChatView(props: ChatViewProps) {
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
-      const showTerminal = shouldShowScriptTerminal(script);
+      // An overlay action starts its page's server; the overlay, not the terminal, is its view.
+      const showTerminal = shouldShowScriptTerminal(script) && overlayUrl === null;
       // A background script gets its own terminal so it never types into a shell
       // the user is not looking at. The session stays listed in the drawer.
       // Limit: the command runs inside an interactive shell, so no exit status
@@ -5081,6 +5092,20 @@ export default function ChatView(props: ChatViewProps) {
           setThreadError(
             activeThreadId,
             error instanceof Error ? error.message : `Failed to run script "${script.name}".`,
+          );
+        }
+        return;
+      }
+      if (overlayUrl !== null) {
+        if (await waitForPage(overlayUrl)) {
+          useAppOverlayStore.getState().toggle(overlayUrl, script.name);
+        } else {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: `${script.name} did not start`,
+              description: `Nothing answered at ${overlayUrl}. Its command runs in a background terminal.`,
+            }),
           );
         }
         return;

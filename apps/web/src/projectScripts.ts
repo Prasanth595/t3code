@@ -16,6 +16,7 @@ export interface ProjectScriptInput {
   readonly runOnSettle: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
+  readonly previewOverlay: boolean;
   readonly runInBackground: boolean;
 }
 
@@ -33,6 +34,7 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
       : {
           previewUrl: input.previewUrl,
           autoOpenPreview: input.autoOpenPreview,
+          ...(input.previewOverlay ? { previewOverlay: true } : {}),
         }),
     ...(input.runInBackground ? { runInBackground: true } : {}),
   };
