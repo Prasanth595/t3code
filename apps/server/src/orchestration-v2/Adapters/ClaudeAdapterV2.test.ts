@@ -9074,11 +9074,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       Effect.scoped(
         Effect.gen(function* () {
           let stopCalls = 0;
+          let stopRequested = yield* Deferred.make<void>();
           const harness = yield* makeWakeHarnessWithOptions({
             stopTask: () =>
               Effect.sync(() => {
                 stopCalls++;
-              }),
+              }).pipe(Effect.andThen(Deferred.succeed(stopRequested, undefined)), Effect.asVoid),
           });
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
@@ -9162,10 +9163,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerThread: harness.providerThread,
             nativeTaskId: "idle-outcome",
           }).pipe(Effect.exit, Effect.forkScoped);
+          yield* Deferred.await(stopRequested);
           yield* TestClock.adjust("2 seconds");
           assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
           assert.equal(stopCalls, 1);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          // Keep a fresh Stop pending while replay drains the old outcome before the resume.
+          stopRequested = yield* Deferred.make<void>();
+          const stopDuringReplay = yield* harness.runtime.stopSubagent!({
+            providerThread: harness.providerThread,
+            nativeTaskId: "idle-outcome",
+          }).pipe(Effect.exit, Effect.forkScoped);
+          yield* Deferred.await(stopRequested);
+          const beforeReplay = harness.events.length;
           yield* harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
@@ -9185,6 +9195,33 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }
           assert.equal(reopened.subagent.nativeTaskRef?.nativeId, "idle-outcome");
           assert.isNull(reopened.subagent.completedAt);
+          assert.isFalse(
+            harness.events
+              .slice(beforeReplay)
+              .some(
+                (event) => event.type === "subagent.updated" && event.subagent.status !== "running",
+              ),
+          );
+          yield* TestClock.adjust("2 seconds");
+          assert.isTrue(Exit.isFailure(yield* Fiber.join(stopDuringReplay)));
+          assert.equal(stopCalls, 2);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          // Only the resumed task's new notification can settle it.
+          yield* harness.offerAndWait(
+            makeSubagentNotificationFrame({
+              taskId: "idle-outcome",
+              toolUseId: "toolu-idle-resume",
+              summary: "Resumed audit outcome.",
+              uuid: "00000000-0000-4000-8000-000000004205",
+            }),
+          );
+          const resumedOutcome = yield* Queue.take(harness.subagentReceipts);
+          assert.equal(resumedOutcome.subagent.status, "completed");
+          assert.equal(resumedOutcome.subagent.result, "Resumed audit outcome.");
+          assert.isAbove(
+            DateTime.toEpochMillis(resumedOutcome.subagent.completedAt!),
+            DateTime.toEpochMillis(completedAt),
+          );
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

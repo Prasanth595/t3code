@@ -3500,6 +3500,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // instead of waiting in the wake buffer for a continuation run.
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
         const subagentStopOutcomes = new Map<string, Deferred.Deferred<void>>();
+        // An idle outcome stays buffered for the parent's wake, but must not
+        // settle the child again after that child resumes.
+        const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
         // Subagent frames can precede the task_started that registers their
         // subagent (the same race rememberPendingClaudeSubagentLaunch covers).
         // They wait here and replay once task_started registers the owner.
@@ -4864,7 +4867,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             "running" | "completed" | "failed" | "cancelled"
           >;
           readonly reopen?: boolean;
-          readonly nativeOutcome?: boolean;
+          readonly nativeOutcome?: Extract<
+            SDKMessage,
+            { readonly type: "system"; readonly subtype: "task_notification" }
+          >;
           readonly onlyIfRunningInRun?: RunId | null;
         }) {
           // The session registry lets a wake-replay turn (fresh context maps)
@@ -5032,7 +5038,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const subagent = {
             task,
             confirmedOutcome:
-              input.nativeOutcome === true
+              input.nativeOutcome !== undefined
                 ? confirmedSubagentOutcome(task)
                 : isReopen
                   ? undefined
@@ -5081,6 +5087,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return [true, new Map(current).set(input.taskId, subagent)] as const;
           });
           if (!accepted) return;
+          if (input.nativeOutcome !== undefined) appliedSubagentOutcomes.add(input.nativeOutcome);
           // A call the subagent left open never returns once it ends. It ends
           // first, while the run that owns the child thread still takes its
           // events.
@@ -5254,7 +5261,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
 
-          if (input.nativeOutcome === true && subagent.confirmedOutcome !== undefined) {
+          if (input.nativeOutcome !== undefined && subagent.confirmedOutcome !== undefined) {
             const outcome = subagentStopOutcomes.get(input.taskId);
             if (outcome !== undefined) yield* Deferred.succeed(outcome, undefined);
           }
@@ -6778,7 +6785,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   taskId: message.task_id,
                   ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                   workflowFrame: message,
-                  nativeOutcome: true,
+                  nativeOutcome: message,
                   result: message.summary,
                   status: claudeTaskOutcome(message.status),
                   onlyIfRunningInRun: registered.task.runId,
@@ -7273,7 +7280,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (message.type === "system" && message.subtype === "task_notification") {
             // A live outcome supersedes earlier idle starts. During replay only
             // remove frames before this notification, preserving a later resume.
-            if ((yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)) {
+            if (
+              !appliedSubagentOutcomes.has(message) &&
+              (yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
+            ) {
               yield* discardBufferedSubagentStarts(
                 liveQuery.nativeThreadId,
                 message.task_id,
@@ -7322,14 +7332,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               message,
               activeContext: context,
             });
-            if (!wasBackgroundTask && !context.ignoredTaskIds.has(message.task_id)) {
+            if (
+              !wasBackgroundTask &&
+              !context.ignoredTaskIds.has(message.task_id) &&
+              !appliedSubagentOutcomes.has(message)
+            ) {
               yield* updateClaudeSubagentNode({
                 context,
                 taskId: message.task_id,
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 // Terminal usage totals arrive here, after the last snapshot.
                 workflowFrame: message,
-                nativeOutcome: true,
+                nativeOutcome: message,
                 result: message.summary,
                 status:
                   message.status === "completed"
