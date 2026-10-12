@@ -3,6 +3,7 @@ import { contextChipPresentation } from "./composerChipPresentation";
 import type { MarkdownFileIcon } from "./markdownLinks";
 import type { SelectableMarkdownSkill } from "../native/SelectableMarkdownText.types";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 
 const CONTEXT_ICONS: Readonly<Record<string, MarkdownFileIcon>> = {
   photo: "image",
@@ -41,14 +42,21 @@ export const ENRICHED_INLINE_FILE_LINK_REGEX =
 export function enrichedSkillLinkRegex(skills?: ReadonlyArray<SelectableMarkdownSkill>) {
   const names = [...new Set(skills?.map((skill) => skill.name) ?? [])].filter(Boolean);
   if (names.length === 0) return null;
-  // Composers quote names that are not one bare word, such as `$"Poteto Mode"`.
-  const sources = names.flatMap((name) => [name, `"${name}"`]);
+  const sources = [...new Set(names.flatMap(skillSources))];
   sources.sort((a, b) => b.length - a.length);
   const alternatives = sources.map((source) => source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   return new RegExp(
     `(?<![A-Za-z0-9_-])(?<!\\p{Sc})\\p{Sc}(?:${alternatives.join("|")})(?![A-Za-z0-9_-])`,
     "u",
   );
+}
+
+/**
+ * Composers quote names that are not one bare word, such as `$"Poteto Mode"`, and escape
+ * quotes, backslashes, and line breaks inside them. Markdown may have consumed those escapes.
+ */
+function skillSources(name: string) {
+  return [name, `"${name}"`, serializeComposerSkillToken(name).slice(1)];
 }
 
 export function enrichedSkillDisplayName(skill: SelectableMarkdownSkill) {
@@ -66,8 +74,8 @@ export function enrichedSkillReference(
   url: string,
   skills?: ReadonlyArray<SelectableMarkdownSkill>,
 ) {
-  const source = /^\p{Sc}(.+)$/u.exec(url)?.[1];
+  const source = /^\p{Sc}(.+)$/su.exec(url)?.[1];
   return source === undefined
     ? undefined
-    : skills?.find((skill) => source === skill.name || source === `"${skill.name}"`);
+    : skills?.find((skill) => skillSources(skill.name).includes(source));
 }
