@@ -51,14 +51,17 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
-const THREAD_WAIT_TOOL_NAME = /(?:^|[^a-z0-9])t3_thread_wait$/i;
-const THREAD_DELEGATION_TOOL_NAME = /(?:^|[^a-z0-9])delegate_task$/i;
+// Tools of T3's own MCP server, which every adapter registers as "t3-code".
+// Adapters spell the tool differently (`mcp__t3-code__t3_thread_wait`,
+// `t3-code.t3_thread_wait`) or report it bare. A same-named tool from another
+// server never matches.
+const T3_MCP_TOOL_PREFIX = "(?:mcp__t3-code__|t3-code[._:/])?";
+const THREAD_WAIT_TOOL_NAME = new RegExp(`^${T3_MCP_TOOL_PREFIX}t3_thread_wait$`);
+const THREAD_DELEGATION_TOOL_NAME = new RegExp(`^${T3_MCP_TOOL_PREFIX}delegate_task$`);
 
 /**
  * Whether a running turn item is a T3 tool call that blocks until another
- * thread finishes: t3_thread_wait, or delegate_task with mode "wait". Providers
- * prefix MCP tool names differently (`mcp__t3-code__t3_thread_wait`,
- * `t3-code.t3_thread_wait`), so the name is matched by its suffix.
+ * thread finishes: t3_thread_wait, or delegate_task with mode "wait".
  */
 export function isThreadWaitToolItem(
   item: Pick<OrchestrationV2TurnItem, "type" | "status"> & {
