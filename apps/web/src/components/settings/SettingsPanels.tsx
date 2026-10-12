@@ -62,6 +62,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
+import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -3369,6 +3370,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
 
         <SettingsRow
           {...searchableSetting("background-work-details")}
