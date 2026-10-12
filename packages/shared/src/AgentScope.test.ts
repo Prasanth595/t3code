@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
 import { describe, expect, it, vi } from "@effect/vitest";
@@ -77,7 +78,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
   it.skipIf(!hasUserScopes)(
     "stops the agent and its children when the process that spawned it is killed",
     async () => {
-      const unit = `t3code-test-${process.pid}-${Date.now()}.scope`;
+      const unit = `t3code-test-${process.pid}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       const launch = agentScopeCommand({
         command: "/bin/sh",
         args: ["-c", "sleep 300 & echo child:$!; exec sleep 300"],
