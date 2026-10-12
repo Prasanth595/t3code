@@ -156,6 +156,7 @@ import {
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
+  useProjects,
   useThreadShells,
 } from "../state/entities";
 import { narrowedEnvironmentId } from "@t3tools/client-runtime/state/environment-selection";
@@ -210,6 +211,7 @@ import {
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
+  resolveSidebarScopedProjectGroup,
   resolveSidebarScopedProjectKeys,
   canClearMissingSidebarProjectScope,
   type SidebarDropVerb,
@@ -2597,6 +2599,30 @@ export default function Sidebar() {
     () => sortSidebarV2ProjectGroups(unsortedProjectGroups, threads, sidebarProjectSortOrder),
     [sidebarProjectSortOrder, threads, unsortedProjectGroups],
   );
+  // The project scope outlives the environment filter, so it resolves against
+  // every environment's projects. Unfiltered, those are the groups above.
+  const allProjects = useProjects();
+  const allProjectGroups = useMemo(
+    () =>
+      environmentNarrowed
+        ? buildSidebarProjectSnapshots({
+            projects: allProjects,
+            groupScratchProjects: true,
+            settings: projectGroupingSettings,
+            primaryEnvironmentId,
+            resolveEnvironmentLabel: (environmentId) =>
+              environmentLabelById.get(environmentId) ?? null,
+          })
+        : unsortedProjectGroups,
+    [
+      allProjects,
+      environmentLabelById,
+      environmentNarrowed,
+      primaryEnvironmentId,
+      projectGroupingSettings,
+      unsortedProjectGroups,
+    ],
+  );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
@@ -2648,11 +2674,11 @@ export default function Sidebar() {
   const projectScopeKey = useMemo(
     () =>
       resolveSidebarProjectScopeKey({
-        groups: projectGroups,
+        groups: allProjectGroups,
         key: persistedProjectScopeKey,
         settings: projectGroupingSettings,
       }),
-    [persistedProjectScopeKey, projectGroups, projectGroupingSettings],
+    [allProjectGroups, persistedProjectScopeKey, projectGroupingSettings],
   );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
@@ -2691,12 +2717,16 @@ export default function Sidebar() {
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
     [projectGroups],
   );
-  const selectedProjectScopeItem = useMemo(
-    () =>
-      projectScopeItems.find((item) => item.value === (projectScopeKey ?? "all")) ??
-      projectScopeItems[0]!,
-    [projectScopeItems, projectScopeKey],
-  );
+  const selectedProjectScopeItem = useMemo(() => {
+    const listed = projectScopeItems.find((item) => item.value === (projectScopeKey ?? "all"));
+    if (listed) return listed;
+    // A scope the environment filter excludes stays selected, so choosing
+    // "All projects" still clears it.
+    const excluded = allProjectGroups.find((project) => project.projectKey === projectScopeKey);
+    return excluded
+      ? { value: excluded.projectKey, label: excluded.displayName }
+      : projectScopeItems[0]!;
+  }, [allProjectGroups, projectScopeItems, projectScopeKey]);
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -2720,11 +2750,8 @@ export default function Sidebar() {
     [projectScopeFilter, projectScopeItems, projectScopeMenuState.query],
   );
   const scopedProjectGroup = useMemo(
-    () =>
-      projectScopeKey === null
-        ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+    () => resolveSidebarScopedProjectGroup(projectScopeKey, projectGroups, allProjectGroups),
+    [allProjectGroups, projectGroups, projectScopeKey],
   );
   const scopedProjectKeys = useMemo(
     () =>
@@ -2742,7 +2769,7 @@ export default function Sidebar() {
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
   useEffect(() => {
     const nextKey = resolveSidebarProjectScopeKey({
-      groups: projectGroups,
+      groups: allProjectGroups,
       key: persistedProjectScopeKey,
       settings: projectGroupingSettings,
       canClearMissingScope: canClearMissingSidebarProjectScope({
@@ -2756,10 +2783,10 @@ export default function Sidebar() {
     }
   }, [
     allProjectConfigsReady,
+    allProjectGroups,
     allProjectSnapshotsReady,
     environmentSelection,
     persistedProjectScopeKey,
-    projectGroups,
     projectGroupingSettings,
     setProjectScopeKey,
   ]);

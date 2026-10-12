@@ -34,6 +34,7 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
+  resolveSidebarScopedProjectGroup,
   resolveSidebarScopedProjectKeys,
   canClearMissingSidebarProjectScope,
   resolveSidebarThreadStatus,
@@ -2371,14 +2372,58 @@ describe("sidebar environment filter", () => {
     ).toEqual(new Set());
   });
 
-  it("lets the project scope decide when one is chosen", () => {
+  it("lets the project scope decide within the environment filter", () => {
+    const projectB = { environmentId: environmentB, id: ProjectId.make("project-b") };
+    const refs = [
+      { environmentId: environmentA, projectId: projectA.id },
+      { environmentId: environmentB, projectId: projectB.id },
+    ];
     expect(
       resolveSidebarScopedProjectKeys({
-        scopedProjectRefs: [{ environmentId: environmentA, projectId: projectA.id }],
-        environmentNarrowed: true,
-        visibleProjects: [],
+        scopedProjectRefs: refs,
+        environmentNarrowed: false,
+        visibleProjects: [projectA, projectB],
       }),
-    ).toEqual(new Set([`${environmentA}:project-a`]));
+    ).toEqual(new Set([`${environmentA}:project-a`, `${environmentB}:project-b`]));
+    expect(
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: refs,
+        environmentNarrowed: true,
+        visibleProjects: [projectB],
+      }),
+    ).toEqual(new Set([`${environmentB}:project-b`]));
+    // A scope the filter excludes shows no rows rather than another environment's.
+    expect(
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: [refs[0]!],
+        environmentNarrowed: true,
+        visibleProjects: [projectB],
+      }),
+    ).toEqual(new Set());
+  });
+
+  it("keeps a project scope the environment filter excludes, and restores it", () => {
+    const onA = { projectKey: "repo:a", memberProjects: [{ environmentId: environmentA }] };
+    const onB = { projectKey: "repo:b", memberProjects: [{ environmentId: environmentB }] };
+    const allGroups = [onA, onB];
+    // Filtered to B: the scope on A is still the saved scope, shown from every environment's groups.
+    expect(resolveSidebarScopedProjectGroup("repo:a", [onB], allGroups)).toBe(onA);
+    // Filtered back to all: the visible group is used again.
+    expect(resolveSidebarScopedProjectGroup("repo:a", allGroups, allGroups)).toBe(onA);
+    expect(resolveSidebarScopedProjectGroup("repo:gone", [onB], allGroups)).toBeNull();
+    expect(resolveSidebarScopedProjectGroup(null, [onB], allGroups)).toBeNull();
+  });
+
+  it("prefers the filtered group, whose members come from the selected environment", () => {
+    const narrowed = {
+      projectKey: "repo:shared",
+      memberProjects: [{ environmentId: environmentB }],
+    };
+    const full = {
+      projectKey: "repo:shared",
+      memberProjects: [{ environmentId: environmentA }, { environmentId: environmentB }],
+    };
+    expect(resolveSidebarScopedProjectGroup("repo:shared", [narrowed], [full])).toBe(narrowed);
   });
 
   it("clears a vanished project scope only once the environment filter is settled and online", () => {

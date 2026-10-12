@@ -585,19 +585,40 @@ export function filterSidebarV2VisibleThreads<
 
 /**
  * Thread rows the sidebar may show, as `${environmentId}:${projectId}` keys, or
- * null for every thread. A project scope wins; otherwise a narrowed environment
- * limits rows to its projects (none while the environment is missing).
+ * null for every thread. A project scope limits rows to its members, and a
+ * narrowed environment to its projects (none while the environment is
+ * missing); both apply together.
  */
 export function resolveSidebarScopedProjectKeys(input: {
   readonly scopedProjectRefs: readonly { environmentId: string; projectId: string }[] | null;
   readonly environmentNarrowed: boolean;
   readonly visibleProjects: readonly { environmentId: string; id: string }[];
 }): ReadonlySet<string> | null {
-  if (input.scopedProjectRefs !== null) {
-    return new Set(input.scopedProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`));
-  }
-  if (!input.environmentNarrowed) return null;
-  return new Set(input.visibleProjects.map((project) => `${project.environmentId}:${project.id}`));
+  const visible = input.environmentNarrowed
+    ? new Set(input.visibleProjects.map((project) => `${project.environmentId}:${project.id}`))
+    : null;
+  if (input.scopedProjectRefs === null) return visible;
+  const scoped = input.scopedProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`);
+  return new Set(visible === null ? scoped : scoped.filter((key) => visible.has(key)));
+}
+
+/**
+ * The group a project scope names. The filtered groups come first, so labels
+ * and members follow the environment filter. A scope the filter excludes falls
+ * back to every environment's groups: it stays saved and shown, with no rows,
+ * until the user clears it or switches the filter back.
+ */
+export function resolveSidebarScopedProjectGroup<G extends { readonly projectKey: string }>(
+  key: string | null,
+  visibleGroups: readonly G[],
+  allGroups: readonly G[],
+): G | null {
+  if (key === null) return null;
+  return (
+    visibleGroups.find((group) => group.projectKey === key) ??
+    allGroups.find((group) => group.projectKey === key) ??
+    null
+  );
 }
 
 /**
