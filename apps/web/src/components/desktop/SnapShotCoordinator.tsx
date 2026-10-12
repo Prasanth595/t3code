@@ -3,7 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import {
   type DraftId,
@@ -226,7 +226,7 @@ export function SnapShotCoordinator() {
     routeThreadRef,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (currentTarget) {
       lastTargetRef.current = currentTarget;
     }
