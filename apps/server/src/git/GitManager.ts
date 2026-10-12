@@ -374,26 +374,27 @@ function namesRepository(remoteUrl: string, remoteKey: string, repositoryKey: st
 }
 
 /**
- * Whether a checkout whose identity remote is at `remoteUrl` holds the pull request's repository
- * or the fork its head comes from. Only a definite mismatch answers no: no remote, a local or
- * relative path, or a pull request URL this cannot read is no evidence either way.
+ * The key of the pull request's repository when a checkout whose identity remote is at
+ * `remoteUrl` holds neither it nor the fork its head comes from, or null when it holds one. Only
+ * a definite mismatch answers with a key: no remote, a local or relative path, or a pull request
+ * URL this cannot read is no evidence either way.
  */
-export function isPullRequestCheckout(
+export function pullRequestCheckoutMismatch(
   remoteUrl: string | null,
   pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-): boolean {
+): string | null {
   const baseKey = pullRequestBaseRepositoryKey(pullRequest.url);
   if (
     baseKey === null ||
     remoteUrl === null ||
     parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl) === null
   ) {
-    return true;
+    return null;
   }
   // Keys leave the port out, but over HTTP it can tell two installs on one host apart. An SSH
   // port says nothing about the web one.
   const remotePort = httpPort(remoteUrl);
-  if (remotePort !== null && remotePort !== httpPort(pullRequest.url)) return false;
+  if (remotePort !== null && remotePort !== httpPort(pullRequest.url)) return baseKey;
   const remoteKey = canonicalRepositoryKey(normalizeGitRemoteUrl(remoteUrl));
   // Forks live on their base's host. A Forgejo install mounted below its host's root serves them
   // over HTTP below that mount too, which the head's `owner/name` leaves out.
@@ -403,11 +404,11 @@ export function isPullRequestCheckout(
       ? base.path.replace(/[^/]+\/[^/]+$/u, "")
       : "";
   const head = resolveHeadRepositoryNameWithOwner(pullRequest);
-  return (
+  const holds =
     namesRepository(remoteUrl, remoteKey, baseKey) ||
     (head !== null &&
-      namesRepository(remoteUrl, remoteKey, `${base.host}/${mount}${head.toLowerCase()}`))
-  );
+      namesRepository(remoteUrl, remoteKey, `${base.host}/${mount}${head.toLowerCase()}`));
+  return holds ? null : baseKey;
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -2675,10 +2676,12 @@ export const make = Effect.gen(function* () {
       // A pull request can be read through any project on its host, so the checkout asked to
       // hold it is not necessarily a checkout of its repository. Fetching into it anyway pulls
       // an unrelated history in, runs its setup and hands the task to the wrong project.
-      const remoteUrl = yield* readCheckoutRemoteUrl(input.cwd);
-      if (!isPullRequestCheckout(remoteUrl, pullRequestWithRemoteInfo)) {
-        const baseKey = pullRequestBaseRepositoryKey(pullRequest.url);
-        const repository = baseKey === null ? pullRequest.url : splitRepositoryKey(baseKey).path;
+      const mismatch = pullRequestCheckoutMismatch(
+        yield* readCheckoutRemoteUrl(input.cwd),
+        pullRequestWithRemoteInfo,
+      );
+      if (mismatch !== null) {
+        const repository = splitRepositoryKey(mismatch).path;
         return yield* new GitManagerError({
           operation: "preparePullRequestThread",
           cwd: input.cwd,

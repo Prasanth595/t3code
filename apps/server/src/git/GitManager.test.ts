@@ -2471,7 +2471,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   ] as const)(
     "decides whether a checkout whose remote %s holds the PR",
     (_name, remoteUrl, url, expected) => {
-      expect(GitManager.isPullRequestCheckout(remoteUrl, pullRequestAt(url))).toBe(expected);
+      expect(GitManager.pullRequestCheckoutMismatch(remoteUrl, pullRequestAt(url)) === null).toBe(
+        expected,
+      );
     },
   );
 
