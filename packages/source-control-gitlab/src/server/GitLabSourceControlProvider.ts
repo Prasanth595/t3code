@@ -15,6 +15,7 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
   type SourceControlUnknownRemoteRefinementInput,
+  type UnknownRemoteVerdict,
 } from "@t3tools/source-control-core/server/discovery";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
 
@@ -83,31 +84,36 @@ function parseGitLabAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
-function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementInput) {
+function refineUnknownGitLabRemote(
+  input: SourceControlUnknownRemoteRefinementInput,
+): UnknownRemoteVerdict {
   const host = input.context.provider.name.toLowerCase();
   const output = combinedAuthOutput(input.auth);
   const hosts = parseGitLabAuthStatusHosts(output);
   // Output that names no host and is not glab's never-logged-in answer (a config glab could not
   // read) says nothing about this one.
   if (hosts.length === 0) {
-    return NO_GITLAB_LOGIN_PATTERN.test(output) ? null : undefined;
+    return { provider: null, settled: NO_GITLAB_LOGIN_PATTERN.test(output) };
   }
   const records = hosts.filter((entry) => entry.host === host);
 
   if (records.length === 0) {
-    return null;
+    return { provider: null, settled: true };
   }
   // A record for this host with no account (its API call failed or its token was rejected) means
   // glab could not confirm this host either way.
   if (!records.some((entry) => entry.account !== null)) {
-    return undefined;
+    return { provider: null, settled: false };
   }
 
   return {
-    kind: SourceControlProviderKind.make("gitlab"),
-    name: "GitLab Self-Hosted",
-    baseUrl: input.context.provider.baseUrl,
-  } as const;
+    provider: {
+      kind: SourceControlProviderKind.make("gitlab"),
+      name: "GitLab Self-Hosted",
+      baseUrl: input.context.provider.baseUrl,
+    },
+    settled: true,
+  };
 }
 
 export const discovery = {

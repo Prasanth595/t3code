@@ -61,17 +61,19 @@ export const discovery = {
   },
   refineUnknownRemote: (input) => {
     const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
-    if (!remote) return null;
+    if (!remote) return { provider: null, settled: true };
     const logins = ForgejoCli.parseForgejoLogins(input.auth.stdout);
-    if (hasLoginBelowMount(logins, remote)) return undefined;
     const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
-    return login
-      ? {
-          kind: SourceControlProviderKind.make("forgejo"),
-          name: "Forgejo / Gitea",
-          baseUrl: login.url,
-        }
-      : null;
+    return {
+      provider: login
+        ? {
+            kind: SourceControlProviderKind.make("forgejo"),
+            name: "Forgejo / Gitea",
+            baseUrl: login.url,
+          }
+        : null,
+      settled: !hasLoginBelowMount(logins, remote),
+    };
   },
   installHint:
     "Install `fj` 0.6 or later from https://codeberg.org/forgejo-contrib/forgejo-cli and run `fj --host <server-url> auth add-token`, or install `tea` 0.16 or later from https://gitea.com/gitea/tea and run `tea login add` for each Forgejo or Gitea server.",

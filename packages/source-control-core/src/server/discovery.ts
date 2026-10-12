@@ -45,10 +45,10 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly remoteRefinementArgs?: ReadonlyArray<string>;
   readonly probeTimeoutMs?: number;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
-  /** Null when the CLI's output answers no for the remote, undefined when it does not answer. */
+  /** Unsettled when the CLI's output does not answer for this remote, as opposed to answering no. */
   readonly refineUnknownRemote?: (
     input: SourceControlUnknownRemoteRefinementInput,
-  ) => SourceControlProviderInfo | null | undefined;
+  ) => UnknownRemoteVerdict;
 };
 
 export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
@@ -353,14 +353,14 @@ export const refineUnknownRemoteProvider = Effect.fn("refineUnknownRemoteProvide
         })
         .pipe(
           Effect.map((auth) => {
-            const provider = spec.refineUnknownRemote({
+            const verdict = spec.refineUnknownRemote({
               cwd: input.cwd,
               context,
               auth,
             });
             // Output cut at the limit may have lost the part that answers for this remote.
             const complete = !auth.stdoutTruncated && !auth.stderrTruncated;
-            return { provider: provider ?? null, settled: provider !== undefined && complete };
+            return { provider: verdict.provider, settled: verdict.settled && complete };
           }),
           // A CLI that is not installed answers no for every checkout.
           Effect.catchIf(isMissingExecutable, () =>

@@ -582,14 +582,17 @@ it.effect("discovers Forgejo accounts and retains the server port", () =>
       ),
     });
     assert.deepStrictEqual(refined, {
-      kind: SourceControlProviderKind.make("forgejo"),
-      name: "Forgejo / Gitea",
-      baseUrl: "http://forgejo.local:3000",
+      provider: {
+        kind: SourceControlProviderKind.make("forgejo"),
+        name: "Forgejo / Gitea",
+        baseUrl: "http://forgejo.local:3000",
+      },
+      settled: true,
     });
   }),
 );
 
-it("does not answer from a tea login list with a login below the remote's mount", () => {
+it("does not settle a tea login list with a login below the remote's mount", () => {
   const refine = (remoteUrl: string, urls: ReadonlyArray<string>) =>
     ForgejoSourceControlProvider.discovery.refineUnknownRemote({
       cwd: "/repo",
@@ -606,14 +609,29 @@ it("does not answer from a tea login list with a login below the remote's mount"
         encodeJson(urls.map((url) => ({ name: url, url, user: "maria", default: "false" }))),
       ),
     });
-  const urls = ["https://git.example.internal/forge", "https://git.example.internal/forge/group"];
-  // The group login serves forge/group/a and not forge/other/b, so the answer depends on the path.
-  assert.isUndefined(refine("https://git.example.internal/forge/group/a.git", urls));
-  assert.isUndefined(refine("https://git.example.internal/forge/other/b.git", urls));
-  assert.strictEqual(
-    refine("https://git.example.internal/forge/other/b.git", urls.slice(0, 1))?.baseUrl,
-    "https://git.example.internal/forge",
-  );
+  const forgejo = (baseUrl: string) => ({
+    kind: SourceControlProviderKind.make("forgejo"),
+    name: "Forgejo / Gitea",
+    baseUrl,
+  });
+  for (const mount of ["", "/forge"]) {
+    const above = `https://git.example.internal${mount}`;
+    const urls = [above, `${above}/group`];
+    // The group login serves group/a and not other/b, so the answer depends on the path. The
+    // login above it still claims other/b.
+    assert.deepStrictEqual(refine(`${above}/other/b.git`, urls), {
+      provider: forgejo(above),
+      settled: false,
+    });
+    assert.deepStrictEqual(refine(`${above}/group/a.git`, urls), {
+      provider: null,
+      settled: false,
+    });
+    assert.deepStrictEqual(refine(`${above}/other/b.git`, urls.slice(0, 1)), {
+      provider: forgejo(above),
+      settled: true,
+    });
+  }
 });
 
 it.effect("does not choose a default Forgejo login across ambiguous SSH server ports", () =>
@@ -665,7 +683,7 @@ it.effect("does not choose a default Forgejo login across ambiguous SSH server p
       },
       auth: processOutput(yield* encodeJsonEffect(logins)),
     });
-    assert.strictEqual(refined?.baseUrl, "http://forgejo.local:4000");
+    assert.strictEqual(refined.provider?.baseUrl, "http://forgejo.local:4000");
     const https = ForgejoCli.parseForgejoRemote("http://forgejo.local:4000/maria/project.git");
     assert.isNotNull(https);
     assert.strictEqual(ForgejoCli.matchForgejoLogin(logins, https!)?.name, "two");

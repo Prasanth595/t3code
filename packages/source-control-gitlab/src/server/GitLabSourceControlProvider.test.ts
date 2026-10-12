@@ -186,7 +186,7 @@ self-hosted.example.test
 });
 
 it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
-  const provider = GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
+  const verdict = GitLabSourceControlProvider.discovery.refineUnknownRemote?.({
     cwd: "/repo",
     context: {
       provider: {
@@ -207,10 +207,13 @@ it("refines unknown GitLab remotes with mixed-case provider hosts", () => {
     },
   });
 
-  assert.deepStrictEqual(provider, {
-    kind: "gitlab",
-    name: "GitLab Self-Hosted",
-    baseUrl: "https://Self-Hosted.Example.Test",
+  assert.deepStrictEqual(verdict, {
+    provider: {
+      kind: SourceControlProviderKind.make("gitlab"),
+      name: "GitLab Self-Hosted",
+      baseUrl: "https://Self-Hosted.Example.Test",
+    },
+    settled: true,
   });
 });
 
