@@ -3159,6 +3159,37 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               origins: {},
             },
           },
+          requirementsReply: { result: { requirements: null } },
+          sandboxPolicy: { type: "workspaceWrite" },
+        }),
+      ),
+  );
+
+  // Codex 0.162.1 started with `-c default_permissions=":workspace"` over a user
+  // `sandbox_mode = "workspace-write"` runs the thread under `:workspace`.
+  it.effect(
+    "keeps the bare workspace-write policy when a launch argument selects a profile over sandbox_mode",
+    () =>
+      runAutoModeTurn(
+        autoModeTurnTranscript({
+          scenario: "workspace-write-config-session-flag-profile",
+          configReadReply: {
+            result: {
+              config: {
+                default_permissions: ":workspace",
+                sandbox_mode: "workspace-write",
+                sandbox_workspace_write: { writable_roots: ["/cache"], network_access: true },
+              },
+              origins: {
+                default_permissions: { name: { type: "sessionFlags" }, version: "sha256:flags" },
+                sandbox_mode: {
+                  name: { type: "user", file: "/codex-home/config.toml", profile: null },
+                  version: "sha256:user",
+                },
+              },
+            },
+          },
+          requirementsReply: { result: { requirements: null } },
           sandboxPolicy: { type: "workspaceWrite" },
         }),
       ),

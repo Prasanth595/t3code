@@ -1393,6 +1393,37 @@ const decodeCodexPermissionProfileRequirements = Schema.decodeUnknownEffect(
   }),
 );
 
+/**
+ * Whether the user or an admin opted Codex into permission profiles. Codex then
+ * runs threads started without a sandbox mode, as T3 starts them, under the
+ * selected profile and ignores `[sandbox_workspace_write]`, so copying the
+ * table into `turn/start` would grant what the profile excludes. In
+ * `core/src/config/mod.rs` at `rust-v0.162.1`, that happens when:
+ *
+ * - managed requirements set `allowedPermissionProfiles`. Requirements that set
+ *   `defaultPermissions` without it fail Codex's config load, and `config/read`
+ *   with it, so those turns keep the bare policy.
+ * - any config layer sets `default_permissions`, including launch arguments.
+ *   A higher layer's `sandbox_mode` selects the table again, but this check
+ *   doesn't reproduce Codex's layer order, so those turns keep the bare policy.
+ *
+ * Built-in profiles that Codex picks on its own, such as `:read-only` for a
+ * project with no trust setting, don't count: T3's mode asks for
+ * workspace-write, and the table holds the user's workspace-write settings.
+ * A resumed or forked thread can also restore the last profile Codex recorded
+ * for it, which `config/read` and `configRequirements/read` don't show, so the
+ * table is copied. That profile came from another Codex client's turn, or is
+ * the one Codex selected when T3 last resumed the thread without starting a
+ * turn, such as a built-in default or a `default_permissions` profile the user
+ * has since removed. T3's next turn clears it.
+ */
+function codexPermissionProfilesConfigured(input: {
+  readonly defaultPermissions: unknown;
+  readonly allowedPermissionProfiles: unknown;
+}): boolean {
+  return input.defaultPermissions != null || input.allowedPermissionProfiles != null;
+}
+
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
   Schema.Struct({ thread: Schema.Struct({ id: Schema.String, updatedAt: Schema.Number }) }),
 );
@@ -6255,25 +6286,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const workspaceWriteConfig = usesCodexWorkspaceWriteDefault(turnInput.runtimePolicy)
               ? yield* client.raw.request("config/read", { cwd: turnInput.runtimePolicy.cwd }).pipe(
                   Effect.flatMap(decodeCodexWorkspaceWriteConfig),
-                  // T3 starts threads without a sandbox mode, so when
-                  // `default_permissions` selects a profile, Codex runs the
-                  // thread under it and ignores this table. The merged config
-                  // can't show a higher layer's `sandbox_mode` overriding that
-                  // selection, so those turns also keep the bare policy.
-                  Effect.map(({ config }) =>
-                    config.default_permissions == null ? config.sandbox_workspace_write : undefined,
-                  ),
-                  // Under managed permission profiles Codex ignores this table,
-                  // so copying it would grant what the admin's profile excludes.
-                  Effect.flatMap((config) =>
-                    config == null
-                      ? Effect.succeed(config)
+                  Effect.flatMap(({ config }) =>
+                    config.sandbox_workspace_write == null
+                      ? Effect.succeed(null)
                       : client.raw.request("configRequirements/read", undefined).pipe(
                           Effect.flatMap(decodeCodexPermissionProfileRequirements),
-                          Effect.map((response) =>
-                            response.requirements?.allowedPermissionProfiles == null
-                              ? config
-                              : undefined,
+                          Effect.map(({ requirements }) =>
+                            codexPermissionProfilesConfigured({
+                              defaultPermissions: config.default_permissions,
+                              allowedPermissionProfiles: requirements?.allowedPermissionProfiles,
+                            })
+                              ? undefined
+                              : config.sandbox_workspace_write,
                           ),
                         ),
                   ),
