@@ -809,7 +809,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(7, 1fr);
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -1286,6 +1286,7 @@ const mobileEndorsementRows = [
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
     .harness:nth-child(even) { border-right: 0; }
+    .harness:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }
