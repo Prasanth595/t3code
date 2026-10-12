@@ -11,6 +11,18 @@ set -euo pipefail
 readonly LINK=/opt/t3code
 readonly BUILT_MARKER=.t3-deploy-built-sha
 readonly FAILED_MARKER=.t3-deploy-failed-sha
+readonly BUSY_MARKER=.t3-deploy-busy-checked
+# A build costs about 10 CPU minutes on a box that also serves production apps.
+# A burst of merges gets one build: the script builds only when main has not moved for this long.
+readonly QUIET_SECONDS=600
+# The busy check starts one node process per project, about 6 CPU seconds each.
+readonly BUSY_CHECK_MINUTES=5
+# Paths that do not reach the server build. A commit range that changes only these
+# moves the running checkout forward without a build or a restart.
+readonly NO_BUILD_PATHS=(
+  ':(exclude)docs' ':(exclude)*.md' ':(exclude).github' ':(exclude)apps/desktop'
+  ':(exclude)apps/mobile' ':(exclude)apps/marketing' ':(exclude)*.test.ts' ':(exclude)*.test.tsx'
+)
 export PATH="/opt/node/bin:$PATH"
 
 log() { echo "t3-deploy: $*"; }
@@ -24,18 +36,30 @@ esac
 
 git -C "$active" fetch --quiet origin main
 sha="$(git -C "$active" rev-parse FETCH_HEAD)"
-if [[ "$(git -C "$active" rev-parse HEAD)" == "$sha" ]]; then
+running="$(git -C "$active" rev-parse HEAD)"
+if [[ "$running" == "$sha" ]]; then
+  exit 0
+fi
+
+if [[ -z "$(git -C "$active" diff --name-only "$running" "$sha" -- . "${NO_BUILD_PATHS[@]}")" ]]; then
+  git -C "$active" checkout --quiet --detach "$sha"
+  log "${sha:0:12} changes nothing that the server builds; the running server moves to it without a build"
   exit 0
 fi
 
 # A thread in one of these states has a live provider process that a restart kills.
+# Prints the first busy thread and stops there.
 busy_threads() {
   local tool=("node" "$active/apps/server/dist/bin.mjs" "tool" "call")
-  local project
+  local project busy
   for project in $(cd /root/Github && "${tool[@]}" t3_project_list | jq -r '.projects[].id'); do
-    (cd /root/Github && "${tool[@]}" t3_thread_list --input "$(jq -nc --arg p "$project" \
-      '{projectId: $p, statuses: ["preparing", "queued", "starting", "running"], limit: 1}')") |
-      jq -r '.threads[].threadId'
+    busy="$(cd /root/Github && "${tool[@]}" t3_thread_list --input "$(jq -nc --arg p "$project" \
+      '{projectId: $p, statuses: ["preparing", "queued", "starting", "running"], limit: 1}')" |
+      jq -r '.threads[].threadId')"
+    if [[ -n "$busy" ]]; then
+      echo "$busy"
+      return
+    fi
   done
 }
 
@@ -45,6 +69,10 @@ if [[ "$(cat "$target/$FAILED_MARKER" 2>/dev/null)" == "$sha" ]]; then
   exit 0
 fi
 if [[ "$(cat "$target/$BUILT_MARKER" 2>/dev/null)" != "$sha" ]]; then
+  quiet_for=$(($(date +%s) - $(git -C "$active" log -1 --format=%ct "$sha")))
+  if ((quiet_for < QUIET_SECONDS)); then
+    exit 0
+  fi
   log "building ${sha:0:12} in $target"
   rm -f "$target/$BUILT_MARKER"
   git -C "$target" fetch --quiet origin main
@@ -57,8 +85,12 @@ if [[ "$(cat "$target/$BUILT_MARKER" 2>/dev/null)" != "$sha" ]]; then
   echo "$sha" >"$target/$BUILT_MARKER"
 fi
 
+if [[ -n "$(find "$target/$BUSY_MARKER" -mmin "-$BUSY_CHECK_MINUTES" 2>/dev/null)" ]]; then
+  exit 0
+fi
 if [[ -n "$(busy_threads)" ]]; then
-  log "${sha:0:12} is built; agents are running, so the switch waits for the next run"
+  touch "$target/$BUSY_MARKER"
+  log "${sha:0:12} is built; agents are running, so the switch waits $BUSY_CHECK_MINUTES minutes"
   exit 0
 fi
 
