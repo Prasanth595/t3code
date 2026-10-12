@@ -5216,6 +5216,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
       );
       const now = yield* DateTime.now;
+      // A message the user sends to the idle thread from a client picks the thread
+      // back up, so the queue a Stop, failure or restart held runs after it.
+      // Agent, scheduled and server-sent messages, such as a usage-limit
+      // continuation, leave the hold for the user to release.
+      if (
+        command.createdBy === "user" &&
+        (command.creationSource === "web" || command.creationSource === "mobile") &&
+        command.scheduledTaskId === undefined
+      ) {
+        for (const run of projection.runs) {
+          if (run.status !== "queued" || run.queueHeld !== true) continue;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, queueHeld: false },
+          });
+        }
+      }
       if (
         !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
         projection.thread.providerInstanceId !== modelSelection.instanceId

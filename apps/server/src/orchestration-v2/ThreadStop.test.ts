@@ -101,7 +101,12 @@ const watch = (threadId: ThreadId, number: number) =>
     });
   });
 
-const send = (threadId: ThreadId, text: string, type: "start_immediately" | "queue_after_active") =>
+const send = (
+  threadId: ThreadId,
+  text: string,
+  type: "start_immediately" | "queue_after_active",
+  createdBy: "user" | "agent" = "user",
+) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     yield* orchestrator.dispatch({
@@ -112,8 +117,8 @@ const send = (threadId: ThreadId, text: string, type: "start_immediately" | "que
       text,
       attachments: [],
       dispatchMode: { type },
-      createdBy: "user",
-      creationSource: "web",
+      createdBy,
+      creationSource: createdBy === "user" ? "web" : "mcp",
     });
   });
 
@@ -512,6 +517,43 @@ it.effect("a delegated task that cannot be stopped fails the walk after its sibl
     );
     assert.isTrue(Exit.isFailure(walked));
     assert.deepEqual((yield* threadState(childThreadId)).runs, ["interrupted"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a message the user sends after Stop releases the held queue behind it", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const stopWithQueue = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        yield* createWatchingThread(threadId, 13);
+        yield* send(threadId, "work", "start_immediately");
+        yield* send(threadId, "queued", "queue_after_active");
+        yield* orchestrator.dispatch({
+          type: "thread.stop",
+          commandId: CommandId.make(`stop:${threadId}`),
+          threadId,
+        });
+        assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted", "queued:held"]);
+      });
+
+    const userThreadId = ThreadId.make("thread:stop-user-sends");
+    yield* stopWithQueue(userThreadId);
+    yield* send(userThreadId, "new", "queue_after_active");
+    assert.deepEqual((yield* threadState(userThreadId)).runs, [
+      "interrupted",
+      "queued",
+      "starting",
+    ]);
+
+    // Only the user picks a stopped thread back up.
+    const agentThreadId = ThreadId.make("thread:stop-agent-sends");
+    yield* stopWithQueue(agentThreadId);
+    yield* send(agentThreadId, "wake", "queue_after_active", "agent");
+    assert.deepEqual((yield* threadState(agentThreadId)).runs, [
+      "interrupted",
+      "queued:held",
+      "starting",
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
