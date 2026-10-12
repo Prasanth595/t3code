@@ -274,7 +274,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "show-header-title",
     title: "Show Header Title",
     to: "/settings/appearance",
-    searchTerms: ["sidebar brand header title wordmark text logo toggle"],
+    searchTerms: ["brand header title wordmark text logo hide switch"],
   },
   {
     id: "diff-color-scheme",
