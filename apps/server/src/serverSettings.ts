@@ -723,6 +723,7 @@ const make = Effect.gen(function* () {
     // A file that failed to decode must stay on disk for the user to repair;
     // the fold below only writes when it started from the file's real contents.
     let settingsFileTrusted = true;
+    let parseFailure = Option.none<unknown>();
 
     if (yield* readConfigExists) {
       const raw = yield* readRawConfig;
@@ -741,6 +742,7 @@ const make = Effect.gen(function* () {
         // The file may hold an opt-out we can no longer read; never resume threads on a guess.
         settings = { ...DEFAULT_SERVER_SETTINGS, continueThreadsAfterServerUpdate: false };
         if (failure._tag === "Failure") {
+          parseFailure = Option.some(Cause.squash(failure.cause));
           yield* Effect.logWarning("failed to parse settings.json, using defaults", {
             path: settingsPath,
             issues: Cause.pretty(failure.cause),
@@ -852,13 +854,13 @@ const make = Effect.gen(function* () {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
-    return { settings: migrated, fileTrusted: settingsFileTrusted };
+    return { settings: migrated, parseFailure };
   });
 
   // A failed read is not kept: the next read retries instead of replaying the failure.
   const settingsCache = yield* Cache.makeWith<
     typeof cacheKey,
-    { readonly settings: ServerSettings; readonly fileTrusted: boolean },
+    { readonly settings: ServerSettings; readonly parseFailure: Option.Option<unknown> },
     ServerSettingsError
   >(() => loadSettingsFromDisk, {
     capacity: 1,
@@ -1074,9 +1076,13 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
-        const { settings: current, fileTrusted } = yield* reloadSettings;
-        if (!fileTrusted) {
-          return yield* new ServerSettingsError({ settingsPath, operation: "read-file" });
+        const { settings: current, parseFailure } = yield* reloadSettings;
+        if (Option.isSome(parseFailure)) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            operation: "read-file",
+            cause: parseFailure.value,
+          });
         }
         const updated = yield* update(current);
         const persisted = yield* persistSettingsSecrets(current, updated);
@@ -1097,7 +1103,7 @@ const make = Effect.gen(function* () {
             return materializedExit.value;
           }),
         );
-        yield* Cache.set(settingsCache, cacheKey, { settings: next, fileTrusted: true });
+        yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
         yield* emitChange(next);
         return resolveTextGenerationProvider(materialized);
       }),
