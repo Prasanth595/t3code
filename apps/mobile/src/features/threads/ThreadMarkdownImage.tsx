@@ -14,7 +14,6 @@ import { PresentationSource } from "../../components/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
-import { assetImageCacheKey } from "../../lib/assetImageSource";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
   type MarkdownImageDisplaySize,
@@ -35,8 +34,6 @@ export const MarkdownImageAvailableWidthContext = createContext(0);
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
-  /** Disk cache key that outlives the signed URL, see `assetImageCacheKey`. */
-  readonly cacheKey?: string | undefined;
   readonly unavailable: boolean;
   readonly alt: string | null;
   /** Pixel size from the server, when it could read the header; the frame is final from the first render. */
@@ -133,7 +130,6 @@ export function ThreadMarkdownImageView(props: {
                 <ThreadMarkdownImageRequest
                   key={props.uri}
                   uri={props.uri}
-                  cacheKey={props.cacheKey}
                   format={props.format}
                   onLoad={setDecodedSize}
                   onError={() => setFailedUri(props.uri)}
@@ -154,7 +150,6 @@ export function ThreadMarkdownImageView(props: {
 
 function ThreadMarkdownImageRequest(props: {
   readonly uri: string;
-  readonly cacheKey?: string | undefined;
   readonly onLoad: (sourceSize: { width: number; height: number }) => void;
   readonly onError: () => void;
   readonly format?: "svg";
@@ -174,11 +169,7 @@ function ThreadMarkdownImageRequest(props: {
         />
       ) : (
         <Image
-          source={
-            props.cacheKey === undefined
-              ? { uri: props.uri }
-              : { uri: props.uri, cacheKey: props.cacheKey }
-          }
+          source={{ uri: props.uri }}
           contentFit="contain"
           cachePolicy="memory-disk"
           accessible={false}
@@ -262,7 +253,6 @@ export function ThreadMarkdownImage(props: {
   return (
     <ThreadMarkdownImageView
       uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
-      cacheKey={assetImageCacheKey(props.environmentId, props.resource)}
       sourceKey={
         props.resource._tag === "attachment"
           ? `attachment:${props.resource.attachmentId}`

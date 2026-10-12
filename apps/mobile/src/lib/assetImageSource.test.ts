@@ -20,7 +20,10 @@ describe("assetImageSource", () => {
     );
 
     expect(first.cacheKey).toBeDefined();
-    expect(second.cacheKey).toBe(first.cacheKey);
+    expect(second).toStrictEqual({
+      uri: "https://host/api/assets/token-b/p.jpg",
+      cacheKey: first.cacheKey,
+    });
     expect(
       assetImageSource(EnvironmentId.make("environment-2"), resource, "https://other/p.jpg")
         .cacheKey,
@@ -34,6 +37,6 @@ describe("assetImageSource", () => {
       "https://host/api/assets/token-a/logo.png",
     );
 
-    expect(source).toEqual({ uri: "https://host/api/assets/token-a/logo.png" });
+    expect(source).toStrictEqual({ uri: "https://host/api/assets/token-a/logo.png" });
   });
 });
