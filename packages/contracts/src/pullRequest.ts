@@ -190,6 +190,19 @@ export const PullRequestReaction = Schema.Struct({
 });
 export type PullRequestReaction = typeof PullRequestReaction.Type;
 
+/** GitHub's `CommentAuthorAssociation`: the author's role on the repository. */
+export const PullRequestAuthorAssociation = Schema.Literals([
+  "OWNER",
+  "MEMBER",
+  "COLLABORATOR",
+  "CONTRIBUTOR",
+  "FIRST_TIME_CONTRIBUTOR",
+  "FIRST_TIMER",
+  "MANNEQUIN",
+  "NONE",
+]);
+export type PullRequestAuthorAssociation = typeof PullRequestAuthorAssociation.Type;
+
 export const PullRequestCommentKind = Schema.Literals([
   "issue-comment",
   "review-comment",
@@ -201,6 +214,11 @@ export const PullRequestComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: PullRequestCommentKind,
   author: Schema.NullOr(PullRequestActor),
+  /**
+   * The author's role on the repository as the host reports it, such as `OWNER`. A string, so a
+   * role a newer host adds does not fail the read. Absent where the host reports no role.
+   */
+  authorAssociation: Schema.optional(Schema.String),
   body: Schema.String,
   createdAt: IsoDateTime,
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
@@ -233,6 +251,11 @@ export type PullRequestReviewVerdict = typeof PullRequestReviewVerdict.Type;
 export const PullRequestThreadComment = Schema.Struct({
   id: TrimmedNonEmptyString,
   author: Schema.NullOr(PullRequestActor),
+  /**
+   * The author's role on the repository as the host reports it, such as `OWNER`. A string, so a
+   * role a newer host adds does not fail the read. Absent where the host reports no role.
+   */
+  authorAssociation: Schema.optional(Schema.String),
   body: Schema.String,
   createdAt: IsoDateTime,
   editedAt: Schema.optional(Schema.NullOr(IsoDateTime)),

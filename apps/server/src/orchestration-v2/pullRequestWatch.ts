@@ -1,9 +1,11 @@
-import type {
-  OrchestrationV2Notification,
-  PullRequestCheck,
-  PullRequestComment,
-  PullRequestDetail,
-  ThreadPullRequestWatch,
+import {
+  DEFAULT_SERVER_SETTINGS,
+  type OrchestrationV2Notification,
+  type PullRequestCheck,
+  type PullRequestComment,
+  type PullRequestDetail,
+  type PullRequestWatchRemarkFilter,
+  type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
 
 /**
@@ -38,13 +40,15 @@ const isFailedCheck = (check: PullRequestCheck) =>
  * soon as it fails, so a check that never finishes (an advisory review bot) cannot hold the
  * news back. "Passed" is reported once the checks the base branch requires all passed, or all
  * checks where the host marks none required. Remarks count when someone other than the agent's
- * own account wrote them, so its own replies never wake it. `remarks` is null when the
- * conversation could not be read; remarks then wait for a later pass.
+ * own account wrote them, so its own replies never wake it. `remarkFilter` can replace that
+ * rule with allowed repository roles and logins, and can skip remarks with an agent marker.
+ * `remarks` is null when the conversation could not be read; remarks then wait for a later pass.
  */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<PullRequestDetail, "headSha" | "checks" | "mergeability" | "viewer" | "author">,
   remarks: ReadonlyArray<PullRequestComment> | null,
+  remarkFilter: PullRequestWatchRemarkFilter = DEFAULT_SERVER_SETTINGS.pullRequestWatchRemarkFilter,
 ): PullRequestWatchReport {
   const changes: Array<PullRequestWatchChange> = [];
   const headSha = detail.headSha ?? null;
@@ -78,6 +82,19 @@ export function evaluatePullRequestWatch(
   }
 
   const own = (detail.viewer ?? detail.author?.login)?.toLowerCase();
+  const { authorAssociations, agentMarker } = remarkFilter;
+  const authorLogins = remarkFilter.authorLogins.map((login) => login.toLowerCase());
+  const wakesAgent = (remark: PullRequestComment) => {
+    if (agentMarker !== "" && remark.body.includes(agentMarker)) return false;
+    const login = remark.author?.login.toLowerCase();
+    if (authorAssociations.length === 0 && authorLogins.length === 0) return login !== own;
+    // The server's account can be a person who reviews, so an allowed author wakes even then.
+    const role = remark.authorAssociation?.toUpperCase();
+    return (
+      (role !== undefined && authorAssociations.some((allowed) => allowed === role)) ||
+      (login !== undefined && authorLogins.includes(login))
+    );
+  };
   const through = Date.parse(watch.remarksThrough);
   // An edit counts as new activity, so bots that rewrite one summary comment still wake the agent.
   const activeAt = (remark: PullRequestComment) => remark.editedAt ?? remark.createdAt;
@@ -86,7 +103,7 @@ export function evaluatePullRequestWatch(
     const at = Date.parse(activeAt(remark));
     return (
       (at > through || (at === through && !watch.remarkIds.includes(remark.id))) &&
-      remark.author?.login.toLowerCase() !== own
+      wakesAgent(remark)
     );
   });
   if (fresh.length > 0) changes.push({ kind: "remarks", remarks: fresh });

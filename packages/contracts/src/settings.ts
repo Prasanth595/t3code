@@ -44,7 +44,7 @@ import {
   ProviderInstanceId,
   ProviderDriverKind,
 } from "./providerInstance.ts";
-import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { PullRequestAuthorAssociation, PullRequestMergeMethod } from "./pullRequest.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -877,6 +877,28 @@ export const SourceControlWritingStyleSettings = Schema.Struct({
 });
 export type SourceControlWritingStyleSettings = typeof SourceControlWritingStyleSettings.Type;
 
+/**
+ * Fork: which pull request remarks wake an agent that watches the pull request. With no roles
+ * and no logins, a remark wakes the agent unless the server's own account wrote it.
+ */
+export const PullRequestWatchRemarkFilter = Schema.Struct({
+  /**
+   * Repository roles whose remarks wake the agent, as the host reports them. A remark from one of
+   * these roles or from `authorLogins` wakes the agent; with either list set, the own-account
+   * rule does not apply. A remark without a reported role counts only through `authorLogins`.
+   */
+  authorAssociations: Schema.Array(PullRequestAuthorAssociation).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Logins whose remarks wake the agent whatever their role, compared without case. */
+  authorLogins: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Text that marks an agent's remark, such as `<!-- agent -->`. A remark with it never wakes. */
+  agentMarker: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+});
+export type PullRequestWatchRemarkFilter = typeof PullRequestWatchRemarkFilter.Type;
+
 export const BranchNamingMode = Schema.Literals(["static", "semantic", "custom"]);
 export type BranchNamingMode = typeof BranchNamingMode.Type;
 
@@ -1323,6 +1345,9 @@ export const ServerSettings = Schema.Struct({
   pullRequestMergeMethod: Schema.NullOr(PullRequestMergeMethod).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  pullRequestWatchRemarkFilter: PullRequestWatchRemarkFilter.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
 
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1602,6 +1627,14 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
+  /** Merges per field: a patched field replaces the saved one. */
+  pullRequestWatchRemarkFilter: Schema.optionalKey(
+    Schema.Struct({
+      authorAssociations: Schema.optionalKey(Schema.Array(PullRequestAuthorAssociation)),
+      authorLogins: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+      agentMarker: Schema.optionalKey(TrimmedString),
+    }),
+  ),
   observability: Schema.optionalKey(
     Schema.Struct({
       otlpTracesUrl: Schema.optionalKey(TrimmedString),

@@ -267,7 +267,11 @@ the thread is active, the server checks the pull request every two minutes and w
 check fails, the required checks pass, someone else comments or reviews, or the branch starts to
 conflict. Threads in a project that watch the same pull request share one check. On GitHub, a check
 first asks whether anything changed and reads the pull request only when it did, which keeps
-watching inside GitHub's rate limit. Comments from your own account do not wake it. Watching ends
+watching inside GitHub's rate limit. Comments from your own account do not wake it. To wake it only
+for some authors, set **Roles that wake agents** or **Logins that wake agents** under **Settings >
+Source control > Pull request watch**. A role is the author's role on the repository on GitHub, such
+as Owner or Collaborator. With either set, your own comments wake the agent too. A comment that
+contains the **Agent remark marker**, such as `<!-- agent -->`, never wakes it. Watching ends
 when the pull request merges or closes, after 10 wakes in a row that bring only comments, after 8
 failed reads in a row, or when you press Stop on the thread. A rate limit only pauses watching.
 Settling or archiving a thread also ends all its watches. Unsettle the thread before starting a new

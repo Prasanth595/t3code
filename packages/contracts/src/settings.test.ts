@@ -657,7 +657,6 @@ describe("ClientSettings sidebar", () => {
       decodeClientSettingsPatch({ confirmTerminalClose: false, terminalAppShortcutsFirst: true }),
     ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
   });
-
 });
 
 describe("ClientSettings context window meter", () => {
@@ -1097,6 +1096,33 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
         projectSettingsOverrides: { project: { removeAgentCreditsOnMerge: true } },
       }).projectSettingsOverrides["project" as ProjectId]?.removeAgentCreditsOnMerge,
     ).toBe(true);
+  });
+});
+
+describe("ServerSettings.pullRequestWatchRemarkFilter", () => {
+  it("filters nothing by default and reads a saved filter", () => {
+    expect(decodeServerSettings({}).pullRequestWatchRemarkFilter).toEqual({
+      authorAssociations: [],
+      authorLogins: [],
+      agentMarker: "",
+    });
+    expect(
+      decodeServerSettings({
+        pullRequestWatchRemarkFilter: {
+          authorAssociations: ["OWNER", "MEMBER", "COLLABORATOR"],
+          agentMarker: " <!-- agent --> ",
+        },
+      }).pullRequestWatchRemarkFilter,
+    ).toEqual({
+      authorAssociations: ["OWNER", "MEMBER", "COLLABORATOR"],
+      authorLogins: [],
+      agentMarker: "<!-- agent -->",
+    });
+    expect(() =>
+      decodeServerSettingsPatch({
+        pullRequestWatchRemarkFilter: { authorAssociations: ["ADMIN"] },
+      }),
+    ).toThrow();
   });
 });
 

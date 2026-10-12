@@ -527,6 +527,32 @@ describe("pull request detail decoding", () => {
     },
   );
 
+  it("carries each remark author's repository role where GitHub reports one", () => {
+    const detail = expectSuccess(
+      activity({
+        comments: [
+          { id: "c1", body: "hi", createdAt: "2026-07-04T00:00:00Z", authorAssociation: "MEMBER" },
+          { id: "c2", body: "hey", createdAt: "2026-07-05T00:00:00Z" },
+        ],
+        reviews: [
+          {
+            id: "r1",
+            body: "ok",
+            state: "APPROVED",
+            submittedAt: "2026-07-06T00:00:00Z",
+            authorAssociation: "owner",
+          },
+        ],
+      }),
+    );
+    expect(detail.comments.map((comment) => [comment.id, comment.authorAssociation])).toEqual([
+      ["c1", "MEMBER"],
+      ["c2", undefined],
+      ["r1", "OWNER"],
+    ]);
+    expect(detail.comments[1]).not.toHaveProperty("authorAssociation");
+  });
+
   it("drops a review that carries neither a body nor a state", () => {
     const raw = JSON.parse(detailJson) as Record<string, unknown>;
     const detail = expectSuccess(
@@ -1223,6 +1249,48 @@ describe("review thread decoding", () => {
     expect(
       reviewThreadConversation(reviewThreads.threads.map((entry) => entry.thread))[0]?.editedAt,
     ).toBe("2026-07-02T00:00:00Z");
+  });
+
+  it("carries a thread comment author's repository role into the conversation", () => {
+    const reviewThreads = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_1",
+            path: "src/a.ts",
+            line: 1,
+            comments: {
+              totalCount: 2,
+              nodes: [
+                { ...comment("c1", "first"), authorAssociation: "COLLABORATOR" },
+                comment("c2", "second"),
+              ],
+            },
+          },
+        ]),
+      ),
+    );
+    const conversation = reviewThreadConversation(
+      reviewThreads.threads.map((entry) => entry.thread),
+    );
+    expect(conversation.map((remark) => remark.authorAssociation)).toEqual([
+      "COLLABORATOR",
+      undefined,
+    ]);
+    const page = expectSuccess(
+      decodeReviewThreadCommentsJson(
+        JSON.stringify({
+          data: {
+            repository: { pullRequest: { id: "PR_1" } },
+            node: {
+              pullRequest: { id: "PR_1" },
+              comments: { nodes: [{ ...comment("c3", "third"), authorAssociation: "NONE" }] },
+            },
+          },
+        }),
+      ),
+    );
+    expect(page.comments[0]?.authorAssociation).toBe("NONE");
   });
 
   it("leaves an outdated thread without a line rather than pinning it to a stale one", () => {

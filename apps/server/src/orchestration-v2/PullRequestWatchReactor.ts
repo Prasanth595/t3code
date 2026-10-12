@@ -6,6 +6,7 @@ import {
   type PullRequestComment,
   type PullRequestRef,
   type PullRequestThreadCommentsResult,
+  type PullRequestWatchRemarkFilter,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
 } from "@t3tools/contracts";
@@ -32,6 +33,7 @@ import {
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { evaluatePullRequestWatch, pullRequestWatchMessage } from "./pullRequestWatch.ts";
@@ -235,6 +237,7 @@ export const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const crypto = yield* Crypto.Crypto;
   const bootedAt = yield* Clock.currentTimeMillis;
   const lives = new Map<string, WatchLife>();
@@ -471,6 +474,7 @@ export const make = Effect.gen(function* () {
   const readGroup = Effect.fn("PullRequestWatchReactor.readGroup")(function* (
     group: WatchGroup,
     fingerprint: ProviderChangeRequestWatchFingerprint | null,
+    remarkFilter: PullRequestWatchRemarkFilter,
   ) {
     const now = yield* Clock.currentTimeMillis;
     const last = lastReads.get(group.key);
@@ -548,7 +552,7 @@ export const make = Effect.gen(function* () {
       remarks: fingerprint?.remarks ?? null,
     });
     yield* eachTarget(group, (target) => {
-      const report = evaluatePullRequestWatch(target.watch, detail, remarks);
+      const report = evaluatePullRequestWatch(target.watch, detail, remarks, remarkFilter);
       if (report.changes.length > 0) {
         return record(
           target,
@@ -619,6 +623,8 @@ export const make = Effect.gen(function* () {
         ),
       { discard: true },
     );
+    // An unreadable settings file fails the pass, so no remark wakes an agent the filter excludes.
+    const { pullRequestWatchRemarkFilter } = yield* settings.getSettings;
     const fingerprints = yield* Effect.forEach(groups, fingerprintOf, {
       concurrency: "unbounded",
     });
@@ -628,7 +634,7 @@ export const make = Effect.gen(function* () {
         const fingerprint = fingerprints[index]!;
         return fingerprint === "paused"
           ? Effect.void
-          : readGroup(group, fingerprint).pipe(
+          : readGroup(group, fingerprint, pullRequestWatchRemarkFilter).pipe(
               Effect.catchCause(
                 logFailure("pull request watch check failed", { pullRequest: group.key }),
               ),

@@ -909,6 +909,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "pull-request-watch-roles",
+    title: "Roles that wake agents",
+    to: "/settings/source-control",
+    searchTerms: [
+      "pull request pr watch remark comment review wake agent owner member collaborator author association role",
+    ],
+    environmentOnly: true,
+  },
+  {
+    id: "pull-request-watch-logins",
+    title: "Logins that wake agents",
+    to: "/settings/source-control",
+    searchTerms: ["pull request pr watch remark comment review wake agent github user author"],
+    environmentOnly: true,
+  },
+  {
+    id: "pull-request-watch-agent-marker",
+    title: "Agent remark marker",
+    to: "/settings/source-control",
+    searchTerms: ["pull request pr watch remark comment wake agent bot skip ignore html comment"],
+    environmentOnly: true,
+  },
+  {
     id: "review-guide-model",
     title: "Review guide model",
     to: "/settings/source-control",

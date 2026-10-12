@@ -388,6 +388,7 @@ const RawCommentSchema = Schema.Struct({
   id: Schema.String,
   lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
+  authorAssociation: Schema.optional(Schema.NullOr(Schema.String)),
   body: Schema.optional(Schema.String),
   createdAt: Schema.String,
   url: Schema.optional(Schema.NullOr(Schema.String)),
@@ -399,6 +400,7 @@ const RawReviewSchema = Schema.Struct({
   id: Schema.String,
   lastEditedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(RawActorSchema)),
+  authorAssociation: Schema.optional(Schema.NullOr(Schema.String)),
   body: Schema.optional(Schema.String),
   state: Schema.optional(Schema.NullOr(Schema.String)),
   submittedAt: Schema.optional(Schema.NullOr(Schema.String)),
@@ -900,11 +902,11 @@ export const PULL_REQUEST_ACTIVITY_GRAPHQL_QUERY = `query($owner: String!, $name
       }
       comments(first: 100, after: $commentsAfter) @include(if: $withComments) {
         pageInfo { hasNextPage endCursor }
-        nodes { id body createdAt lastEditedAt url author { __typename login avatarUrl ... on User { name } } }
+        nodes { id body createdAt lastEditedAt url authorAssociation author { __typename login avatarUrl ... on User { name } } }
       }
       reviews(first: 100, after: $reviewsAfter) @include(if: $withReviews) {
         pageInfo { hasNextPage endCursor }
-        nodes { id body state submittedAt lastEditedAt url author { __typename login avatarUrl ... on User { name } } }
+        nodes { id body state submittedAt lastEditedAt url authorAssociation author { __typename login avatarUrl ... on User { name } } }
       }
     }
   }
@@ -1035,7 +1037,7 @@ export const REVIEW_THREADS_GRAPHQL_QUERY = `query($owner: String!, $name: Strin
           comments(first: 10) {
             totalCount
             pageInfo { hasNextPage endCursor }
-            nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
+            nodes { id author { __typename login avatarUrl } authorAssociation body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
           }
         }
       }
@@ -1092,7 +1094,7 @@ export const REVIEW_THREAD_COMMENTS_GRAPHQL_QUERY = `query($owner: String!, $nam
       pullRequest { id }
       comments(first: ${GRAPHQL_PAGE_SIZE}, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id author { __typename login avatarUrl } body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
+        nodes { id author { __typename login avatarUrl } authorAssociation body createdAt lastEditedAt url ${REACTION_GROUPS_FIELDS} }
       }
     }
   }
@@ -1374,6 +1376,14 @@ export interface GitHubPullRequestActivity {
 function trimmed(value: string | null | undefined): string | null {
   const text = value?.trim() ?? "";
   return text.length > 0 ? text : null;
+}
+
+/** The author's role on the repository, left out where GitHub reports none. */
+function authorAssociationOf(value: string | null | undefined): {
+  readonly authorAssociation?: string;
+} {
+  const role = trimmed(value);
+  return role === null ? {} : { authorAssociation: role.toUpperCase() };
 }
 
 /**
@@ -1678,6 +1688,7 @@ function toComments(raw: {
     id: comment.id,
     kind: "issue-comment",
     author: toActor(comment.author),
+    ...authorAssociationOf(comment.authorAssociation),
     body: comment.body ?? "",
     createdAt: comment.createdAt,
     editedAt: comment.lastEditedAt ?? null,
@@ -1703,6 +1714,7 @@ function toComments(raw: {
         id: review.id,
         kind: "review",
         author: toActor(review.author),
+        ...authorAssociationOf(review.authorAssociation),
         body: review.body ?? "",
         createdAt: submittedAt,
         editedAt: review.lastEditedAt ?? null,
@@ -2639,6 +2651,9 @@ export function reviewThreadConversation(
       id: comment.id,
       kind: "review-comment",
       author: comment.author,
+      ...(comment.authorAssociation === undefined
+        ? {}
+        : { authorAssociation: comment.authorAssociation }),
       body: comment.body,
       createdAt: comment.createdAt,
       editedAt: comment.editedAt ?? null,
@@ -2739,6 +2754,7 @@ export function decodeReviewThreadsJson(
           comments: thread.comments.nodes.map((comment) => ({
             id: comment.id,
             author: toActor(comment.author),
+            ...authorAssociationOf(comment.authorAssociation),
             body: comment.body ?? "",
             createdAt: comment.createdAt,
             editedAt: comment.lastEditedAt ?? null,
@@ -2860,6 +2876,7 @@ export function decodeReviewThreadCommentsJson(raw: string): Result.Result<
     comments: (comments?.nodes ?? []).map((comment) => ({
       id: comment.id,
       author: toActor(comment.author),
+      ...authorAssociationOf(comment.authorAssociation),
       body: comment.body ?? "",
       createdAt: comment.createdAt,
       editedAt: comment.lastEditedAt ?? null,
