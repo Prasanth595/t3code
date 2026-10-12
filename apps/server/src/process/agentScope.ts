@@ -177,6 +177,14 @@ export const make = Effect.gen(function* () {
   // at a time, so only its latest scope can explain a failure.
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 
+  // util-linux's setpriv sets the agent's parent-death signal, so an agent
+  // never outlives the server that reads it.
+  const setpriv = yield* Effect.cached(
+    resolve("setpriv", hostEnvironment).pipe(
+      Effect.map((resolved) => (resolved._tag === "Some" ? resolved.value : undefined)),
+    ),
+  );
+
   const readCgroupFile = (controlGroup: string, file: string) =>
     fileSystem
       .readFileString(path.join("/sys/fs/cgroup", controlGroup, file))
@@ -296,7 +304,10 @@ export const make = Effect.gen(function* () {
       // Leave unresolved commands alone so the spawn reports the missing binary.
       if (resolved._tag === "None") return { command, args };
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved.value, args });
+      const dieWithServer = yield* setpriv;
+      if (scope === undefined) {
+        return agentScopeCommand({ command: resolved.value, args, setpriv: dieWithServer });
+      }
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
       const systemdScope: AgentSystemdScope = {
@@ -308,7 +319,12 @@ export const make = Effect.gen(function* () {
         // the unit even when it fails.
         options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
-      return agentScopeCommand({ command: resolved.value, args, scope: systemdScope });
+      return agentScopeCommand({
+        command: resolved.value,
+        args,
+        scope: systemdScope,
+        setpriv: dieWithServer,
+      });
     }),
     oomKilled,
     clear,

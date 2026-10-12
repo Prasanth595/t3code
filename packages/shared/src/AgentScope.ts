@@ -97,15 +97,25 @@ export interface AgentSystemdScope {
  * spawned PID, stdio, and signals all belong to the agent itself.
  * `systemd-run --scope` registers its own PID as the scope and then runs the
  * command, so the agent and all of its children start inside the scope.
+ *
+ * With `setpriv`, the agent also gets SIGTERM when the server dies. A scope
+ * takes the agent out of the server's cgroup, so when the server is killed
+ * (the service launcher's SIGKILL after its grace period, a crash) nothing
+ * else stops the agent, and it keeps working and billing with nobody reading it.
  */
 export function agentScopeCommand(input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly scope?: AgentSystemdScope | undefined;
+  readonly setpriv?: string | undefined;
 }): AgentScopeCommand {
-  const { command, args, scope } = input;
+  const { command, args, scope, setpriv } = input;
+  const dieWithServer = setpriv === undefined ? [] : [setpriv, "--pdeathsig", "TERM", "--"];
   if (scope === undefined) {
-    return { command: "/bin/sh", args: ["-c", LAUNCH_SCRIPT, "t3-agent", command, ...args] };
+    return {
+      command: "/bin/sh",
+      args: ["-c", LAUNCH_SCRIPT, "t3-agent", ...dieWithServer, command, ...args],
+    };
   }
   return {
     command: "/bin/sh",
@@ -114,6 +124,7 @@ export function agentScopeCommand(input: {
       SCOPED_LAUNCH_SCRIPT,
       "t3-agent",
       scope.runtimeDir,
+      ...dieWithServer,
       scope.systemdRun,
       "--user",
       "--scope",
