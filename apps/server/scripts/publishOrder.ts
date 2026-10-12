@@ -8,11 +8,12 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
   ServerCliBuildAssetMissingError,
+  ServerCliLauncherManifestInvalidError,
   ServerCliNpmPackageNotReadyError,
   ServerCliNpmPackagesNotInstallableError,
-  ServerCliPlatformManifestInvalidError,
 } from "./cliErrors.ts";
 
+type NpmPackage = { readonly name: string; readonly version: string };
 const READY_DEADLINE = "25 minutes";
 
 // Checks a package again after 5s, 10s, 20s, then every 30s.
@@ -32,16 +33,17 @@ const recheckSchedule = Schedule.exponential("5 seconds").pipe(
  * A successful upload can still 404 for minutes while npm processes it, and
  * npm installs the launcher without an optional dependency it cannot fetch.
  * So unless this is a dry run, the launcher also waits until `checkInstallable`
- * passes for every platform tarball, and is skipped if that takes longer than
- * `READY_DEADLINE`.
+ * passes for each of the `platformPackages` it installs, and is skipped if that
+ * takes longer than `READY_DEADLINE`.
  */
 export const publishPlatformsThenLauncher = <E, R, R2>(input: {
   readonly platformTarballs: ReadonlyArray<string>;
   readonly launcherTarball: string;
   readonly publish: (tarball: string) => Effect.Effect<void, E, R>;
   readonly dryRun: boolean;
+  readonly platformPackages: ReadonlyArray<NpmPackage>;
   readonly checkInstallable: (
-    tarball: string,
+    pkg: NpmPackage,
   ) => Effect.Effect<void, ServerCliNpmPackageNotReadyError, R2>;
 }) =>
   Effect.gen(function* () {
@@ -58,23 +60,24 @@ export const publishPlatformsThenLauncher = <E, R, R2>(input: {
       // The last answer for each package npm does not serve yet, reported if
       // the deadline passes.
       const pending = new Map(
-        input.platformTarballs.map((tarball) => [tarball, `${tarball}: no response yet`]),
+        input.platformPackages.map((pkg) => [`${pkg.name}@${pkg.version}`, "no response yet"]),
       );
       yield* Effect.log(
-        `[cli] waiting up to ${READY_DEADLINE} for npm to serve ${input.platformTarballs.length} platform packages before publishing t3`,
+        `[cli] waiting up to ${READY_DEADLINE} for npm to serve ${pending.size} platform packages before publishing t3`,
       );
       yield* Effect.forEach(
-        input.platformTarballs,
-        (tarball) =>
-          input.checkInstallable(tarball).pipe(
+        input.platformPackages,
+        (pkg) => {
+          const spec = `${pkg.name}@${pkg.version}`;
+          return input.checkInstallable(pkg).pipe(
             Effect.tapError((error) => {
-              const entry = `${error.packageSpec}: ${error.reason}`;
-              pending.set(tarball, entry);
-              return Effect.log(`[cli] waiting for npm to serve ${entry}`);
+              pending.set(spec, error.reason);
+              return Effect.log(`[cli] waiting for npm to serve ${spec}: ${error.reason}`);
             }),
             Effect.retry(recheckSchedule),
-            Effect.tap(() => Effect.sync(() => pending.delete(tarball))),
-          ),
+            Effect.tap(() => Effect.sync(() => pending.delete(spec))),
+          );
+        },
         { concurrency: "unbounded", discard: true },
       ).pipe(
         // The schedule never gives up, so a package npm never serves fails here.
@@ -82,7 +85,7 @@ export const publishPlatformsThenLauncher = <E, R, R2>(input: {
         Effect.mapError(
           () =>
             new ServerCliNpmPackagesNotInstallableError({
-              pending: [...pending.values()].sort(),
+              pending: [...pending].map(([spec, reason]) => `${spec}: ${reason}`).sort(),
               launcherTarball: input.launcherTarball,
               deadline: READY_DEADLINE,
             }),
@@ -106,7 +109,7 @@ const NpmVersionMetadata = Schema.Struct({
  */
 export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable")(function* (
   registry: string,
-  spec: { readonly name: string; readonly version: string },
+  spec: NpmPackage,
 ) {
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
   const packageSpec = `${spec.name}@${spec.version}`;
@@ -172,29 +175,32 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
   yield* send("tarball", HttpClientRequest.head(tarballUrl), () => Effect.void);
 });
 
-const decodePlatformManifest = Schema.decodeUnknownEffect(
-  Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String })),
+const decodeLauncherManifest = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ optionalDependencies: Schema.Record(Schema.String, Schema.String) }),
+  ),
 );
 
 /**
- * Reads a platform package's name and version from its package.json. A file
- * that cannot be read is a missing build asset; one that is not JSON or lacks
- * a string name and version is an invalid manifest.
+ * Reads the platform packages the launcher installs, at their exact versions,
+ * from its package.json `optionalDependencies`. An unreadable file is a missing
+ * build asset; one that is not JSON or lacks those is an invalid manifest.
  */
-export const readPlatformManifest = Effect.fn("readPlatformManifest")(function* (
+export const readLauncherPlatformPackages = Effect.fn("readLauncherPlatformPackages")(function* (
   manifestPath: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  return yield* fs.readFileString(manifestPath).pipe(
-    Effect.mapError(
-      (cause) => new ServerCliBuildAssetMissingError({ assetPath: manifestPath, cause }),
-    ),
-    Effect.flatMap((text) =>
-      decodePlatformManifest(text).pipe(
-        Effect.mapError(
-          (cause) => new ServerCliPlatformManifestInvalidError({ assetPath: manifestPath, cause }),
-        ),
+  const text = yield* fs
+    .readFileString(manifestPath)
+    .pipe(
+      Effect.mapError(
+        (cause) => new ServerCliBuildAssetMissingError({ assetPath: manifestPath, cause }),
       ),
+    );
+  const { optionalDependencies } = yield* decodeLauncherManifest(text).pipe(
+    Effect.mapError(
+      (cause) => new ServerCliLauncherManifestInvalidError({ assetPath: manifestPath, cause }),
     ),
   );
+  return Object.entries(optionalDependencies).map(([name, version]) => ({ name, version }));
 });

@@ -48,15 +48,15 @@ export class ServerCliBuildAssetMissingError extends Schema.TaggedError<ServerCl
   }
 }
 
-export class ServerCliPlatformManifestInvalidError extends Schema.TaggedError<ServerCliPlatformManifestInvalidError>()(
-  "ServerCliPlatformManifestInvalidError",
+export class ServerCliLauncherManifestInvalidError extends Schema.TaggedError<ServerCliLauncherManifestInvalidError>()(
+  "ServerCliLauncherManifestInvalidError",
   {
     assetPath: Schema.String,
     cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
-    return `Invalid platform package manifest: ${this.assetPath}`;
+    return `Invalid launcher package manifest: ${this.assetPath}`;
   }
 }
 

@@ -14,11 +14,13 @@ import { ServerCliNpmPackageNotReadyError } from "./cliErrors.ts";
 import {
   checkNpmVersionInstallable,
   publishPlatformsThenLauncher,
-  readPlatformManifest,
+  readLauncherPlatformPackages,
 } from "./publishOrder.ts";
 
 const platformTarballs = ["a.tgz", "b.tgz", "c.tgz"];
 const launcherTarball = "t3.tgz";
+// The packages the launcher installs, listed out of name order.
+const platformPackages = ["c", "a", "b"].map((name) => ({ name, version: "1.2.3" }));
 
 // A fake publish that records when each upload starts and ends. Platform
 // uploads only end once every platform upload has started, so they have to
@@ -40,30 +42,30 @@ const fakePublish = Effect.fn("fakePublish")(function* (failing?: string) {
   return { events, publish };
 });
 
-const checksOf = (events: ReadonlyArray<string>, tarball: string) =>
-  events.filter((event) => event === `check ${tarball}`).length;
+const checksOf = (events: ReadonlyArray<string>, name: string) =>
+  events.filter((event) => event === `check ${name}`).length;
 const checkEvents = (events: ReadonlyArray<string>) =>
   events.filter((event) => event.startsWith("check "));
 
-// A fake readiness check that records each call in `events`. A tarball fails
-// its first `failures[tarball]` checks, the first with a metadata reason and
-// the rest with a tarball one. `firstRound` opens once every platform has
+// A fake readiness check that records each call in `events`. A package fails
+// its first `failures[name]` checks, the first with a metadata reason and the
+// rest with a tarball one. `firstRound` opens once every platform package has
 // been checked, so a test can move the clock only after the wait started.
 const fakeCheck = Effect.fn("fakeCheck")(function* (
   events: Array<string>,
   failures: Readonly<Record<string, number>> = {},
 ) {
   const firstRound = yield* Latch.make();
-  const checkInstallable = (tarball: string) =>
+  const checkInstallable = (pkg: { readonly name: string; readonly version: string }) =>
     Effect.gen(function* () {
-      events.push(`check ${tarball}`);
-      if (platformTarballs.every((platform) => events.includes(`check ${platform}`))) {
+      events.push(`check ${pkg.name}`);
+      if (platformPackages.every(({ name }) => events.includes(`check ${name}`))) {
         yield* firstRound.open;
       }
-      const checks = checksOf(events, tarball);
-      if (checks > (failures[tarball] ?? 0)) return;
+      const checks = checksOf(events, pkg.name);
+      if (checks > (failures[pkg.name] ?? 0)) return;
       return yield* new ServerCliNpmPackageNotReadyError({
-        packageSpec: tarball.replace(".tgz", "@1.2.3"),
+        packageSpec: `${pkg.name}@${pkg.version}`,
         reason: checks === 1 ? "metadata HTTP 404" : "tarball HTTP 404",
       });
     });
@@ -79,6 +81,7 @@ it.effect("publishes the platform packages at once and the launcher last", () =>
       launcherTarball,
       publish,
       dryRun: false,
+      platformPackages,
       checkInstallable: () => Effect.void,
     });
 
@@ -102,6 +105,7 @@ it.effect("finishes the other uploads and skips the launcher when one fails", ()
         launcherTarball,
         publish,
         dryRun: false,
+        platformPackages,
         checkInstallable,
       }),
     );
@@ -125,6 +129,7 @@ it.effect(
         launcherTarball,
         publish,
         dryRun: false,
+        platformPackages,
         checkInstallable,
       });
 
@@ -133,11 +138,7 @@ it.effect(
         "end b.tgz",
         "end c.tgz",
       ]);
-      assert.deepStrictEqual(events.slice(6, 9).toSorted(), [
-        "check a.tgz",
-        "check b.tgz",
-        "check c.tgz",
-      ]);
+      assert.deepStrictEqual(events.slice(6, 9).toSorted(), ["check a", "check b", "check c"]);
       assert.deepStrictEqual(events.slice(9), [`start ${launcherTarball}`]);
     }),
 );
@@ -145,7 +146,7 @@ it.effect(
 it.effect("holds the launcher until npm serves a package that failed its first checks", () =>
   Effect.gen(function* () {
     const { events, publish } = yield* fakePublish();
-    const { checkInstallable, firstRound } = yield* fakeCheck(events, { "b.tgz": 4 });
+    const { checkInstallable, firstRound } = yield* fakeCheck(events, { b: 4 });
 
     const fiber = yield* Effect.forkChild(
       publishPlatformsThenLauncher({
@@ -153,6 +154,7 @@ it.effect("holds the launcher until npm serves a package that failed its first c
         launcherTarball,
         publish,
         dryRun: false,
+        platformPackages,
         checkInstallable,
       }),
     );
@@ -162,20 +164,20 @@ it.effect("holds the launcher until npm serves a package that failed its first c
     // b.tgz fails at 0s, 5s, 15s and 35s. The next check waits 30s, not 40s,
     // so it comes at 65s.
     yield* TestClock.adjust("64 seconds");
-    assert.strictEqual(checksOf(events, "b.tgz"), 4);
+    assert.strictEqual(checksOf(events, "b"), 4);
     assert.notInclude(events, `start ${launcherTarball}`);
 
     yield* TestClock.adjust("1 second");
-    assert.strictEqual(checksOf(events, "b.tgz"), 5);
+    assert.strictEqual(checksOf(events, "b"), 5);
     yield* Fiber.join(fiber);
     assert.deepStrictEqual(checkEvents(events).toSorted(), [
-      "check a.tgz",
-      "check b.tgz",
-      "check b.tgz",
-      "check b.tgz",
-      "check b.tgz",
-      "check b.tgz",
-      "check c.tgz",
+      "check a",
+      "check b",
+      "check b",
+      "check b",
+      "check b",
+      "check b",
+      "check c",
     ]);
     assert.strictEqual(events.at(-1), `start ${launcherTarball}`);
   }),
@@ -184,10 +186,7 @@ it.effect("holds the launcher until npm serves a package that failed its first c
 it.effect("skips the launcher when npm does not serve every package within 25 minutes", () =>
   Effect.gen(function* () {
     const { events, publish } = yield* fakePublish();
-    const { checkInstallable, firstRound } = yield* fakeCheck(events, {
-      "a.tgz": Infinity,
-      "c.tgz": Infinity,
-    });
+    const { checkInstallable, firstRound } = yield* fakeCheck(events, { a: Infinity, c: Infinity });
 
     const fiber = yield* Effect.forkChild(
       publishPlatformsThenLauncher({
@@ -195,6 +194,7 @@ it.effect("skips the launcher when npm does not serve every package within 25 mi
         launcherTarball,
         publish,
         dryRun: false,
+        platformPackages,
         checkInstallable,
       }),
     );
@@ -208,7 +208,7 @@ it.effect("skips the launcher when npm does not serve every package within 25 mi
     const error = yield* Effect.flip(Fiber.join(fiber));
     assert(typeof error !== "string");
     assert.strictEqual(error._tag, "ServerCliNpmPackagesNotInstallableError");
-    // Each package's last answer, not its first metadata 404.
+    // Each package's last answer, in name order rather than the launcher's.
     assert.deepStrictEqual(error.pending, [
       "a@1.2.3: tarball HTTP 404",
       "c@1.2.3: tarball HTTP 404",
@@ -229,6 +229,7 @@ it.effect("skips the readiness check on a dry run", () =>
       launcherTarball,
       publish,
       dryRun: true,
+      platformPackages,
       checkInstallable,
     });
 
@@ -434,33 +435,42 @@ it.effect("releases the response when npm answers with an error", () =>
   }),
 );
 
-const manifestPath = "/packages/@t3code/t3-linux-x64/package.json";
+const manifestPath = "/packages/t3/package.json";
 
 // A fake filesystem in which every file reads as `text`.
 const fakeManifest = (text: string) =>
   FileSystem.layerNoop({ readFileString: () => Effect.succeed(text) });
 
-it.effect("reads a platform package's name and version from its manifest", () =>
+it.effect("reads the platform packages the launcher installs from its manifest", () =>
   Effect.gen(function* () {
-    const spec = yield* readPlatformManifest(manifestPath).pipe(
-      Effect.provide(fakeManifest(JSON.stringify({ ...platformPackage, os: ["linux"] }))),
+    const manifest = {
+      name: "t3",
+      version: "1.2.3",
+      optionalDependencies: { "@t3code/t3-linux-x64": "1.2.3", "@t3code/t3-win32-x64": "1.2.3" },
+    };
+
+    const packages = yield* readLauncherPlatformPackages(manifestPath).pipe(
+      Effect.provide(fakeManifest(JSON.stringify(manifest))),
     );
 
-    assert.deepStrictEqual(spec, platformPackage);
+    assert.deepStrictEqual(packages, [
+      platformPackage,
+      { name: "@t3code/t3-win32-x64", version: "1.2.3" },
+    ]);
   }),
 );
 
-it.effect("reports a platform manifest it cannot read as a missing build asset", () =>
+it.effect("reports a launcher manifest it cannot read as a missing build asset", () =>
   Effect.gen(function* () {
     const cause = PlatformError.systemError({
-      _tag: "PermissionDenied",
+      _tag: "NotFound",
       module: "FileSystem",
       method: "readFileString",
-      description: "permission denied",
+      description: "no such file",
       pathOrDescriptor: manifestPath,
     });
 
-    const error = yield* readPlatformManifest(manifestPath).pipe(
+    const error = yield* readLauncherPlatformPackages(manifestPath).pipe(
       Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.fail(cause) })),
       Effect.flip,
     );
@@ -475,30 +485,22 @@ it.effect("reports a platform manifest it cannot read as a missing build asset",
   }),
 );
 
-it.effect("reports a platform manifest that is not JSON as invalid", () =>
+it.effect.each([
+  { manifest: "is not JSON", text: "{" },
+  {
+    manifest: "lists no optionalDependencies",
+    text: JSON.stringify({ name: "t3", version: "1.2.3" }),
+  },
+])("reports a launcher manifest that $manifest as invalid", ({ text }) =>
   Effect.gen(function* () {
-    const error = yield* readPlatformManifest(manifestPath).pipe(
-      Effect.provide(fakeManifest("{")),
+    const error = yield* readLauncherPlatformPackages(manifestPath).pipe(
+      Effect.provide(fakeManifest(text)),
       Effect.flip,
     );
 
-    assert.strictEqual(error._tag, "ServerCliPlatformManifestInvalidError");
+    assert.strictEqual(error._tag, "ServerCliLauncherManifestInvalidError");
     assert.strictEqual(error.assetPath, manifestPath);
     assert.isTrue(Schema.isSchemaError(error.cause));
-    assert.strictEqual(error.message, `Invalid platform package manifest: ${manifestPath}`);
-  }),
-);
-
-it.effect("reports a platform manifest without a version as invalid", () =>
-  Effect.gen(function* () {
-    const error = yield* readPlatformManifest(manifestPath).pipe(
-      Effect.provide(fakeManifest(JSON.stringify({ name: platformPackage.name }))),
-      Effect.flip,
-    );
-
-    assert.strictEqual(error._tag, "ServerCliPlatformManifestInvalidError");
-    assert.strictEqual(error.assetPath, manifestPath);
-    assert.isTrue(Schema.isSchemaError(error.cause));
-    assert.strictEqual(error.message, `Invalid platform package manifest: ${manifestPath}`);
+    assert.strictEqual(error.message, `Invalid launcher package manifest: ${manifestPath}`);
   }),
 );

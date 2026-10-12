@@ -24,7 +24,7 @@ import {
 import {
   checkNpmVersionInstallable,
   publishPlatformsThenLauncher,
-  readPlatformManifest,
+  readLauncherPlatformPackages,
 } from "./publishOrder.ts";
 
 const RepoRoot = Effect.service(Path.Path).pipe(
@@ -250,14 +250,8 @@ const publishCmd = Command.make(
       if (!(yield* fs.exists(launcherTarball))) {
         return yield* new ServerCliBuildAssetMissingError({ assetPath: launcherTarball });
       }
-      // The tarball names carry no version, so each package's name and version
-      // come from the package.json unpacked beside its tarball.
-      const platformSpecs = new Map(
-        yield* Effect.forEach(platformTarballs, (tarball) =>
-          readPlatformManifest(
-            path.join(scopeDir, path.basename(tarball, ".tgz"), "package.json"),
-          ).pipe(Effect.map((spec) => [tarball, spec] as const)),
-        ),
+      const platformPackages = yield* readLauncherPlatformPackages(
+        path.join(packagesDir, "t3", "package.json"),
       );
 
       // A real run checks for the platform packages where npm publishes them,
@@ -287,8 +281,8 @@ const publishCmd = Command.make(
         launcherTarball,
         publish,
         dryRun: config.dryRun,
-        checkInstallable: (tarball) =>
-          checkNpmVersionInstallable(registry, platformSpecs.get(tarball)!),
+        platformPackages,
+        checkInstallable: (pkg) => checkNpmVersionInstallable(registry, pkg),
       }).pipe(Effect.provide(FetchHttpClient.layer));
     }),
 ).pipe(
