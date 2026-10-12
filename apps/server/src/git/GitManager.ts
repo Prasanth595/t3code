@@ -383,6 +383,34 @@ function namesRepository(
 }
 
 /**
+ * The remote a fork clone names its base by, when renaming it `upstream` would let the clone open
+ * the pull request: the identity remote is a repository of the base's name on the base's host, and
+ * the remote's first URL is hosted and names the base. A subtree or vendoring remote beside an
+ * unrelated identity is no fork's base, and a rename onto a taken `upstream` would fail.
+ */
+function forkBaseRemote(
+  remotes: ReadonlyMap<string, string>,
+  identity: { readonly remoteName: string; readonly remoteUrl: string } | null,
+  pullRequestUrl: string,
+  baseKey: string,
+): string | undefined {
+  if (identity === null || identity.remoteName === "upstream") return undefined;
+  const base = splitRepositoryKey(baseKey);
+  const fork = splitRepositoryKey(
+    canonicalRepositoryKey(normalizeGitRemoteUrl(identity.remoteUrl)),
+  );
+  const name = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+  if (name(fork.path) !== name(base.path)) return undefined;
+  if (!namesRepository(identity.remoteUrl, pullRequestUrl, `${base.host}/${fork.path}`))
+    return undefined;
+  return [...remotes].find(
+    ([, url]) =>
+      parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null &&
+      namesRepository(url, pullRequestUrl, baseKey),
+  )?.[0];
+}
+
+/**
  * The key of the pull request's repository when a checkout whose identity remote is at
  * `remoteUrl` holds neither it nor the fork its head comes from, or null when it holds one. Only
  * a definite mismatch answers with a key: no remote, a local or relative path, or a pull request
@@ -2688,12 +2716,7 @@ export const make = Effect.gen(function* () {
       );
       if (mismatch !== null) {
         const repository = splitRepositoryKey(mismatch).path;
-        // A fork clone reads as the fork unless its base remote is named `upstream`. Where another
-        // remote names the base, that rename is the fix, unless `upstream` is already taken.
-        const baseRemote =
-          identity?.remoteName === "upstream"
-            ? undefined
-            : [...remotes].find(([, url]) => namesRepository(url, pullRequest.url, mismatch))?.[0];
+        const baseRemote = forkBaseRemote(remotes, identity, pullRequest.url, mismatch);
         const rename =
           baseRemote === undefined
             ? ""

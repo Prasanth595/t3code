@@ -5375,8 +5375,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     "refuses a checkout that reaches the pull request's repository only through a remote other than upstream",
     () =>
       Effect.gen(function* () {
+        // A fork clone: its identity remote is a fork of the base, under another owner.
         const prepared = yield* prepareInCheckoutOfAnotherRepository("worktree", (repoDir) =>
           Effect.gen(function* () {
+            yield* runGit(repoDir, [
+              "config",
+              "remote.origin.url",
+              "https://github.com/someone/codething-mvp.git",
+            ]);
             const baseDir = yield* createBareRemote();
             yield* runGit(repoDir, ["remote", "add", "acme", baseDir]);
             yield* configureVisibleRemoteUrlWithLocalRewrite(
@@ -5396,6 +5402,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           },
         });
       }),
+  );
+
+  it.effect.each([
+    {
+      // A monorepo that pulls the base in as a subtree is no fork of it.
+      layout: "a subtree remote beside an unrelated identity",
+      remotes: ["libfoo", "origin"],
+      commands: [["remote", "add", "libfoo", "https://github.com/pingdotgg/codething-mvp.git"]],
+      identity: "https://github.com/someone/unrelated.git",
+    },
+    {
+      // A relative path reads like the base's key but names a directory.
+      layout: "a local path remote",
+      remotes: ["mirror", "origin"],
+      commands: [["remote", "add", "mirror", "github.com/pingdotgg/codething-mvp.git"]],
+      identity: "https://github.com/someone/codething-mvp.git",
+    },
+    {
+      // Renaming `origin` onto the identity remote's `upstream` would fail.
+      layout: "an identity remote already named upstream",
+      remotes: ["origin", "upstream"],
+      commands: [
+        ["remote", "rename", "origin", "upstream"],
+        ["remote", "add", "origin", "https://github.com/pingdotgg/codething-mvp.git"],
+      ],
+      identity: "https://github.com/someone/codething-mvp.git",
+    },
+  ] as const)("refuses with no rename to suggest for $layout", ({ remotes, commands, identity }) =>
+    Effect.gen(function* () {
+      const prepared = yield* prepareInCheckoutOfAnotherRepository("worktree", (repoDir) =>
+        Effect.gen(function* () {
+          yield* runGit(repoDir, ["config", "remote.origin.url", identity]);
+          for (const command of commands) yield* runGit(repoDir, [...command]);
+        }),
+      );
+      yield* expectRefusedBeforeAnyWrite(prepared, remotes);
+      expect(prepared.result).toMatchObject({
+        failure: { detail: expect.not.stringContaining("git remote rename") },
+      });
+    }),
   );
 
   it.effect(
