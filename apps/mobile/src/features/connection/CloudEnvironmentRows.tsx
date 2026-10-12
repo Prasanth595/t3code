@@ -400,7 +400,10 @@ function CloudEnvironmentRowShell(props: {
     props.onPress || props.onLongPress
       ? {
           accessibilityHint: props.accessibilityHint,
-          accessibilityLabel: props.accessibilityLabel,
+          // A label replaces what screen readers would read from the children.
+          accessibilityLabel: props.accessibilityLabel
+            ? `${props.accessibilityLabel}, ${statusText}`
+            : undefined,
           accessibilityRole: props.onPress ? ("button" as const) : undefined,
           onPress: props.onPress,
           onLongPress: props.onLongPress,
