@@ -772,9 +772,10 @@ describe("DesktopWindow", () => {
   // Chromium hands the main window's zoom level down to embedded preview
   // guests, so every app zoom has to put the preview browser back at its own
   // zoom or zooming the UI drags the previewed page with it.
-  it.effect("restores the preview browser's own zoom after zooming the app", () =>
+  it.effect("keeps app zoom on the main window with independent preview zoom", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
+      const popup = makeFakeBrowserWindow();
       const createCount = yield* Ref.make(0);
       const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
       const previewZoomReapplies: number[] = [];
@@ -783,6 +784,7 @@ describe("DesktopWindow", () => {
         createCount,
         mainWindow,
         previewZoomReapplies,
+        focusedWindow: popup.window,
       });
 
       yield* Effect.gen(function* () {
@@ -801,6 +803,51 @@ describe("DesktopWindow", () => {
         // Recorded after the window level moved, so the preview is put back at
         // its own zoom on every step rather than left on the inherited one.
         assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
+
+        const beforeInput = fakeWindow.webContentsListeners.get("before-input-event");
+        if (!beforeInput)
+          return yield* Effect.die("before-input-event listener was not registered");
+        const input = {
+          type: "keyDown",
+          key: "+",
+          code: "Equal",
+          meta: true,
+          control: false,
+          alt: false,
+          shift: true,
+          isComposing: false,
+        };
+        const shortcuts = [
+          {},
+          { key: "=" },
+          { code: "BracketRight", shift: false },
+          { code: "NumpadAdd", shift: false },
+        ];
+        for (const [index, shortcut] of shortcuts.entries()) {
+          const preventDefault = vi.fn();
+          beforeInput({ preventDefault }, { ...input, ...shortcut });
+          assert.equal(preventDefault.mock.calls.length, 1);
+          assert.equal(fakeWindow.window.webContents.getZoomLevel(), (index + 1) * 0.5);
+        }
+        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0, 0.5, 1, 1.5, 2]);
+
+        for (const shortcut of [
+          { key: "=", shift: false },
+          { key: "-", shift: false },
+          { key: "0", shift: false },
+          { type: "keyUp" },
+          { meta: false },
+          { control: true },
+          { alt: true },
+          { isComposing: true },
+        ]) {
+          const preventDefault = vi.fn();
+          beforeInput({ preventDefault }, { ...input, ...shortcut });
+          assert.equal(preventDefault.mock.calls.length, 0);
+          assert.equal(fakeWindow.window.webContents.getZoomLevel(), 2);
+        }
+        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0, 0.5, 1, 1.5, 2]);
+        assert.equal(popup.setZoomLevel.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );
