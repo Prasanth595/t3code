@@ -5396,9 +5396,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* expectRefusedBeforeAnyWrite(prepared, ["acme", "origin"]);
         expect(prepared.result).toMatchObject({
           failure: {
-            detail: expect.stringContaining(
-              "Its remote acme names pingdotgg/codething-mvp; run `git remote rename acme upstream` to open the pull request here.",
-            ),
+            detail:
+              "This project is not a checkout of pingdotgg/codething-mvp. Its remote acme names pingdotgg/codething-mvp; run `git remote rename acme upstream` to open the pull request here.",
           },
         });
       }),

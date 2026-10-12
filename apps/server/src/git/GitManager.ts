@@ -2717,14 +2717,15 @@ export const make = Effect.gen(function* () {
       if (mismatch !== null) {
         const repository = splitRepositoryKey(mismatch).path;
         const baseRemote = forkBaseRemote(remotes, identity, pullRequest.url, mismatch);
-        const rename =
+        // A fork clone needs the rename, not a project elsewhere, so each message gives one remedy.
+        const remedy =
           baseRemote === undefined
-            ? ""
-            : ` Its remote ${baseRemote} names ${repository}; run \`git remote rename ${baseRemote} upstream\` to open the pull request here.`;
+            ? "Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name."
+            : `Its remote ${baseRemote} names ${repository}; run \`git remote rename ${baseRemote} upstream\` to open the pull request here.`;
         return yield* new GitManagerError({
           operation: "preparePullRequestThread",
           cwd: input.cwd,
-          detail: `This project is not a checkout of ${repository}. Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.${rename}`,
+          detail: `This project is not a checkout of ${repository}. ${remedy}`,
         });
       }
 
