@@ -330,7 +330,10 @@ export function mergeEnvironmentSettings(
   };
 }
 
-const pendingModelPreferencesMigrations = new Set<EnvironmentId>();
+// Never cleared: a server that predates `migrateModelPreferences` drops it and keeps reporting
+// null, so retrying on each settings push would save to that server in a loop. The next
+// favorites or model-preference save still carries the migration.
+const attemptedModelPreferencesMigrations = new Set<EnvironmentId>();
 
 /** Seed saved client preferences once without overwriting another client's edits. */
 export function useMigrateModelPreferences(
@@ -345,15 +348,13 @@ export function useMigrateModelPreferences(
       !environmentId ||
       !settings ||
       !hydrated ||
-      pendingModelPreferencesMigrations.has(environmentId)
+      attemptedModelPreferencesMigrations.has(environmentId)
     )
       return;
     const patch = modelPreferencesMigrationPatch(settings, clientSettings);
     if (!patch) return;
-    pendingModelPreferencesMigrations.add(environmentId);
-    void migrate({ environmentId, input: { patch } }).finally(() =>
-      pendingModelPreferencesMigrations.delete(environmentId),
-    );
+    attemptedModelPreferencesMigrations.add(environmentId);
+    void migrate({ environmentId, input: { patch } });
   }, [clientSettings, environmentId, hydrated, migrate, settings]);
 }
 

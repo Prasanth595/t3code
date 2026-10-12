@@ -137,6 +137,9 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly model: string;
 }> = [];
 const FAVORITES_PROVIDER_FILTER = "@favorites";
+// Migrate once per environment: a server that predates `migrateModelPreferences` drops it and
+// keeps reporting null, so retrying on each settings push would save to that server in a loop.
+const attemptedModelPreferencesMigrations = new Set<EnvironmentId>();
 /** Provider catalog header with its harness logo and disclosure state. */
 function ProviderHeader(props: {
   readonly driver: string | undefined;
@@ -390,9 +393,17 @@ function ThreadSettingsSessionProvider(
   }).favorites;
   const saveSettings = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
   useEffect(() => {
-    if (!props.environmentId || !settings || !AsyncResult.isSuccess(preferences)) return;
+    if (
+      !props.environmentId ||
+      !settings ||
+      !AsyncResult.isSuccess(preferences) ||
+      attemptedModelPreferencesMigrations.has(props.environmentId)
+    )
+      return;
     const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
-    if (patch) void saveSettings({ environmentId: props.environmentId, input: { patch } });
+    if (!patch) return;
+    attemptedModelPreferencesMigrations.add(props.environmentId);
+    void saveSettings({ environmentId: props.environmentId, input: { patch } });
   }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
   const favoriteKeys = useMemo(
     () =>
