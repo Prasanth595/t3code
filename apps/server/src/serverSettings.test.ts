@@ -518,13 +518,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const raw = `{ "responseStreamingMode": "turn", `;
       yield* fs.writeFileString(config.settingsPath, raw);
 
-      const saved = yield* Effect.exit(
+      const error = yield* Effect.flip(
         serverSettings.updateSettings({
           observability: { otlpTracesUrl: "http://localhost:4318/v1/traces" },
         }),
       );
 
-      assert.isTrue(saved._tag === "Failure");
+      assert.equal(error.operation, "read-file");
       assert.equal(yield* fs.readFileString(config.settingsPath), raw);
     }).pipe(Effect.provide(layerServerSettings())),
   );
