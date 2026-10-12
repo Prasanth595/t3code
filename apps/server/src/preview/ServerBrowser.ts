@@ -887,6 +887,9 @@ const make = Effect.gen(function* () {
       if (!isMainNavigation(request)) return;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
+      // Only a top-level document asks for a passkey; leaving it ends the request
+      // so the next document can ask. Same-document routes send no request.
+      cancelPasskey(tab);
       tab.loading = true;
       report(tab, { _tag: "Loading", url: request.url().slice(0, 2048), title: "" });
     });
@@ -2418,6 +2421,10 @@ const make = Effect.gen(function* () {
           ) {
             const dropped = Effect.runSyncExit(Queue.clear(output));
             if (dropped._tag === "Failure") return;
+            // The device closes a passkey sheet only when it hears the request ended.
+            for (const item of dropped.value) {
+              if (item._tag === "passkeyCancel") Queue.offerUnsafe(output, item);
+            }
             Queue.offerUnsafe(output, next);
             // The controller's open picker may have been in the dropped backlog.
             const chooser = next._tag === "control" ? fileChooserMessage(tab) : null;

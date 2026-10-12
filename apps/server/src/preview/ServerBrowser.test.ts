@@ -1275,6 +1275,54 @@ it.live("releasing control cancels the request on the device and refuses the pag
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a page that navigates away ends its passkey request, and the next page may ask", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer } = yield* passkeyViewer(true);
+      const answer = passkeyBinding!({ page, frame: page }, "get", 1, {
+        challenge: "Y2hhbGxlbmdl",
+      });
+      const request = yield* nextPasskeyOutput(viewer);
+      assert(request._tag === "passkey");
+      page.emit("request", {
+        url: () => "https://example.com/home",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+      });
+      expect(yield* nextPasskeyOutput(viewer)).toEqual({ _tag: "passkeyCancel", id: request.id });
+      expect(yield* Effect.promise(() => answer)).toEqual({ error: "NotAllowedError" });
+      const next = passkeyBinding!({ page, frame: page }, "get", 1, { challenge: "bmV4dA" });
+      expect(yield* nextPasskeyOutput(viewer)).toMatchObject({ _tag: "passkey", kind: "get" });
+      yield* viewer.input({ type: "releaseControl" });
+      expect(yield* Effect.promise(() => next)).toEqual({ error: "NotAllowedError" });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live("a stalled viewer still hears that a passkey request ended", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { page, viewer } = yield* passkeyViewer(true);
+      const answer = passkeyBinding!({ page, frame: page }, "get", 1, {
+        challenge: "Y2hhbGxlbmdl",
+      });
+      const request = yield* nextPasskeyOutput(viewer);
+      assert(request._tag === "passkey");
+      // The page gives up, then the viewer stops reading before it hears so.
+      yield* Effect.promise(() => passkeyBinding!({ page, frame: page }, "abort", 1));
+      expect(yield* Effect.promise(() => answer)).toEqual({ error: "NotAllowedError" });
+      stallViewer(viewer, { _tag: "viewport", width: 1, height: 1 });
+      // A control update replaces the stalled backlog.
+      yield* viewer.input({ type: "releaseControl" });
+      expect(yield* Queue.clear(viewer.output)).toContainEqual({
+        _tag: "passkeyCancel",
+        id: request.id,
+      });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.each([
   { name: "the page itself", active: { tagName: "BODY" }, field: "none" },
   { name: "a button", active: { tagName: "BUTTON" }, field: "none" },
