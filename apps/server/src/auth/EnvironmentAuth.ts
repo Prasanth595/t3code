@@ -873,6 +873,7 @@ export const make = Effect.gen(function* () {
     input?: {
       readonly proofKeyThumbprint?: string;
       readonly requestedScopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly requiredScopes?: ReadonlyArray<AuthEnvironmentScope>;
     },
   ): Effect.Effect<
     ResolvedBootstrapGrant,
@@ -1267,7 +1268,7 @@ export const make = Effect.gen(function* () {
     access,
   ) =>
     // No proof key: a code bound to a T3 Connect client's key fails without being spent.
-    resolveBootstrapGrant(code.trim()).pipe(
+    resolveBootstrapGrant(code.trim(), { requiredScopes: mcpClientScopes(access) }).pipe(
       Effect.catchTags({
         ServerAuthInvalidCredentialError: () =>
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "unknown_or_used" })),
