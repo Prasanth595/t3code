@@ -791,7 +791,7 @@ effectIt.effect("does not swallow process probe interruption", () =>
 );
 
 effectIt.effect(
-  "parses Windows netstat TCP and TCPv6 listeners and skips process spawns when idle",
+  "parses Windows netstat listeners, names them once via tasklist, and skips spawns when idle",
   () => {
     const spawnedArgs: Array<ReadonlyArray<string>> = [];
     const fetchFn = (() =>
@@ -807,9 +807,12 @@ effectIt.effect(
               spawnedArgs.push(input.args);
               const isIpv6 = input.args.includes("tcpv6");
               return Effect.succeed({
-                stdout: isIpv6
-                  ? "  TCP    [::1]:43123            [::]:0                 ABHÖREN         1234\r\n  TCP    [::1]:43123            [::1]:52000            HERGESTELLT     1234\r\n"
-                  : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n  TCP    127.0.0.1:5173         127.0.0.1:60123        ESTABLISHED     9999\r\n",
+                stdout:
+                  input.command === "tasklist.exe"
+                    ? '"node.exe","1234","Console","1","93,164 K"\r\n'
+                    : isIpv6
+                      ? "  TCP    [::1]:43123            [::]:0                 ABHÖREN         1234\r\n  TCP    [::1]:43123            [::1]:52000            HERGESTELLT     1234\r\n"
+                      : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n  TCP    127.0.0.1:5173         127.0.0.1:60123        ESTABLISHED     9999\r\n",
                 stderr: "",
                 code: null,
                 timedOut: false,
@@ -837,14 +840,25 @@ effectIt.effect(
         processIds: [1234],
       });
       const discovered = yield* scanner.scan();
-      expect(discovered.map((entry) => ({ port: entry.port, pid: entry.pid }))).toEqual([
-        { port: 5173, pid: 1234 },
-        { port: 43123, pid: 1234 },
+      expect(
+        discovered.map((entry) => ({
+          port: entry.port,
+          pid: entry.pid,
+          processName: entry.processName,
+        })),
+      ).toEqual([
+        { port: 5173, pid: 1234, processName: "node" },
+        { port: 43123, pid: 1234, processName: "node" },
       ]);
       expect(spawnedArgs).toEqual([
         ["-ano", "-p", "tcp"],
         ["-ano", "-p", "tcpv6"],
+        ["/FO", "CSV", "/NH", "/FI", "PID eq 1234"],
       ]);
+
+      // Names are cached per PID, so later polls spawn only netstat.
+      yield* scanner.scan();
+      expect(spawnedArgs.filter((args) => args.includes("/FI"))).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   },
 );

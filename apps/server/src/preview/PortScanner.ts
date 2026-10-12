@@ -301,6 +301,15 @@ const parseWindowsListenerLine = (
   };
 };
 
+/** Reads the image name from `tasklist.exe /FO CSV /NH /FI "PID eq <pid>"` output. */
+const parseTasklistProcessName = (raw: string, pid: number): string | null => {
+  for (const line of raw.split(/\r?\n/g)) {
+    const match = /^"([^"]*)","(\d+)"/.exec(line.trim());
+    if (match && Number(match[2]) === pid) return match[1]!.replace(/\.exe$/i, "") || null;
+  }
+  return null;
+};
+
 const parseWindowsListenerOutput = (
   raw: string,
   terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
@@ -406,6 +415,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const webProbeCacheRef = yield* Ref.make<ReadonlyMap<string, WebProbeCacheEntry>>(new Map());
   const scanSemaphore = yield* Semaphore.make(1);
   const lsofMissingRef = yield* Ref.make(false);
+  /** Windows image names by PID; netstat reports only PIDs. */
+  const windowsProcessNamesRef = yield* Ref.make<ReadonlyMap<number, string | null>>(new Map());
   /** Confirmed owners of listening socket inodes. */
   const socketOwnersRef = yield* Ref.make<
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
@@ -652,6 +663,41 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     return { discovered, configured } satisfies WebProbeSnapshot;
   });
 
+  // `tasklist` costs ~200ms per PID, so look up only visible servers and only once per PID.
+  const withWindowsProcessNames = Effect.fn("PortDiscovery.withWindowsProcessNames")(function* (
+    snapshot: WebProbeSnapshot,
+  ) {
+    const servers = [...snapshot.discovered, ...snapshot.configured.values()];
+    const pids = new Set(servers.flatMap((server) => (server.pid === null ? [] : [server.pid])));
+    const cached = yield* Ref.get(windowsProcessNamesRef);
+    const fetched = yield* Effect.forEach(
+      [...pids].filter((pid) => !cached.has(pid)),
+      (pid) =>
+        processRunner
+          .run({
+            command: "tasklist.exe",
+            args: ["/FO", "CSV", "/NH", "/FI", `PID eq ${pid}`],
+            timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
+            maxOutputBytes: 64 * 1024,
+          })
+          .pipe(
+            Effect.map((result) => [pid, parseTasklistProcessName(result.stdout, pid)] as const),
+            Effect.orElseSucceed(() => [pid, null] as const),
+          ),
+      { concurrency: "unbounded" },
+    );
+    const names = new Map([...cached, ...fetched].filter(([pid]) => pids.has(pid)));
+    yield* Ref.set(windowsProcessNamesRef, names);
+    const withName = (server: DiscoveredLocalServer): DiscoveredLocalServer =>
+      server.pid === null || server.processName !== null
+        ? server
+        : { ...server, processName: names.get(server.pid) ?? null };
+    return {
+      discovered: snapshot.discovered.map(withName),
+      configured: new Map([...snapshot.configured].map(([key, server]) => [key, withName(server)])),
+    } satisfies WebProbeSnapshot;
+  });
+
   const recoverProcessProbeFailure =
     (probe: "lsof" | "windows-listeners") => (error: ProcessRunner.ProcessRunError) =>
       Effect.logDebug("preview port process probe failed; probing configured URLs only", {
@@ -696,8 +742,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverWindowsProbeFailure,
         }),
       );
-      if (listeners !== null) return yield* probeWebServers(listeners, configuredUrls);
-      return yield* probeWebServers([], configuredUrls);
+      return yield* withWindowsProcessNames(
+        yield* probeWebServers(listeners ?? [], configuredUrls),
+      );
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     if (yield* Ref.get(lsofMissingRef)) {
