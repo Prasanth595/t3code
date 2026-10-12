@@ -3744,6 +3744,81 @@ it.effect("ProviderSessionManagerV2 release retries leave a replacement session 
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 leaves a replacement's status to it when a failed release ends",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread-provider-session-manager-failed-replacement");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const now = yield* DateTime.now;
+        // The release settles this request right after recording the session.
+        const request = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          now,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            ...request.events,
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        // The runtime's events end unexpectedly, and its release stalls in scope close.
+        const events = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+        assert.isDefined(events);
+        yield* Queue.end(events!);
+        yield* Deferred.await(scopeCloseReached);
+
+        // Another thread on the same runtime reopens it meanwhile; then the
+        // time-boxed close lets the release write its records.
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        const settled = yield* eventSink
+          .stream({
+            threadId,
+            afterSequence: yield* eventSink.latestSequence({ threadId }),
+            eventType: "runtime-request.updated",
+          })
+          .pipe(Stream.runHead, Effect.forkScoped);
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(settled);
+        const status = (yield* projectionStore.getThreadProjection(threadId)).providerSessions.at(
+          -1,
+        )?.status;
+
+        // The replacement's close hangs as well; release it while the clock can move.
+        const stopping = yield* manager.shutdown.pipe(Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(stopping);
+
+        assert.isDefined(status);
+        assert.notEqual(status, "error");
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 keeps each failed release's cleanup", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

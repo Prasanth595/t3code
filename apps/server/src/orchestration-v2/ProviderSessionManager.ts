@@ -989,6 +989,8 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
+        /** Set by callers inside `open`, which already hold this session's open lock. */
+        readonly openLockHeld?: boolean;
       }) =>
         Effect.acquireUseRelease(
           removeLiveEntry(input),
@@ -1028,8 +1030,19 @@ export const layerWithOptions = (
                     releasedBackgroundTasks,
                     releasedAt,
                   };
+                  // A thread of a shared runtime can reopen it under the same
+                  // id while this closes. The open lock orders the check and
+                  // write against that, so a replacement keeps its status.
+                  const writeRecords = Effect.gen(function* () {
+                    const replaced = (yield* Ref.get(sessions)).has(
+                      sessionKey(input.providerSessionId),
+                    );
+                    yield* writeReleaseRecords({ ...records, replaced });
+                  });
                   const recorded = yield* Effect.exit(
-                    writeReleaseRecords({ ...records, replaced: false }),
+                    input.openLockHeld === true
+                      ? writeRecords
+                      : sessionOpen.withLock(input.providerSessionId, writeRecords),
                   );
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);
@@ -2230,11 +2243,13 @@ export const layerWithOptions = (
                           providerSessionId: input.providerSessionId,
                           reason: "manual_shutdown",
                           detail: "The provider session start was interrupted.",
+                          openLockHeld: true,
                         }
                       : {
                           providerSessionId: input.providerSessionId,
                           reason: "runtime_error",
                           detail: "Failed to persist the provider-session attachment.",
+                          openLockHeld: true,
                         },
                   ).pipe(logReleaseFailure(input.providerSessionId)),
                 ),
