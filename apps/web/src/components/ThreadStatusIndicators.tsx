@@ -48,6 +48,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import {
   pullRequestMatchesSearchQuery,
   resolveThreadLastVisitedAt,
+  resolveThreadRunningProcessLabel,
   resolveThreadStatusPill,
   type ThreadStatusPill,
   useRetainedValue,
@@ -764,17 +765,16 @@ export function resolveDisplayedThreadPrProvider(input: {
   return undefined;
 }
 
+const RUNNING_TERMINAL_STATUS: TerminalStatusIndicator = {
+  label: "Terminal process running",
+  colorClass: "text-teal-600 dark:text-teal-300/90",
+  pulse: true,
+};
+
 export function terminalStatusFromRunningIds(
   runningTerminalIds: ReadonlyArray<string>,
 ): TerminalStatusIndicator | null {
-  if (runningTerminalIds.length === 0) {
-    return null;
-  }
-  return {
-    label: "Terminal process running",
-    colorClass: "text-teal-600 dark:text-teal-300/90",
-    pulse: true,
-  };
+  return runningTerminalIds.length === 0 ? null : RUNNING_TERMINAL_STATUS;
 }
 
 /** Align newly started pulses with the document clock without a timer or frame loop. */
@@ -788,22 +788,26 @@ export function synchronizeTerminalPulse(event: AnimationEvent<SVGSVGElement>) {
   }
 }
 
+/** Pulsing terminal icon on a thread row while an integrated terminal or an
+    agent background command runs. Opens the terminal when there is one,
+    otherwise the thread, where the composer strip can stop the command. */
 export function ThreadTerminalStatusButton({
   threadRef,
   terminalIds,
+  pendingBackgroundTasks,
   onThreadActivate,
 }: {
   threadRef: ScopedThreadRef;
   terminalIds: readonly string[];
+  pendingBackgroundTasks: SidebarThreadSummary["pendingBackgroundTasks"];
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
 }) {
+  const label = resolveThreadRunningProcessLabel({
+    terminalCount: terminalIds.length,
+    pendingBackgroundTasks,
+  });
+  if (label === null) return null;
   const terminalId = terminalIds[0];
-  if (terminalId === undefined) return null;
-  const status = terminalStatusFromRunningIds(terminalIds);
-  const label =
-    terminalIds.length === 1
-      ? "1 terminal process running. Open terminal"
-      : `${terminalIds.length} terminal processes running. Open terminal`;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -814,14 +818,14 @@ export function ThreadTerminalStatusButton({
             data-testid={`sidebar-terminal-status-${threadRef.threadId}`}
             className={cn(
               "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              status?.colorClass,
+              RUNNING_TERMINAL_STATUS.colorClass,
             )}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              revealThreadTerminal(threadRef, terminalId);
+              if (terminalId !== undefined) revealThreadTerminal(threadRef, terminalId);
               onThreadActivate(threadRef);
             }}
           />

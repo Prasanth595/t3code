@@ -1256,6 +1256,38 @@ export function resolveThreadStatusPill(input: {
   return null;
 }
 
+function backgroundCommandCountLabel(count: number): string {
+  return count === 1 ? "1 background command" : `${count} background commands`;
+}
+
+/** Tooltip for a thread row's running-process icon, or null when nothing runs.
+    Background commands an agent left live after its turn ended count too: a
+    dev server, or a check the agent wakes for when it exits. They do not hold
+    the thread's status (see backgroundWorkHoldsCompletion), so without the
+    icon the row reads as finished while the composer still shows the command
+    running. Integrated terminals lead, because the icon opens one. */
+export function resolveThreadRunningProcessLabel(input: {
+  readonly terminalCount: number;
+  readonly pendingBackgroundTasks: SidebarThreadSummary["pendingBackgroundTasks"];
+}): string | null {
+  const commands = input.pendingBackgroundTasks.filter((task) => task.kind === "command");
+  if (input.terminalCount > 0) {
+    const terminals =
+      input.terminalCount === 1
+        ? "1 terminal process"
+        : `${input.terminalCount} terminal processes`;
+    return commands.length === 0
+      ? `${terminals} running. Open terminal`
+      : `${terminals} and ${backgroundCommandCountLabel(commands.length)} running. Open terminal`;
+  }
+  const [onlyCommand, ...otherCommands] = commands;
+  if (onlyCommand === undefined) return null;
+  const description = otherCommands.length === 0 ? onlyCommand.description?.trim() : undefined;
+  return description
+    ? `Running: ${description}. Open thread`
+    : `${backgroundCommandCountLabel(commands.length)} running. Open thread`;
+}
+
 export function resolveProjectStatusIndicator(
   statuses: ReadonlyArray<ThreadStatusPill | null>,
 ): ThreadStatusPill | null {

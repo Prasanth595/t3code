@@ -849,6 +849,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           <ThreadTerminalStatusButton
             threadRef={threadRef}
             terminalIds={runningTerminalIds}
+            pendingBackgroundTasks={thread.pendingBackgroundTasks}
             onThreadActivate={navigateToThread}
           />
           <div

@@ -38,6 +38,7 @@ import {
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
   resolveThreadRowClassName,
+  resolveThreadRunningProcessLabel,
   resolveThreadStatusPill,
   resolveWorkingStartedAt,
   pullRequestMatchesSearchQuery,
@@ -1222,6 +1223,47 @@ describe("formatWorkingDurationLabel", () => {
   it("clamps negative and non-finite elapsed values to zero", () => {
     expect(formatWorkingDurationLabel(-5_000)).toBe("0s");
     expect(formatWorkingDurationLabel(Number.NaN)).toBe("0s");
+  });
+});
+
+describe("resolveThreadRunningProcessLabel", () => {
+  const command = (taskId: string, description?: string) =>
+    ({ taskId, kind: "command", description }) as const;
+
+  it("is null when no terminal or background command runs", () => {
+    expect(
+      resolveThreadRunningProcessLabel({
+        terminalCount: 0,
+        pendingBackgroundTasks: [{ taskId: "agent-1", kind: "subagent", description: "Review" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("names a single background command and opens the thread", () => {
+    expect(
+      resolveThreadRunningProcessLabel({
+        terminalCount: 0,
+        pendingBackgroundTasks: [command("bg-1", " Show diff and queue verify ")],
+      }),
+    ).toBe("Running: Show diff and queue verify. Open thread");
+    expect(
+      resolveThreadRunningProcessLabel({
+        terminalCount: 0,
+        pendingBackgroundTasks: [command("bg-1"), command("bg-2", "dev server")],
+      }),
+    ).toBe("2 background commands running. Open thread");
+  });
+
+  it("leads with terminals, which the icon opens", () => {
+    expect(resolveThreadRunningProcessLabel({ terminalCount: 2, pendingBackgroundTasks: [] })).toBe(
+      "2 terminal processes running. Open terminal",
+    );
+    expect(
+      resolveThreadRunningProcessLabel({
+        terminalCount: 1,
+        pendingBackgroundTasks: [command("bg-1", "dev server")],
+      }),
+    ).toBe("1 terminal process and 1 background command running. Open terminal");
   });
 });
 
