@@ -186,9 +186,7 @@ Queued messages appear above the composer. Rows show a thumbnail of any attached
 the text. Drag a row by its handle to reorder it, use the handle's arrow keys, promote the message
 to a steer, or remove it.
 
-If the server restarts, saved queued messages keep their order and are held. Press
-**Resume** in an empty composer on web or desktop, or **Resume queue** in the queue
-sheet on mobile, to continue. You can edit, reorder, or remove held messages without starting them.
+Queued messages pause after you press **Stop**, when the provider fails or worktree setup fails, and when the server restarts. They keep their order, and the queue shows that it is paused. Sending a new message continues the queue after it, except after a failed worktree setup, where retrying the setup continues it. To continue without sending anything, press **Resume** in an empty composer on web or desktop, or **Resume queue** in the queue sheet on mobile. You can edit, reorder, or remove paused messages without starting them.
 
 The pencil on a queued row opens that message in the composer for editing. The original message
 stays in the queue until you save, and its row is highlighted while you edit. The message's

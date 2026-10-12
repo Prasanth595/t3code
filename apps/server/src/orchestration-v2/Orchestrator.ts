@@ -5216,6 +5216,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
       );
       const now = yield* DateTime.now;
+      // A new message someone types into a client after Stop or a failure is the
+      // go-ahead the held queue waits for, so the held messages follow it instead of
+      // stranding. Scheduled prompts keep the client they were created from, and a
+      // late steer is re-sent under its original identity, so neither counts.
+      // Messages held because their worktree was never created stay held: once this
+      // run ends, nothing would stop them from running in the project checkout.
+      const worktreeMissing =
+        (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
+        latestRun.workspacePreparation?.type === "worktree" &&
+        projection.thread.worktreePath === null;
+      if (
+        command.createdBy === "user" &&
+        (command.creationSource === "web" || command.creationSource === "mobile") &&
+        command.scheduledTaskId === undefined &&
+        !projection.messages.some((message) => message.id === command.messageId) &&
+        !worktreeMissing
+      ) {
+        for (const heldRun of projection.runs) {
+          if (heldRun.status !== "queued" || heldRun.queueHeld !== true) continue;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: heldRun.id,
+            providerInstanceId: heldRun.providerInstanceId,
+            occurredAt: now,
+            payload: { ...heldRun, queueHeld: false },
+          });
+        }
+      }
       if (
         !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
         projection.thread.providerInstanceId !== modelSelection.instanceId

@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderTurnId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -704,4 +705,104 @@ it.effect(
       );
       assert.isTrue(Exit.isFailure(unrelated));
     }).pipe(Effect.provide(layerTest)),
+);
+
+/** Stops a thread's only run with a message queued behind it, leaving that message held. */
+const stopWithHeldQueue = (threadId: ThreadId, number: number) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* createWatchingThread(threadId, number);
+    yield* send(threadId, "compact", "start_immediately");
+    yield* send(threadId, "waiting", "queue_after_active");
+    const stopped = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "run.interrupt",
+      commandId: CommandId.make(`stop:${threadId}`),
+      threadId,
+      runId: stopped.id,
+      holdQueue: true,
+    });
+    assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted", "queued:held"]);
+  });
+
+it.effect("a message sent from a client after Stop releases the held queue behind it", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:stop-then-send");
+    yield* stopWithHeldQueue(threadId, 5);
+    yield* send(threadId, "next", "start_immediately");
+    assert.deepEqual((yield* threadState(threadId)).runs, ["interrupted", "queued", "starting"]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a scheduled prompt after Stop leaves the held queue held", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:stop-then-automatic");
+    yield* stopWithHeldQueue(threadId, 6);
+    // A scheduled prompt carries the client its task was created from.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("send:stop-then-automatic:scheduled"),
+      threadId,
+      messageId: MessageId.make("message:stop-then-automatic:scheduled"),
+      scheduledTaskId: ScheduledTaskId.make("scheduled-task:nightly"),
+      text: "nightly",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.deepEqual((yield* threadState(threadId)).runs, [
+      "interrupted",
+      "queued:held",
+      "starting",
+    ]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a late steer re-sent after Stop leaves the held queue held", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make("thread:stop-then-late-steer");
+    yield* stopWithHeldQueue(threadId, 8);
+    // A steer that lands after its turn ended is re-sent under the message it already has.
+    const stopped = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("send:stop-then-late-steer"),
+      threadId,
+      messageId: stopped.userMessageId,
+      text: "compact",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.include((yield* threadState(threadId)).runs, "queued:held");
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("a client message leaves messages held behind a worktree that was never created", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:stop-without-worktree");
+    yield* stopWithHeldQueue(threadId, 7);
+    // Stop landed during worktree setup, so the thread never got its worktree.
+    const stopped = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+    yield* projections.apply({
+      id: EventId.make("event:stop-without-worktree:preparation"),
+      type: "run.updated",
+      threadId,
+      runId: stopped.id,
+      occurredAt: yield* DateTime.now,
+      payload: { ...stopped, workspacePreparation: { type: "worktree", baseRef: "main" } },
+    });
+    yield* send(threadId, "next", "start_immediately");
+    assert.deepEqual((yield* threadState(threadId)).runs, [
+      "interrupted",
+      "queued:held",
+      "starting",
+    ]);
+  }).pipe(Effect.provide(layerTest)),
 );
