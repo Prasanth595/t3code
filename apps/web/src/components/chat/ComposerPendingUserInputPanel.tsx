@@ -291,7 +291,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                           text={option.label}
                           cwd={cwd}
                           threadRef={threadRef}
-                          className="text-sm font-medium [&_a]:pointer-events-auto [&_button]:pointer-events-auto"
+                          className="text-sm font-medium [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto"
                         />
                       </div>
                       {hasDescription ? (
@@ -300,7 +300,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                             text={option.description}
                             cwd={cwd}
                             threadRef={threadRef}
-                            className="text-secondary-label text-2xs [&_a]:pointer-events-auto [&_button]:pointer-events-auto"
+                            className="text-secondary-label text-2xs [&_a]:pointer-events-auto [&_button]:pointer-events-auto [&_[role=button]]:pointer-events-auto"
                           />
                         </div>
                       ) : null}
