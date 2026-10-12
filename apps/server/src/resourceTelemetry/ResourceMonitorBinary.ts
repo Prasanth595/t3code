@@ -155,13 +155,6 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
           path.resolve(import.meta.dirname, "../resource-monitor", executableName),
           path.resolve(
             import.meta.dirname,
-            "../../native/resource-monitor/target",
-            rustTarget,
-            "release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
             "../../../../native/resource-monitor/target",
             rustTarget,
             "release",
@@ -172,26 +165,6 @@ export const make = Effect.fn("resourceTelemetry.resourceMonitorBinary.make")(fu
             "../../../native/resource-monitor/target",
             rustTarget,
             "release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../native/resource-monitor/target/release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../native/resource-monitor/target/debug",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../../native/resource-monitor/target/release",
-            executableName,
-          ),
-          path.resolve(
-            import.meta.dirname,
-            "../../../native/resource-monitor/target/debug",
             executableName,
           ),
           path.resolve(
