@@ -43,11 +43,12 @@ import {
 } from "../threadRoutes";
 import { toastManager } from "./ui/toast";
 
-/** Layout commands a focused desktop browser page hands back to the app. */
-const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
+/** App commands a focused desktop browser page hands back to the app. */
+const PREVIEW_FORWARDED_APP_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "preview.annotate",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
@@ -199,7 +200,7 @@ export function ReopenClosedViewShortcut() {
     // sends each command back as a menu action.
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
-      ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      ...PREVIEW_FORWARDED_APP_COMMANDS,
     ];
     void preview
       .setForwardedShortcuts(

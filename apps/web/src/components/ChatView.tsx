@@ -270,7 +270,7 @@ import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
 import { usePreviewSession } from "./preview/usePreviewSession";
-import { subscribePreviewAction } from "./preview/previewActionBus";
+import { dispatchPreviewAction, subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
 import {
@@ -8228,6 +8228,13 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         onToggleDiff();
+        return;
+      }
+
+      if (command === "preview.annotate") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) dispatchPreviewAction("annotate");
         return;
       }
 

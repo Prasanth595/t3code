@@ -934,6 +934,15 @@ export function PreviewView({
     };
   }, [runtimeTabId]);
 
+  const canPickElement = Boolean(previewBridge && tabId && !isServerTab && !isUnreachable);
+
+  useEffect(() => {
+    if (!visible || !canPickElement) return;
+    return window.desktopBridge?.onMenuAction((action) => {
+      if (action === "preview.annotate") handlePickElement();
+    });
+  }, [canPickElement, handlePickElement, visible]);
+
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
   useEffect(() => {
@@ -955,11 +964,22 @@ export function PreviewView({
         case "reset-zoom":
           handleResetZoom();
           return;
+        case "annotate":
+          if (canPickElement) handlePickElement();
+          return;
         case "toggle-panel":
           return;
       }
     });
-  }, [handleRefresh, handleResetZoom, handleZoomIn, handleZoomOut, visible]);
+  }, [
+    canPickElement,
+    handlePickElement,
+    handleRefresh,
+    handleResetZoom,
+    handleZoomIn,
+    handleZoomOut,
+    visible,
+  ]);
 
   return (
     <div

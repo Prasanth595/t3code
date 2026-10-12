@@ -151,6 +151,10 @@ terminals so native undo keeps working there.
 `navigation.back` (`mod+[` by default) and `navigation.forward` (`mod+]`) move
 through the pages you have visited, like a browser's back and forward buttons.
 
+`preview.annotate` (`mod+alt+c` by default) starts or cancels an annotation in the
+open desktop browser, like its **Annotate** button. It also works while the
+browser page has focus.
+
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread). `chat.newWithoutProject`

@@ -11,7 +11,8 @@ export type PreviewAction =
   | "focus-url"
   | "zoom-in"
   | "zoom-out"
-  | "reset-zoom";
+  | "reset-zoom"
+  | "annotate";
 
 const EVENT_NAME = "t3code:preview-action";
 
