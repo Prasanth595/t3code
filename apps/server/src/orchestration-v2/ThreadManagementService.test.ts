@@ -923,42 +923,37 @@ it.effect.each([
   }),
 );
 
-it.effect.each([
-  { status: "completed" as const, settles: true },
-  { status: "failed" as const, settles: false },
-  { status: "interrupted" as const, settles: false },
-])("settleAfterRun settles only when the run $status", ({ status, settles }) =>
-  Effect.gen(function* () {
-    const projectId = ProjectId.make("project:thread-management:settle-after-run");
-    const threadId = ThreadId.make("thread:thread-management:settle-after-run");
-    const runId = RunId.make("run:thread-management:settle-after-run");
-    const dispatched: Array<string> = [];
-    const layerTest = ThreadManagementService.layer.pipe(
-      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
-      Layer.provide(
-        Layer.mock(Orchestrator.OrchestratorV2)({
-          getThreadEventSequence: () => Effect.succeed(0),
-          getThreadRecords: () =>
-            Effect.succeed({
-              thread: { id: threadId, projectId, deletedAt: null },
-              runs: [{ id: runId, status }],
-            } as unknown as OrchestrationV2ThreadProjection),
-          dispatch: (command) =>
-            Effect.sync(() => {
-              dispatched.push(command.type);
-              return { sequence: 1, storedEvents: [] } as never;
-            }),
-        }),
-      ),
-      Layer.provide(ServerSettings.layerTest()),
-      Layer.provide(layerReceiptsTest),
-    );
-    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
-      Effect.provide(layerTest),
-    );
-
-    yield* service.settleAfterRun({ projectId, threadId, runId });
-
-    expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
-  }),
+it.effect.each([true, false])(
+  "settleThread files through the orchestrator (own agent: %s)",
+  (byOwnAgent) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:thread-management:file");
+      const now = yield* DateTime.now;
+      const dispatched: Array<string> = [];
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadShell: () => Effect.succeed({ settleWhenIdleAt: now } as never),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: 1, storedEvents: [] } as never;
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+        Effect.provide(layerTest),
+      );
+      const result = yield* service.settleThread({
+        threadId,
+        commandId: CommandId.make("file"),
+        byOwnAgent,
+      });
+      expect(dispatched).toEqual(["thread.settle"]);
+      expect(result).toEqual(byOwnAgent ? { settlesWhenTurnEnds: true } : { sequence: 1 });
+    }),
 );
