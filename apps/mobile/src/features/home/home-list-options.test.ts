@@ -5,14 +5,40 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { HomeListOptionsProvider, useHomeListOptions } from "./home-list-options";
 
+// The environment filter is a saved device preference; keep it in memory here.
+const preferences = vi.hoisted(() => ({ homeEnvironmentId: null as string | null }));
+vi.mock("@effect/atom-react", async () => {
+  const { AsyncResult } = await import("effect/reactivity");
+  const { useReducer } = await import("react");
+  return {
+    useAtomValue: () => {
+      // Re-render on every save, like a subscribed atom.
+      useReducer((count: number) => count + 1, 0);
+      return AsyncResult.success({ ...preferences });
+    },
+    useAtomSet: () => (patch: Partial<typeof preferences>) => {
+      Object.assign(preferences, patch);
+    },
+  };
+});
+vi.mock("../../state/preferences", () => ({
+  mobilePreferencesAtom: {},
+  updateMobilePreferencesAtom: {},
+}));
+vi.mock("../../state/workspace", () => ({
+  useWorkspaceEnvironments: () => [
+    { environmentId: "environment-1", isEnabled: true, connectionState: "connected" },
+  ],
+  useConnectionsReady: () => true,
+}));
+
 describe("home list options across layout changes", () => {
   const environmentId = EnvironmentId.make("environment-1");
-  const availableEnvironmentIds = new Set([environmentId]);
   let root: Root;
   let latest: ReturnType<typeof useHomeListOptions>;
 
   function ThreadList() {
-    const state = useHomeListOptions(availableEnvironmentIds);
+    const state = useHomeListOptions();
     useLayoutEffect(() => {
       latest = state;
     });
