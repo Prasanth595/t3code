@@ -674,6 +674,7 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
         super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
     }
   }
+
   // After a drag scrolls the editor, ArrowKeyMovementMethod calls this to pull the caret into the
   // visible lines, so the next keystroke lands in the middle of the prompt. Scrolling to read back
   // must leave the caret where it was; typing scrolls back to it.
