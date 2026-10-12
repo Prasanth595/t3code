@@ -432,7 +432,7 @@ export interface ThreadManagementServiceShape {
     input: OrchestrationV2StopWorkflowInput,
   ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
   /**
-   * Sends `thread.stop` to every delegated task under a thread, depth first. Their command IDs
+   * Sends `thread.stop` to every distinct delegated child thread, depth first. Their command IDs
    * derive from `commandId`, so a retry repeats nothing that already stopped. A task that
    * cannot be stopped does not keep the others running: all are tried, then it fails.
    */
@@ -1075,9 +1075,13 @@ const make = Effect.gen(function* () {
       const failures: Array<
         Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
       > = [];
+      const stoppedChildThreadIds = new Set<ThreadId>();
       for (const task of subagents) {
         if (task.origin !== "app_owned" || task.childThreadId === null) continue;
         const threadId = task.childThreadId;
+        // Follow-up tasks reuse a child thread; walk its subtree only once.
+        if (stoppedChildThreadIds.has(threadId)) continue;
+        stoppedChildThreadIds.add(threadId);
         yield* dispatch({
           type: "thread.stop",
           commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),
