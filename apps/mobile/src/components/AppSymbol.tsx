@@ -45,6 +45,7 @@ import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
+import IconCornerDownRight from "@tabler/icons-react-native/IconCornerDownRight";
 import IconDatabase from "@tabler/icons-react-native/IconDatabase";
 import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
 import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
@@ -150,6 +151,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.triangle.merge": IconGitMerge,
   "arrow.triangle.pull": IconGitPullRequest,
   "square.3.layers.3d": IconStack2,
+  "arrow.turn.down.right": IconCornerDownRight,
   "arrow.turn.left.up": IconArrowBackUp,
   "arrow.up": IconArrowUp,
   "arrow.up.circle": IconArrowUpCircle,

@@ -9,7 +9,9 @@ import {
 } from "./work-log-layout";
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";
 import {
+  getQuestionAnswerHeading,
   getQuestionAnswerPreview,
+  getQuestionIds,
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import * as Haptics from "expo-haptics";
@@ -977,12 +979,19 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
             : null;
   const viewedImagePath = workEntryViewedImagePath(row.workEntry);
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
-  const previewText = workEntryRowLabel(row.workEntry);
-  const answerPreview = row.workEntry.questionAnswer
-    ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
-    : null;
+  const questionAnswer = row.workEntry.questionAnswer;
+  // Matches web: one question leads with its text and answer; several are
+  // counted, and their answers show once expanded.
+  const questionHeading = questionAnswer ? getQuestionAnswerHeading(questionAnswer) : "";
+  const previewText = questionHeading || workEntryRowLabel(row.workEntry);
+  const answerPreview =
+    questionAnswer &&
+    hasQuestionAnswer(questionAnswer) &&
+    getQuestionIds(questionAnswer).length === 1
+      ? getQuestionAnswerPreview(questionAnswer)
+      : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = workEntryRowLabel(row.workEntry, expanded);
+  const displayText = questionHeading || workEntryRowLabel(row.workEntry, expanded);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&
@@ -1073,16 +1082,8 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
               tone={isUsageLimit ? "warning" : iconIsDestructive ? "danger" : "default"}
             >
               {isSystemNotice ? row.summary : displayText}
-              {answerPreview ? (
-                <Text
-                  className={
-                    !expanded &&
-                    row.workEntry.questionAnswer &&
-                    hasQuestionAnswer(row.workEntry.questionAnswer)
-                      ? "text-foreground"
-                      : "text-foreground-subtle"
-                  }
-                >{`  ${answerPreview}`}</Text>
+              {answerPreview && !expanded ? (
+                <Text className="text-foreground">{`  ${answerPreview}`}</Text>
               ) : null}
             </WorkLogLabel>
           </>

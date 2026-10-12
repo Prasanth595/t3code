@@ -9,9 +9,10 @@ import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
+  getQuestionAnswerHeading,
   getQuestionAnswerPreview,
   getQuestionAnswerText,
-  getQuestionTextPreview,
+  getQuestionIds,
   hasQuestionAnswer,
 } from "@t3tools/client-runtime/work-log/user-input";
 import {
@@ -130,6 +131,7 @@ import {
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  CornerDownRightIcon,
   DownloadIcon,
   EyeIcon,
   GitForkIcon,
@@ -4047,7 +4049,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const questionHeading = row.entry.questionAnswer
-    ? getQuestionTextPreview(row.entry.questionAnswer)
+    ? getQuestionAnswerHeading(row.entry.questionAnswer)
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
   const threadLabel = threadReadLabel(label, threadTarget);
@@ -4099,7 +4101,10 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             ) : (
               "Thought"
             )
-          ) : row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
+          ) : !row.expanded &&
+            row.entry.questionAnswer &&
+            hasQuestionAnswer(row.entry.questionAnswer) &&
+            getQuestionIds(row.entry.questionAnswer).length === 1 ? (
             <span className="flex min-w-0 gap-1.5">
               <span className="min-w-0 truncate">{label}</span>
               <span className="min-w-0 truncate text-foreground">
@@ -5583,8 +5588,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   // The question is the row's identity: a generic "User input submitted"
   // label buries what was asked, so lead with the question text (even over a
   // lone tool row's display label) and keep the answer as the trailing preview.
+  // Several questions are counted instead, and their answers only show expanded.
   const questionHeading = workEntry.questionAnswer
-    ? getQuestionTextPreview(workEntry.questionAnswer)
+    ? getQuestionAnswerHeading(workEntry.questionAnswer)
     : "";
   const previewText =
     isReasoning && expanded
@@ -5593,7 +5599,10 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         : "Thought"
       : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
   const answerPreview =
-    workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
+    !expanded &&
+    workEntry.questionAnswer &&
+    hasQuestionAnswer(workEntry.questionAnswer) &&
+    getQuestionIds(workEntry.questionAnswer).length === 1
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
       : null;
   const viewedImagePath = workEntryViewedImagePath(workEntry);
@@ -5748,18 +5757,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               )}
             </span>
             {answerPreview ? (
-              <span
-                className={cn(
-                  "min-w-0 truncate",
-                  !expanded &&
-                    workEntry.questionAnswer &&
-                    hasQuestionAnswer(workEntry.questionAnswer)
-                    ? "text-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
-                {answerPreview}
-              </span>
+              <span className="min-w-0 truncate text-foreground">{answerPreview}</span>
             ) : null}
           </p>
         </div>
@@ -5888,51 +5886,62 @@ function QuestionAnswerHistory({
   );
   const urls = useAssetUrls(activeThreadEnvironmentId, resources);
   return (
-    <div className="ms-7 mt-2 space-y-2" onClick={stopRowToggle}>
-      {[
-        ...new Set([
-          ...Object.keys(answer.questionTextById ?? {}),
-          ...Object.keys(answer.answers),
-          ...Object.keys(answer.attachmentsByQuestionId),
-        ]),
-      ].map((questionId) => (
-        <div key={questionId} className="space-y-1">
-          {answer.questionTextById?.[questionId] ? (
-            <p className="whitespace-pre-wrap text-sm text-muted-foreground">
-              {answer.questionTextById[questionId]}
-            </p>
-          ) : null}
-          {getQuestionAnswerText(answer.answers[questionId]) ? (
-            <p className="ms-3 whitespace-pre-wrap text-sm text-muted-foreground">
-              {getQuestionAnswerText(answer.answers[questionId])}
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            {(answer.attachmentsByQuestionId[questionId] ?? []).map((attachment) => {
-              const url = urls[attachments.indexOf(attachment)];
-              return (
-                <a
-                  key={attachment.id}
-                  href={url ?? undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm underline"
-                >
-                  {attachment.type === "image" && url ? (
-                    <img
-                      src={url}
-                      alt={attachment.name}
-                      className="h-20 max-w-32 rounded object-contain"
-                    />
-                  ) : (
-                    attachment.name
-                  )}
-                </a>
-              );
-            })}
+    <div
+      className="ms-7 mt-1 mb-2 divide-y divide-border overflow-hidden rounded-lg border border-border bg-message text-sm select-text"
+      onClick={stopRowToggle}
+    >
+      {getQuestionIds(answer).map((questionId) => {
+        const text = getQuestionAnswerText(answer.answers[questionId]);
+        const questionAttachments = answer.attachmentsByQuestionId[questionId] ?? [];
+        return (
+          <div key={questionId} className="space-y-1 px-3 py-2.5">
+            {answer.questionTextById?.[questionId] ? (
+              <p className="whitespace-pre-wrap text-muted-foreground">
+                {answer.questionTextById[questionId]}
+              </p>
+            ) : null}
+            {text || questionAttachments.length > 0 ? (
+              <div className="flex min-w-0 gap-1.5">
+                <CornerDownRightIcon
+                  aria-hidden
+                  className="mt-[0.1875rem] size-3.5 shrink-0 text-muted-foreground"
+                />
+                <div className="min-w-0 flex-1 space-y-2">
+                  {text ? (
+                    <p className="whitespace-pre-wrap font-medium text-foreground">{text}</p>
+                  ) : null}
+                  {questionAttachments.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {questionAttachments.map((attachment) => {
+                        const url = urls[attachments.indexOf(attachment)];
+                        return (
+                          <a
+                            key={attachment.id}
+                            href={url ?? undefined}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="underline"
+                          >
+                            {attachment.type === "image" && url ? (
+                              <img
+                                src={url}
+                                alt={attachment.name}
+                                className="h-20 max-w-32 rounded object-contain"
+                              />
+                            ) : (
+                              attachment.name
+                            )}
+                          </a>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
