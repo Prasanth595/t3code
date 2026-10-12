@@ -1403,6 +1403,11 @@ export const ServerSettings = Schema.Struct({
   pullRequestWatchRemarkFilter: PullRequestWatchRemarkFilter.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * Fork: a checkout's repository is its `origin` remote before its `upstream` remote. A fork
+   * checkout then lists, reads and watches the pull requests of the fork, not of upstream.
+   */
+  preferOriginRemote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1714,6 +1719,7 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
+  preferOriginRemote: Schema.optionalKey(Schema.Boolean),
   /** Merges per field: a patched field replaces the saved one. */
   pullRequestWatchRemarkFilter: Schema.optionalKey(
     Schema.Struct({

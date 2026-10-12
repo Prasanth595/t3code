@@ -312,6 +312,32 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect("names a fork checkout by its origin while preferOriginRemote is on", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-prefer-origin-test-",
+      });
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:julius/t3code-fork.git"]);
+      yield* git(cwd, ["remote", "add", "upstream", "git@github.com:T3Tools/t3code.git"]);
+
+      let preferOrigin = true;
+      const resolver = yield* RepositoryIdentityResolver.make({
+        preferOriginRemote: Effect.sync(() => preferOrigin),
+      }).pipe(Effect.provide(ProcessRunner.layer));
+
+      const fork = yield* resolver.resolve(cwd);
+      expect(fork?.canonicalKey).toBe("github.com/julius/t3code-fork");
+      expect(fork?.locator.remoteName).toBe("origin");
+      expect(fork?.origin).toBeUndefined();
+
+      // Turning the setting off takes effect without a refresh.
+      preferOrigin = false;
+      expect((yield* resolver.resolve(cwd))?.canonicalKey).toBe("github.com/t3tools/t3code");
+    }),
+  );
+
   it.effect("uses the last remote path segment as the repository name for nested groups", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
