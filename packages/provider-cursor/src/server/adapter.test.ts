@@ -96,7 +96,7 @@ describe("CursorAdapterV2", () => {
                       args: {
                         description: "Review",
                         prompt: "Review the code.",
-                        subagentType: { kind: "unspecified" },
+                        subagentType: { kind: "explore" },
                         ...(model === undefined ? {} : { model }),
                         agentId: "cursor-task-agent",
                         mode: "unspecified" as const,
@@ -200,6 +200,8 @@ describe("CursorAdapterV2", () => {
         assert.isFalse(sentWithMcpOverride);
         const rows = events.filter((event) => event.type === "subagent.updated");
         assert.equal(rows[0]?.subagent.status, "running");
+        assert.equal(rows[0]?.subagent.agentType, "explore");
+        assert.equal(rows.at(-1)?.subagent.agentType, "explore");
         assert.equal(rows[0]?.subagent.model, model ?? null);
         assert.equal(rows.at(-1)?.subagent.model, lateModel ?? model ?? null);
         assert.equal(

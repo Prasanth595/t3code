@@ -19,6 +19,7 @@ type SubagentRowSubagent = Pick<
   | "threadId"
   | "childThreadId"
   | "model"
+  | "agentType"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -126,6 +127,7 @@ function SubagentMetadata(props: {
         size={12}
       />
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
+        {subagent.agentType?.trim() ? `${subagent.agentType.trim()} · ` : ""}
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
       </Text>

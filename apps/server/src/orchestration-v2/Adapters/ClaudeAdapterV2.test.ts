@@ -7775,6 +7775,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.equal(outer?.status, "completed");
         assert.equal(nested?.status, "completed");
         assert.equal(nested?.parentNodeId, outer?.id);
+        assert.equal(nested?.agentType, "general-purpose");
         assert.deepEqual(
           subagentRouting(harness.events, []).assistantTexts(outer?.childThreadId ?? undefined),
           ["OUTER_WORKING", "OUTER_DONE"],

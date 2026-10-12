@@ -88,6 +88,10 @@ export interface AntigravityAdapterV2Options {
  * ACP 1.1.1 exposes subagent invocations as ordinary `start_subagent` tools
  * without child session ids. Project them as subagent items keyed by the tool
  * call so the timeline shows them as delegated work.
+ *
+ * agentType is intentionally unset: the docs say invoke_subagent takes a role,
+ * but the start_subagent rawInput keys are unverified. Capture a live tool_call
+ * and read the role key from rawInput if present.
  */
 const extractAntigravitySubagentUpdate: NonNullable<AcpAdapterV2Flavor["extractSubagentUpdate"]> = (
   toolCall,

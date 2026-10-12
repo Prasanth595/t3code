@@ -45,6 +45,9 @@ export function extractDevinSubagentUpdate(
   const started = record(meta?.["cognition.ai/subagent_started"]);
   const data = completed ?? started;
   if (typeof data?.agentId !== "string") return undefined;
+  // agentType is intentionally unset: docs say run_subagent takes a profile
+  // (subagent_explore etc.) but subagent_started carries no such key in our
+  // fixtures. Check a live payload or the run_subagent rawInput for one.
   return {
     nativeTaskId: data.agentId,
     childSessionId: data.agentId,

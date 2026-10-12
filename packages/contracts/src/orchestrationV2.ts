@@ -759,6 +759,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
+  /** Provider-native subagent type (e.g. "Explore"); plain String so a blank value never fails decode. */
+  agentType: Schema.optional(Schema.String),
   modelSelection: Schema.optional(ModelSelection),
   // Parent-wake policy for app-owned tasks: "always" offers a continuation on
   // every terminal (async delegations; queue_after_active sequences it behind

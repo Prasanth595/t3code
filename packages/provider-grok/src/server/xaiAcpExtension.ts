@@ -116,6 +116,7 @@ export interface XAiAcpSubagentUpdate {
   readonly prompt: string;
   readonly title: string | null;
   readonly model: string | null;
+  readonly agentType?: string | undefined;
   readonly status: "running" | "completed" | "failed";
   readonly childSessionId: string | null;
   readonly result: string | null;
@@ -953,6 +954,7 @@ export function extractXAiAcpSubagentUpdate(
     prompt: nonEmptyString(rawInput?.prompt) ?? "",
     title: nonEmptyString(rawInput?.description) ?? null,
     model: nonEmptyString(rawInput?.model) ?? null,
+    agentType: nonEmptyString(rawInput?.subagent_type) ?? nonEmptyString(rawInput?.subagentType),
     status,
     childSessionId,
     result: asyncSpawnAck ? null : legacyResult,

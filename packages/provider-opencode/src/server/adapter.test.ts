@@ -762,9 +762,9 @@ describe("OpenCodeAdapterV2", () => {
         return yield* Effect.die("OpenCode runtime must expose hasPendingBackgroundWork.");
       }
       yield* harness.startTurn();
-      const terminal = yield* harness.runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
+      const collected = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
         Effect.forkScoped,
       );
       const taskPart = (status: "running" | "completed") => ({
@@ -780,11 +780,14 @@ describe("OpenCodeAdapterV2", () => {
             callID: "call_task",
             state: {
               status,
-              input: {
-                description: "Background sleep task",
-                prompt: "sleep",
-                subagent_type: "general",
-              },
+              input:
+                status === "running"
+                  ? {
+                      description: "Background sleep task",
+                      prompt: "sleep",
+                      subagent_type: "general",
+                    }
+                  : {},
               title: "Background sleep task",
               metadata: { parentSessionId: root, sessionId: child, background: true },
               time: { start: 3, ...(status === "completed" ? { end: 3 } : {}) },
@@ -817,7 +820,15 @@ describe("OpenCodeAdapterV2", () => {
       yield* push(status(child, "busy"));
       yield* push(taskPart("completed"));
       yield* push(status(root, "idle"));
-      assert.equal(Option.getOrUndefined(yield* Fiber.join(terminal))?.status, "completed");
+      const events = Array.from(yield* Fiber.join(collected));
+      const terminalEvent = events.at(-1);
+      assert.equal(
+        terminalEvent?.type === "turn.terminal" ? terminalEvent.status : undefined,
+        "completed",
+      );
+      const rows = events.filter((event) => event.type === "subagent.updated");
+      assert.equal(rows.at(-1)?.subagent.status, "completed");
+      assert.equal(rows.at(-1)?.subagent.agentType, "general");
       assert.isTrue(yield* hasPendingBackgroundWork, "the running child must pin idle release");
 
       yield* push(status(child, "idle"));

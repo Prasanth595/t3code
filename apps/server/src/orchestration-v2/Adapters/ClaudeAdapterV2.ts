@@ -4820,6 +4820,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           /** Raw SDK frame, folded into the coordinator's workflow snapshot. */
           readonly workflowFrame?: unknown;
           readonly workflowName?: string;
+          readonly agentType?: string;
           readonly workflowRunHandles?: OrchestrationV2WorkflowRunHandles;
           readonly result?: string;
           readonly status: Extract<
@@ -4971,6 +4972,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : {}),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
             model,
             // What the subagent runs with, unless it was recovered after a
             // restart. The parent's other options belong to the parent's session.
@@ -7114,6 +7116,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 claudeTaskTypeFromSdkMessage(message) === CLAUDE_WORKFLOW_TASK_TYPE;
               // `meta.name` from the workflow script; only workflow tasks carry it.
               const workflowName = isWorkflow ? text(field(message, "workflow_name")) : undefined;
+              const agentType = text(field(message, "subagent_type"));
 
               yield* updateClaudeSubagentNode({
                 context,
@@ -7123,6 +7126,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(model === undefined ? {} : { model }),
                 ...(launch?.effort === undefined ? {} : { effort: launch.effort }),
                 ...(owner === undefined ? {} : { owner }),
+                ...(agentType === undefined ? {} : { agentType }),
                 ...(isWorkflow
                   ? {
                       workflowFrame: message,

@@ -375,6 +375,7 @@ interface OpenCodeSubagentContext {
   childThreadId: ThreadId | null;
   childProviderThreadId: OrchestrationV2ProviderThread["id"] | null;
   model: string | null;
+  agentType: string | undefined;
   result: string | null;
 }
 
@@ -1345,11 +1346,13 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               childThreadId: null,
               childProviderThreadId: null,
               model: null,
+              agentType: undefined,
               result: null,
             };
             subagentsByNativeItemId.set(part.id, context);
           }
           context.model = toolModel(part) ?? context.model;
+          context.agentType = recordString(input, "subagent_type") ?? context.agentType;
           const childSessionId = taskSessionId(part);
           if (childSessionId !== null && context.childSessionId === null) {
             context.childSessionId = childSessionId;
@@ -1471,6 +1474,7 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
             prompt,
             title,
             model: context.model,
+            ...(context.agentType === undefined ? {} : { agentType: context.agentType }),
             status: subagentStatus,
             result: context.result,
             startedAt: context.startedAt,

@@ -1555,6 +1555,11 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeThreadId: `${input.context.run.runId}:task:${input.callId}`,
             });
+          const subagentKind = args.subagentType?.kind;
+          const agentType =
+            args.subagentType?.name?.trim() ||
+            (subagentKind === "unspecified" ? undefined : subagentKind?.trim()) ||
+            undefined;
           const task: OrchestrationV2Subagent = {
             ...(existing?.task ?? {
               id: nodeId,
@@ -1578,6 +1583,7 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               startedAt: now,
             }),
             model: args.model?.trim() || existing?.task.model || null,
+            ...(agentType === undefined ? {} : { agentType }),
             nativeTaskRef: {
               driver: CursorAgentSdk.CURSOR_PROVIDER,
               nativeId: input.callId,

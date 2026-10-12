@@ -1349,6 +1349,7 @@ const decodeCodexChildThread = Schema.decodeUnknownEffect(
       id: Schema.String,
       model: Schema.optional(Schema.NullOr(Schema.String)),
       reasoningEffort: Schema.optional(Schema.NullOr(Schema.String)),
+      agentRole: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   }),
 );
@@ -2449,6 +2450,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly completedAt?: DateTime.Utc | null;
           readonly startedAt?: DateTime.Utc;
           readonly reopen?: boolean;
+          readonly agentType?: string | undefined;
         }) =>
           Effect.gen(function* () {
             const now = yield* DateTime.now;
@@ -2464,6 +2466,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const task = {
               ...prior,
               status,
+              ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
               ...(input.reopen
                 ? {
                     runId: input.subagent.parentContext.projectionRunId,
@@ -2860,7 +2863,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 nativeItemId: input.nativeItemId,
               }),
               turnItemOrdinal,
-              task,
+              task: task as OrchestrationV2Subagent,
             } satisfies CodexSubagentThreadContext;
 
             yield* Ref.update(subagentThreads, (current) => {
@@ -2967,47 +2970,62 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             for (const pendingTurn of pendingTurns) {
               yield* emitSubagentProviderTurnStarted(subagent, pendingTurn);
             }
-            if (task.model === null) {
-              yield* client.raw
-                .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
-                .pipe(
-                  Effect.flatMap(decodeCodexChildThread),
-                  Effect.map((response): typeof CodexChildSelection.Type | null =>
-                    response.thread.id === input.nativeThreadId && response.thread.model?.trim()
-                      ? {
-                          thread: response.thread,
-                          model: response.thread.model,
-                          reasoningEffort: response.thread.reasoningEffort,
-                        }
-                      : null,
-                  ),
-                  Effect.catch(() => Effect.succeed(null)),
-                  Effect.flatMap((response) =>
-                    response === null
-                      ? client.raw
-                          .request("thread/resume", {
-                            threadId: input.nativeThreadId,
-                            excludeTurns: true,
-                          })
-                          .pipe(Effect.flatMap(decodeCodexChildModel))
-                      : Effect.succeed(response),
-                  ),
-                  Effect.timeout("5 seconds"),
-                  Effect.flatMap((response) =>
-                    response.thread.id === input.nativeThreadId &&
-                    !subagentSelections.has(input.nativeThreadId)
-                      ? updateSubagentSelection(
-                          input.nativeThreadId,
-                          response.model,
-                          response.reasoningEffort,
-                          response.serviceTier,
-                        )
-                      : Effect.void,
-                  ),
-                  Effect.catch(() => Effect.void),
-                  Effect.forkIn(scope),
-                );
-            }
+            yield* client.raw
+              .request("thread/read", { threadId: input.nativeThreadId, includeTurns: false })
+              .pipe(
+                Effect.flatMap(decodeCodexChildThread),
+                Effect.map((response) =>
+                  response.thread.id === input.nativeThreadId ? response : null,
+                ),
+                Effect.catch(() => Effect.succeed(null)),
+                Effect.tap((response) => {
+                  const agentType = response?.thread.agentRole?.trim();
+                  return agentType && agentType !== subagent.task.agentType
+                    ? emitSubagentTaskUpdate({
+                        subagent,
+                        status: subagent.task.status,
+                        agentType,
+                      })
+                    : Effect.void;
+                }),
+                Effect.map((response): typeof CodexChildSelection.Type | null =>
+                  response?.thread.model?.trim()
+                    ? {
+                        thread: response.thread,
+                        model: response.thread.model,
+                        reasoningEffort: response.thread.reasoningEffort,
+                      }
+                    : null,
+                ),
+                Effect.flatMap((read) =>
+                  task.model !== null
+                    ? Effect.void
+                    : (read === null
+                        ? client.raw
+                            .request("thread/resume", {
+                              threadId: input.nativeThreadId,
+                              excludeTurns: true,
+                            })
+                            .pipe(Effect.flatMap(decodeCodexChildModel))
+                        : Effect.succeed(read)
+                      ).pipe(
+                        Effect.flatMap((response) =>
+                          response.thread.id === input.nativeThreadId &&
+                          !subagentSelections.has(input.nativeThreadId)
+                            ? updateSubagentSelection(
+                                input.nativeThreadId,
+                                response.model,
+                                response.reasoningEffort,
+                                response.serviceTier,
+                              )
+                            : Effect.void,
+                        ),
+                      ),
+                ),
+                Effect.timeout("5 seconds"),
+                Effect.catch(() => Effect.void),
+                Effect.forkIn(scope),
+              );
           });
 
         const registerSubagentThreads = (input: {

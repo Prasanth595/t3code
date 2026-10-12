@@ -1352,6 +1352,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           prompt: call.prompt,
           title: call.title,
           model: call.model,
+          ...(call.agent === undefined ? {} : { agentType: call.agent }),
           status: call.status,
           result: call.result,
           startedAt: call.startedAt,
@@ -2270,7 +2271,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             const { input } = event.data;
             call.prompt = stringField(input, "prompt") ?? call.prompt;
             call.title = stringField(input, "description") ?? call.title;
-            call.agent = stringField(input, "agent");
+            call.agent = stringField(input, "agent") ?? call.agent;
             call.model = stringField(input, "model") ?? call.model;
             call.background = input["background"] === true;
             return yield* emitSubagent(call);

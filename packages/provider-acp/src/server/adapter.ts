@@ -463,6 +463,7 @@ export interface AcpAdapterV2SubagentUpdate {
   readonly prompt: string;
   readonly title: string | null;
   readonly model: string | null;
+  readonly agentType?: string | undefined;
   readonly status:
     | "pending"
     | "running"
@@ -2767,6 +2768,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt: now,
             }),
             model: update.model?.trim() || existing?.task.model || null,
+            ...(update.agentType === undefined ? {} : { agentType: update.agentType }),
             status: taskStatus,
             result: update.result ?? existing?.task.result ?? null,
             completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,

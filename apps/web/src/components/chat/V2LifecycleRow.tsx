@@ -522,6 +522,7 @@ function SubagentTimelineLink(props: {
           {...props}
           elapsed={agent ? <AgentElapsed agent={projectedSubagentsToRuntime([agent])[0]!} /> : null}
           model={agent?.model ?? null}
+          agentType={agent?.agentType}
           modelSelection={agent?.modelSelection}
           status={liveStatus}
           result={agent?.result ?? props.result}
@@ -535,6 +536,7 @@ function SubagentTimelineLink(props: {
 function SubagentTimelineTooltip(
   props: Parameters<typeof SubagentTimelineLink>[0] & {
     model: string | null;
+    agentType: string | undefined;
     modelSelection: OrchestrationV2Subagent["modelSelection"];
     elapsed: ReactNode;
   },
@@ -552,6 +554,7 @@ function SubagentTimelineTooltip(
     <SubagentTooltipContent
       title={formatSubagentDisplayTitle(child?.title ?? props.title)}
       model={props.model}
+      agentType={props.agentType}
       providerInstanceId={props.providerInstanceId}
       origin={props.origin}
       modelSelection={props.modelSelection}

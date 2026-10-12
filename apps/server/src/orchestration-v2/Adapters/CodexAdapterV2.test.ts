@@ -7315,6 +7315,44 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect.each([
+    { agentRole: "explorer", expected: "explorer" },
+    { agentRole: " \t ", expected: undefined },
+  ])("reads child agentRole $agentRole into the subagent agentType", ({ agentRole, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const typed = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          resumeSubagentTranscript,
+          (event) =>
+            event.type === "subagent.updated" && event.subagent.agentType === "explorer"
+              ? Deferred.succeed(typed, undefined)
+              : Effect.void,
+          undefined,
+          (threadId) => Effect.succeed({ thread: { id: threadId, model: "gpt-6-sol", agentRole } }),
+        );
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-child-agent-role"),
+            text: RESUME_PROMPT,
+          }),
+        );
+        if (expected) yield* Deferred.await(typed);
+        yield* TestClock.adjust("100 millis");
+        yield* harness.firstTerminal;
+        const updates = harness.subagentUpdates();
+        assert.equal(updates.at(-1)?.subagent.agentType, expected);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["failed", "malformed", "wrong child", "blank model"] as const)(
     "resumes child metadata after a %s read",
     (readResult) =>

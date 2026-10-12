@@ -1742,6 +1742,7 @@ describe("AcpAdapterV2", () => {
         "task-b": ["completed", "`b.txt` has three lines."],
         "task-bg": ["completed", "a.txt b.txt"],
       });
+      assert.equal(tasks.get("task-a")?.agentType, "explore");
       assert.isTrue(
         items.some(
           (item) =>

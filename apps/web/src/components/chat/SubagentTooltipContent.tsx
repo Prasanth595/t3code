@@ -33,6 +33,7 @@ import { deriveProviderInstanceEntries, shouldShowInstanceBadge } from "../../pr
 export function SubagentTooltipContent(props: {
   title: string;
   model: string | null;
+  agentType?: string | undefined;
   providerInstanceId: ProviderInstanceId;
   origin: OrchestrationV2Subagent["origin"];
   modelSelection?: OrchestrationV2Subagent["modelSelection"];
@@ -54,6 +55,7 @@ export function SubagentTooltipContent(props: {
   const { modelLabel, workspace: metadata } = resolveSubagentMetadata(props);
   const preview = subagentDetailPreview(props);
   const model = props.model?.trim();
+  const agentType = props.agentType?.trim();
   const modelSlug = props.provider
     ? resolveSelectableModel(props.provider.driver, model, props.provider.models)
     : model;
@@ -139,6 +141,7 @@ export function SubagentTooltipContent(props: {
         )}
         <span className="inline-flex min-w-0 items-center gap-1 text-foreground/75">
           <span className="min-w-0 truncate">
+            {agentType ? `${agentType} · ` : null}
             {showInstanceBadge ? `${modelLabel} · ${entry.displayName}` : modelLabel}
           </span>
           {effort || speed?.speedIcon ? (

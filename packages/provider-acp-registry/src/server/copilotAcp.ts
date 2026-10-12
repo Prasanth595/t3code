@@ -169,6 +169,7 @@ export function extractCopilotSubagentUpdate(
     prompt: input.prompt,
     title: typeof input.description === "string" ? input.description : null,
     model: typeof input.model === "string" ? input.model : null,
+    agentType: input.agent_type.trim() || undefined,
     status,
     result: status !== "running" && typeof output === "string" ? output : null,
   };
