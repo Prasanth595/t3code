@@ -827,16 +827,24 @@ function mergeWindowsEnv(
 ): NodeJS.ProcessEnv {
   const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
   for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) {
-      if (key.toUpperCase() === "PATH") {
-        for (const existingKey of Object.keys(nextEnv)) {
-          if (existingKey !== key && existingKey.toUpperCase() === "PATH") {
-            delete nextEnv[existingKey];
-          }
-        }
-      }
+    if (value !== undefined && key.toUpperCase() !== "PATH") {
       nextEnv[key] = value;
     }
+  }
+  // Windows env keys are case-insensitive, so collapse every PATH spelling into
+  // one key, keeping the patch value readEnvPath would have preferred.
+  const patchPath =
+    readEnvPath(patch) ??
+    Object.entries(patch).find(
+      ([key, value]) => value !== undefined && key.toUpperCase() === "PATH",
+    )?.[1];
+  if (patchPath !== undefined) {
+    for (const existingKey of Object.keys(nextEnv)) {
+      if (existingKey.toUpperCase() === "PATH") {
+        delete nextEnv[existingKey];
+      }
+    }
+    nextEnv.PATH = patchPath;
   }
   return nextEnv;
 }

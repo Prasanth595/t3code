@@ -734,6 +734,29 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
+  it.effect("collapses PATH spellings to the preferred patch value when extending host env", () =>
+    Effect.gen(function* () {
+      let resolvedEnvironment: NodeJS.ProcessEnv | undefined;
+      yield* resolveSpawnCommand("codex", [], {
+        env: { PATH: "C:\\explicit", Path: "C:\\other" },
+        extendEnv: true,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provideService(HostProcess.Environment, {
+          Path: "C:\\host",
+          PATHEXT: ".EXE",
+        }),
+        Effect.provideService(SpawnExecutableResolution, (_command, _platform, env) => {
+          resolvedEnvironment = env;
+          return "C:\\explicit\\codex.exe";
+        }),
+      );
+
+      expect(resolvedEnvironment).toEqual({ PATH: "C:\\explicit", PATHEXT: ".EXE" });
+    }),
+  );
+
   it.effect("scans PATH once per command until the search environment changes", () =>
     Effect.gen(function* () {
       const scans: Array<string> = [];
