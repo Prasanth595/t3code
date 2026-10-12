@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type {
-  ProviderSettingsFormAnnotation,
-  ProviderSettingsFormControl,
-  ProviderSettingsFormOption,
-  ProviderSettingsFormSchemaAnnotation,
+import {
+  isSecretSetting,
+  type ProviderSettingsFormAnnotation,
+  type ProviderSettingsFormControl,
+  type ProviderSettingsFormOption,
+  type ProviderSettingsFormSchemaAnnotation,
 } from "@t3tools/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
 
@@ -131,7 +132,7 @@ export function deriveProviderSettingsFields(
               ? { placeholder: formAnnotation.placeholder }
               : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
-          ...(formAnnotation.secret ? { secret: true } : {}),
+          ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
             : {}),
