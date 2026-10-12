@@ -56,10 +56,19 @@ export function ArtifactOpenMenu(props: {
 
   const run = useCallback(
     async (action: ArtifactOpenAction) => {
+      // Browsers only allow a new tab inside the click itself, so a web client opens it
+      // before the asset URL resolves and points it there afterwards.
+      const pendingTab =
+        action === "external-browser" && !isElectron ? window.open("about:blank", "_blank") : null;
       try {
         const resolved = await resolve();
         if (resolved === null) throw new Error("Unable to resolve the artifact.");
         if (action === "external-browser") {
+          if (pendingTab) {
+            pendingTab.opener = null;
+            pendingTab.location.href = resolved.url;
+            return;
+          }
           await ensureLocalApi().shell.openExternal(resolved.url);
           return;
         }
@@ -70,6 +79,7 @@ export function ArtifactOpenMenu(props: {
         });
         if (result._tag === "Failure") throw new Error("Unable to reveal the artifact.");
       } catch {
+        pendingTab?.close();
         toastManager.add({
           type: "error",
           title:
