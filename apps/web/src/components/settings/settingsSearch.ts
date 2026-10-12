@@ -571,6 +571,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["terminal keybindings keyboard shortcuts priority shell focus"],
   },
   {
+    id: "app-toggle-shortcuts",
+    title: "App toggle shortcuts",
+    to: "/settings/general",
+    searchTerms: ["global hotkey keyboard shortcut show hide toggle window raycast f17"],
+    desktopOnly: true,
+  },
+  {
     id: "background-work-details",
     title: "Background work details",
     to: "/settings/general",

@@ -417,6 +417,14 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmTerminalClose: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Fork: a focused terminal hands keys that match an app keybinding to the app first. */
   terminalAppShortcutsFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: global shortcuts that show or hide the desktop app, as Electron accelerators such as
+   * `F17`. Plain strings, so one bad entry cannot make the whole settings document unreadable;
+   * the desktop app skips an entry that Electron rejects.
+   */
+  appToggleShortcuts: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   /** Fork: background work status icons open a details popover; their descriptions render markdown links. */
   backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
@@ -1826,6 +1834,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadUnpin: Schema.optionalKey(Schema.Boolean),
   confirmTerminalClose: Schema.optionalKey(Schema.Boolean),
   terminalAppShortcutsFirst: Schema.optionalKey(Schema.Boolean),
+  appToggleShortcuts: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),

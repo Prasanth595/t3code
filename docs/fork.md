@@ -178,6 +178,14 @@ The server setting `preferOriginRemote` makes a fork checkout count as its fork.
 - With the setting on, `origin` comes first. The pull request list, pull request details, watches and links use the fork. The sidebar groups the checkout under the fork in both cases.
 - Pull request creation and the pull request of the current branch come from the GitHub provider. It follows gh's default repository, then `upstream`. Run `gh repo set-default <owner>/<fork>` in each fork checkout, so that these use the fork too. The setting does not change them. Revisit if a fork checkout without a gh default creates a pull request on upstream.
 
+## App toggle shortcuts
+
+The client setting `appToggleShortcuts` lists global keys that show and hide the desktop app. It is empty by default. Set it in Settings > General > App toggle shortcuts, for example `F17, Alt+Space`.
+
+- A key brings the app to the front when it is in the background, and hides it when it is in front. On macOS it hides and unhides the whole app, which has no animation.
+- Each entry is an Electron accelerator. The settings field rejects a key that Electron cannot name. The ISO section key `§` is one of them: map it to a function key, for example with Karabiner.
+- If another app or feature already holds a key, the desktop app logs a warning and skips it.
+
 ## Pull request watch remark filter
 
 The server setting `pullRequestWatchRemarkFilter` selects which comments and reviews wake an agent that watches a pull request. It is off by default. Turn it on in Settings > Source control > Pull request watch.
