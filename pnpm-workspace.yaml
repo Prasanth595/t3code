@@ -193,6 +193,7 @@ minimumReleaseAgeExclude:
   - "@muse-code/sdk@1.4.6"
 
 overrides:
+  "valibot@<1.4.2": 1.4.2
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
