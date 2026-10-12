@@ -144,6 +144,8 @@ export interface ComposerPromptEditorProps {
   richTextEnabled?: boolean;
   /** Preserve editor answers verbatim, without Markdown or context chips. */
   literalText?: boolean;
+  /** Hydrate self-contained thread links only while editing a question answer. */
+  answerThreadLinks?: boolean;
   /** Draft records behind the prompt's context references, keyed by context id. */
   contextRecords: ComposerDraftContextRecords;
   /** Structured clipboard payload for the given referenced ids, or null to skip. */
@@ -791,7 +793,7 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   // Every mode initializes from the controlled value, preserving the draft.
   return (
     <ComposerPromptEditorTiptapInner
-      key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
+      key={`${props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}:${props.answerThreadLinks ? "answer" : "draft"}`}
       {...props}
     />
   );
@@ -823,6 +825,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     cursor,
     richTextEnabled,
     literalText = false,
+    answerThreadLinks = false,
     contextRecords,
     buildContextClipboardFragment,
     importContextFragment,
@@ -856,13 +859,15 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             0,
             Math.min(text.length, Number.isFinite(position) ? Math.floor(position) : text.length),
           )
-        : clampCollapsedComposerCursor(text, position),
-    [literalText],
+        : clampCollapsedComposerCursor(text, position, false, answerThreadLinks),
+    [literalText, answerThreadLinks],
   );
   const expandEditorCursor = useCallback(
     (text: string, position: number) =>
-      literalText ? position : expandCollapsedComposerCursor(text, position),
-    [literalText],
+      literalText
+        ? position
+        : expandCollapsedComposerCursor(text, position, false, answerThreadLinks),
+    [literalText, answerThreadLinks],
   );
 
   const onChangeRef = useRef(onChange);
@@ -1003,11 +1008,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       const suppressTrigger =
         literalText ||
         inCodeBlock ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left") ||
-        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right");
+        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "left", answerThreadLinks) ||
+        isCollapsedCursorAdjacentToInlineToken(nextValue, nextCursor, "right", answerThreadLinks);
       onChangeRef.current(nextValue, nextCursor, nextExpandedCursor, suppressTrigger, contextIds);
     },
-    [clampEditorCursor, literalText],
+    [clampEditorCursor, literalText, answerThreadLinks],
   );
 
   const editorAttributes = useMemo(
@@ -1165,7 +1170,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             description: shortDescription || found.description?.trim() || null,
           };
         },
-        { styling: richText, literalText },
+        { styling: richText, literalText, answerThreadLinks },
       ),
       editable: !disabled,
       editorProps: {
@@ -1413,7 +1418,9 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
               ? importPastedComposerText(clipboardData, importFragment)
               : pastedText;
           // Complete chips at paste boundaries just as autocomplete does.
-          const tokens = literalText ? [] : collectComposerPromptInlineTokens(`${text}\n`);
+          const tokens = literalText
+            ? []
+            : collectComposerPromptInlineTokens(`${text}\n`, answerThreadLinks);
           const lastToken = tokens.at(-1);
           if (
             (lastToken?.type === "mention" || lastToken?.type === "skill") &&
@@ -1446,7 +1453,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             insertMarkdownParagraphs(
               text,
               skillLabelFor,
-              { styling: richText, blocks: !nested, literalText, literalLength },
+              { styling: richText, blocks: !nested, literalText, literalLength, answerThreadLinks },
               (content) => {
                 // Tagged on the same transaction insertContent builds, so the
                 // paste is one undo step of its own.
@@ -1564,7 +1571,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       citationRequestRef.current?.value === value ? citationRequestRef.current : null;
     if (previousSnapshot.value !== value) {
       editor.commands.setContent(
-        buildDocJson(value, skillLabelFor, { styling: richText, literalText }),
+        buildDocJson(value, skillLabelFor, { styling: richText, literalText, answerThreadLinks }),
         {
           emitUpdate: false,
         },
@@ -1603,6 +1610,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     editor,
     expandEditorCursor,
     literalText,
+    answerThreadLinks,
     richText,
     skillLabelFor,
     value,
@@ -1661,6 +1669,8 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
             : collapseExpandedComposerCursor(
                 snapshotRef.current.value,
                 snapshotRef.current.value.length,
+                false,
+                answerThreadLinks,
               ),
         );
       },
@@ -1723,7 +1733,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
           : edgeRect.bottom - caretRect.bottom < threshold;
       },
     }),
-    [editor, focusAt, literalText, readSnapshot],
+    [editor, focusAt, literalText, answerThreadLinks, readSnapshot],
   );
 
   const handleCopyCut = useCallback(
@@ -1837,7 +1847,13 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 function insertMarkdownParagraphs(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options: { styling: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options: {
+    styling: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    literalLength?: number;
+    answerThreadLinks?: boolean;
+  },
   insertContent: (content: JSONContent[] | JSONContent) => void,
 ): void {
   const blocks = buildTiptapContent(value, skillLabelFor, options);

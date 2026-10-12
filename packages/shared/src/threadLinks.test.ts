@@ -1,8 +1,26 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatThreadLink, parseThreadLinkHref, relabelThreadLinks } from "./threadLinks.ts";
+import {
+  collectThreadLinks,
+  formatThreadLink,
+  parseThreadLinkHref,
+  relabelThreadLinks,
+} from "./threadLinks.ts";
 
 describe("thread links", () => {
+  it("collects exact chip sources and ranges while leaving code and invalid links literal", () => {
+    const source = formatThreadLink("thread:peer%3A1", "Parser design");
+    const text = `Ask ${source}, then \`${source}\`.\n\`\`\`md\n${source}\n\`\`\`\n[bad](t3-thread://v1/)`;
+    expect(collectThreadLinks(text)).toEqual([
+      {
+        threadId: "thread:peer%3A1",
+        label: "Parser design",
+        source,
+        start: 4,
+        end: 4 + source.length,
+      },
+    ]);
+  });
   it("takes the thread id verbatim, percent escapes included", () => {
     expect(parseThreadLinkHref("t3-thread://v1/mcp:1234")).toBe("mcp:1234");
     expect(parseThreadLinkHref("t3-thread://v1/thread:delegated-task:mcp%3A1")).toBe(

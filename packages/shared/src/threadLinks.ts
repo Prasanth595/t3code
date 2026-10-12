@@ -47,6 +47,23 @@ export function hasThreadLinks(markdown: string): boolean {
   return markdown.includes(`](${THREAD_LINK_HREF_PREFIX}`);
 }
 
+/** Self-contained thread references outside code, including their source ranges. */
+export function collectThreadLinks(markdown: string) {
+  return Array.from(markdown.matchAll(THREAD_LINK_OUTSIDE_CODE)).flatMap((match) => {
+    const threadId = match.groups?.href ? parseThreadLinkHref(match.groups.href) : null;
+    if (threadId === null) return [];
+    return [
+      {
+        threadId,
+        label: match[0].slice(1, match[0].indexOf("](")),
+        source: match[0],
+        start: match.index,
+        end: match.index + match[0].length,
+      },
+    ];
+  });
+}
+
 /**
  * Relabels each thread link with `title(threadId)`, pointing it at the thread that title came from.
  * A link it returns nothing for keeps its label.
