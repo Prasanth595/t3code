@@ -248,7 +248,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               Effect.interruptible,
               Effect.timeout("10 seconds"),
               Effect.catch(() =>
-                Effect.logWarning("Failed to stop cancelled OpenCode text generation.", promptContext),
+                Effect.logWarning(
+                  "Failed to stop cancelled OpenCode text generation.",
+                  promptContext,
+                ),
               ),
               Effect.asVoid,
             ),
