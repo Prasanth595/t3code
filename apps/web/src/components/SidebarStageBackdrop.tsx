@@ -85,7 +85,7 @@ export function SidebarStageBackdrop({
       style={
         showCustomImage
           ? {
-              backgroundImage: `url(${customBackdropImageUrl})`,
+              backgroundImage: `url(${JSON.stringify(customBackdropImageUrl)})`,
             }
           : undefined
       }
