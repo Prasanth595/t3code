@@ -61,6 +61,7 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as SideQuestShelf from "./nofun/SideQuestShelf.ts";
+import * as StudioActivityBridge from "./nofun/StudioActivityBridge.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -524,8 +525,20 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// Studio activity bridge (F08): event-driven publisher onto the bridge URL,
+// inert unless NOFUN_STUDIO_BRIDGE_URL/TOKEN are set. Deps are provided from
+// the same layer values as the rest of the runtime, so layer memoization
+// shares one store instance.
+const layerStudioActivityBridge = StudioActivityBridge.layer.pipe(
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(ProjectStore.layer),
+  Layer.provide(RuntimeLayer.layerEventInfrastructure),
+  Layer.provide(layerPersistence),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  layerStudioActivityBridge,
   // Asks T3 Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,

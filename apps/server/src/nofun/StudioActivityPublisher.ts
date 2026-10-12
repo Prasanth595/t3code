@@ -33,7 +33,7 @@
 //   commits, call publishNow(); on producer-offline, skip the sink call.
 // - Wire observeWatermark to the bridge snapshot acknowledgement carrying
 //   the accepted t3.activity producer stamp. No server.ts route changes.
-import { createHash } from "node:crypto";
+import * as NodeCrypto from "node:crypto";
 
 export const STUDIO_ACTIVITY_PARTITION = "t3.activity" as const;
 export const STUDIO_ACTIVITY_PRODUCER_ID = "t3.activity-publisher" as const;
@@ -121,6 +121,8 @@ export type StudioActivityPublisherOptions = {
   sink: StudioActivitySink;
   now?: () => string;
   online?: boolean;
+  /** First sequence number. Seed from the clock so sequences stay monotonic across restarts. */
+  initialSequence?: number;
 };
 
 /** Deterministic canonical JSON: sorted object keys, compact separators. */
@@ -136,7 +138,7 @@ export function canonicalActivityJson(value: unknown): string {
 }
 
 export function activityPayloadHash(canonicalBytes: string): string {
-  return createHash("sha256").update(canonicalBytes, "utf8").digest("hex");
+  return NodeCrypto.createHash("sha256").update(canonicalBytes, "utf8").digest("hex");
 }
 
 export type ProducerUpdateVerdict =
@@ -205,7 +207,7 @@ export type PublishResult =
 export class StudioActivityPublisher {
   private readonly producerId: string;
   private readonly epoch: string;
-  private readonly allowedProjectIds: ReadonlySet<string>;
+  private allowedProjectIds: ReadonlySet<string>;
   private readonly allowedRoots: ReadonlyArray<string>;
   private readonly reads: StudioActivityReads;
   private readonly sink: StudioActivitySink;
@@ -218,16 +220,25 @@ export class StudioActivityPublisher {
   constructor(options: StudioActivityPublisherOptions) {
     this.producerId = options.producerId ?? STUDIO_ACTIVITY_PRODUCER_ID;
     this.epoch = options.epoch;
-    this.allowedProjectIds = new Set<string>([...options.allowedProjectIds]);
+    this.allowedProjectIds = new Set<string>(options.allowedProjectIds);
     this.allowedRoots = options.allowedRoots ?? [];
     this.reads = options.reads;
     this.sink = options.sink;
     this.now = options.now ?? (() => new Date().toISOString());
     this.online = options.online ?? true;
+    this.nextSequence = options.initialSequence ?? 1;
   }
 
   setOnline(online: boolean): void {
     this.online = online;
+  }
+
+  /**
+   * Refresh the explicit project allowlist (e.g. after project
+   * create/delete). Unknown (unlisted) projects stay excluded.
+   */
+  setAllowedProjectIds(ids: ReadonlySet<string> | ReadonlyArray<string>): void {
+    this.allowedProjectIds = new Set<string>(ids);
   }
 
   get pendingCount(): number {

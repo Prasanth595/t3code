@@ -93,6 +93,30 @@ function setup(
 }
 
 describe("StudioActivityPublisher", () => {
+  it("keeps sequences increasing across a restart when seeded from the clock", async () => {
+    const make = (initialSequence: number, sent: ActivityProducerInput[]) =>
+      new StudioActivityPublisher({
+        epoch: EPOCH,
+        initialSequence,
+        allowedProjectIds: [ALLOWED_PROJECT],
+        allowedRoots: ["/work"],
+        reads: { listActivityThreads: () => fixtureReads() },
+        sink: { send: (input) => void sent.push(input) },
+        now: () => NOW,
+      });
+    const before: ActivityProducerInput[] = [];
+    const first = make(1_760_000_000_000, before);
+    await first.publishNow();
+    await first.publishNow();
+    const after: ActivityProducerInput[] = [];
+    const restarted = make(1_760_000_060_000, after);
+    await restarted.publishNow();
+    const lastBefore = before.at(-1)!.stamp!.sequence;
+    expect(before[0]!.stamp!.sequence).toBe(1_760_000_000_000);
+    expect(after[0]!.stamp!.sequence).toBeGreaterThan(lastBefore);
+    expect(after[0]!.stamp!.epoch).toBe(before[0]!.stamp!.epoch);
+  });
+
   it("publishes an ExternalProducerInput-shaped envelope with only allowed references", async () => {
     const { publisher, sent } = setup();
     const result = await publisher.publishNow();
