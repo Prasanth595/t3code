@@ -45,6 +45,7 @@ import {
   resolveThreadSelectionOverlayState,
 } from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import type { ThreadListFilters } from "../../persistence/mobile-preferences";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
   DEFAULT_MOBILE_PROJECT_GROUPING_SETTINGS,
@@ -226,6 +227,7 @@ export function AdaptiveWorkspaceLayout(props: {
     <AdaptiveWorkspaceLayoutContent
       {...props}
       projectGroupingMode={groupingSettings.sidebarProjectGroupingMode}
+      savedThreadListFilters={preferencesResult.value.threadListFilters}
     />
   );
 }
@@ -237,6 +239,7 @@ function AdaptiveWorkspaceLayoutContent(
     readonly workspaceRouteKey: string | undefined;
   } & {
     readonly projectGroupingMode: SidebarProjectGroupingMode;
+    readonly savedThreadListFilters?: ThreadListFilters | undefined;
   },
 ) {
   const projectGroupingMode = props.projectGroupingMode;
@@ -592,7 +595,10 @@ function AdaptiveWorkspaceLayoutContent(
 
   if (nativeWorkspace) {
     return (
-      <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+      <HomeListOptionsProvider
+        projectGroupingMode={projectGroupingMode}
+        savedFilters={props.savedThreadListFilters}
+      >
         <AdaptiveWorkspaceContext value={contextValue}>
           <NativeWorkspaceInspectorContext
             value={{ render: workspaceInspector?.render, visible: inspectorColumnTargetWidth > 0 }}
@@ -604,7 +610,10 @@ function AdaptiveWorkspaceLayoutContent(
     );
   }
   return (
-    <HomeListOptionsProvider projectGroupingMode={projectGroupingMode}>
+    <HomeListOptionsProvider
+      projectGroupingMode={projectGroupingMode}
+      savedFilters={props.savedThreadListFilters}
+    >
       <AdaptiveWorkspaceContext.Provider value={contextValue}>
         <View testID="adaptive-workspace-layout" className="flex-1 flex-row">
           {shouldRenderPrimarySidebar && layout.listPaneWidth !== null ? (
