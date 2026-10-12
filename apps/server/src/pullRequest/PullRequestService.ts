@@ -2119,10 +2119,16 @@ export const make = Effect.gen(function* () {
                   .pipe(
                     // Once the authorized provider action starts, a failure may leave partial
                     // remote updates. Validation and permission failures above changed nothing.
+                    // A borrowed read is cached as the asking project's, and one asked from the
+                    // lending project as the lender's, so both are refreshed.
                     Effect.ensuring(
                       input.stackNumber === undefined
                         ? Effect.void
-                        : refreshAfterTurn(project.project.id),
+                        : Effect.forEach(
+                            new Set([project.project.id, (project.checkout ?? project.project).id]),
+                            refreshAfterTurn,
+                            { discard: true },
+                          ),
                     ),
                     Effect.mapError(toPullRequestError("runAction")),
                     Effect.as(

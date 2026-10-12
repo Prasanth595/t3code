@@ -5698,6 +5698,85 @@ it.effect.each([false, true])(
     }),
 );
 
+it.effect("refreshes the asking project's sibling layers after a borrowed stack action fails", () =>
+  Effect.gen(function* () {
+    const actedIn: string[] = [];
+    const summaryReads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        // Listed first, so it is the project on the host that lends its credentials.
+        project({
+          id: "unrelated",
+          title: "unrelated",
+          workspaceRoot: "/unrelated",
+          repository: "acme/unrelated",
+        }),
+        project({ id: "app", title: "app", workspaceRoot: "/app", repository: "acme/app" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          capabilities: {
+            diff: true,
+            comment: true,
+            actions: ["update-branch"],
+            mergeMethods: ["merge"],
+            updateMethods: ["rebase"],
+            stackActions: true,
+            search: true,
+            reactions: true,
+            review: FULL_REVIEW,
+            reviewers: FULL_REVIEWERS,
+          },
+          getViewerPermissions: () =>
+            Effect.succeed({
+              actions: [],
+              stackRebase: true,
+              comment: true,
+              resolve: false,
+              verdicts: [],
+              requestReviewers: false,
+            }),
+          getChangeRequestSummary: (input) =>
+            Effect.sync(() => {
+              summaryReads.push(input.cwd);
+              return changeRequest(8, "2026-07-01T00:00:00Z");
+            }),
+          // One layer is updated on the host before the next one fails.
+          runAction: (input) =>
+            Effect.gen(function* () {
+              actedIn.push(input.cwd);
+              return yield* requestFailed;
+            }),
+        }),
+      ],
+    });
+    const layer = { host: "github.com", repository: "acme/api", number: 3 };
+    const sibling = { ...layer, projectId: "app" as ProjectId, number: 8 };
+    const lendersSibling = { ...sibling, projectId: "unrelated" as ProjectId };
+    yield* service.summary(sibling);
+    yield* service.summary(lendersSibling);
+    assert.strictEqual(summaryReads.length, 2);
+
+    yield* Effect.flip(
+      service.runAction({
+        ...layer,
+        projectId: "app" as ProjectId,
+        action: "update-branch",
+        updateMethod: "rebase",
+        stackNumber: 50,
+        expectedStackHeads: [{ number: 3, headSha: "ccc" }],
+      }),
+    );
+
+    // The action ran with the lending project's credentials, but the sibling was cached as the
+    // asking project's, and the same pull request asked from the lender as the lender's.
+    assert.deepStrictEqual(actedIn, ["/unrelated"]);
+    yield* service.summary(sibling);
+    yield* service.summary(lendersSibling);
+    assert.strictEqual(summaryReads.length, 4);
+  }),
+);
+
 it.effect("refuses a way of updating a branch that the host or the viewer does not allow", () =>
   Effect.gen(function* () {
     let taken: string | null = null;
