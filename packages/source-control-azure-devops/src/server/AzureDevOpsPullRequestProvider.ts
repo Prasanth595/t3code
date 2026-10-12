@@ -348,6 +348,7 @@ export const make = Effect.gen(function* () {
     getChangeRequest: (input) =>
       Effect.gen(function* () {
         const pullRequest = yield* cli.getPullRequest({ cwd: input.cwd, number: input.number });
+        const checks = yield* cli.listBuildChecks({ cwd: input.cwd, number: input.number });
         const location = pullRequest.location;
         // The file count is two reads past the pull request itself, and it is the only thing
         // riding on them, so a failure leaves it unknown rather than losing the whole detail.
@@ -373,7 +374,7 @@ export const make = Effect.gen(function* () {
           mergedAt: pullRequest.state === "merged" ? pullRequest.closedAt : null,
           closedAt: pullRequest.state === "closed" ? pullRequest.closedAt : null,
           reviewers: pullRequest.reviewers,
-          checks: [],
+          checks,
           mergeCapabilities: { merge: true, squash: true, rebase: false },
           viewerPermissions: AZURE_DEVOPS_VIEWER_PERMISSIONS,
           autoMergeEnabled: pullRequest.autoMergeEnabled,
