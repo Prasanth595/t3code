@@ -470,6 +470,24 @@ describe("readAntigravityUsage", () => {
     return reads;
   });
 
+  /** Main's query for each table, which the reader keeps for tables it cannot page. */
+  const mainQueries = {
+    gen_metadata: "SELECT idx, data FROM gen_metadata ORDER BY idx",
+    steps: "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx",
+    trajectory_metadata_blob: "SELECT data FROM trajectory_metadata_blob",
+  };
+
+  /** Asserts that `table` was read once, unpaged, with main's query. */
+  const assertMainRead = (
+    reads: ReadonlyArray<{ sql: string; blobRows: number }>,
+    table: keyof typeof mainQueries,
+    blobRows: number,
+  ) =>
+    assert.deepStrictEqual(
+      reads.filter((read) => read.sql.includes(`FROM ${table}`)),
+      [{ sql: mainQueries[table], blobRows }],
+    );
+
   it.effect("reads large Antigravity databases a bounded page of blobs at a time", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -511,15 +529,19 @@ describe("readAntigravityUsage", () => {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
       const rows = 300;
+      // The smallest rowid and 0 come first, then rowids above 2^53 count up
+      // while idx counts down; only the last trajectory row has a timestamp.
+      const rowids = [
+        -(2n ** 63n),
+        0n,
+        ...Array.from({ length: rows - 2 }, (_, index) => 2n ** 53n + 1n + BigInt(index)),
+      ];
       yield* seedDatabase(path.join(dir, "large-rowid.db"), (db) =>
         Effect.gen(function* () {
           yield* createTables(db);
           yield* db.exec("CREATE TABLE trajectory_metadata_blob (data BLOB)");
           yield* db.exec("BEGIN");
-          // Rowids start above 2^53 and count up while idx counts down; only the
-          // last trajectory row has a timestamp.
-          for (let index = 0; index < rows; index++) {
-            const rowid = 2n ** 53n + 1n + BigInt(index);
+          for (const [index, rowid] of rowids.entries()) {
             const idx = rows - 1 - index;
             yield* db.run("INSERT INTO gen_metadata (rowid, idx, data) VALUES (?, ?, ?)", [
               rowid,
@@ -551,6 +573,10 @@ describe("readAntigravityUsage", () => {
         ],
       );
       assert.strictEqual(records(result)[0]?.timestampMs, 1780000300000);
+      assert.strictEqual(
+        reads.reduce((sum, read) => sum + read.blobRows, 0),
+        rows * 3,
+      );
       for (const read of reads) {
         assert.isAtMost(read.blobRows, 256, read.sql);
       }
@@ -605,11 +631,12 @@ describe("readAntigravityUsage", () => {
   );
 
   // Inserted out of idx order, with idx 1 twice; the second idx 1 row is last.
+  // The first idx 1 row has the larger blob, so rowid order is not byte order.
   const shuffledGenerations = [
     [2, 30, "Gemini 2.5 Pro"],
     [0, 10, "Gemini 3 Pro"],
-    [1, 20, "Gemini 3 Flash"],
-    [1, 21, "Claude Opus 4.6"],
+    [1, 20, "Claude Opus 4.6"],
+    [1, 21, "Gemini 3 Flash"],
   ] as const;
 
   /** Rows without response ids, so each dedupe key is the row's position after sorting by idx. */
@@ -648,7 +675,7 @@ describe("readAntigravityUsage", () => {
   const summary = (result: Effect.Success<ReturnType<typeof readAntigravityUsage>>) =>
     records(result).map(({ dedupeKey, model, totals }) => ({ dedupeKey, model, totals }));
 
-  it.effect("orders unindexed Antigravity rows by idx, keeping insertion order for equal idx", () =>
+  it.effect("orders unindexed Antigravity rows by idx, then by rowid for equal idx", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
@@ -664,7 +691,7 @@ describe("readAntigravityUsage", () => {
         { dedupeKey: "antigravity:order:step:0:0", model: "gemini-3-pro", totals: inputTokens(5) },
         {
           dedupeKey: "antigravity:order:step:1:0",
-          model: "claude-opus-4-6",
+          model: "gemini-3-flash",
           totals: inputTokens(7),
         },
         {
@@ -674,12 +701,12 @@ describe("readAntigravityUsage", () => {
         },
         {
           dedupeKey: "antigravity:order:generation:1:0",
-          model: "gemini-3-flash",
+          model: "claude-opus-4-6",
           totals: inputTokens(20),
         },
         {
           dedupeKey: "antigravity:order:generation:2:0",
-          model: "claude-opus-4-6",
+          model: "gemini-3-flash",
           totals: inputTokens(21),
         },
         {
@@ -700,7 +727,7 @@ describe("readAntigravityUsage", () => {
     },
     {
       dedupeKey: `antigravity:${sessionId}:step:1:0`,
-      model: "gemini-3-flash",
+      model: "claude-opus-4-6",
       totals: inputTokens(7),
     },
     {
@@ -710,7 +737,7 @@ describe("readAntigravityUsage", () => {
     },
     {
       dedupeKey: `antigravity:${sessionId}:generation:1:0`,
-      model: "gemini-3-flash",
+      model: "claude-opus-4-6",
       totals: inputTokens(20),
     },
     {
@@ -720,14 +747,17 @@ describe("readAntigravityUsage", () => {
     },
   ];
 
-  it.effect("reads Antigravity tables whose idx is an INTEGER PRIMARY KEY", () =>
+  it.effect.each([
+    { name: "whose idx is an INTEGER PRIMARY KEY", suffix: "" },
+    { name: "declared WITHOUT ROWID", suffix: " WITHOUT ROWID" },
+  ])("reads Antigravity tables $name", ({ suffix }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
       yield* seedDatabase(path.join(dir, "keyed.db"), (db) =>
         Effect.gen(function* () {
-          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB)");
-          yield* db.exec("CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB)");
+          yield* db.exec(`CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB)${suffix}`);
+          yield* db.exec(`CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB)${suffix}`);
           // A primary key cannot repeat, so the second idx 1 generation is left out.
           yield* positionalUsage(db, shuffledGenerations.slice(0, 3));
         }),
@@ -738,55 +768,35 @@ describe("readAntigravityUsage", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("reads WITHOUT ROWID Antigravity tables", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      yield* seedDatabase(path.join(dir, "without-rowid.db"), (db) =>
-        Effect.gen(function* () {
-          yield* db.exec(
-            "CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB) WITHOUT ROWID",
-          );
-          yield* db.exec(
-            "CREATE TABLE steps (idx INTEGER PRIMARY KEY, metadata BLOB) WITHOUT ROWID",
-          );
-          yield* positionalUsage(db, shuffledGenerations.slice(0, 3));
-        }),
-      );
-      const result = yield* readAntigravityUsage(dir, 0);
-      assert.deepStrictEqual(result.errors, []);
-      assert.deepStrictEqual(summary(result), keyedSummary("without-rowid"));
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
   it.effect("reads Antigravity tables with a column named rowid", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
-      const rows = 300;
       yield* seedDatabase(path.join(dir, "rowid-column.db"), (db) =>
         Effect.gen(function* () {
           yield* db.exec("CREATE TABLE gen_metadata (rowid TEXT, idx INTEGER, data BLOB)");
           yield* db.exec("CREATE TABLE steps (rowid TEXT, idx INTEGER, metadata BLOB)");
-          yield* db.exec("BEGIN");
-          for (let idx = 0; idx < rows; idx++) {
-            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?, ?)", [
-              `g-${idx}`,
-              idx,
-              antigravityGeneration(`g-${idx}`),
-            ]);
-            yield* db.run("INSERT INTO steps VALUES (?, ?, ?)", [
-              `s-${idx}`,
-              idx,
-              new Uint8Array(protoBytes(9, [...protoNumber(2, 10), ...protoText(11, `s-${idx}`)])),
-            ]);
-          }
-          yield* db.exec("COMMIT");
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?, ?)", [
+            "g-0",
+            0,
+            antigravityGeneration("g-0"),
+          ]);
+          yield* db.run("INSERT INTO steps VALUES (?, ?, ?)", [
+            "s-0",
+            0,
+            new Uint8Array(protoBytes(9, [...protoNumber(2, 10), ...protoText(11, "s-0")])),
+          ]);
         }),
       );
+      const reads = yield* recordReads;
       const result = yield* readAntigravityUsage(dir, 0);
       assert.deepStrictEqual(result.errors, []);
-      assert.strictEqual(records(result).length, rows * 2);
+      assert.deepStrictEqual(
+        records(result).map((record) => record.dedupeKey),
+        ["antigravity:11:s-0", "antigravity:11:g-0"],
+      );
+      assertMainRead(reads, "gen_metadata", 1);
+      assertMainRead(reads, "steps", 1);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -805,9 +815,11 @@ describe("readAntigravityUsage", () => {
           ]);
         }),
       );
+      const reads = yield* recordReads;
       const result = yield* readAntigravityUsage(dir, 0);
       assert.deepStrictEqual(result.errors, []);
-      // ORDER BY idx reads the covering index, which sorts equal idx rows by data, descending.
+      assertMainRead(reads, "gen_metadata", 3);
+      // Records SQLite's current plan: the covering index sorts equal idx rows by data, descending.
       assert.deepStrictEqual(
         summary(result)
           .filter(({ dedupeKey }) => dedupeKey?.includes(":generation:"))
@@ -839,9 +851,11 @@ describe("readAntigravityUsage", () => {
           ]);
         }),
       );
+      const reads = yield* recordReads;
       const result = yield* readAntigravityUsage(dir, 0);
       assert.deepStrictEqual(result.errors, []);
-      // The index returns the last inserted timestamp first.
+      assertMainRead(reads, "trajectory_metadata_blob", 3);
+      // Records SQLite's current plan: the covering index returns the last inserted timestamp first.
       assert.deepStrictEqual(
         records(result).map((record) => record.timestampMs),
         [1780000003000],

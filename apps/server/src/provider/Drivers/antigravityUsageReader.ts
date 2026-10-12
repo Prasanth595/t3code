@@ -199,7 +199,9 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     // again, so a table is read in rowid pages when that keeps the query's order:
     // in an ordinary rowid table with no index and no column named rowid, ORDER BY
     // idx sorts a rowid-order scan, which paging plus a stable sort by idx
-    // reproduces. Any other table is read with its single query.
+    // reproduces. Equal idx rows keep rowid order because SQLite's default
+    // single-threaded sorter keeps scan order for equal keys; this client never
+    // enables sorter threads. Any other table is read with its single query.
     const readRows = Effect.fnUntraced(function* (
       table: string,
       query: string,
@@ -208,13 +210,13 @@ const readDatabase = Effect.fn("readDatabase")(function* (
         row: Record<string, unknown>,
       ) => Effect.Effect<boolean, AntigravityDatabaseDecodeError>,
     ) {
-      const [schema] = yield* sql<{ readonly pageable: unknown }>`
+      const [probe] = yield* sql<{ readonly pageable: unknown }>`
         SELECT EXISTS (SELECT 1 FROM pragma_table_list(${table}) WHERE type = 'table' AND wr = 0)
           AND NOT EXISTS (SELECT 1 FROM pragma_index_list(${table}))
           AND NOT EXISTS (SELECT 1 FROM pragma_table_xinfo(${table}) WHERE name = 'rowid' COLLATE NOCASE)
           AS pageable
       `;
-      const paged = schema?.pageable === 1;
+      const paged = Number(probe?.pageable) === 1;
       // Rowids can exceed Number.MAX_SAFE_INTEGER, so the cursor is read as text.
       let after: number | bigint = -Infinity;
       while (true) {
