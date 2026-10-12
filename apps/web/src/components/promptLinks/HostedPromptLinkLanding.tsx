@@ -79,7 +79,11 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
   );
   if (appPath === null || continuedHref === href) return null;
   const canContinue = isReady && environments.length > 0;
-  if (opener === "browser" && canContinue) return null;
+  if (opener === "browser") {
+    if (canContinue) return null;
+    // Blank until the machines load, so a remembered choice does not flash this page.
+    if (!isReady) return <></>;
+  }
   return (
     <HostedPromptLinkLanding
       appPath={appPath}

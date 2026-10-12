@@ -306,7 +306,11 @@ export function NewThreadLinkView({ link }: { readonly link: NewThreadLink }) {
   }
 }
 
-/** Checks the linked pull request out into its own worktree and opens a thread there. */
+/**
+ * Asks, then checks the linked pull request out into its own worktree and opens a thread there.
+ * The checkout runs the project's setup script on code from the pull request, so a link alone
+ * never starts it.
+ */
 function PullRequestLinkCheckout({
   link,
   project,
@@ -314,7 +318,7 @@ function PullRequestLinkCheckout({
   readonly link: Extract<NewThreadLink, { kind: "pull-request" }>;
   readonly project: EnvironmentProject;
 }) {
-  const { startHandoff } = usePullRequestHandoffs({
+  const { handoff, startHandoff } = usePullRequestHandoffs({
     environmentId: project.environmentId,
     detail: {
       projectId: project.id,
@@ -322,15 +326,33 @@ function PullRequestLinkCheckout({
       url: promptLinkPullRequestUrl(link.pullRequest),
     },
   });
-  const startedRef = useRef(false);
+  const warnedRef = useRef(false);
   useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-    // The checkout reports its own progress and says the task is in the composer.
-    if (link.prompt !== null) warnAboutHiddenCharacters(link.prompt);
-    void startHandoff("prompt-link", link.prompt === null ? null : { prompt: link.prompt.text });
-  }, [link.prompt, startHandoff]);
-  return <LinkPage title="Preparing the pull request checkout..." />;
+    if (warnedRef.current || link.prompt === null) return;
+    warnedRef.current = true;
+    warnAboutHiddenCharacters(link.prompt);
+  }, [link.prompt]);
+  const { owner, name, number } = link.pullRequest;
+  return (
+    <LinkPage
+      title={`Check out ${owner}/${name}#${number}?`}
+      description="This puts the pull request's code in a new worktree and runs your project's setup script on it."
+    >
+      <Button
+        size="sm"
+        disabled={handoff !== null}
+        // The checkout reports its own progress and says the task is in the composer.
+        onClick={() =>
+          void startHandoff(
+            "prompt-link",
+            link.prompt === null ? null : { prompt: link.prompt.text },
+          )
+        }
+      >
+        {handoff !== null ? "Checking out..." : "Check out"}
+      </Button>
+    </LinkPage>
+  );
 }
 
 function LinkPage({

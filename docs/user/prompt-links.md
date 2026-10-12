@@ -43,8 +43,9 @@ this step next time.
 - **`provider` and `model`**: used when you have that provider set up. Otherwise your default
   model is used, and T3 Code tells you.
 - **`pr`**: opens the thread linked to that pull request on any connected machine, with the prompt
-  in its composer. When no thread is linked, T3 Code checks the pull request out into a worktree
-  and opens a draft there.
+  in its composer. When no thread is linked, the draft goes on the pull request branch in a new
+  worktree. T3 Code checks the code out only after you confirm, because the checkout runs your
+  setup script on it.
 
 A thread link with a prompt, such as `https://app.t3.codes/<environment>/<thread>?prompt=…`,
 puts the prompt in that thread's composer. If you already typed a draft there, T3 Code asks

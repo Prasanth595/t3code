@@ -345,12 +345,14 @@ function UserMessageCopyButton(props: {
       iconSize={13}
     />
   );
-  if (props.text.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return button;
+  // A link carries plain text, so context chips become their labels.
+  const linkText = replaceComposerContextReferences(props.text, (reference) => reference.label);
+  if (linkText.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return button;
   return (
     <ControlPillMenu
       actions={USER_MESSAGE_COPY_MENU_ACTIONS}
       onPressAction={({ nativeEvent }) => {
-        if (nativeEvent.event === "copy-prompt-link") void copyPromptLink(props.text);
+        if (nativeEvent.event === "copy-prompt-link") void copyPromptLink(linkText);
       }}
       shouldOpenOnLongPress
     >

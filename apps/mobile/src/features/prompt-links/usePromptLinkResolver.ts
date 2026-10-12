@@ -100,7 +100,15 @@ export function usePromptLinkResolver(params: Readonly<Record<string, unknown>> 
   };
 
   const openProjectDraft = async (project: EnvironmentProject, request: LinkedDraftRequest) => {
-    await waitForComposerDraftsLoaded();
+    try {
+      await waitForComposerDraftsLoaded();
+    } catch {
+      Alert.alert(
+        "Could not open link",
+        "Drafts could not be loaded, so the prompt was not added.",
+      );
+      return;
+    }
     const draftKey = createNewTaskDraft({
       environmentId: project.environmentId,
       projectId: project.id,

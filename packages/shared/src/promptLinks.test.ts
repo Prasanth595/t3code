@@ -17,6 +17,10 @@ describe("sanitizeLinkedPrompt", () => {
       text: "abcrate me",
       hiddenCharacters: 5,
     });
+    expect(sanitizeLinkedPrompt("a\u2028b\u2029c")).toEqual({
+      text: "a\nb\nc",
+      hiddenCharacters: 0,
+    });
   });
 
   it("keeps emoji sequences intact", () => {

@@ -55,6 +55,7 @@ export type PromptLinkResult<T> =
 // Zero-width and bidi controls, tag and variation-selector blocks, and other characters that
 // render as nothing. A model reads them; the person checking the draft cannot see them, which
 // makes them the usual way to hide instructions in a prompt. U+FE0E/U+FE0F stay: emoji use them.
+// Line and paragraph separators become plain newlines, so the draft shows the break the model reads.
 const HIDDEN_CHARACTERS =
   // oxlint-disable-next-line no-control-regex, no-misleading-character-class -- these are the characters it removes.
   /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0D\uFEFF\uFFA0\uFFF0-\uFFFB\u{1BCA0}-\u{1BCA3}\u{1D173}-\u{1D17A}\u{E0000}-\u{E0FFF}]/gu;
@@ -70,7 +71,7 @@ const isEmojiPart = (codePoint: number | undefined) =>
 export function sanitizeLinkedPrompt(raw: string): LinkedPrompt {
   let hiddenCharacters = 0;
   const visible = Array.from(
-    raw.replace(/\r\n?/g, "\n").replace(HIDDEN_CHARACTERS, () => {
+    raw.replace(/\r\n?|[\u2028\u2029]/g, "\n").replace(HIDDEN_CHARACTERS, () => {
       hiddenCharacters++;
       return "";
     }),
