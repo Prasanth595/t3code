@@ -380,7 +380,15 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
         thread: { id: childThreadId },
-        runs: [{ id: childRunId, status: "running" }],
+        runs: [
+          {
+            id: childRunId,
+            status: "running",
+            executionScope: { kind: "ordinary" },
+            executionCause: { kind: "independent" },
+            executionDelivery: { kind: "message_text" },
+          },
+        ],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -460,7 +468,15 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
         thread: { id: childThreadId },
-        runs: [{ id: childRunId, status: "running" }],
+        runs: [
+          {
+            id: childRunId,
+            status: "running",
+            executionScope: { kind: "ordinary" },
+            executionCause: { kind: "independent" },
+            executionDelivery: { kind: "message_text" },
+          },
+        ],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -547,7 +563,15 @@ describe("OrchestratorMcpService", () => {
       } as unknown as OrchestrationV2ThreadProjection;
       const childProjection = {
         thread: { id: childThreadId },
-        runs: [{ id: childRunId, status: "running" }],
+        runs: [
+          {
+            id: childRunId,
+            status: "running",
+            executionScope: { kind: "ordinary" },
+            executionCause: { kind: "independent" },
+            executionDelivery: { kind: "message_text" },
+          },
+        ],
         contextTransfers: [],
         messages: [],
         subagents: [],
@@ -648,7 +672,15 @@ describe("OrchestratorMcpService", () => {
           childThreadId,
           {
             thread: { id: childThreadId },
-            runs: [{ id: RunId.make("run:mcp-cancel-grandchild-child"), status: "running" }],
+            runs: [
+              {
+                id: RunId.make("run:mcp-cancel-grandchild-child"),
+                status: "running",
+                executionScope: { kind: "ordinary" },
+                executionCause: { kind: "independent" },
+                executionDelivery: { kind: "message_text" },
+              },
+            ],
             contextTransfers: [],
             messages: [],
             subagents: [
@@ -867,6 +899,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           id: parentRunId,
           ordinal: 1,
           status: "running",
+          executionScope: { kind: "ordinary" },
+          executionCause: { kind: "independent" },
+          executionDelivery: { kind: "message_text" },
           rootNodeId: parentNodeId,
           providerInstanceId: codexInstanceId,
           modelSelection,

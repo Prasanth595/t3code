@@ -23,6 +23,8 @@ import * as EventSink from "./EventSink.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import { runOrchestratorV2Scenario } from "./testkit/OrchestratorScenario.ts";
 import * as Ref from "effect/Ref";
@@ -58,6 +60,15 @@ const makeSwarmLayer = (
     Layer.provideMerge(
       Layer.mergeAll(
         database,
+        ServerSettings.layerTest({
+          providerInstances: Object.fromEntries(
+            [providerAdapter, ...additionalAdapters].map((candidate) => [
+              candidate.instanceId,
+              { driver: candidate.driver, enabled: true },
+            ]),
+          ),
+        }),
+        CommandReceiptStore.layer.pipe(Layer.provide(database)),
         ThreadCommandExecutor.layer,
         ProjectionStore.layer.pipe(Layer.provide(database)),
         ProviderReplayHarness.layerWithRegistry(

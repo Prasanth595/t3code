@@ -292,16 +292,17 @@ export const layerExecutor: Layer.Layer<
                         ? {}
                         : { senderThreadId: message.senderThreadId }),
                     } as const;
-                    yield* threads.dispatch(
-                      effect.request.cause === undefined
-                        ? fallback
-                        : {
-                            ...fallback,
-                            type: "message.causal-dispatch",
-                            cause: effect.request.cause,
-                            intentFingerprint: effect.id,
-                          },
-                    )
+                    yield* threads
+                      .dispatch(
+                        effect.request.cause === undefined
+                          ? fallback
+                          : {
+                              ...fallback,
+                              type: "message.causal-dispatch",
+                              cause: effect.request.cause,
+                              intentFingerprint: effect.id,
+                            },
+                      )
                       .pipe(
                         // The turn that just completed leaves no further retry
                         // target once the instance is off: the completed turn

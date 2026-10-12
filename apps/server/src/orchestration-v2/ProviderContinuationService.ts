@@ -210,34 +210,36 @@ export const layer = Layer.effectDiscard(
         const intentFingerprint = Array.from(bytes, (byte) =>
           byte.toString(16).padStart(2, "0"),
         ).join("");
-        yield* threads.dispatch({
-          type: "message.causal-dispatch",
-          commandId,
-          intentFingerprint,
-          cause,
-          threadId: request.threadId,
-          messageId: request.messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
-          },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          creationSource: request.delivery.kind === "adapter_buffered" ? "provider" : "server",
-        }).pipe(
-          Effect.catchTags({
-            ThreadManagementProviderInstanceDisabledError: (error) =>
-              Effect.logInfo("orchestration-v2.provider-continuation.instance-disabled", {
-                threadId: request.threadId,
-                providerThreadId: request.providerThreadId,
-                projectId: error.projectId,
-                instanceId: error.instanceId,
-              }).pipe(Effect.andThen(request.clearIfCurrent?.() ?? Effect.void)),
-          }),
-        );
+        yield* threads
+          .dispatch({
+            type: "message.causal-dispatch",
+            commandId,
+            intentFingerprint,
+            cause,
+            threadId: request.threadId,
+            messageId: request.messageId,
+            text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+            notification: request.notification ?? {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: request.delivery.kind === "adapter_buffered" ? "provider" : "server",
+          })
+          .pipe(
+            Effect.catchTags({
+              ThreadManagementProviderInstanceDisabledError: (error) =>
+                Effect.logInfo("orchestration-v2.provider-continuation.instance-disabled", {
+                  threadId: request.threadId,
+                  providerThreadId: request.providerThreadId,
+                  projectId: error.projectId,
+                  instanceId: error.instanceId,
+                }).pipe(Effect.andThen(request.clearIfCurrent?.() ?? Effect.void)),
+            }),
+          );
       },
     );
 

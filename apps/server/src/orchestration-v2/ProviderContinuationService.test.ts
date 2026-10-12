@@ -8,7 +8,6 @@ import {
   ProviderThreadId,
   RunId,
   RunAttemptId,
-  ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
@@ -16,7 +15,6 @@ import {
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -591,8 +589,8 @@ describe("ProviderContinuationService", () => {
     () => {
       return Effect.gen(function* () {
         const attempts = yield* Ref.make(0);
-        const cleared = yield* Ref.make(false);
         const acknowledged = yield* Queue.unbounded<unknown>();
+        const consumed = yield* Deferred.make<void>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(delegatedProjection()),
           dispatch: (command) => {
@@ -610,33 +608,47 @@ describe("ProviderContinuationService", () => {
                 ),
               );
             }
-            return Queue.offer(acknowledged, command).pipe(Effect.as({} as never));
+            return Queue.offer(acknowledged, command).pipe(
+              Effect.andThen(
+                Queue.size(acknowledged).pipe(
+                  Effect.flatMap((size) =>
+                    size === 2 ? Deferred.succeed(consumed, undefined) : Effect.void,
+                  ),
+                ),
+              ),
+              Effect.as({} as never),
+            );
           },
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              ProviderContinuationRequests.layer,
+              layerThreads,
+              NodeServices.layer,
+            ),
           ),
         );
 
         yield* Effect.gen(function* () {
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           yield* requests.offer({
+            kind: "delegated_completion",
             threadId,
             providerThreadId,
             driver,
             detail: null,
-            delivery: "message_text",
-            clearIfCurrent: () => Ref.set(cleared, true),
+            delivery: { kind: "message_text" },
             delegatedCompletion: {
               parentRunId,
               generation: 1,
               messageId: delegatedMessageId,
             },
           });
-          yield* Effect.yieldNow;
+          yield* Deferred.await(consumed);
           assert.equal(yield* Ref.get(attempts), 1);
-          assert.isTrue(yield* Ref.get(cleared));
+          assert.isTrue(yield* Deferred.isDone(consumed));
 
           // The refused delivery is acknowledged administratively, task by
           // task, so the cohort's delivery is consumed instead of left open.
@@ -673,6 +685,7 @@ describe("ProviderContinuationService", () => {
     () => {
       return Effect.gen(function* () {
         const requested = yield* Ref.make(true);
+        const cleared = yield* Deferred.make<void>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
           getThreadRecords: () => Effect.succeed(projection),
           dispatch: () =>
@@ -685,30 +698,26 @@ describe("ProviderContinuationService", () => {
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              ProviderContinuationRequests.layer,
+              layerThreads,
+              NodeServices.layer,
+            ),
           ),
         );
 
-        // Mirrors the ACP adapter's own dispatchIfCurrent: on a failed effect
-        // it clears its sticky "continuation requested" flag before
-        // re-raising. If this service pre-recovered the failure before
-        // handing the effect here, this flag would stay stuck set and
-        // hasPendingBackgroundWork would never clear.
-        const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          Effect.gen(function* () {
-            const exit = yield* Effect.exit(effect);
-            if (Exit.isFailure(exit)) {
-              yield* Ref.set(requested, false);
-              return yield* Effect.failCause(exit.cause);
-            }
-            return Option.some(exit.value);
-          });
-
         yield* Effect.gen(function* () {
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          yield* requests.offer(request(dispatchIfCurrent));
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
+          yield* requests.offer({
+            ...request(),
+            clearIfCurrent: () =>
+              Ref.set(requested, false).pipe(
+                Effect.andThen(Deferred.succeed(cleared, undefined)),
+                Effect.asVoid,
+              ),
+          });
+          yield* Deferred.await(cleared);
           assert.isFalse(
             yield* Ref.get(requested),
             "a disabled instance must still clear the adapter's sticky offer flag",
@@ -721,55 +730,53 @@ describe("ProviderContinuationService", () => {
     },
   );
 
-  it.effect(
-    "clears a sticky continuation offer for an adapter whose dispatchIfCurrent does not self-clear on failure",
-    () => {
-      return Effect.gen(function* () {
-        const wakeHeld = yield* Ref.make(true);
-        const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: () => Effect.succeed(projection),
-          dispatch: () =>
-            Effect.fail(
-              new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-                projectId: ProjectId.make("project-provider-continuation-disabled"),
-                instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
-              }) as never,
+  it.effect("clears a sticky continuation offer through its explicit cleanup callback", () => {
+    return Effect.gen(function* () {
+      const wakeHeld = yield* Ref.make(true);
+      const cleared = yield* Deferred.make<void>();
+      const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: () =>
+          Effect.fail(
+            new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+              projectId: ProjectId.make("project-provider-continuation-disabled"),
+              instanceId: ProviderInstanceId.make("instance-provider-continuation-disabled"),
+            }) as never,
+          ),
+      });
+      const layerWorker = ProviderContinuationService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ProviderContinuationRequests.layer,
+            layerThreads,
+            NodeServices.layer,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+        yield* requests.offer({
+          ...request(),
+          clearIfCurrent: () =>
+            Ref.set(wakeHeld, false).pipe(
+              Effect.andThen(Deferred.succeed(cleared, undefined)),
+              Effect.asVoid,
             ),
         });
-        const layerWorker = ProviderContinuationService.layer.pipe(
-          Layer.provide(
-            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
-          ),
+        yield* Deferred.await(cleared);
+        assert.isFalse(
+          yield* Ref.get(wakeHeld),
+          "a disabled instance must clear the offer via the explicit callback " +
+            "when the adapter itself does not clear on dispatch failure",
         );
-
-        // Mirrors the Muse adapter: dispatchIfCurrent forwards the dispatch
-        // effect without any failure handling of its own (unlike ACP or Pi),
-        // so only the explicit clearIfCurrent callback can clear the sticky
-        // "wake held" flag. Without it, a disabled instance leaves the flag
-        // set forever and no later background turn is ever offered.
-        const dispatchIfCurrent = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-          Effect.asSome(effect);
-
-        yield* Effect.gen(function* () {
-          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-          yield* requests.offer({
-            ...request(dispatchIfCurrent),
-            clearIfCurrent: () => Ref.set(wakeHeld, false),
-          });
-          yield* Effect.yieldNow;
-          yield* Effect.yieldNow;
-          assert.isFalse(
-            yield* Ref.get(wakeHeld),
-            "a disabled instance must clear the offer via the explicit callback " +
-              "when the adapter itself does not clear on dispatch failure",
-          );
-        }).pipe(
-          Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
-          Effect.scoped,
-        );
-      });
-    },
-  );
+      }).pipe(
+        Effect.provide(Layer.merge(ProviderContinuationRequests.layer, layerWorker)),
+        Effect.scoped,
+      );
+    });
+  });
 
   it.effect("keeps a Grok delegated completion queued instead of restarting active work", () => {
     return Effect.gen(function* () {

@@ -4,6 +4,7 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ProviderThread,
@@ -16,6 +17,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  SwarmId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -475,6 +477,109 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect.each([
+  ["message.causal-dispatch", "disabled"],
+  ["message.causal-dispatch", "enabled"],
+  ["message.causal-dispatch", "replay"],
+  ["swarm.create", "disabled"],
+  ["swarm.create", "enabled"],
+  ["swarm.create", "replay"],
+  ["swarm.send", "disabled"],
+  ["swarm.send", "enabled"],
+  ["swarm.send", "replay"],
+] as const)("applies project enablement to command/admission %j", ([type, admission]) => {
+  const projectId = ProjectId.make("project:thread-management:chokepoint");
+  const threadId = ThreadId.make("thread:thread-management:chokepoint");
+  const instanceId = ProviderInstanceId.make("codex_work");
+  const enabledInstance = ProviderInstanceId.make("codex_personal");
+  const commandId = CommandId.make(`command:scoped-enablement:${type}:${admission}`);
+  const dispatched: Array<string> = [];
+  const layerTest = layerDispatchChokepointTest(
+    ServerSettings.layerTest({
+      providerInstances: {
+        [instanceId]: { driver: "codex", enabled: true },
+        [enabledInstance]: { driver: "codex", enabled: true },
+      },
+      projectSettingsOverrides: {
+        [projectId]: { providerInstances: { [instanceId]: { enabled: admission === "enabled" } } },
+      },
+    }),
+  )(dispatched);
+  const common = { commandId, threadId, intentFingerprint: `intent:${type}:${admission}` };
+  const command: OrchestrationV2ServerCommand =
+    type === "swarm.create"
+      ? {
+          ...common,
+          type,
+          parentRunId: RunId.make("scoped-parent"),
+          parentNodeId: NodeId.make("scoped-parent-node"),
+          title: "Scoped peers",
+          members: [enabledInstance, instanceId].map((target) => ({
+            task: "Inspect the repository",
+            modelSelection: { instanceId: target, model: "test" },
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+          })),
+        }
+      : type === "swarm.send"
+        ? {
+            ...common,
+            type,
+            swarmId: SwarmId.make("scoped-group"),
+            senderThreadId: ThreadId.make("scoped-sender"),
+            senderRunId: RunId.make("scoped-source"),
+            text: "Review this result",
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+          }
+        : {
+            ...common,
+            type,
+            messageId: MessageId.make(`message:${commandId}`),
+            text: "Continue the original work",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+            cause: {
+              kind: "scoped",
+              reason: "answer",
+              source: {
+                kind: "run",
+                threadId,
+                runId: RunId.make("scoped-source"),
+                attemptId: null,
+              },
+            },
+          };
+  return Effect.gen(function* () {
+    if (admission === "replay") {
+      const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+      yield* receipts.insertIfAbsent({
+        commandId,
+        threadId,
+        commandType: type,
+        acceptedAt: yield* DateTime.now,
+        resultSequence: 1,
+        status: "accepted",
+        error: null,
+      });
+    }
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    if (admission === "disabled") {
+      const error = yield* Effect.flip(threads.dispatch(command));
+      expect(error).toBeInstanceOf(
+        ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+      );
+      expect(error).toMatchObject({ projectId, instanceId });
+      expect(dispatched).toEqual([]);
+    } else {
+      yield* threads.dispatch(command);
+      expect(dispatched).toEqual([type]);
+    }
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("classifies projection infrastructure failures separately from a missing thread", () => {
   const projectId = ProjectId.make("project:thread-management:projection-failure");

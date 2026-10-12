@@ -102,14 +102,16 @@ describe("orchestration V2 wire projection", () => {
         lastVisitedAt: null,
         deletedAt: null,
       } satisfies OrchestrationV2AppThread;
-      const projection = emptyProjection({
-        id: EventId.make("wire-thread-created"),
-        type: "thread.created",
-        threadId: base.threadId,
-        occurredAt: base.updatedAt,
-        payload: thread,
-      });
-      projection.runs = [run];
+      const projection = {
+        ...emptyProjection({
+          id: EventId.make("wire-thread-created"),
+          type: "thread.created",
+          threadId: base.threadId,
+          occurredAt: base.updatedAt,
+          payload: thread,
+        }),
+        runs: [run],
+      };
       const legacyRun = Schema.Struct({ id: RunId, delegatedTaskId: Schema.optional(NodeId) });
       const decodeLegacy = Schema.decodeUnknownSync(legacyRun);
       const encodeRun = Schema.encodeSync(OrchestrationV2RunJson);

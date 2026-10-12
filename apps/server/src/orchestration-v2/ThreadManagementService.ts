@@ -637,6 +637,7 @@ const make = Effect.gen(function* () {
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
       case "message.dispatch":
+      case "message.causal-dispatch":
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
             assertProviderInstanceEnabled({
@@ -644,6 +645,31 @@ const make = Effect.gen(function* () {
               commandId: command.commandId,
               instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
             }),
+          ),
+        );
+      case "swarm.send":
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((projection) =>
+            assertProviderInstanceEnabled({
+              projectId: projection.thread.projectId,
+              commandId: command.commandId,
+              instanceId: projection.thread.modelSelection.instanceId,
+            }),
+          ),
+        );
+      case "swarm.create":
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((owner) =>
+            Effect.forEach(
+              command.members,
+              (member) =>
+                assertProviderInstanceEnabled({
+                  projectId: owner.thread.projectId,
+                  commandId: command.commandId,
+                  instanceId: member.modelSelection.instanceId,
+                }),
+              { discard: true },
+            ),
           ),
         );
       case "delegated_task.request":
