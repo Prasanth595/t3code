@@ -555,6 +555,7 @@ it.effect(
 it.effect("separates overlapping unpinned permission reads after a saved account switch", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
+    const broadStarted = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let activeToken = "restricted-credential";
     const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
@@ -578,6 +579,9 @@ it.effect("separates overlapping unpinned permission reads after a saved account
         Effect.gen(function* () {
           const authorization = request.headers["authorization"];
           requests.push({ url: request.url, authorization });
+          if (authorization === "Bearer broad-credential") {
+            yield* Deferred.succeed(broadStarted, undefined);
+          }
           yield* Deferred.succeed(started, undefined);
           yield* Deferred.await(release);
           return HttpClientResponse.fromWeb(
@@ -615,8 +619,8 @@ it.effect("separates overlapping unpinned permission reads after a saved account
     const fresh = yield* Effect.all([read, read], { concurrency: "unbounded" }).pipe(
       Effect.forkChild,
     );
-    // Let both readers reach the pending request before answering either account.
-    yield* Effect.yieldNow;
+    // Keep both accounts' HTTP requests pending before answering either one.
+    yield* Deferred.await(broadStarted);
     yield* Deferred.succeed(release, undefined);
 
     expect((yield* Fiber.join(older)).comparison?.viewerCanUpdate).toBe(false);
