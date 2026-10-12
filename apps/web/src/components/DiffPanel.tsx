@@ -1162,10 +1162,7 @@ export default function DiffPanel({
                                 : activeCwd,
                             repositoryRoot:
                               selectedRunId === null
-                                ? (branchDiffPreview.data?.repositoryRoot ??
-                                  (shouldRetryBranchDiffAtEnvironmentCwd
-                                    ? undefined
-                                    : activeRepositoryRoot))
+                                ? (branchDiffPreview.data?.repositoryRoot ?? activeRepositoryRoot)
                                 : activeRepositoryRoot,
                             revision: workspaceMutationId,
                             refreshToken:
