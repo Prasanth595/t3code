@@ -200,8 +200,9 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     // in an ordinary rowid table with no index and no column named rowid, ORDER BY
     // idx sorts a rowid-order scan, which paging plus a stable sort by idx
     // reproduces. Equal idx rows keep rowid order because SQLite's default
-    // single-threaded sorter keeps scan order for equal keys; this client never
-    // enables sorter threads. Any other table is read with its single query.
+    // single-threaded sorter keeps scan order for equal keys, an observed behaviour
+    // SQLite does not document; this client never enables sorter threads. Any
+    // other table is read with its single query.
     const readRows = Effect.fnUntraced(function* (
       table: string,
       query: string,

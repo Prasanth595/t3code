@@ -488,6 +488,20 @@ describe("readAntigravityUsage", () => {
       [{ sql: mainQueries[table], blobRows }],
     );
 
+  /** Asserts that `table` was read only with the reader's rowid-paged query. */
+  const assertPagedRead = (
+    reads: ReadonlyArray<{ sql: string; blobRows: number }>,
+    table: keyof typeof mainQueries,
+  ) => {
+    const queries = reads
+      .filter((read) => read.sql.includes(`FROM ${table}`))
+      .map((read) => read.sql);
+    assert.isTrue(
+      queries.length > 0 && queries.every((sql) => sql.includes("rowid > ?")),
+      `expected ${table} to be read in rowid pages, got: ${queries.join(" | ")}`,
+    );
+  };
+
   it.effect("reads large Antigravity databases a bounded page of blobs at a time", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
@@ -529,12 +543,13 @@ describe("readAntigravityUsage", () => {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
       const rows = 300;
-      // The smallest rowid and 0 come first, then rowids above 2^53 count up
-      // while idx counts down; only the last trajectory row has a timestamp.
+      // The smallest rowid and 0 come first, then rowids from 2^53 + 2 count up
+      // while idx counts down, so the first page ends on 2^53 + 255, which a
+      // Number would round; only the last trajectory row has a timestamp.
       const rowids = [
         -(2n ** 63n),
         0n,
-        ...Array.from({ length: rows - 2 }, (_, index) => 2n ** 53n + 1n + BigInt(index)),
+        ...Array.from({ length: rows - 2 }, (_, index) => 2n ** 53n + 2n + BigInt(index)),
       ];
       yield* seedDatabase(path.join(dir, "large-rowid.db"), (db) =>
         Effect.gen(function* () {
@@ -748,9 +763,9 @@ describe("readAntigravityUsage", () => {
   ];
 
   it.effect.each([
-    { name: "whose idx is an INTEGER PRIMARY KEY", suffix: "" },
-    { name: "declared WITHOUT ROWID", suffix: " WITHOUT ROWID" },
-  ])("reads Antigravity tables $name", ({ suffix }) =>
+    { name: "whose idx is an INTEGER PRIMARY KEY", suffix: "", paged: true },
+    { name: "declared WITHOUT ROWID", suffix: " WITHOUT ROWID", paged: false },
+  ])("reads Antigravity tables $name", ({ suffix, paged }) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const dir = yield* tempDir;
@@ -762,9 +777,17 @@ describe("readAntigravityUsage", () => {
           yield* positionalUsage(db, shuffledGenerations.slice(0, 3));
         }),
       );
+      const reads = yield* recordReads;
       const result = yield* readAntigravityUsage(dir, 0);
       assert.deepStrictEqual(result.errors, []);
       assert.deepStrictEqual(summary(result), keyedSummary("keyed"));
+      if (paged) {
+        assertPagedRead(reads, "gen_metadata");
+        assertPagedRead(reads, "steps");
+      } else {
+        assertMainRead(reads, "gen_metadata", 3);
+        assertMainRead(reads, "steps", 2);
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
