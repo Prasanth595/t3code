@@ -62,7 +62,10 @@ export const discovery = {
   refineUnknownRemote: (input) => {
     const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
     if (!remote) return { provider: null, settled: true };
-    const logins = ForgejoCli.parseForgejoLogins(input.auth.stdout);
+    // Output that is not a login list (a failed command, a config tea could not read) holds no
+    // answer, so only a list that decodes can settle.
+    const decoded = ForgejoCli.decodeForgejoLogins(input.auth.stdout);
+    const logins = Result.isSuccess(decoded) ? decoded.success : [];
     const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
     return {
       provider: login
@@ -72,7 +75,7 @@ export const discovery = {
             baseUrl: login.url,
           }
         : null,
-      settled: !hasLoginBelowMount(logins, remote),
+      settled: Result.isSuccess(decoded) && !hasLoginBelowMount(logins, remote),
     };
   },
   installHint:

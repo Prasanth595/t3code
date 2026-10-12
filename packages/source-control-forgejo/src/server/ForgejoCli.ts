@@ -46,7 +46,7 @@ export const ForgejoLoginSchema = Schema.Struct({
   default: Schema.String,
 });
 
-const decodeForgejoLogins = decodeJsonResult(Schema.Array(ForgejoLoginSchema));
+export const decodeForgejoLogins = decodeJsonResult(Schema.Array(ForgejoLoginSchema));
 
 export function parseForgejoLogins(raw: string) {
   const decoded = decodeForgejoLogins(raw);

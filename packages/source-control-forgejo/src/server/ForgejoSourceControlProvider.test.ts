@@ -10,7 +10,10 @@ import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { VcsProcessSpawnError } from "@t3tools/contracts";
-import { firstNonEmptyLine } from "@t3tools/source-control-core/server/discovery";
+import {
+  firstNonEmptyLine,
+  refineUnknownRemoteProvider,
+} from "@t3tools/source-control-core/server/discovery";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 import * as ForgejoCli from "./ForgejoCli.ts";
@@ -633,6 +636,38 @@ it("does not settle a tea login list with a login below the remote's mount", () 
     });
   }
 });
+
+it.effect("does not settle a tea login list it could not read", () =>
+  Effect.gen(function* () {
+    const refine = (output: ReturnType<typeof processOutput>) =>
+      refineUnknownRemoteProvider({
+        specs: [ForgejoSourceControlProvider.discovery],
+        process: { run: () => Effect.succeed(output) },
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: SourceControlProviderKind.make("unknown"),
+            name: "git.example.internal",
+            baseUrl: "https://git.example.internal",
+          },
+          remoteName: "origin",
+          remoteUrl: "https://git.example.internal/maria/project.git",
+        },
+      });
+    // Core lets `tea login list` exit non-zero, so a failed command reaches the spec as well.
+    for (const output of [
+      processOutput("tea: could not read the config\n"),
+      processOutput('{"message":"no logins"}'),
+      processOutput("", {
+        stderr: "Error: could not read the config\n",
+        exitCode: ChildProcessSpawner.ExitCode(1),
+      }),
+    ]) {
+      assert.deepStrictEqual(yield* refine(output), { provider: null, settled: false });
+    }
+    assert.deepStrictEqual(yield* refine(processOutput("[]")), { provider: null, settled: true });
+  }),
+);
 
 it.effect("does not choose a default Forgejo login across ambiguous SSH server ports", () =>
   Effect.gen(function* () {
