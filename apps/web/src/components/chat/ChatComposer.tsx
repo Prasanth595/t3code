@@ -245,7 +245,6 @@ import {
 } from "~/lib/composerContextRecords";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "./threadContextDrag";
-import { insertDroppedThreadContexts } from "./composerThreadDrop";
 import { readThreadShell, useThreadShells } from "~/state/entities";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
@@ -6303,36 +6302,41 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const shell = readThreadShell(ref);
         return shell ? [threadContextRecord(ref, shell.title)] : [];
       });
-      const inserted = insertDroppedThreadContexts({
-        records,
-        composerTarget: composerDraftTarget,
-        questionTarget: questionAttachmentTarget,
-        canAnswer:
+      if (records.length === 0) return;
+      if (questionAttachmentTarget !== null) {
+        const canAnswer =
           canOperateThread &&
           !isConnecting &&
           !isComposerApprovalState &&
           !activePendingIsResponding &&
-          activePendingProgress?.activeQuestion?.allowCustomAnswer !== false,
-        insertAnswerText: (text) => {
-          const snapshot = readComposerSnapshot();
-          const cursor = snapshot.expandedCursor;
-          const leadingSpace = cursor > 0 && !/\s/.test(snapshot.value[cursor - 1] ?? "");
-          const applied = applyPromptReplacement(
+          activePendingProgress?.activeQuestion?.allowCustomAnswer !== false;
+        const text = `${records
+          .map((record) => formatInlineContextReference(threadContextReference(record)))
+          .join(" ")} `;
+        const snapshot = readComposerSnapshot();
+        const cursor = snapshot.expandedCursor;
+        const leadingSpace = cursor > 0 && !/\s/.test(snapshot.value[cursor - 1] ?? "");
+        const inserted =
+          canAnswer &&
+          applyPromptReplacement(
             cursor,
             extendReplacementRangeForTrailingSpace(snapshot.value, cursor, text),
             leadingSpace ? ` ${text}` : text,
           );
-          if (applied && isComposerCollapsedMobile) expandMobileComposer();
-          return applied;
-        },
-        addThreadContexts: addComposerDraftThreadContexts,
-      });
-      if (!inserted && records.length > 0) {
-        toastManager.add({
-          type: "error",
-          title: "Unable to add thread",
-          description: "The composer is busy; try again once it is ready.",
+        if (!inserted) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to add thread",
+            description: "The composer is busy; try again once it is ready.",
+          });
+          return;
+        }
+        addComposerDraftThreadContexts(questionAttachmentTarget, records, {
+          appendReference: false,
         });
+        if (isComposerCollapsedMobile) expandMobileComposer();
+      } else {
+        addComposerDraftThreadContexts(composerDraftTarget, records);
       }
     };
     form.addEventListener(THREAD_CONTEXT_DROP_EVENT, onThreadDrop);
