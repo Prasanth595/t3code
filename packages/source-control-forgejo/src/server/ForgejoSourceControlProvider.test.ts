@@ -126,7 +126,7 @@ it.effect("refreshes Forgejo viewer permissions immediately after credentials ch
   );
 });
 
-it.effect("reselects the current tea login between API requests", () => {
+it.effect("reselects the current tea login for writes while an older read is pending", () => {
   let account = "alice";
   const selected: string[] = [];
   let holdLogin: Effect.Effect<void> = Effect.void;
@@ -135,7 +135,7 @@ it.effect("reselects the current tea login between API requests", () => {
     const input = {
       cwd: "/repo\n%work",
       repository: "https://forgejo.test/acme/web",
-      path: "user",
+      path: "repos/acme/web/pulls/42",
     };
     assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"alice"}');
     account = "bob";
@@ -151,9 +151,14 @@ it.effect("reselects the current tea login between API requests", () => {
       (yield* cli.api({ ...input, freshCredentials: true })).stdout,
       '{"login":"carol"}',
     );
+    const write = yield* cli
+      .api({ ...input, method: "PATCH", body: { state: "closed" } })
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
     yield* Deferred.succeed(release, undefined);
+    assert.strictEqual((yield* Fiber.join(write)).stdout, '{"login":"carol"}');
     assert.strictEqual((yield* Fiber.join(pending)).stdout, '{"login":"bob"}');
-    assert.deepStrictEqual(selected, ["alice", "bob", "carol", "bob"]);
+    assert.deepStrictEqual(selected, ["alice", "bob", "carol", "carol", "bob"]);
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -288,35 +293,37 @@ it.effect("shares pending Forgejo pull reads and refreshes after writes and fail
   }),
 );
 
-it.effect("submits a Forgejo review without sending its summary in the preliminary GET", () => {
+it.effect("submits a Forgejo review using a fresh head and an empty GET body", () => {
   const methods: string[] = [];
+  let head = "old-head";
+  let holdPull: Effect.Effect<void> = Effect.void;
   const reviewClient = HttpClient.make((request) => {
     methods.push(request.method);
     if (request.method === "GET") {
       assert.strictEqual(request.url, "https://forgejo.test/api/v1/repos/maria/project/pulls/42");
-      return Effect.succeed(
-        HttpClientResponse.fromWeb(
-          request,
-          new Response(
-            encodeJson({
-              number: 42,
-              title: "Review target",
-              body: "",
-              html_url: "https://forgejo.test/maria/project/pulls/42",
-              user: { login: "maria" },
-              state: "open",
-              merged: false,
-              head: { ref: "feature", sha: "head", repo: null },
-              base: { ref: "main", sha: "base", repo: null },
-              created_at: "2026-09-13T00:00:00Z",
-              updated_at: "2026-09-13T00:00:00Z",
-              closed_at: null,
-              merged_at: null,
-              labels: [],
-            }),
-          ),
+      const response = HttpClientResponse.fromWeb(
+        request,
+        new Response(
+          encodeJson({
+            number: 42,
+            title: "Review target",
+            body: "",
+            html_url: "https://forgejo.test/maria/project/pulls/42",
+            user: { login: "maria" },
+            state: "open",
+            merged: false,
+            head: { ref: "feature", sha: head, repo: null },
+            base: { ref: "main", sha: "base", repo: null },
+            created_at: "2026-09-13T00:00:00Z",
+            updated_at: "2026-09-13T00:00:00Z",
+            closed_at: null,
+            merged_at: null,
+            labels: [],
+          }),
         ),
       );
+      assert.strictEqual(request.body._tag, "Empty");
+      return holdPull.pipe(Effect.as(response));
     }
     assert.strictEqual(request.method, "POST");
     assert.strictEqual(
@@ -338,16 +345,36 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
       Effect.provideService(ForgejoCli.ForgejoCli, cli),
     );
-    yield* provider.submitReview({
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    holdPull = Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)));
+    const summary = provider.getChangeRequestSummary;
+    if (!summary) return yield* Effect.die("narrow reads missing");
+    const pending = yield* summary({
       cwd: "/repo",
       repository: "maria/project",
       host: "forgejo.test",
       number: 42,
-      verdict: "comment",
-      body: "Review summary",
-      comments: [],
-    });
-    assert.deepStrictEqual(methods, ["GET", "POST"]);
+    }).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    head = "head";
+    holdPull = Effect.void;
+    const review = yield* provider
+      .submitReview({
+        cwd: "/repo",
+        repository: "maria/project",
+        host: "forgejo.test",
+        number: 42,
+        verdict: "comment",
+        body: "Review summary",
+        comments: [],
+      })
+      .pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* Deferred.succeed(release, undefined);
+    yield* Fiber.join(review);
+    assert.deepStrictEqual(methods, ["GET", "GET", "POST"]);
+    yield* Fiber.join(pending);
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, reviewClient),
     Effect.provideService(
@@ -356,7 +383,9 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
         exists: () => Effect.succeed(true),
         readFileString: () =>
           Effect.succeed(
-            encodeJson({ hosts: { "forgejo.test": { type: "Application", token: "test-token" } } }),
+            encodeJson({
+              hosts: { "forgejo.test": { type: "Application", token: "test-token" } },
+            }),
           ),
       }),
     ),

@@ -515,7 +515,16 @@ export const make = Effect.gen(function* () {
         body: { body: input.body },
       }),
     submitReview: Effect.fn("ForgejoPullRequestProvider.submitReview")(function* (input) {
-      const pr = yield* getPull(input);
+      const pr = yield* read(
+        {
+          cwd: input.cwd,
+          repository: input.repository,
+          host: input.host,
+          path: pullPath(input),
+          freshCredentials: true,
+        },
+        ForgejoPullRequest,
+      );
       yield* write({
         ...input,
         path: `${pullPath(input)}/reviews`,

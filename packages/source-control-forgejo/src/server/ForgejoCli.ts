@@ -657,8 +657,8 @@ export const make = Effect.gen(function* () {
       });
     return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
-  // Share pending resolution, but reselect the login after it finishes so account and remote
-  // changes apply to the next request without an extra identity check.
+  // Share pending read resolution. Writes and permission checks reselect the login so they
+  // cannot join a target captured before an account change.
   const targets = yield* Cache.makeWith(
     (key: string) => {
       const [cwd = "", reference, repository, host, remoteUrl, baseUrl, requestedHost, scope] = key
@@ -689,7 +689,7 @@ export const make = Effect.gen(function* () {
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
     const hostOnly =
       input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET");
-    const repository = yield* input.freshCredentials
+    const repository = yield* input.freshCredentials || (input.method && input.method !== "GET")
       ? resolveTarget(
           {
             cwd: input.cwd,
