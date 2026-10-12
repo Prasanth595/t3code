@@ -12,10 +12,10 @@ import * as ServerConfig from "../config.ts";
 // Size the -wal file is cut back to on the first commit after a WAL reset.
 export const WAL_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
 
-// Upper bound on the connection's page cache. At SQLite's 2 MiB default, every
-// query on a large database re-reads its b-tree pages from the OS. The cache
-// only grows as pages are read, so a small database never reaches the bound.
-export const PAGE_CACHE_SIZE_KIB = 64 * 1024;
+// Page-cache budget for the connection, in KiB. SQLite's 2,000 KiB default is
+// smaller than a large database's hot pages, so those get read from the OS
+// again. The cache fills only as pages are read.
+const PAGE_CACHE_SIZE_KIB = 64 * 1024;
 
 const layerSetup = Layer.effectDiscard(
   Effect.gen(function* () {

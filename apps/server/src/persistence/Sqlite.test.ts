@@ -10,7 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { PAGE_CACHE_SIZE_KIB, WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
+import { WAL_SIZE_LIMIT_BYTES } from "./Sqlite.ts";
 import * as SqlitePersistence from "./Sqlite.ts";
 
 const lockHolderSource = `
@@ -96,6 +96,6 @@ it.effect("applies the page cache bound in the shared persistence setup", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const rows = yield* sql<{ readonly cache_size: number }>`PRAGMA cache_size`;
-    assert.equal(rows[0]?.cache_size, -PAGE_CACHE_SIZE_KIB);
+    assert.equal(rows[0]?.cache_size, -65536);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
