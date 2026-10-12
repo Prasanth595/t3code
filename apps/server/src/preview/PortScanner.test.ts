@@ -789,3 +789,62 @@ effectIt.effect("does not swallow process probe interruption", () =>
     }
   }),
 );
+
+effectIt.effect(
+  "parses Windows netstat TCP and TCPv6 listeners and skips process spawns when idle",
+  () => {
+    const spawnedArgs: Array<ReadonlyArray<string>> = [];
+    const fetchFn = (() =>
+      Promise.resolve(
+        new Response("hello", { headers: { "content-type": "text/html" } }),
+      )) as typeof globalThis.fetch;
+    const layer = PortScanner.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          layerNoProc,
+          Layer.succeed(ProcessRunner.ProcessRunner, {
+            run: (input) => {
+              spawnedArgs.push(input.args);
+              const isIpv6 = input.args.includes("tcpv6");
+              return Effect.succeed({
+                stdout: isIpv6
+                  ? "  TCP    [::1]:43123            [::]:0                 ABHÖREN         1234\r\n  TCP    [::1]:43123            [::1]:52000            HERGESTELLT     1234\r\n"
+                  : "  TCP    127.0.0.1:5173         0.0.0.0:0              LISTENING       1234\r\n  TCP    127.0.0.1:5173         127.0.0.1:60123        ESTABLISHED     9999\r\n",
+                stderr: "",
+                code: null,
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              });
+            },
+          }),
+          Layer.succeed(HostProcess.Platform, "win32"),
+          FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn))),
+        ),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(spawnedArgs).toHaveLength(0);
+
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      const discovered = yield* scanner.scan();
+      expect(discovered.map((entry) => ({ port: entry.port, pid: entry.pid }))).toEqual([
+        { port: 5173, pid: 1234 },
+        { port: 43123, pid: 1234 },
+      ]);
+      expect(spawnedArgs).toEqual([
+        ["-ano", "-p", "tcp"],
+        ["-ano", "-p", "tcpv6"],
+      ]);
+    }).pipe(Effect.provide(layer));
+  },
+);
