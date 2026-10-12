@@ -2117,9 +2117,6 @@ export function PullRequestDetailPanel({
                             <span aria-hidden className="invisible col-start-1 row-start-1">
                               {selectedMergeMethodLabel}
                             </span>
-                            <span aria-hidden className="invisible col-start-1 row-start-1">
-                              Confirm merge?
-                            </span>
                             <span className="col-start-1 row-start-1">
                               {pendingAction === "merge"
                                 ? "Merging..."
