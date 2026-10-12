@@ -117,6 +117,8 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { BackgroundWorkIcon, BackgroundWorkText } from "./BackgroundWorkDetails";
+import { backgroundWorkFromNotification } from "./BackgroundWorkDetails.logic";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Root, RootContent } from "mdast";
@@ -5441,6 +5443,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     workEntry.projectedItem?.item.type === "notification"
       ? notificationChildThreadId(workEntry.projectedItem.item.source)
       : undefined;
+  const notification =
+    workEntry.projectedItem?.item.type === "notification" ? workEntry.projectedItem.item : null;
+  const backgroundWork = notification ? backgroundWorkFromNotification(notification) : null;
   const groupView = use(WorkGroupViewCtx);
   const [expanded, setExpanded] = useState(
     () => groupView?.state.expandedEntries.has(workEntry.id) ?? false,
@@ -5657,18 +5662,25 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       data-v2-item-visibility={workEntry.projectedItem?.visibility}
       {...rowToggleProps}
       icon={
-        <span
-          className={iconWrapperClass}
-          role={showFailedIndicator ? "img" : undefined}
-          aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+        <BackgroundWorkIcon
+          work={backgroundWork ?? []}
+          summary={notification?.summary}
+          cwd={ctx.markdownCwd}
+          threadRef={threadRef}
         >
-          <ToolActivityIconView
-            icon={entryToolIcon}
-            fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-2"
-            muted
-          />
-        </span>
+          <span
+            className={iconWrapperClass}
+            role={showFailedIndicator ? "img" : undefined}
+            aria-label={showFailedIndicator ? "Tool call failed" : undefined}
+          >
+            <ToolActivityIconView
+              icon={entryToolIcon}
+              fallbackName={entryIconName}
+              className="block size-4 shrink-0 stroke-2"
+              muted
+            />
+          </span>
+        </BackgroundWorkIcon>
       }
       label={
         <div className="min-w-0 flex-1 overflow-hidden">
@@ -5693,6 +5705,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   label={threadLabel}
                   environmentId={ctx.activeThreadEnvironmentId}
                   linked
+                />
+              ) : backgroundWork ? (
+                <BackgroundWorkText
+                  text={previewText}
+                  cwd={ctx.markdownCwd}
+                  threadRef={threadRef}
                 />
               ) : (
                 previewText

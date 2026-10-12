@@ -679,6 +679,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.terminalAppShortcutsFirst !== DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst
         ? ["App shortcuts in terminal"]
         : []),
+      ...(settings.backgroundWorkDetails !== DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails
+        ? ["Background work details"]
+        : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
@@ -707,6 +710,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadUnpin,
       settings.confirmTerminalClose,
       settings.terminalAppShortcutsFirst,
+      settings.backgroundWorkDetails,
       settings.composerCollapseOnScroll,
       settings.composerRichTextEnabled,
       settings.sendShortcut,
@@ -864,6 +868,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
       terminalAppShortcutsFirst: DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst,
+      backgroundWorkDetails: DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -3331,6 +3336,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ terminalAppShortcutsFirst: Boolean(checked) })
               }
               aria-label="App shortcuts take priority in terminal"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("background-work-details")}
+          description="Click the status icon of a monitor, background command, or background agent to see its command and output file. Links in their descriptions open."
+          resetAction={
+            settings.backgroundWorkDetails !== DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails ? (
+              <SettingResetButton
+                label="background work details"
+                onClick={() =>
+                  updateSettings({
+                    backgroundWorkDetails: DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.backgroundWorkDetails}
+              onCheckedChange={(checked) =>
+                updateSettings({ backgroundWorkDetails: Boolean(checked) })
+              }
+              aria-label="Background work details"
             />
           }
         />

@@ -35,6 +35,7 @@ const clientSettings: ClientSettings = {
   confirmThreadUnpin: false,
   confirmTerminalClose: true,
   terminalAppShortcutsFirst: false,
+  backgroundWorkDetails: false,
   contextWindowMeterEnabled: false,
   composerCollapseOnScroll: true,
   dismissedProviderUpdateNotificationKeys: [],

@@ -563,6 +563,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["terminal keybindings keyboard shortcuts priority shell focus"],
   },
   {
+    id: "background-work-details",
+    title: "Background work details",
+    to: "/settings/general",
+    searchTerms: ["monitor background command agent task output file popover markdown links"],
+  },
+  {
     id: "quit-confirmation",
     title: "Quit shortcut",
     to: "/settings/general",

@@ -657,6 +657,13 @@ describe("ClientSettings sidebar", () => {
       decodeClientSettingsPatch({ confirmTerminalClose: false, terminalAppShortcutsFirst: true }),
     ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
   });
+
+  it("keeps background work details off by default", () => {
+    expect(decodeClientSettings({}).backgroundWorkDetails).toBe(false);
+    expect(decodeClientSettingsPatch({ backgroundWorkDetails: true })).toEqual({
+      backgroundWorkDetails: true,
+    });
+  });
 });
 
 describe("ClientSettings context window meter", () => {

@@ -136,6 +136,8 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { BackgroundWorkIcon, BackgroundWorkText } from "./chat/BackgroundWorkDetails";
+import { backgroundWorkFromPendingTask } from "./chat/BackgroundWorkDetails.logic";
 import {
   latestUnheldRun,
   usageLimitRunPresentedAsLatest,
@@ -7632,15 +7634,27 @@ export default function ChatView(props: ChatViewProps) {
       // A dev server can run for hours after the agent is done, so only work
       // that will wake the agent pulses.
       icon: (
-        <span
-          className={cn(
-            "size-1.5 rounded-full bg-foreground",
-            presentation.waiting && "animate-status-pulse",
-          )}
-          aria-hidden="true"
+        <BackgroundWorkIcon
+          work={activeBackgroundTasks.map(backgroundWorkFromPendingTask)}
+          cwd={gitCwd ?? undefined}
+          threadRef={activeThreadRef}
+        >
+          <span
+            className={cn(
+              "size-1.5 rounded-full bg-foreground",
+              presentation.waiting && "animate-status-pulse",
+            )}
+            aria-hidden="true"
+          />
+        </BackgroundWorkIcon>
+      ),
+      title: (
+        <BackgroundWorkText
+          text={presentation.title}
+          cwd={gitCwd ?? undefined}
+          threadRef={activeThreadRef}
         />
       ),
-      title: presentation.title,
       // A single named item is already in the title.
       description:
         presentation.items.length === 1 && presentation.items[0]?.childThreadId === undefined
@@ -7651,7 +7665,11 @@ export default function ChatView(props: ChatViewProps) {
                 <Fragment key={item.taskId}>
                   {index > 0 ? ", " : null}
                   {childThreadId === undefined ? (
-                    item.label
+                    <BackgroundWorkText
+                      text={item.label}
+                      cwd={gitCwd ?? undefined}
+                      threadRef={activeThreadRef}
+                    />
                   ) : (
                     <InlineButton
                       tone="muted"
@@ -7678,7 +7696,9 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeBackgroundTasks,
     activeThread,
+    activeThreadRef,
     canOperateThread,
+    gitCwd,
     handleStopBackgroundWork,
     isStoppingBackgroundWork,
     onOpenRelatedThread,
