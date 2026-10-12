@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { APP_STAGE_LABEL } from "../branding";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
@@ -57,19 +57,34 @@ export function SidebarStageBackdrop({
   variant,
   customBackdropImageUrl,
 }: SidebarStageBackdropProps) {
+  const [hasLoadError, setHasLoadError] = useState(false);
+
+  useEffect(() => {
+    setHasLoadError(false);
+    if (!customBackdropImageUrl) return;
+
+    const img = new Image();
+    img.src = customBackdropImageUrl;
+    img.onerror = () => {
+      setHasLoadError(true);
+    };
+  }, [customBackdropImageUrl]);
+
+  const showCustomImage = Boolean(customBackdropImageUrl) && !hasLoadError;
+
   return (
     <div
       aria-hidden
       className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden bg-cover bg-center"
       style={
-        customBackdropImageUrl
+        showCustomImage
           ? {
               backgroundImage: `url(${customBackdropImageUrl})`,
             }
           : undefined
       }
     >
-      {customBackdropImageUrl ? null : variant ? <StageBackdropArt variant={variant} /> : null}
+      {showCustomImage ? null : variant ? <StageBackdropArt variant={variant} /> : null}
     </div>
   );
 }
