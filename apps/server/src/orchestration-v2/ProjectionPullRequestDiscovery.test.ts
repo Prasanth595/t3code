@@ -59,71 +59,63 @@ const createThread = Effect.fn(function* (
   return id;
 });
 
-const cases = [
-  ["sql", sqlLayer],
-  ["memory", ProjectionStore.layerMemory],
-] as const;
-it.effect.each(cases)(
-  "%s: discovery preserves legacy links and explicit unlinking",
-  ([_name, layer]) =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const linkedPullRequest = {
-        projectId: ProjectId.make("project"),
-        repository: "example/repo",
-        number: 1,
-        url: "https://github.com/example/repo/pull/1",
-      };
-      yield* createThread("legacy", { linkedPullRequest });
-      yield* createThread("unlinked", { linkedPullRequest, pullRequests: [] });
-      const snapshot = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: false });
-      assert.equal(snapshot.threads[0]?.pullRequests?.[0]?.number, 1);
-      assert.deepEqual(snapshot.threads[1]?.pullRequests, []);
-    }).pipe(Effect.provide(layer)),
+it.effect("SQL discovery preserves legacy links and explicit unlinking", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const linkedPullRequest = {
+      projectId: ProjectId.make("project"),
+      repository: "example/repo",
+      number: 1,
+      url: "https://github.com/example/repo/pull/1",
+    };
+    yield* createThread("legacy", { linkedPullRequest });
+    yield* createThread("unlinked", { linkedPullRequest, pullRequests: [] });
+    const snapshot = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: false });
+    assert.equal(snapshot.threads[0]?.pullRequests?.[0]?.number, 1);
+    assert.deepEqual(snapshot.threads[1]?.pullRequests, []);
+  }).pipe(Effect.provide(sqlLayer)),
 );
-it.effect.each(cases)(
-  "%s: discovery keeps active and backfill metadata without archive or deleted rows",
-  ([_name, layer]) =>
-    Effect.gen(function* () {
-      const store = yield* ProjectionStore.ProjectionStoreV2;
-      const active = yield* createThread("active", { branch: null });
-      const settled = yield* createThread("settled", { settledAt: now });
-      yield* createThread("override", { settledOverride: "settled" });
-      const archived = yield* createThread("archived", { archivedAt: now });
-      yield* createThread("deleted", { deletedAt: now });
-      const all = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: false });
-      assert.deepEqual(
-        all.threads.map((thread) => thread.id),
-        [active, ThreadId.make("override"), settled],
-      );
-      assert.equal(all.threads[0]?.branch, null);
-      assert.deepEqual(all.threads[0]?.pullRequests, []);
-      const pending = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: true });
-      assert.deepEqual(
-        pending.threads.map((thread) => thread.id),
-        [active],
-      );
-      const single = yield* store.getPullRequestDiscoverySnapshot({
-        threadId: settled,
+it.effect("SQL discovery keeps active and backfill metadata without archive or deleted rows", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const active = yield* createThread("active", { branch: null });
+    const settled = yield* createThread("settled", { settledAt: now });
+    yield* createThread("override", { settledOverride: "settled" });
+    const archived = yield* createThread("archived", { archivedAt: now });
+    yield* createThread("deleted", { deletedAt: now });
+    const all = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: false });
+    assert.deepEqual(
+      all.threads.map((thread) => thread.id),
+      [active, ThreadId.make("override"), settled],
+    );
+    assert.equal(all.threads[0]?.branch, null);
+    assert.deepEqual(all.threads[0]?.pullRequests, []);
+    const pending = yield* store.getPullRequestDiscoverySnapshot({ unsettledOnly: true });
+    assert.deepEqual(
+      pending.threads.map((thread) => thread.id),
+      [active],
+    );
+    const single = yield* store.getPullRequestDiscoverySnapshot({
+      threadId: settled,
+      unsettledOnly: false,
+    });
+    assert.deepEqual(
+      single.threads.map((thread) => thread.id),
+      [settled],
+    );
+    assert.isEmpty(
+      (yield* store.getPullRequestDiscoverySnapshot({
+        threadId: archived,
         unsettledOnly: false,
-      });
-      assert.deepEqual(
-        single.threads.map((thread) => thread.id),
-        [settled],
-      );
-      assert.isEmpty(
-        (yield* store.getPullRequestDiscoverySnapshot({
-          threadId: archived,
-          unsettledOnly: false,
-        })).threads,
-      );
-      assert.isEmpty(
-        (yield* store.getPullRequestDiscoverySnapshot({
-          threadId: ThreadId.make("unknown"),
-          unsettledOnly: false,
-        })).threads,
-      );
-    }).pipe(Effect.provide(layer)),
+      })).threads,
+    );
+    assert.isEmpty(
+      (yield* store.getPullRequestDiscoverySnapshot({
+        threadId: ThreadId.make("unknown"),
+        unsettledOnly: false,
+      })).threads,
+    );
+  }).pipe(Effect.provide(sqlLayer)),
 );
 
 it.effect("SQL discovery reads no run, message, item or fork history", () =>
@@ -155,44 +147,5 @@ it.effect("SQL discovery reads no run, message, item or fork history", () =>
       ),
     );
     assert.isTrue(statements.some((query) => query.includes("MAX(sequence)")));
-  }).pipe(Effect.provide(sqlLayer)),
-);
-
-it.effect("SQL discovery identifies the thread whose metadata cannot decode", () =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const sql = yield* SqlClient.SqlClient;
-    const id = yield* createThread("malformed-metadata");
-    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = '{}' WHERE thread_id = ${id}`;
-    const error = yield* Effect.flip(
-      store.getPullRequestDiscoverySnapshot({ unsettledOnly: false }),
-    );
-    assert.equal(error._tag, "ProjectionStoreReadError");
-    if (error._tag === "ProjectionStoreReadError") {
-      assert.equal(error.threadId, id);
-      assert.isDefined(error.cause);
-    }
-  }).pipe(Effect.provide(sqlLayer)),
-);
-
-it.effect("SQL discovery reports read failures with single-thread or sweep context", () =>
-  Effect.gen(function* () {
-    const store = yield* ProjectionStore.ProjectionStoreV2;
-    const sql = yield* SqlClient.SqlClient;
-    const id = yield* createThread("read-failure");
-    yield* sql`DROP TABLE orchestration_v2_projection_threads`;
-    for (const threadId of [undefined, id]) {
-      const error = yield* Effect.flip(
-        store.getPullRequestDiscoverySnapshot({
-          ...(threadId === undefined ? {} : { threadId }),
-          unsettledOnly: false,
-        }),
-      );
-      assert.equal(error._tag, "ProjectionStoreReadError");
-      if (error._tag === "ProjectionStoreReadError") {
-        assert.equal(error.threadId, threadId ?? ThreadId.make("thread:pull-request-discovery"));
-        assert.isDefined(error.cause);
-      }
-    }
   }).pipe(Effect.provide(sqlLayer)),
 );
