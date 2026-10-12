@@ -84,7 +84,7 @@ export const layer = Layer.effectDiscard(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
-          ["messages", "runs", "providerTurns"],
+          ["messages", "runs", "providerTurns", "subagents"],
           {
             messageIds:
               request.delegatedCompletion === undefined
@@ -167,8 +167,11 @@ export const layer = Layer.effectDiscard(
                     Effect.andThen(
                       Effect.forEach(
                         delivery.taskIds,
-                        (taskId) =>
-                          ids.allocate
+                        (taskId) => {
+                          const resultRunId = projection.subagents.find(
+                            (task) => task.id === taskId,
+                          )?.completionDelivery?.resultRunId;
+                          return ids.allocate
                             .command({
                               fixtureName: "delegated-completion",
                               commandName: "acknowledge-disabled",
@@ -180,10 +183,12 @@ export const layer = Layer.effectDiscard(
                                   commandId: ackCommandId,
                                   parentThreadId: request.threadId,
                                   taskId,
+                                  ...(resultRunId === undefined ? {} : { resultRunId }),
                                   observedByRunId: null,
                                 }),
                               ),
-                            ),
+                            );
+                        },
                         { discard: true },
                       ),
                     ),

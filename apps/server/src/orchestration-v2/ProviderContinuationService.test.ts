@@ -50,6 +50,17 @@ const request = (
 const delegatedProjection = (disposition: "open" | "stopped" | "disposed" = "open") =>
   ({
     ...projection,
+    subagents: ["node-provider-continuation-first", "node-provider-continuation-second"].map(
+      (id, index) => ({
+        id,
+        completionDelivery: {
+          state: "claimed",
+          resultRunId: `run-result-${index}`,
+          generation: 1,
+          observedByRunId: null,
+        },
+      }),
+    ),
     runs: [
       {
         id: parentRunId,
@@ -539,11 +550,41 @@ describe("ProviderContinuationService", () => {
         const attempts = yield* Ref.make(0);
         const cleared = yield* Ref.make(false);
         const acknowledged = yield* Queue.unbounded<unknown>();
+        const currentProjection = yield* Ref.make(delegatedProjection());
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
-          getThreadRecords: () => Effect.succeed(delegatedProjection()),
+          getThreadRecords: (_threadId, fields) =>
+            Ref.get(currentProjection).pipe(
+              Effect.map((current) => {
+                const selected = { ...current };
+                for (const field of Object.keys(selected)) {
+                  if (field !== "thread" && !fields.some((requested) => requested === field)) {
+                    Reflect.deleteProperty(selected, field);
+                  }
+                }
+                return selected;
+              }),
+            ),
           dispatch: (command) => {
             if ((command as { type: string }).type === "message.dispatch") {
               return Ref.update(attempts, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Ref.update(currentProjection, (current) => ({
+                    ...current,
+                    subagents: current.subagents.map(
+                      (task, index) =>
+                        ({
+                          ...task,
+                          completionDelivery: {
+                            ...task.completionDelivery,
+                            state: "claimed",
+                            generation: 2,
+                            observedByRunId: null,
+                            resultRunId: RunId.make(`run-newer-result-${index}`),
+                          },
+                        }) satisfies OrchestrationV2ThreadProjection["subagents"][number],
+                    ),
+                  })),
+                ),
                 Effect.andThen(
                   Effect.fail(
                     new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
@@ -589,11 +630,22 @@ describe("ProviderContinuationService", () => {
           const acknowledgements = (yield* Queue.takeAll(acknowledged)) as ReadonlyArray<{
             type: string;
             taskId: string;
+            resultRunId: string;
             observedByRunId: string | null;
           }>;
           assert.deepEqual(
             acknowledgements.map((command) => command.taskId),
             ["node-provider-continuation-first", "node-provider-continuation-second"],
+          );
+          assert.deepEqual(
+            acknowledgements.map((command) => command.resultRunId),
+            ["run-result-0", "run-result-1"],
+          );
+          assert.deepEqual(
+            (yield* Ref.get(currentProjection)).subagents.map(
+              (task) => task.completionDelivery?.resultRunId,
+            ),
+            [RunId.make("run-newer-result-0"), RunId.make("run-newer-result-1")],
           );
           for (const command of acknowledgements) {
             assert.equal(command.type, "delegated_task.completion-delivery.acknowledge");

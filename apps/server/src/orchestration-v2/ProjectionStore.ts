@@ -559,32 +559,42 @@ function needsRecovery(
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
     case "subagent-results": {
       const parentThreadId = projection.thread.lineage.parentThreadId;
+      const forkedFrom = projection.thread.forkedFrom;
       return (
         projection.thread.lineage.relationshipToParent === "subagent" &&
         parentThreadId !== null &&
-        projection.thread.forkedFrom?.type === "node" &&
-        ((parent?.subagents ?? []).some(
-          (task) =>
-            task.origin === "app_owned" &&
-            task.result === null &&
-            task.childThreadId === projection.thread.id &&
-            projection.runs.some(
-              (run) =>
-                run.delegatedTaskId === task.id &&
-                ["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-                  run.status,
-                ),
-            ),
-        ) ||
-          (["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
-            latestUnheldRun(projection.runs)?.status ?? "idle",
-          ) &&
-            ![...projection.contextTransfers, ...(parent?.contextTransfers ?? [])].some(
-              (transfer) =>
-                transfer.type === "subagent_result" &&
-                transfer.sourceThreadId === projection.thread.id &&
-                transfer.targetThreadId === parentThreadId,
-            )))
+        forkedFrom?.type === "node" &&
+        (parent?.subagents ?? []).some((task) => {
+          if (task.origin !== "app_owned" || task.childThreadId !== projection.thread.id)
+            return false;
+          const taskRuns = projection.runs.filter((run) => run.delegatedTaskId === task.id);
+          const resultRun =
+            taskRuns.length > 0
+              ? taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0]
+              : task.id === forkedFrom.nodeId
+                ? latestUnheldRun(
+                    projection.runs.filter((run) => run.delegatedTaskId === undefined),
+                  )
+                : undefined;
+          if (
+            resultRun == null ||
+            !["completed", "interrupted", "failed", "cancelled", "rolled_back"].includes(
+              resultRun.status,
+            )
+          )
+            return false;
+          const firstRun = projection.runs.toSorted((a, b) => a.ordinal - b.ordinal)[0];
+          return !(parent?.contextTransfers ?? []).some(
+            (transfer) =>
+              transfer.type === "subagent_result" &&
+              transfer.sourceThreadId === projection.thread.id &&
+              transfer.targetThreadId === parentThreadId &&
+              (transfer.sourcePoint.runId === resultRun.id ||
+                (task.id === forkedFrom.nodeId &&
+                  firstRun?.id === resultRun.id &&
+                  transfer.sourcePoint.runId === undefined)),
+          );
+        })
       );
     }
     case "runtime":
@@ -3602,28 +3612,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
                   AND json_extract(child.payload_json, '$.lineage.parentThreadId') IS NOT NULL
                   AND json_extract(child.payload_json, '$.forkedFrom.type') = 'node'
-                  AND (EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_runs AS requested
-                    JOIN orchestration_v2_projection_subagents AS task
-                      ON task.subagent_id = json_extract(requested.payload_json, '$.delegatedTaskId')
-                    WHERE requested.thread_id = child.thread_id
-                      AND requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                      AND task.child_thread_id = child.thread_id
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_subagents AS task
+                    JOIN orchestration_v2_projection_runs AS requested
+                      ON requested.thread_id = child.thread_id
+                    WHERE task.child_thread_id = child.thread_id
                       AND json_extract(task.payload_json, '$.origin') = 'app_owned'
-                      AND json_extract(task.payload_json, '$.result') IS NULL
-                  ) OR (
-                    -- The original task still waits for the latest unheld work.
-                    (SELECT status FROM orchestration_v2_projection_runs
-                     WHERE thread_id = child.thread_id
-                       AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
-                     ORDER BY ordinal DESC LIMIT 1
-                    ) IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
-                    AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_context_transfers
-                    WHERE source_thread_id = child.thread_id
-                      AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
-                      AND type = 'subagent_result'
-                  )))
+                      AND requested.run_id = COALESCE(
+                        (SELECT run_id FROM orchestration_v2_projection_runs
+                         WHERE thread_id = child.thread_id
+                           AND json_extract(payload_json, '$.delegatedTaskId') = task.subagent_id
+                         ORDER BY ordinal DESC LIMIT 1),
+                        (SELECT run_id FROM orchestration_v2_projection_runs
+                         WHERE thread_id = child.thread_id
+                           AND task.subagent_id = json_extract(child.payload_json, '$.forkedFrom.nodeId')
+                           AND json_extract(payload_json, '$.delegatedTaskId') IS NULL
+                           AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
+                         ORDER BY ordinal DESC LIMIT 1))
+                      AND requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
+                      AND NOT EXISTS (
+                        SELECT 1 FROM orchestration_v2_projection_context_transfers AS result
+                        WHERE result.source_thread_id = child.thread_id
+                          AND result.target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
+                          AND result.type = 'subagent_result'
+                          AND (json_extract(result.payload_json, '$.sourcePoint.runId') = requested.run_id
+                            OR (json_extract(result.payload_json, '$.sourcePoint.runId') IS NULL
+                              AND task.subagent_id = json_extract(child.payload_json, '$.forkedFrom.nodeId')
+                              AND requested.run_id = (SELECT run_id FROM orchestration_v2_projection_runs
+                                WHERE thread_id = child.thread_id ORDER BY ordinal ASC LIMIT 1)))
+                      ))
                   ELSE 0 END
               `;
             case "runtime":

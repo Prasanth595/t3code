@@ -478,6 +478,8 @@ export type OrchestrationV2DelegatedCompletionTaskDeliveryState =
 
 export const OrchestrationV2DelegatedCompletionTaskDelivery = Schema.Struct({
   state: OrchestrationV2DelegatedCompletionTaskDeliveryState,
+  resultRunId: Schema.optional(RunId),
+  generation: Schema.optional(PositiveInt),
   observedByRunId: Schema.NullOr(RunId),
 });
 export type OrchestrationV2DelegatedCompletionTaskDelivery =
@@ -3124,6 +3126,7 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.completion-delivery.acknowledge"),
+    resultRunId: Schema.optional(RunId),
     commandId: CommandId,
     parentThreadId: ThreadId,
     taskId: NodeId,

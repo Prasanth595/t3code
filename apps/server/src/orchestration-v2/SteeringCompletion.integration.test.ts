@@ -5,6 +5,7 @@ import {
   EventId,
   NodeId,
   ProjectId,
+  RunId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
@@ -252,7 +253,12 @@ it.effect.each(
                   title: "Background test",
                   model: null,
                   completionWake: timing === "settled only" ? "settled_only" : "always",
-                  completionDelivery: { state: "claimed", observedByRunId: null },
+                  completionDelivery: {
+                    state: "claimed",
+                    resultRunId: RunId.make("run-result-steering"),
+                    generation: 1,
+                    observedByRunId: null,
+                  },
                   status: "completed",
                   result: "done",
                   startedAt: now,
@@ -355,6 +361,8 @@ it.effect.each(
               commandId: CommandId.make("read-result"),
               parentThreadId: threadId,
               taskId,
+              resultRunId: delivered.subagents.find((task) => task.id === taskId)
+                ?.completionDelivery?.resultRunId,
               observedByRunId: first.runId,
             });
             const acknowledged = yield* orchestrator.getThreadProjection(threadId);

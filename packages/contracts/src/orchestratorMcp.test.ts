@@ -164,3 +164,38 @@ describe("orchestrator MCP contracts", () => {
     ).toBe("Loop converged.");
   });
 });
+
+it("keeps original task fields when decoding later delivery", () => {
+  const original = decodeDelegateTaskResult({
+    taskId: "node-task-1",
+    childThreadId: "thread-child-1",
+    childRunId: "run-child-1",
+    childNodeId: "node-task-1",
+    status: "failed",
+    workState: "result_available",
+    hasPendingChildRuns: false,
+    providerInstanceId: "claudeAgent",
+    model: "claude-sonnet-4-6",
+    summary: "Original failure.",
+    resultContextTransferId: "context-transfer-result-1",
+    latestTerminalRunId: "run-child-2",
+    latestTerminalStatus: "completed",
+    latestTerminalSummary: "Later success.",
+    latestTerminalResultContextTransferId: "context-transfer-result-1",
+    waitTimedOut: false,
+  });
+  const correlated = decodeDelegateTaskResult({
+    ...original,
+    completionDelivery: {
+      state: "claimed",
+      resultRunId: "run-child-2",
+      generation: 2,
+      observedByRunId: null,
+    },
+  });
+  expect(original.completionDelivery).toBeUndefined();
+  expect(correlated.status).toBe("failed");
+  expect(correlated.summary).toBe("Original failure.");
+  expect(correlated.latestTerminalSummary).toBe("Later success.");
+  expect(correlated.completionDelivery?.resultRunId).toBe("run-child-2");
+});

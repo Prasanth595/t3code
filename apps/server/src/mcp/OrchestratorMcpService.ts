@@ -444,14 +444,38 @@ function taskResultTransfer(
       .map((run) => run.id),
   );
   if (originalRun !== undefined) resultRunIds.add(originalRun.id);
-  return parent.contextTransfers.find(
-    (transfer) =>
-      transfer.type === "subagent_result" &&
-      transfer.sourceThreadId === task.childThreadId &&
-      transfer.targetThreadId === parent.thread.id &&
-      ((transfer.sourcePoint.runId !== undefined && resultRunIds.has(transfer.sourcePoint.runId)) ||
-        (transfer.sourcePoint.runId === undefined && originalRun?.delegatedTaskId === undefined)),
-  );
+  return parent.contextTransfers
+    .filter(
+      (transfer) =>
+        transfer.type === "subagent_result" &&
+        transfer.sourceThreadId === task.childThreadId &&
+        transfer.targetThreadId === parent.thread.id &&
+        ((transfer.sourcePoint.runId !== undefined &&
+          resultRunIds.has(transfer.sourcePoint.runId)) ||
+          (transfer.sourcePoint.runId === undefined && originalRun?.delegatedTaskId === undefined)),
+    )
+    .toSorted(
+      (a, b) =>
+        (child.runs.find((run) => run.id === a.sourcePoint.runId)?.ordinal ?? 0) -
+        (child.runs.find((run) => run.id === b.sourcePoint.runId)?.ordinal ?? 0),
+    )[0];
+}
+
+function taskDeliveryResultTransfer(
+  parent: Pick<OrchestrationV2ThreadProjection, "thread" | "contextTransfers">,
+  child: Pick<OrchestrationV2ThreadProjection, "runs" | "contextTransfers">,
+  task: OrchestrationV2Subagent,
+) {
+  if (task.completionDelivery?.resultRunId !== undefined) {
+    return parent.contextTransfers.find(
+      (transfer) =>
+        transfer.type === "subagent_result" &&
+        transfer.sourceThreadId === task.childThreadId &&
+        transfer.targetThreadId === parent.thread.id &&
+        transfer.sourcePoint.runId === task.completionDelivery?.resultRunId,
+    );
+  }
+  return taskResultTransfer(parent, child, task);
 }
 
 function pageIncludesTerminalTaskResult(input: {
@@ -464,7 +488,7 @@ function pageIncludesTerminalTaskResult(input: {
   >;
   readonly maxChars: number;
 }): boolean {
-  const transfer = taskResultTransfer(input.parent, input.target, input.task);
+  const transfer = taskDeliveryResultTransfer(input.parent, input.target, input.task);
   if (transfer === undefined) return false;
   const run =
     transfer.sourcePoint.runId === undefined
@@ -1326,6 +1350,7 @@ const make = Effect.gen(function* () {
     waitTimedOut = false,
     acknowledgeTerminal = false,
     acknowledgementOperation = "task-status-acknowledge",
+    observedResultRunId?: RunId,
   ): Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
@@ -1451,10 +1476,21 @@ const make = Effect.gen(function* () {
           : null,
         latestTerminalResultContextTransferId: resultTransferForRun(terminalRun)?.id ?? null,
         waitTimedOut,
+        completionDelivery: task.completionDelivery ?? null,
       } satisfies OrchestratorMcpDelegateTaskResult;
+      const acknowledgmentRunId =
+        task.completionDelivery?.resultRunId === undefined
+          ? undefined
+          : (observedResultRunId ??
+            (resultTransfer?.sourcePoint.runId === task.completionDelivery.resultRunId
+              ? resultTransfer.sourcePoint.runId
+              : terminalRun?.id === task.completionDelivery.resultRunId
+                ? (response.latestTerminalRunId ?? undefined)
+                : undefined));
       if (
         acknowledgeTerminal &&
         isTerminalTaskStatus(status) &&
+        acknowledgmentRunId === task.completionDelivery?.resultRunId &&
         task.completionDelivery?.state !== "acknowledged" &&
         task.completionDelivery?.state !== "disposed"
       ) {
@@ -1470,6 +1506,7 @@ const make = Effect.gen(function* () {
             }),
             parentThreadId: scope.thread.threadId,
             taskId,
+            ...(acknowledgmentRunId === undefined ? {} : { resultRunId: acknowledgmentRunId }),
             observedByRunId:
               observingRun?.providerInstanceId === scope.thread.providerInstanceId
                 ? observingRun.id
@@ -1483,6 +1520,14 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+      }
+      if (acknowledgeTerminal) {
+        const current = yield* loadProjection(scope.thread.threadId);
+        return {
+          ...response,
+          completionDelivery:
+            current.subagents.find((row) => row.id === taskId)?.completionDelivery ?? null,
+        };
       }
       return response;
     });
@@ -2488,7 +2533,7 @@ const make = Effect.gen(function* () {
           (input.textOffset ?? 0) === 0
         ) {
           for (const task of tasks) {
-            const transfer = taskResultTransfer(parent, target, task);
+            const transfer = taskDeliveryResultTransfer(parent, target, task);
             const resultRunId = transfer?.sourcePoint.runId ?? delegatedTaskRun(target, task)?.id;
             const resultRunIds = resultRunId === undefined ? [] : [resultRunId];
             const resultRecords = yield* threadManagement
@@ -2514,6 +2559,7 @@ const make = Effect.gen(function* () {
                 false,
                 true,
                 "thread-read-acknowledge",
+                resultRunId,
               );
             }
           }

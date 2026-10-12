@@ -28,6 +28,7 @@ import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2DelegatedCompletionTaskDelivery,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
@@ -202,6 +203,9 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
   latestTerminalStatus: Schema.NullOr(OrchestratorMcpTerminalDelegatedTaskStatus),
   latestTerminalSummary: Schema.NullOr(Schema.String),
   latestTerminalResultContextTransferId: Schema.NullOr(ContextTransferId),
+  completionDelivery: Schema.optional(
+    Schema.NullOr(OrchestrationV2DelegatedCompletionTaskDelivery),
+  ),
   providerInstanceId: ProviderInstanceId,
   model: Schema.NullOr(Schema.String),
   summary: Schema.NullOr(Schema.String),

@@ -7,6 +7,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -238,6 +239,34 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
         archivedAt: name === "archived" ? now : null,
         deletedAt: name === "deleted" ? now : null,
       });
+      const task: OrchestrationV2Subagent = {
+        id: NodeId.make(`node:${name}`),
+        threadId: parent,
+        runId: null,
+        parentNodeId: NodeId.make("node:parent"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver,
+        providerInstanceId,
+        providerThreadId: null,
+        childThreadId: child,
+        nativeTaskRef: null,
+        prompt: name,
+        title: null,
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+      };
+      yield* projections.apply({
+        id: EventId.make(`event:${name}:task`),
+        type: "subagent.updated",
+        threadId: parent,
+        occurredAt: now,
+        payload: task,
+      });
       yield* createRun(child, name === "running" ? "running" : "completed");
       // A wake queued behind the result: held by Stop or a restart, or still deliverable.
       if (name === "held" || name === "queued") {
@@ -340,7 +369,10 @@ it.effect.each([
     yield* createRun(child, "completed", { ordinal: 2 });
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
     const taskId = NodeId.make("node:followup");
-    yield* createRun(child, "completed", { ordinal: 3, delegatedTaskId: taskId });
+    const followupRunId = yield* createRun(child, "completed", {
+      ordinal: 3,
+      delegatedTaskId: taskId,
+    });
     yield* createRun(child, "running", { ordinal: 4 });
     const task = {
       id: taskId,
@@ -377,6 +409,31 @@ it.effect.each([
       threadId: parent,
       occurredAt: now,
       payload: { ...task, status: "completed", result: "Follow-up result.", completedAt: now },
+    });
+    assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [child]);
+    yield* projections.apply({
+      id: EventId.make("event:followup-result"),
+      type: "context-transfer.created",
+      threadId: parent,
+      occurredAt: now,
+      payload: {
+        id: ContextTransferId.make("transfer:followup-result"),
+        type: "subagent_result",
+        sourceThreadId: child,
+        targetThreadId: parent,
+        sourcePoint: { threadId: child, runId: followupRunId },
+        basePoint: null,
+        sourceProviderInstanceId: providerInstanceId,
+        targetProviderInstanceId: providerInstanceId,
+        targetRunId: null,
+        status: "pending",
+        resolution: null,
+        createdBy: "system",
+        error: null,
+        createdAt: now,
+        updatedAt: now,
+        consumedAt: null,
+      },
     });
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), []);
   }).pipe(Effect.provide(layer)),

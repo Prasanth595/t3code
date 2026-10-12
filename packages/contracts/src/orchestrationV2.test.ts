@@ -1568,3 +1568,19 @@ describe("latestProviderTurnForAttempt", () => {
     expect(latestProviderTurnForAttempt(turns, null)).toBeUndefined();
   });
 });
+
+it("decodes legacy and correlated result acknowledgment commands", () => {
+  const decode = Schema.decodeUnknownSync(OrchestrationV2Command);
+  const base = {
+    type: "delegated_task.completion-delivery.acknowledge",
+    commandId: "command-ack",
+    parentThreadId: "thread-parent",
+    taskId: "node-task",
+    observedByRunId: null,
+  };
+  expect(decode(base).type).toBe("delegated_task.completion-delivery.acknowledge");
+  const current = decode({ ...base, resultRunId: "run-result" });
+  if (current.type !== "delegated_task.completion-delivery.acknowledge")
+    throw new Error("Wrong command variant");
+  expect(current.resultRunId).toBe("run-result");
+});
