@@ -24,6 +24,7 @@ import {
   setActivePreviewTab,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
+import { browserMiniPlayerSource, usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 
 import {
@@ -62,6 +63,8 @@ export async function openUrlInPreview<E>(input: {
   readonly profileId?: PreviewOpenInput["profileId"];
   /** Open the tab without switching the thread to it. */
   readonly background?: boolean;
+  /** Show the tab in the right panel, or float it over the thread. The right panel when omitted. */
+  readonly presentation?: "panel" | "floating";
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
@@ -106,6 +109,12 @@ export async function openUrlInPreview<E>(input: {
       return;
     }
     applyPreviewServerSnapshot(input.threadRef, snapshot);
+    if (input.presentation === "floating") {
+      usePreviewMiniPlayerStore
+        .getState()
+        .open(input.threadRef, browserMiniPlayerSource(snapshot.tabId));
+      return;
+    }
     useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
   });
 }

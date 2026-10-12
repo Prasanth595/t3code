@@ -26,8 +26,8 @@ import {
 import { useCallback, useMemo, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { create } from "zustand";
 
+import { showContextMenuFallback } from "~/contextMenuFallback";
 import { observeResize } from "~/lib/observeResize";
-import { readLocalApi } from "~/localApi";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -87,8 +87,6 @@ export function usePinnedScripts(input: {
 
   const openPinMenu = useCallback(
     async (position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
       const menuItems = (
         group: "global" | "project",
         scripts: readonly ProjectScript[],
@@ -121,7 +119,8 @@ export function usePinnedScripts(input: {
           : []),
       ];
       if (items.length === 0) return;
-      const clicked = await api.contextMenu.show(items, position);
+      // The in-app menu, not the native one: it matches the app theme on every platform.
+      const clicked = await showContextMenuFallback(items, position);
       if (!clicked || !canWrite) return;
       const separator = clicked.indexOf(":");
       if (separator < 0) return;
