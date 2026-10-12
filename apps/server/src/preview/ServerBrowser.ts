@@ -106,6 +106,14 @@ const AGENT_CURSOR_CLICK_LEAD_MS = 40;
 const sleepUntil = (deadline: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, deadline - Date.now())));
 
+// An enabled field that takes typed text.
+const WRITABLE_FIELD_SCRIPT = `(element) => {
+  if (element.isContentEditable) return true;
+  if (element.tagName === "TEXTAREA") return !element.disabled && !element.readOnly;
+  if (element.tagName !== "INPUT") return false;
+  const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
+  return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
+}`;
 // Touch viewers raise the keyboard for editable targets, including opaque frames.
 const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   let element = document.elementFromPoint(x, y);
@@ -117,16 +125,13 @@ const EDITABLE_AT_POINT_SCRIPT = `(x, y) => {
   if (element && element.tagName === "LABEL" && element.control) element = element.control;
   if (!element) return false;
   if (element.tagName === "IFRAME" || element.tagName === "FRAME") return true;
-  if (element.isContentEditable) return true;
-  if (element.tagName === "TEXTAREA") return !element.disabled && !element.readOnly;
-  if (element.tagName !== "INPUT") return false;
-  const nonText = ["button", "checkbox", "color", "file", "hidden", "image", "radio", "range", "reset", "submit"];
-  return !nonText.includes(element.type) && !element.disabled && !element.readOnly;
+  return (${WRITABLE_FIELD_SCRIPT})(element);
 }`;
 // Where a viewer's saved login would land, found through shadow roots and same-origin
-// frames: "password" for a password field, "field" for anything else, "frame" when focus is
-// in a cross-origin frame, which stays opaque and gets nothing.
-const FOCUSED_FIELD_SCRIPT = `() => {
+// frames: "password" for a password field, "field" for another writable field, "frame" when
+// focus is in a cross-origin frame, which stays opaque and gets nothing, and "none" when no
+// writable field has focus, so a fill never types into the page or Tabs onto a password.
+export const FOCUSED_FIELD_SCRIPT = `() => {
   let element = document.activeElement;
   while (element) {
     if (element.tagName === "IFRAME" || element.tagName === "FRAME") {
@@ -138,8 +143,8 @@ const FOCUSED_FIELD_SCRIPT = `() => {
     if (!inner || inner === element) break;
     element = inner;
   }
-  const password = element?.tagName === "INPUT" && element.type === "password" && !element.disabled && !element.readOnly;
-  return password ? "password" : "field";
+  if (!element || !(${WRITABLE_FIELD_SCRIPT})(element)) return "none";
+  return element.tagName === "INPUT" && element.type === "password" ? "password" : "field";
 }`;
 const httpOrigin = (url: string) => {
   try {
@@ -351,11 +356,15 @@ interface ServerTab {
   readonly openerTabId: string | undefined;
   /** Finished downloads, newest last; files live until the tab closes. */
   readonly downloads: Array<ServerDownload>;
-  /** A page's open file picker, waiting for the controlling viewer's files. */
+  /**
+   * A page's open file picker, waiting for the controlling viewer's files. Its
+   * id is reissued for each viewer it is offered to, so only that viewer can answer.
+   */
   fileChooser: {
     readonly id: string;
     readonly chooser: FileChooser;
     readonly accept: string;
+    readonly offeredTo: string | null;
   } | null;
   dialog: Dialog | null;
   /** A page's passkey request, waiting on the controlling viewer's device. */
@@ -1091,14 +1100,27 @@ const make = Effect.gen(function* () {
         .catch(() => null)) ?? "";
     // A newer picker replaces an unanswered one, as a real browser allows only one.
     if (previous) closeFileChooser(tab);
-    tab.fileChooser = { id: NodeCrypto.randomUUID(), chooser, accept: accept.slice(0, 1024) };
+    tab.fileChooser = {
+      id: NodeCrypto.randomUUID(),
+      chooser,
+      accept: accept.slice(0, 1024),
+      offeredTo: null,
+    };
     pushFileChooser(tab);
   };
 
   const pushFileChooser = (tab: ServerTab) => {
-    const message = fileChooserMessage(tab);
+    const open = tab.fileChooser;
     const controller = [...tab.viewers].find((viewer) => viewer.id === tab.control.controller);
-    if (message) controller?.push(message);
+    if (!open || !controller) return;
+    if (open.offeredTo !== controller.id) {
+      // A new controller gets a fresh id; the previous one can no longer answer.
+      tab.fileChooser = { ...open, id: NodeCrypto.randomUUID(), offeredTo: controller.id };
+      if (open.offeredTo !== null)
+        for (const viewer of tab.viewers) viewer.push({ _tag: "fileChooserClosed", id: open.id });
+    }
+    const message = fileChooserMessage(tab);
+    if (message) controller.push(message);
   };
 
   const closeFileChooser = (tab: ServerTab) => {
@@ -1114,7 +1136,14 @@ const make = Effect.gen(function* () {
   ) => {
     const tab = tabs.get(tabKey(input.threadId, input.tabId));
     const open = tab?.fileChooser;
-    if (!tab || !open || open.id !== input.chooserId) return false;
+    if (
+      !tab ||
+      !open ||
+      open.id !== input.chooserId ||
+      open.offeredTo === null ||
+      open.offeredTo !== tab.control.controller
+    )
+      return false;
     if (input.files.length > 0) {
       await open.chooser.setFiles(
         open.chooser.isMultiple() ? [...input.files] : input.files.slice(0, 1),
