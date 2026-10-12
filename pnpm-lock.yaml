@@ -80,6 +80,7 @@ catalogs:
       version: 11.0.5
 
 overrides:
+  dbus-next>xml2js: 0.6.0
   '@exodus/bytes>@noble/hashes': 1.8.0
   '@react-navigation/core': 7.21.13
   dbus-next>usocket: '-'
@@ -12275,10 +12276,6 @@ packages:
     resolution: {integrity: sha512-k8KO9hrMyNk6tUWqUfkTEZbezRRpONVOzUTnc97VnCvyj6Tf9lyUR9EDAIeiVLv56jsMcoXEwjW8Kv5yPY52lw==}
     engines: {node: '>=16.0.0'}
 
-  xml2js@0.4.23:
-    resolution: {integrity: sha512-ySPiMjM0+pLDftHgXY4By0uswI3SPKLDw/i3UXbnO8M/p28zqexCUoPmQFrYD+/1BzhGJSs2i1ERWKJAtiLrug==}
-    engines: {node: '>=4.0.0'}
-
   xml2js@0.6.0:
     resolution: {integrity: sha512-eLTh0kA8uHceqesPqSE+VvO1CDDJWMwlQfB6LuN6T8w6MaDJ8Txm8P7s5cHD0miF0V+GGTZrDQfxPZQVsur33w==}
     engines: {node: '>=4.0.0'}
@@ -18660,7 +18657,7 @@ snapshots:
       jsbi: 2.0.5
       long: 4.0.0
       safe-buffer: 5.2.1
-      xml2js: 0.4.23
+      xml2js: 0.6.0
 
   debounce-fn@4.0.0:
     dependencies:
@@ -23734,11 +23731,6 @@ snapshots:
 
   xml-naming@0.1.0:
     optional: true
-
-  xml2js@0.4.23:
-    dependencies:
-      sax: 1.6.1
-      xmlbuilder: 11.0.1
 
   xml2js@0.6.0:
     dependencies:
