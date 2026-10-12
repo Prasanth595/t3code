@@ -800,7 +800,7 @@ describe("EnvironmentSupervisor", () => {
           (state) => state.phase === "connected" && state.generation === 1,
         );
         yield* harness.setNetworkStatus("offline");
-        yield* TestClock.adjust("3 seconds");
+        yield* TestClock.adjust("6 seconds");
         yield* awaitState(supervisor.state, (state) => state.phase === "offline");
 
         expect(yield* Ref.get(harness.releaseCount)).toBe(1);
@@ -1313,8 +1313,8 @@ describe("EnvironmentSupervisor", () => {
       yield* harness.wake("application-active");
       yield* TestClock.adjust("5 seconds");
       yield* supervisor.retryNow;
-      // The retry's 3 second limit applies, not the 10 seconds left of the 15.
-      yield* TestClock.adjust("2999 millis");
+      // The retry's 6 second limit applies, not the 10 seconds left of the 15.
+      yield* TestClock.adjust("5999 millis");
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
       yield* TestClock.adjust("1 milli");
       yield* awaitState(
@@ -1337,7 +1337,7 @@ describe("EnvironmentSupervisor", () => {
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("application-active-probe");
-      yield* TestClock.adjust("3 seconds");
+      yield* TestClock.adjust("6 seconds");
       // The timed-out wake probe reconnects immediately without a backoff
       // sleep: no further clock advance is needed.
       yield* awaitState(
@@ -1953,7 +1953,7 @@ describe("EnvironmentSupervisor routes", () => {
 
       yield* Ref.set(lanReachable, false);
       yield* harness.wake("network-changed");
-      yield* TestClock.adjust("3 seconds");
+      yield* TestClock.adjust("6 seconds");
 
       yield* awaitState(
         supervisor.state,
