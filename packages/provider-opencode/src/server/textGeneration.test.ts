@@ -27,6 +27,8 @@ const runtimeMock = {
     sessionCreateCalls: 0,
     sessionCreateSignals: [] as Array<AbortSignal | undefined>,
     promptSignals: [] as Array<AbortSignal | undefined>,
+    sessionAbortIds: [] as string[],
+    abortFailure: undefined as Error | undefined,
     connectionError: undefined as Error | undefined,
     sessionCreateError: undefined as unknown,
     sessionResult: undefined as { data?: { id: string } } | undefined,
@@ -44,6 +46,8 @@ const runtimeMock = {
     this.state.sessionCreateCalls = 0;
     this.state.sessionCreateSignals.length = 0;
     this.state.promptSignals.length = 0;
+    this.state.sessionAbortIds.length = 0;
+    this.state.abortFailure = undefined;
     this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
     this.state.sessionResult = undefined;
@@ -107,6 +111,11 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
             throw runtimeMock.state.sessionCreateError;
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
+        },
+        abort: async (input: { readonly sessionID: string }) => {
+          runtimeMock.state.sessionAbortIds.push(input.sessionID);
+          if (runtimeMock.state.abortFailure) throw runtimeMock.state.abortFailure;
+          return { data: true };
         },
         prompt: async (
           input: { readonly parts: ReadonlyArray<unknown> },
@@ -567,6 +576,7 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(error.detail).toContain("timed out");
         expect(runtimeMock.state.sessionCreateSignals.at(-1)?.aborted).toBe(true);
         expect(runtimeMock.state.promptUrls).toEqual([]);
+        expect(runtimeMock.state.sessionAbortIds).toEqual([]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
@@ -589,6 +599,30 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(error).toBeInstanceOf(TextGenerationError);
         expect(error.detail).toContain("timed out");
         expect(runtimeMock.state.promptSignals.at(-1)?.aborted).toBe(true);
+        expect(runtimeMock.state.sessionAbortIds).toEqual(["http://127.0.0.1:4301/session"]);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("does not mask a timed-out prompt when its session abort fails", () =>
+    withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.abortFailure = new Error("synthetic session-abort failure");
+        runtimeMock.state.promptResult = new Promise(() => {}) as unknown as NonNullable<
+          typeof runtimeMock.state.promptResult
+        >;
+
+        const child = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        while (runtimeMock.state.promptUrls.length === 0) {
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust(Duration.seconds(181));
+        const error = yield* Fiber.join(child).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(TextGenerationError);
+        expect(error.detail).toContain("timed out");
+        expect(runtimeMock.state.sessionAbortIds).toEqual(["http://127.0.0.1:9999/session"]);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
