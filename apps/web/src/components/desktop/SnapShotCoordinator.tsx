@@ -349,6 +349,13 @@ export function SnapShotCoordinator() {
           // An animated capture may still be waiting on creation abandoned before this ready pass.
           // Its null result is evicted by resolveSnapShotDeliveryTarget; retry from this pass's route.
           if (!capturedTarget) {
+            if (
+              passContext.routeHref !== latestContextRef.current.routeHref ||
+              passContext.defaultProjectKey !== latestContextRef.current.defaultProjectKey
+            ) {
+              rerunRequestedRef.current = true;
+              continue;
+            }
             capturedTarget = await resolveSnapShotDeliveryTarget(
               captureTargetsRef.current,
               item.id,

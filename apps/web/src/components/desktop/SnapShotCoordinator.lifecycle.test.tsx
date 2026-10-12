@@ -166,6 +166,25 @@ it("delivers after ready when navigation already drained before draft creation w
   expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(pendingCapture.id);
 });
 
+it("retries an abandoned drain creation from the new route instead of its old project", async () => {
+  await mount(null);
+  const creation = deferred<{ draftId: DraftId } | null>();
+  const handleNewThread = vi.fn(() => creation.promise);
+  const project = scopeProjectRef(environmentId, ProjectId.make("old-project"));
+  route.current = { ...route.current, defaultProjectRef: project, handleNewThread };
+  await act(async () => root.render(<SnapShotCoordinator />));
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  expect(handleNewThread).toHaveBeenCalledExactlyOnceWith(project);
+
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => creation.resolve(null));
+
+  expect(handleNewThread).toHaveBeenCalledTimes(1);
+  expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(pendingCapture.id);
+});
+
 it("does not reuse live project resolution for a capture from an earlier drain pass", async () => {
   await mount(null);
   const projectA = scopeProjectRef(environmentId, ProjectId.make("project-a"));
