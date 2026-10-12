@@ -3,6 +3,7 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
+  type DesktopPendingSnapShot,
   type DesktopSnapShotEvent,
   EnvironmentId,
   type ScopedThreadRef,
@@ -40,7 +41,11 @@ const bridge = vi.hoisted(() => {
   const listeners = new Set<(event: DesktopSnapShotEvent) => void>();
   return {
     listeners,
-    listPendingSnapShots: vi.fn(async () => []),
+    listPendingSnapShots: vi.fn(async (): Promise<DesktopPendingSnapShot[]> => []),
+    // Delivery reads the capture first; stopping there keeps the test off image decoding.
+    readSnapShot: vi.fn(async (_id: string): Promise<never> => {
+      throw new Error("Capture read stopped by test.");
+    }),
     getSnapShotState: vi.fn(async () => ({})),
     onSnapShotEvent: vi.fn((listener: (event: DesktopSnapShotEvent) => void) => {
       listeners.add(listener);
@@ -79,7 +84,8 @@ async function mount(routeThreadRef: ScopedThreadRef | null) {
 
 beforeEach(() => {
   bridge.listeners.clear();
-  bridge.listPendingSnapShots.mockClear();
+  bridge.listPendingSnapShots.mockClear().mockResolvedValue([]);
+  bridge.readSnapShot.mockClear();
   bridge.onSnapShotEvent.mockClear();
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
 });
@@ -107,8 +113,23 @@ it("does not list pending captures when streaming updates the active thread", as
 });
 
 it("retries persisted captures once a destination bootstraps", async () => {
+  bridge.listPendingSnapShots.mockResolvedValue([
+    {
+      id: "c0ffee-02",
+      name: "window.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      source: {
+        kind: "snap-shot",
+        capturedAt: "2026-09-01T00:00:00.000Z",
+        appName: "Editor",
+        windowTitle: "main.ts",
+      },
+    },
+  ]);
   await mount(null);
   expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(1);
+  expect(bridge.readSnapShot).not.toHaveBeenCalled();
 
   for (let update = 1; update <= 5; update++) {
     setRoute(threadA, update);
@@ -116,6 +137,7 @@ it("retries persisted captures once a destination bootstraps", async () => {
   }
 
   expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(2);
+  expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith("c0ffee-02");
 });
 
 it("targets the thread the user navigated to for the next capture", async () => {
