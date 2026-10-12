@@ -62,10 +62,9 @@ export function environmentDisplayLabel(
   if (environment.environmentId === primaryEnvironmentId) {
     return `${environment.label} · this device`;
   }
-  const group = [
-    environment,
-    ...colliding.filter((other) => other.environmentId !== primaryEnvironmentId),
-  ];
+  // The client's own environment reads "this device", but it still takes part:
+  // a suffix it shares, such as the same OS, tells nothing apart.
+  const group = [environment, ...colliding];
   for (const rule of SUFFIX_RULES) {
     const suffixes = group.map(rule);
     if (suffixes.every((suffix) => suffix !== null) && new Set(suffixes).size === group.length) {

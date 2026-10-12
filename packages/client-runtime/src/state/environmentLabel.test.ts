@@ -46,6 +46,17 @@ describe("environmentDisplayLabel", () => {
     ]);
   });
 
+  it("does not name an OS that this device shares", () => {
+    const environments = [
+      environment("primary", { platformOs: "windows", displayUrl: "http://localhost:5964/" }),
+      environment("other", { platformOs: "windows", displayUrl: "http://127.0.0.1:14673/" }),
+    ];
+    expect(labels(environments, "primary")).toEqual([
+      "SwerveStation · this device",
+      "SwerveStation · 127.0.0.1:14673",
+    ]);
+  });
+
   it("tells colliding environments apart by OS", () => {
     const environments = [
       environment("a", { platformOs: "windows" }),
