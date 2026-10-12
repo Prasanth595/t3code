@@ -9429,6 +9429,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const secondPrompt = "Edit again.";
         // turn/start request, its response and turn/started, reusing the first native turn id.
+        // Codex never reuses a turn id; reusing it here makes the turn-end cleanup observable.
         const secondTurnStart = codexReplayPreamble({
           nativeThreadId,
           nativeTurnId,
