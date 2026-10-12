@@ -224,6 +224,7 @@ interface ChatMarkdownProps {
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   className?: string;
+  inline?: boolean;
   /** Treat single newlines as hard breaks — chat-style user input. */
   lineBreaks?: boolean;
   /** Parse sanitized raw HTML instead of displaying its source text. */
@@ -3399,6 +3400,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
 function ChatMarkdown({
   text,
   className,
+  inline = false,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
@@ -3448,6 +3450,8 @@ function ChatMarkdown({
               : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
           }
           skipHtml={false}
+          allowedElements={inline ? ["a", "strong", "em", "del", "code", "br"] : undefined}
+          unwrapDisallowed={inline}
           components={CHAT_MARKDOWN_COMPONENTS}
           urlTransform={markdownUrlTransform}
         >

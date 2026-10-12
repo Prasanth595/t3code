@@ -1,5 +1,9 @@
-import { type RuntimeRequestId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { Root, RootContent } from "mdast";
+import ChatMarkdown from "../ChatMarkdown";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -11,6 +15,8 @@ import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 
 interface PendingUserInputPanelProps {
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef;
   pendingUserInputs: PendingUserInput[];
   disabled?: boolean;
   respondingRequestIds: RuntimeRequestId[];
@@ -22,6 +28,8 @@ interface PendingUserInputPanelProps {
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  cwd,
+  threadRef,
   pendingUserInputs,
   disabled = false,
   respondingRequestIds,
@@ -37,6 +45,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
   return (
     <ComposerPendingUserInputCard
+      cwd={cwd}
+      threadRef={threadRef}
       key={activePrompt.requestId}
       prompt={activePrompt}
       disabled={disabled}
@@ -51,6 +61,8 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 });
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  cwd,
+  threadRef,
   prompt,
   disabled,
   isResponding,
@@ -60,6 +72,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance,
   onDismiss,
 }: {
+  cwd: string | undefined;
+  threadRef: ScopedThreadRef;
   prompt: PendingUserInput;
   disabled: boolean;
   isResponding: boolean;
@@ -73,6 +87,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
+  const optionIdPrefix = useId();
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
@@ -204,7 +219,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           </span>
           {isCollapsed ? (
             <span className="min-w-0 flex-1 truncate text-secondary-label">
-              {activeQuestion.question}
+              <ReactMarkdown remarkPlugins={[remarkGfm, remarkQuestionPreview]}>
+                {activeQuestion.question}
+              </ReactMarkdown>
             </span>
           ) : null}
         </ComposerBanner.Content>
@@ -242,7 +259,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
-            <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
+            <ChatMarkdown text={activeQuestion.question} cwd={cwd} threadRef={threadRef} />
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
@@ -256,8 +273,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   isOptimisticallySelected ||
                   (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
                 const shortcutKey = index < 9 ? index + 1 : null;
+                const labelId = `${optionIdPrefix}-${index}-label`;
+                const descriptionId = `${optionIdPrefix}-${index}-description`;
+                const hasDescription = option.description && option.description !== option.label;
                 const className = cn(
-                  "group flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                  "group relative flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-150",
                   isSelected
                     ? "bg-muted/55 text-foreground"
                     : "bg-transparent text-foreground/85 hover:bg-muted/30",
@@ -267,9 +287,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 const content = (
                   <>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">{option.label}</span>
-                      {option.description && option.description !== option.label ? (
-                        <span className="text-secondary-label text-2xs">{option.description}</span>
+                      <div id={labelId}>
+                        <ChatMarkdown
+                          text={option.label}
+                          cwd={cwd}
+                          threadRef={threadRef}
+                          inline
+                          className="text-sm font-medium [&_a]:pointer-events-auto [&_button]:pointer-events-auto"
+                        />
+                      </div>
+                      {hasDescription ? (
+                        <div id={descriptionId}>
+                          <ChatMarkdown
+                            text={option.description}
+                            cwd={cwd}
+                            threadRef={threadRef}
+                            inline
+                            className="text-secondary-label text-2xs [&_a]:pointer-events-auto [&_button]:pointer-events-auto"
+                          />
+                        </div>
                       ) : null}
                     </div>
                     {isSelected ? (
@@ -286,17 +322,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   </>
                 );
                 return (
-                  <button
-                    key={`${activeQuestion.id}:${optionValue}`}
-                    type="button"
-                    disabled={disabled || isResponding}
-                    onClick={() => {
-                      handleOptionSelection(activeQuestion.id, optionValue);
-                    }}
-                    className={className}
-                  >
-                    {content}
-                  </button>
+                  <div key={`${activeQuestion.id}:${optionValue}`} className={className}>
+                    <button
+                      type="button"
+                      disabled={disabled || isResponding}
+                      aria-labelledby={labelId}
+                      aria-describedby={hasDescription ? descriptionId : undefined}
+                      aria-pressed={isSelected}
+                      onClick={() => handleOptionSelection(activeQuestion.id, optionValue)}
+                      className="absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25"
+                    />
+                    <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2">
+                      {content}
+                    </div>
+                  </div>
                 );
               })}
             </div>
@@ -306,3 +345,23 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     </Collapsible>
   );
 });
+
+function remarkQuestionPreview() {
+  return (tree: Root) => {
+    const text = (node: Root | RootContent): string => {
+      if (node.type === "html" || node.type === "definition") return "";
+      if ("alt" in node) return node.alt ?? "";
+      if ("value" in node) return node.value;
+      if ("children" in node) {
+        const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(
+          node.type,
+        )
+          ? " "
+          : "";
+        return node.children.map(text).join(separator);
+      }
+      return node.type === "break" ? " " : "";
+    };
+    tree.children = [{ type: "text", value: text(tree).replace(/\s+/g, " ").trim() }];
+  };
+}
