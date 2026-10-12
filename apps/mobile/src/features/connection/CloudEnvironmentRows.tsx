@@ -197,7 +197,6 @@ function CloudEnvironmentRowsContent(
             <CloudEnvironmentRow
               key={environment.environment.environmentId}
               environment={environment}
-              opensActions={props.onOpenEnvironment !== undefined}
               onConnect={() => handleConnectCloudEnvironment(environment)}
               onDeregister={() => handleDeregisterCloudEnvironment(environment)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
@@ -305,8 +304,6 @@ function ConnectedCloudEnvironmentRow(props: {
  */
 function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
-  /** Tapping the row offers to deregister it, not only long-pressing. */
-  readonly opensActions: boolean;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
   readonly onDeregister: () => void;
@@ -321,15 +318,11 @@ function CloudEnvironmentRow(props: {
 
   return (
     <CloudEnvironmentRowShell
-      accessibilityHint={
-        props.opensActions
-          ? "Offers to deregister it from your T3 Connect account"
-          : "Long press to deregister from your T3 Connect account"
-      }
+      accessibilityHint="Offers to deregister it from your T3 Connect account"
       accessibilityLabel={props.environment.environment.label}
-      onPress={props.opensActions ? props.onDeregister : undefined}
+      onPress={props.onDeregister}
       onLongPress={props.onDeregister}
-      showsChevron={props.opensActions}
+      showsChevron
       connectionError={presentation.connectionError}
       connectionErrorTraceId={presentation.connectionErrorTraceId}
       connectionState={presentation.connectionState}
