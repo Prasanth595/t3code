@@ -347,6 +347,7 @@ function createTextGeneration(
       Effect.succeed({
         title: "Update workflow",
       }),
+    generateReviewGuide: () => Effect.succeed({ stops: [] }),
     ...overrides,
   };
 
@@ -395,6 +396,7 @@ function createTextGeneration(
             }),
         ),
       ),
+    generateReviewGuide: (input) => implementation.generateReviewGuide(input),
   };
 }
 
@@ -3829,6 +3831,47 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       );
       expect(mergeBase).toBe(mainSha);
       expect(generatedCount).toBe(1);
+    }),
+  );
+
+  it.effect.each([
+    { branch: "fix/name", existingBranches: ["fix"], expected: "fix-2/name" },
+    { branch: "fix/name", existingBranches: ["fix/name/child"], expected: "fix/name-2" },
+  ])("commits on $expected when $branch has ref namespace collisions", (scenario) =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const mainSha = (yield* runGit(repoDir, ["rev-parse", "main"])).stdout.trim();
+      for (const branch of scenario.existingBranches) {
+        yield* runGit(repoDir, ["branch", branch]);
+      }
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "hello\nnamespace-collision\n");
+
+      const { manager } = yield* makeManager({
+        textGeneration: {
+          generateCommitMessage: () =>
+            Effect.succeed({
+              subject: "Fix namespace collision",
+              body: "",
+              branch: scenario.branch,
+            }),
+        },
+      });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        featureBranch: true,
+      });
+
+      expect(result.branch).toEqual({ status: "created", name: scenario.expected });
+      expect(result.commit.status).toBe("created");
+      expect((yield* runGit(repoDir, ["branch", "--show-current"])).stdout.trim()).toBe(
+        scenario.expected,
+      );
+      expect((yield* runGit(repoDir, ["status", "--porcelain"])).stdout.trim()).toBe("");
+      for (const branch of ["main", ...scenario.existingBranches]) {
+        expect((yield* runGit(repoDir, ["rev-parse", branch])).stdout.trim()).toBe(mainSha);
+      }
     }),
   );
 
