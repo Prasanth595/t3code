@@ -62,7 +62,10 @@ export function isThreadWaitToolItem(
     readonly input?: unknown;
   },
 ): boolean {
-  if (item.type !== "dynamic_tool" || !isOrchestrationV2WorkActive(item.status)) return false;
+  // A pending call has not started blocking yet, so only a call that runs counts.
+  if (item.type !== "dynamic_tool" || (item.status !== "running" && item.status !== "waiting")) {
+    return false;
+  }
   // The shared resolver accepts every provider's spelling of a T3 tool and
   // rejects same-named tools from other MCP servers.
   const toolId = resolveT3McpToolId(item.toolName);

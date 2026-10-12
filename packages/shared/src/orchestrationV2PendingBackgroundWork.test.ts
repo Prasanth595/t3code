@@ -28,6 +28,7 @@ describe("isThreadWaitToolItem", () => {
     ["a blocking delegation", true, "mcp__t3-code__delegate_task", "running", { mode: "wait" }],
     ["an async delegation", false, "mcp__t3-code__delegate_task", "running", { mode: "async" }],
     ["a thread read", false, "mcp__t3-code__t3_thread_read", "running", {}],
+    ["a wait that has not started", false, "mcp__t3-code__t3_thread_wait", "pending", {}],
     ["a finished wait", false, "mcp__t3-code__t3_thread_wait", "completed", {}],
     ["an unrelated suffix", false, "my_t3_thread_wait_helper", "running", {}],
     ["another server's wait", false, "mcp__other__t3_thread_wait", "running", {}],
