@@ -203,7 +203,7 @@ function EnvironmentScopeMenu({
 
 function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
   const selected = groups.find((group) => group.projectKey === value.project);
-  const entries = projectScopeMenuEntries(groups, environments, value.machine);
+  const entries = projectScopeMenuEntries(groups, environments);
   const machineLabels = useProjectMachineLabels();
   const selectedEnvironmentIds = entries
     .find((entry) => entry.group === selected)

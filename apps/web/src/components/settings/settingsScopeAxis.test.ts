@@ -123,15 +123,19 @@ describe("settings scope project menu", () => {
       environments: entry.environments.map((environment) => environment.label),
     }));
 
-  it("lists only projects with a checkout on the selected environment, named by it", () => {
-    expect(summarize(projectScopeMenuEntries(groups, environments, fedora.environmentId))).toEqual([
+  it("names groups narrowed to one environment by that environment only", () => {
+    const onFedora = [
+      api,
+      group("shared", "shared", [member("shared-fedora", fedora.environmentId, "/src/shared")]),
+    ];
+    expect(summarize(projectScopeMenuEntries(onFedora, environments))).toEqual([
       { project: "api", environments: ["fedora"] },
       { project: "shared", environments: ["fedora"] },
     ]);
   });
 
   it("names each project's environments when every environment is in scope", () => {
-    expect(summarize(projectScopeMenuEntries(groups, environments, undefined))).toEqual([
+    expect(summarize(projectScopeMenuEntries(groups, environments))).toEqual([
       { project: "api", environments: ["fedora"] },
       { project: "shared", environments: ["fedora", "laptop"] },
       { project: "notes", environments: ["laptop"] },
@@ -139,7 +143,7 @@ describe("settings scope project menu", () => {
   });
 
   it("omits environment names when only one environment exists", () => {
-    expect(summarize(projectScopeMenuEntries([api], [fedora], undefined))).toEqual([
+    expect(summarize(projectScopeMenuEntries([api], [fedora]))).toEqual([
       { project: "api", environments: [] },
     ]);
   });
@@ -151,9 +155,7 @@ describe("settings scope project menu", () => {
     const onLaptop = group("astrabit-laptop", "Astrabit", [
       member("laptop", laptop.environmentId, "C:\\astrabit"),
     ]);
-    expect(
-      summarize(projectScopeMenuEntries([onFedora, onLaptop], environments, undefined)),
-    ).toEqual([
+    expect(summarize(projectScopeMenuEntries([onFedora, onLaptop], environments))).toEqual([
       { project: "astrabit-fedora", environments: ["fedora"] },
       { project: "astrabit-laptop", environments: ["laptop"] },
     ]);

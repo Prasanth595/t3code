@@ -53,27 +53,16 @@ export interface ProjectScopeMenuEntry<E extends ScopeEnvironment> {
 }
 
 /**
- * The project picker's rows. A chosen environment lists only projects with a
- * checkout there. Each row names its environments, so same-name projects read
- * as "Astrabit • Fedora" and "Astrabit • SwerveStation".
+ * The project picker's rows, from groups already narrowed to any chosen
+ * environment. Each row names its environments, so same-name projects read as
+ * "Astrabit • Fedora" and "Astrabit • SwerveStation".
  */
 export function projectScopeMenuEntries<E extends ScopeEnvironment>(
   groups: readonly SidebarProjectSnapshot[],
   environments: readonly E[],
-  machine: string | undefined,
 ): ProjectScopeMenuEntry<E>[] {
-  const visible =
-    machine === undefined
-      ? groups
-      : groups.filter((group) =>
-          group.memberProjects.some((member) => member.environmentId === machine),
-        );
-  return visible.map((group) => {
-    const shownIds = new Set(
-      group.memberProjects
-        .map((member) => member.environmentId)
-        .filter((environmentId) => machine === undefined || environmentId === machine),
-    );
+  return groups.map((group) => {
+    const shownIds = new Set(group.memberProjects.map((member) => member.environmentId));
     return {
       group,
       environments:
