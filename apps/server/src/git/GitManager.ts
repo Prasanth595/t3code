@@ -188,41 +188,30 @@ const REPOSITORY_FACTS_CACHE_TTL = Duration.seconds(60);
 interface RepositoryFacts {
   readonly remoteNames: ReadonlyArray<string>;
   readonly remoteUrlByName: ReadonlyMap<string, string>;
-  readonly remoteByBranch: ReadonlyMap<string, string>;
   readonly defaultBranch: string | null;
 }
 
 // Parses `git config -z --get-regexp` entries ("key\nvalue\0", or "key\0"
 // without a value). Section and variable names come back lowercased while
-// branch and remote names keep their case and may contain dots.
-function parseRemoteConfig(stdout: string) {
+// remote names keep their case and may contain dots.
+function parseRemoteUrls(stdout: string) {
   const remoteUrlByName = new Map<string, string>();
-  const remoteByBranch = new Map<string, string>();
   for (const entry of stdout.split("\0")) {
     const newline = entry.indexOf("\n");
     if (newline < 0) continue;
     const key = entry.slice(0, newline);
     const value = entry.slice(newline + 1).trim();
     if (value.length === 0) continue;
-    if (key.startsWith("remote.") && key.endsWith(".url")) {
-      remoteUrlByName.set(key.slice("remote.".length, -".url".length), value);
-    } else if (key.startsWith("branch.") && key.endsWith(".remote")) {
-      remoteByBranch.set(key.slice("branch.".length, -".remote".length), value);
-    }
+    remoteUrlByName.set(key.slice("remote.".length, -".url".length), value);
   }
-  return { remoteUrlByName, remoteByBranch };
+  return remoteUrlByName;
 }
 
-function prLookupRepositoryIdentity(
-  facts: RepositoryFacts,
-  branch: string,
-  remoteNameOverride: string | undefined,
-) {
+function prLookupRepositoryIdentity(facts: RepositoryFacts, remoteName: string | null) {
   const remoteUrlKey = (remoteName: string | null) => {
     const remoteUrl = remoteName === null ? undefined : facts.remoteUrlByName.get(remoteName);
     return remoteUrl === undefined ? null : normalizeGitRemoteUrl(remoteUrl);
   };
-  const remoteName = remoteNameOverride ?? facts.remoteByBranch.get(branch) ?? null;
   const targetRemoteUrlKey = remoteUrlKey("origin");
   return {
     remoteName,
@@ -1553,7 +1542,6 @@ export const make = Effect.gen(function* () {
       return {
         remoteNames,
         remoteUrlByName: new Map(),
-        remoteByBranch: new Map(),
         defaultBranch: null,
       } satisfies RepositoryFacts;
     }
@@ -1562,7 +1550,7 @@ export const make = Effect.gen(function* () {
         gitCore.execute({
           operation: "GitManager.branchPullRequest.remoteConfig",
           cwd,
-          args: ["config", "-z", "--get-regexp", "^(remote\\..*\\.url|branch\\..*\\.remote)$"],
+          args: ["config", "-z", "--get-regexp", "^remote\\..*\\.url$"],
           allowNonZeroExit: true,
         }),
         gitCore
@@ -1576,7 +1564,7 @@ export const make = Effect.gen(function* () {
     );
     return {
       remoteNames,
-      ...parseRemoteConfig(remoteConfig.exitCode === 0 ? remoteConfig.stdout : ""),
+      remoteUrlByName: parseRemoteUrls(remoteConfig.exitCode === 0 ? remoteConfig.stdout : ""),
       defaultBranch,
     } satisfies RepositoryFacts;
   });
@@ -2533,11 +2521,15 @@ export const make = Effect.gen(function* () {
     // The cached head context may have resolved on a different remote than
     // the saved upstream: a branch tracking origin/main but pushed to a fork
     // is looked up on the fork. Verify against the remote the lookup used.
-    const identityRemoteName = (headContext: BranchHeadContext) =>
-      headContext.remoteName ?? remoteName ?? undefined;
-    const identityOf = (headContext: BranchHeadContext) =>
-      prLookupRepositoryIdentity(facts, branch, identityRemoteName(headContext));
-    type Identity = ReturnType<typeof identityOf>;
+    const identityOf = Effect.fnUntraced(function* (headContext: BranchHeadContext) {
+      return prLookupRepositoryIdentity(
+        facts,
+        headContext.remoteName ??
+          remoteName ??
+          (yield* readConfigValueNullable(cacheCwd, `branch.${branch}.remote`)),
+      );
+    });
+    type Identity = ReturnType<typeof prLookupRepositoryIdentity>;
     const canVerifyIdentity = (headContext: BranchHeadContext, identity: Identity) =>
       !(
         (headContext.headRemoteUrlKey !== null && identity.headRemoteUrlKey === null) ||
@@ -2546,7 +2538,7 @@ export const make = Effect.gen(function* () {
     const hasSameIdentity = (headContext: BranchHeadContext, identity: Identity) =>
       headContext.headRemoteUrlKey === identity.headRemoteUrlKey &&
       headContext.targetRemoteUrlKey === identity.targetRemoteUrlKey;
-    let currentIdentity = identityOf(cached.headContext);
+    let currentIdentity = yield* identityOf(cached.headContext);
     if (
       !canVerifyIdentity(cached.headContext, currentIdentity) ||
       !hasSameIdentity(cached.headContext, currentIdentity)
@@ -2560,7 +2552,7 @@ export const make = Effect.gen(function* () {
       if (!options?.refresh && refreshed?.cacheKey !== cacheKey) {
         return yield* branchPullRequest({ cwd, branch }, { refresh: true });
       }
-      currentIdentity = identityOf(cached.headContext);
+      currentIdentity = yield* identityOf(cached.headContext);
     }
     if (!canVerifyIdentity(cached.headContext, currentIdentity)) {
       return yield* new GitManagerError({
@@ -2572,7 +2564,7 @@ export const make = Effect.gen(function* () {
     if (!hasSameIdentity(cached.headContext, currentIdentity)) {
       yield* Cache.invalidate(prLookupCache, cacheKey);
       cached = yield* getPrLookup(cacheKey);
-      const refreshedIdentity = identityOf(cached.headContext);
+      const refreshedIdentity = yield* identityOf(cached.headContext);
       if (
         !canVerifyIdentity(cached.headContext, refreshedIdentity) ||
         !hasSameIdentity(cached.headContext, refreshedIdentity)
