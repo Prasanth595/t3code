@@ -173,7 +173,7 @@ export function PullRequestReviewSheet({
         placeholder={
           reviewing
             ? summaryRequired
-              ? "Summarize your review (required to request changes)"
+              ? "Summary required to request changes…"
               : "Summarize your review…"
             : "Write a comment…"
         }
