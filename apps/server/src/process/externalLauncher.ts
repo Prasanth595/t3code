@@ -95,6 +95,7 @@ const POWERSHELL_ARGUMENTS_PREFIX = [
 
 const DETACHED_IGNORE_STDIO_OPTIONS = {
   detached: true,
+  windowsHide: true,
   stdin: "ignore",
   stdout: "ignore",
   stderr: "ignore",
@@ -228,6 +229,7 @@ function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLa
     args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
     options: {
       detached: true,
+      windowsHide: true,
       shell: false,
       stdin: "ignore",
       stdout: "ignore",
@@ -745,6 +747,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       args: spawnCommand.args,
       options: {
         detached: true,
+        windowsHide: true,
         shell: spawnCommand.shell,
         stdin: "ignore",
         stdout: "ignore",

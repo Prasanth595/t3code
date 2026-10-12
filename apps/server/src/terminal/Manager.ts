@@ -810,12 +810,12 @@ const windowsProcessTableSnapshot = Effect.fn("terminal.windowsProcessTableSnaps
   > {
     const processRunner = yield* ProcessRunner.ProcessRunner;
     const command =
-      'Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { Write-Output "$($_.ProcessId)|$($_.ParentProcessId)|$($_.Name)" }';
+      'foreach ($p in (Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,Name -ErrorAction Stop)) { "$($p.ProcessId)|$($p.ParentProcessId)|$($p.Name)" }';
     const result = yield* processRunner
       .run({
         command: "powershell.exe",
         args: ["-NoProfile", "-NonInteractive", "-Command", command],
-        timeout: "1500 millis",
+        timeout: "4000 millis",
         maxOutputBytes: 262_144,
         outputMode: "truncate",
         timeoutBehavior: "timedOutResult",
@@ -1660,49 +1660,75 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    const terminated = yield* Effect.try({
-      try: () => process.kill("SIGTERM"),
-      catch: (cause) =>
-        new TerminalProcessSignalError({
-          cause,
-          signal: "SIGTERM",
-          terminalPid: process.pid,
+    let exited = false;
+    const unsubscribeExit = process.onExit(() => {
+      exited = true;
+    });
+    const waitForProcessExit = Effect.callback<boolean>((resume) => {
+      if (exited) {
+        resume(Effect.succeed(true));
+        return;
+      }
+      const stop = process.onExit(() => {
+        resume(Effect.succeed(true));
+      });
+      return Effect.sync(stop);
+    });
+    try {
+      const terminated = yield* Effect.try({
+        try: () => process.kill("SIGTERM"),
+        catch: (cause) =>
+          new TerminalProcessSignalError({
+            cause,
+            signal: "SIGTERM",
+            terminalPid: process.pid,
+          }),
+      }).pipe(
+        Effect.as(true),
+        Effect.catch((error) =>
+          Effect.logWarning("failed to kill terminal process", {
+            threadId,
+            terminalId,
+            signal: "SIGTERM",
+            cause: error,
+          }).pipe(Effect.as(false)),
+        ),
+      );
+      if (!terminated) {
+        return;
+      }
+
+      const exitedBeforeGrace = yield* waitForProcessExit.pipe(
+        Effect.timeoutOrElse({
+          duration: processKillGraceMs,
+          orElse: () => Effect.succeed(false),
         }),
-    }).pipe(
-      Effect.as(true),
-      Effect.catch((error) =>
-        Effect.logWarning("failed to kill terminal process", {
-          threadId,
-          terminalId,
-          signal: "SIGTERM",
-          cause: error,
-        }).pipe(Effect.as(false)),
-      ),
-    );
-    if (!terminated) {
-      return;
+      );
+      if (exitedBeforeGrace || exited) {
+        return;
+      }
+
+      yield* Effect.try({
+        try: () => process.kill("SIGKILL"),
+        catch: (cause) =>
+          new TerminalProcessSignalError({
+            cause,
+            signal: "SIGKILL",
+            terminalPid: process.pid,
+          }),
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to force-kill terminal process", {
+            threadId,
+            terminalId,
+            signal: "SIGKILL",
+            cause: error,
+          }),
+        ),
+      );
+    } finally {
+      unsubscribeExit();
     }
-
-    yield* Effect.sleep(processKillGraceMs);
-
-    yield* Effect.try({
-      try: () => process.kill("SIGKILL"),
-      catch: (cause) =>
-        new TerminalProcessSignalError({
-          cause,
-          signal: "SIGKILL",
-          terminalPid: process.pid,
-        }),
-    }).pipe(
-      Effect.catch((error) =>
-        Effect.logWarning("failed to force-kill terminal process", {
-          threadId,
-          terminalId,
-          signal: "SIGKILL",
-          cause: error,
-        }),
-      ),
-    );
   });
 
   const startKillEscalation = Effect.fn("terminal.startKillEscalation")(function* (

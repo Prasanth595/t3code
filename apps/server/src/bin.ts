@@ -16,8 +16,14 @@ if (
     runtimeMain: import.meta.main,
   })
 ) {
+  const entryArg = process.argv[1] ?? "";
   const command = process.argv[2];
-  if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
+  if (
+    typeof process.send === "function" &&
+    /(?:^|[\\/])conpty_console_list_agent(?:\.js)?$/iu.test(entryArg)
+  ) {
+    process.exit(0);
+  } else if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {

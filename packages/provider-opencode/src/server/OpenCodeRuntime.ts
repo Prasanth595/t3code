@@ -756,11 +756,14 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
                 // any serve process left in that group.
               }
             });
-      const terminateChild = killOpenCodeProcessGroup("SIGTERM").pipe(
-        Effect.andThen(Effect.sleep("1 second")),
-        Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
-        Effect.ignore,
-      );
+      const terminateChild = (
+        hostPlatform === "win32"
+          ? killOpenCodeProcessGroup("SIGTERM")
+          : killOpenCodeProcessGroup("SIGTERM").pipe(
+              Effect.andThen(Effect.sleep("1 second")),
+              Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
+            )
+      ).pipe(Effect.ignore);
       // Registered before recording, so an interrupt while the ledger writes
       // still stops the group.
       yield* Scope.addFinalizer(runtimeScope, terminateChild);
