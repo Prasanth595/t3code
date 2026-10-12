@@ -1526,7 +1526,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
           // T3's tools are an addition: a session that cannot receive them still runs.
           Effect.catch((cause) =>
-            Effect.logWarning("Could not write the T3 Code MCP credential file.", cause).pipe(
+            Effect.logWarning("Could not update the T3 Code MCP credential file.", cause).pipe(
               Effect.as(undefined),
             ),
           ),

@@ -527,16 +527,23 @@ describe("AcpSessionRuntime", () => {
 
   it.effect("drops a raw MCP credential the server inherited from an older build", () =>
     Effect.gen(function* () {
+      const stale = {
+        T3_ACP_MCP_AUTHORIZATION: "Bearer stale-dummy-mcp-credential",
+        T3_MCP_BEARER_TOKEN: "stale-dummy-mcp-credential",
+        T3_CODE_MCP_AUTHORIZATION: "Bearer stale-dummy-mcp-credential",
+      };
       yield* Effect.acquireRelease(
         Effect.sync(() => {
-          const previous = process.env.T3_ACP_MCP_AUTHORIZATION;
-          process.env.T3_ACP_MCP_AUTHORIZATION = "Bearer stale-dummy-mcp-credential";
-          return previous;
+          const saved = Object.keys(stale).map((name) => [name, process.env[name]] as const);
+          Object.assign(process.env, stale);
+          return saved;
         }),
-        (previous) =>
+        (saved) =>
           Effect.sync(() => {
-            if (previous === undefined) delete process.env.T3_ACP_MCP_AUTHORIZATION;
-            else process.env.T3_ACP_MCP_AUTHORIZATION = previous;
+            for (const [name, value] of saved) {
+              if (value === undefined) delete process.env[name];
+              else process.env[name] = value;
+            }
           }),
       );
       const runtime = yield* AcpSessionRuntime.make({

@@ -72,8 +72,10 @@ export function withoutRawMcpCredentials(
 }
 
 /**
- * Owner-only files holding MCP `Authorization` header values, one per key,
- * each in a private temporary directory that closing the scope removes.
+ * Files holding MCP `Authorization` header values, one per key, each in a
+ * private temporary directory that closing the scope removes. On POSIX each
+ * file has mode `0600` from its first write on, in a `0700` directory. Windows
+ * ignores the mode, so the file gets the ACL of the user's temp directory.
  *
  * Child processes that send the header themselves (the ACP stdio bridge and
  * `acp-mcp-call`, the Pi extension) receive a path instead of the value: an
@@ -84,8 +86,8 @@ export function withoutRawMcpCredentials(
 export const makeMcpCredentialFiles = Effect.fn("makeMcpCredentialFiles")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const scope = yield* Effect.scope;
-  // Writes run one at a time, so each file holds the header recorded for it
-  // and the next read that sees a different header rewrites it.
+  // Writes and removals run one at a time and never interleave. A `write` with
+  // a header other than the recorded one rewrites the file.
   const permit = yield* Semaphore.make(1);
   const files = new Map<
     string,
@@ -104,8 +106,13 @@ export const makeMcpCredentialFiles = Effect.fn("makeMcpCredentialFiles")(functi
             files.set(key, { path, authorization: undefined });
           }
           // Renamed over the file, so a reader never finds it missing or half written.
+          // Created fresh and exclusively: an existing `.tmp` keeps its own mode, and one
+          // that appears after the delete must not receive the header.
           const temporary = `${path}.tmp`;
-          yield* fs.writeFileString(temporary, authorization, { mode: 0o600 }).pipe(
+          yield* fs.remove(temporary, { force: true }).pipe(
+            Effect.andThen(
+              fs.writeFileString(temporary, authorization, { mode: 0o600, flag: "wx" }),
+            ),
             Effect.andThen(fs.rename(temporary, path)),
             Effect.onError(() => fs.remove(temporary, { force: true }).pipe(Effect.ignore)),
           );
@@ -119,10 +126,12 @@ export const makeMcpCredentialFiles = Effect.fn("makeMcpCredentialFiles")(functi
         Effect.gen(function* () {
           const current = files.get(key);
           if (current === undefined) return;
+          // Forgotten first, so a removal that stops part way leaves no header
+          // for a later `write` to trust.
+          files.set(key, { path: current.path, authorization: undefined });
           // Even with no header recorded: a failed write can leave either file.
           yield* fs.remove(current.path, { force: true });
           yield* fs.remove(`${current.path}.tmp`, { force: true });
-          files.set(key, { path: current.path, authorization: undefined });
         }),
       ),
   };

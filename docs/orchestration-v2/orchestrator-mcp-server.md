@@ -153,11 +153,12 @@ extension into the server cache and spawns
 
 ```text
 T3_MCP_URL=http://127.0.0.1:<port>/mcp
-T3_MCP_AUTHORIZATION_FILE=<owner-only file holding the Authorization header>
+T3_MCP_AUTHORIZATION_FILE=<file holding the Authorization header>
 ```
 
-Only the file's path is in Pi's environment. Commands Pi runs do not inherit
-the token, so it is not in their `COREDUMP_ENVIRON` either.
+On POSIX the file has mode `0600`; on Windows it gets the user temp directory's
+ACL. Only the file's path is in Pi's environment. Commands Pi runs do not
+inherit the token, so it is not in their `COREDUMP_ENVIRON` either.
 
 The extension preserves public names under `mcp__t3-code__` for saved loadouts
 and tool selectors. Modern Pi also receives hidden `mcp__t3_code__` aliases,

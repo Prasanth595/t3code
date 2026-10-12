@@ -2329,7 +2329,11 @@ const program = Effect.gen(function* () {
       return Effect.succeed({
         inherited: process.env.T3_ACP_RUNTIME_AMBIENT === "sentinel",
         explicit: process.env.T3_ACP_RUNTIME_EXPLICIT === "kept",
-        rawMcpCredential: process.env.T3_ACP_MCP_AUTHORIZATION !== undefined,
+        rawMcpCredential: [
+          "T3_ACP_MCP_AUTHORIZATION",
+          "T3_MCP_BEARER_TOKEN",
+          "T3_CODE_MCP_AUTHORIZATION",
+        ].some((name) => process.env[name] !== undefined),
       });
     }
     if (method === "_test/release-resume") {

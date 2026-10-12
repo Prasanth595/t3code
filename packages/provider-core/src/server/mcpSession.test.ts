@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -69,7 +71,7 @@ describe("makeMcpCredentialFiles", () => {
     expect((yield* (yield* FileSystem.FileSystem).stat(path)).mode & 0o777).toBe(0o600);
   });
 
-  it.effect("rewrites a key's file in place and skips an unchanged header", () =>
+  it.effect("keeps a key's path through a rotation and skips an unchanged header", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const files = yield* makeMcpCredentialFiles();
@@ -98,6 +100,115 @@ describe("makeMcpCredentialFiles", () => {
       expect(yield* files.write("thread-a", "Bearer dummy-mcp-credential")).toBe(path);
       expect(yield* fs.readFileString(path)).toBe("Bearer dummy-mcp-credential");
       yield* expectOwnerOnly(path);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("writes the file again after a removal that stopped part way", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let failTemporaryRemove = false;
+      const files = yield* makeMcpCredentialFiles().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          remove: (path, options) =>
+            failTemporaryRemove && path.endsWith(".tmp")
+              ? Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "remove",
+                  }),
+                )
+              : fs.remove(path, options),
+        }),
+      );
+      const path = yield* files.write("thread-a", "Bearer dummy-mcp-credential");
+
+      // The stable file goes, then deleting its `.tmp` fails.
+      failTemporaryRemove = true;
+      yield* Effect.flip(files.remove("thread-a"));
+      expect(yield* fs.exists(path)).toBe(false);
+
+      failTemporaryRemove = false;
+      expect(yield* files.write("thread-a", "Bearer dummy-mcp-credential")).toBe(path);
+      expect(yield* fs.readFileString(path)).toBe("Bearer dummy-mcp-credential");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("writes the file again after a removal that was interrupted part way", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const stableFileGone = yield* Deferred.make<void>();
+      let pauseTemporaryRemove = false;
+      const files = yield* makeMcpCredentialFiles().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          remove: (path, options) =>
+            pauseTemporaryRemove && path.endsWith(".tmp")
+              ? Deferred.succeed(stableFileGone, undefined).pipe(Effect.andThen(Effect.never))
+              : fs.remove(path, options),
+        }),
+      );
+      const path = yield* files.write("thread-a", "Bearer dummy-mcp-credential");
+
+      // The stable file goes, then the removal is interrupted while deleting its `.tmp`.
+      pauseTemporaryRemove = true;
+      const removal = yield* Effect.forkChild(files.remove("thread-a"));
+      yield* Deferred.await(stableFileGone);
+      expect(yield* fs.exists(path)).toBe(false);
+      yield* Fiber.interrupt(removal);
+
+      pauseTemporaryRemove = false;
+      expect(yield* files.write("thread-a", "Bearer dummy-mcp-credential")).toBe(path);
+      expect(yield* fs.readFileString(path)).toBe("Bearer dummy-mcp-credential");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("replaces a leftover temporary file instead of writing into it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files = yield* makeMcpCredentialFiles();
+      const path = yield* files.write("thread-a", "Bearer dummy-mcp-credential");
+      yield* fs.writeFileString(`${path}.tmp`, "junk");
+      yield* fs.chmod(`${path}.tmp`, 0o644);
+
+      yield* files.write("thread-a", "Bearer rotated-dummy-mcp-credential");
+      expect(yield* fs.readFileString(path)).toBe("Bearer rotated-dummy-mcp-credential");
+      yield* expectOwnerOnly(path);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not write into a temporary file created after the leftover is deleted", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      let planted: string | undefined;
+      const files = yield* makeMcpCredentialFiles().pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          // Another process creates a readable `.tmp` right after the delete.
+          remove: (path, options) =>
+            Effect.gen(function* () {
+              yield* fs.remove(path, options);
+              if (planted === undefined || !path.endsWith(".tmp")) return;
+              yield* fs.link(planted, path);
+              planted = undefined;
+            }),
+        }),
+      );
+      const path = yield* files.write("thread-a", "Bearer dummy-mcp-credential");
+      // A second name for the planted file, so it can be read after cleanup removes the `.tmp`.
+      const plantedPath = `${path}.planted`;
+      yield* fs.writeFileString(plantedPath, "junk");
+      yield* fs.chmod(plantedPath, 0o644);
+      planted = plantedPath;
+
+      const error = yield* Effect.flip(
+        files.write("thread-a", "Bearer rotated-dummy-mcp-credential"),
+      );
+      expect(error.reason).toMatchObject({ _tag: "AlreadyExists", method: "writeFile" });
+      expect(yield* fs.readFileString(path)).toBe("Bearer dummy-mcp-credential");
+      expect(yield* fs.readFileString(plantedPath)).toBe("junk");
+      expect(yield* fs.exists(`${path}.tmp`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
