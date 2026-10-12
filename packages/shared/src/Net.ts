@@ -139,6 +139,7 @@ export const make = () => {
         hasListenerOnHost(port, "127.0.0.1"),
         hasListenerOnHost(port, "::1"),
         (ipv4, ipv6) => ipv4 || ipv6,
+        { concurrent: true },
       );
       if (hasListener) {
         return false;
@@ -148,6 +149,7 @@ export const make = () => {
         canListenOnHost(port, "127.0.0.1"),
         canListenOnHost(port, "::1"),
         (ipv4, ipv6) => ipv4 && ipv6,
+        { concurrent: true },
       );
     });
 

@@ -356,10 +356,12 @@ export function readEnvironmentFromWindowsShell(
     typeof optionsOrExecFile === "function"
       ? ({} satisfies WindowsEnvironmentProbeOptions)
       : (optionsOrExecFile ?? {});
+  const defaultExecFile: ExecFileSyncLike = (file, args, execOptions) =>
+    NodeChildProcess.execFileSync(file, args, { ...execOptions, windowsHide: true });
   const execFile: ExecFileSyncLike =
     typeof optionsOrExecFile === "function"
       ? optionsOrExecFile
-      : (maybeExecFile ?? (NodeChildProcess.execFileSync as ExecFileSyncLike));
+      : (maybeExecFile ?? defaultExecFile);
   const command = buildWindowsEnvironmentCaptureCommand(names);
   const args = [
     "-NoLogo",
@@ -750,7 +752,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     options.env === undefined
       ? hostEnvironment
       : options.extendEnv
-        ? { ...hostEnvironment, ...options.env }
+        ? mergeWindowsEnv(hostEnvironment, options.env)
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
   // The scan is synchronous and runs before every child process, so it shares
@@ -768,7 +770,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     env.MSYSTEM ? "msystem" : "",
     command,
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
-  const nowNanos = yield* Clock.currentTimeNanos;
+  const nowNanos = yield* Clock.monotonicTimeNanos;
   const cached = explicitPath ? undefined : cache.get(cacheKey);
   let resolvedExecutable: string | null;
   if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
@@ -840,6 +842,13 @@ function mergeWindowsEnv(
   const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
   for (const [key, value] of Object.entries(patch)) {
     if (value !== undefined) {
+      if (key.toUpperCase() === "PATH") {
+        for (const existingKey of Object.keys(nextEnv)) {
+          if (existingKey !== key && existingKey.toUpperCase() === "PATH") {
+            delete nextEnv[existingKey];
+          }
+        }
+      }
       nextEnv[key] = value;
     }
   }
