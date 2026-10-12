@@ -128,11 +128,6 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
-  const layerThreadManagement = ThreadManagement.layer.pipe(
-    Layer.provide(layerOrchestrator),
-    Layer.provide(layerServerSettings),
-    Layer.provide(layerReceipts),
-  );
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(
     options.createWorktree ??
@@ -157,30 +152,49 @@ function makeHarness(options: HarnessOptions = {}) {
   const generateThreadTitle = vi.fn(
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
+  const layerProjectService = Layer.succeed(ProjectService.ProjectService, {
+    create: () => Effect.die("unused"),
+    bootstrap: () => Effect.die("unused"),
+    update: () => Effect.die("unused"),
+    delete: () => Effect.die("unused"),
+    getById: (id) =>
+      Effect.succeed(
+        id === projectId
+          ? Option.some(configuredProject)
+          : id === otherProjectId
+            ? Option.some(otherProject)
+            : Option.none(),
+      ),
+    getByWorkspaceRoot: () => Effect.succeed(Option.some(configuredProject)),
+    snapshot: Effect.die("unused"),
+    getShell: () => Effect.die("unused"),
+    listShells: () => Effect.die("unused"),
+    listAgents: () =>
+      Effect.succeed([
+        {
+          id: AgentId.make("lead"),
+          name: "Lead",
+          description: "Coordinates work.",
+        },
+        {
+          id: AgentId.make("reasoner"),
+          name: "Reasoner",
+          description: "Reasons carefully.",
+          tier: "reasoning",
+        },
+        {
+          id: AgentId.make("inheritor"),
+          name: "Inheritor",
+          description: "Inherits the selected model.",
+        },
+      ]),
+  });
   const layerExternalServices = Layer.mergeAll(
     NodeServices.layer,
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
-    Layer.succeed(ProjectService.ProjectService, {
-      create: () => Effect.die("unused"),
-      bootstrap: () => Effect.die("unused"),
-      update: () => Effect.die("unused"),
-      delete: () => Effect.die("unused"),
-      getById: (id) =>
-        Effect.succeed(
-          id === projectId
-            ? Option.some(configuredProject)
-            : id === otherProjectId
-              ? Option.some(otherProject)
-              : Option.none(),
-        ),
-      getByWorkspaceRoot: () => Effect.succeed(Option.some(configuredProject)),
-      snapshot: Effect.die("unused"),
-      getShell: () => Effect.die("unused"),
-      listShells: () => Effect.die("unused"),
-      listAgents: () => Effect.die("unused"),
-    }),
+    layerProjectService,
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
       renameBranch,
@@ -207,6 +221,12 @@ function makeHarness(options: HarnessOptions = {}) {
         namedProjectsRoot: "/projects",
         folderForThread: () => Effect.succeed(Option.none()),
       }),
+  );
+  const layerThreadManagement = ThreadManagement.layer.pipe(
+    Layer.provide(layerOrchestrator),
+    Layer.provide(layerServerSettings),
+    Layer.provide(layerReceipts),
+    Layer.provide(layerProjectService),
   );
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
@@ -2051,7 +2071,6 @@ it.effect("uses the persisted thread model when resuming after an accepted creat
       projectId: input.projectId,
       title: input.title,
       modelSelection: persistedModelSelection,
-      agentId: AgentId.make("lead"),
       runtimeMode: input.runtimeMode,
       interactionMode: input.interactionMode,
       branch: null,

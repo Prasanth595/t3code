@@ -1,5 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import {
+  AgentId,
   CommandId,
   MessageId,
   NodeId,
@@ -32,6 +33,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -359,7 +361,8 @@ it.effect("inherits the machine value when the project has no override", () => {
 });
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
+  (dispatched: Array<string>, agentListCalls: Array<ProjectId> = [], validAgentId?: AgentId) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
@@ -380,6 +383,17 @@ const layerDispatchChokepointTest =
             Effect.sync(() => {
               dispatched.push(command.type);
               return { sequence: 1, storedEvents: [] } as never;
+            }),
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.mock(ProjectService.ProjectService)({
+          listAgents: ({ projectId }) =>
+            Effect.sync(() => {
+              agentListCalls.push(projectId);
+              return validAgentId === undefined
+                ? []
+                : [{ id: validAgentId, name: "Selected agent", description: "Test agent." }];
             }),
         }),
       ),
@@ -475,6 +489,133 @@ it.effect(
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect("rejects a direct thread.create with an unknown custom agent before dispatch", () => {
+  const projectId = ProjectId.make("project:thread-management:unknown-agent");
+  const threadId = ThreadId.make("thread:thread-management:unknown-agent");
+  const commandId = CommandId.make("command:thread-management:unknown-agent");
+  const dispatched: Array<string> = [];
+  const agentListCalls: Array<ProjectId> = [];
+  const layerTest = layerDispatchChokepointTest(ServerSettings.layerTest())(
+    dispatched,
+    agentListCalls,
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const error = yield* Effect.flip(
+      threads.dispatch({
+        type: "thread.create",
+        commandId,
+        threadId,
+        projectId,
+        title: "Unknown agent",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "test",
+        },
+        agentId: AgentId.make("missing-agent"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      }),
+    );
+
+    expect(error).toBeInstanceOf(Orchestrator.OrchestratorCommandRejectedError);
+    expect(dispatched).toEqual([]);
+    expect(agentListCalls).toEqual([projectId]);
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("accepts a direct thread.create when its custom agent exists", () => {
+  const projectId = ProjectId.make("project:thread-management:known-agent");
+  const threadId = ThreadId.make("thread:thread-management:known-agent");
+  const commandId = CommandId.make("command:thread-management:known-agent");
+  const agentId = AgentId.make("selected-agent");
+  const dispatched: Array<string> = [];
+  const agentListCalls: Array<ProjectId> = [];
+  const layerTest = layerDispatchChokepointTest(ServerSettings.layerTest())(
+    dispatched,
+    agentListCalls,
+    agentId,
+  );
+
+  return Effect.gen(function* () {
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId,
+      threadId,
+      projectId,
+      title: "Known agent",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "test",
+      },
+      agentId,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    expect(dispatched).toEqual(["thread.create"]);
+    expect(agentListCalls).toEqual([projectId]);
+  }).pipe(Effect.provide(layerTest));
+});
+
+it.effect("replays an accepted thread.create without revalidating its custom agent", () => {
+  const projectId = ProjectId.make("project:thread-management:agent-replay");
+  const threadId = ThreadId.make("thread:thread-management:agent-replay");
+  const commandId = CommandId.make("command:thread-management:agent-replay");
+  const dispatched: Array<string> = [];
+  const agentListCalls: Array<ProjectId> = [];
+  const layerTest = layerDispatchChokepointTest(ServerSettings.layerTest())(
+    dispatched,
+    agentListCalls,
+  );
+
+  return Effect.gen(function* () {
+    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+    yield* receipts.insertIfAbsent({
+      commandId,
+      threadId,
+      commandType: "thread.create",
+      acceptedAt: yield* DateTime.now,
+      resultSequence: 1,
+      status: "accepted",
+      error: null,
+    });
+
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    yield* threads.dispatch({
+      type: "thread.create",
+      commandId,
+      threadId,
+      projectId,
+      title: "Accepted agent replay",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "test",
+      },
+      agentId: AgentId.make("removed-agent"),
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+
+    expect(dispatched).toEqual(["thread.create"]);
+    expect(agentListCalls).toEqual([]);
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect("classifies projection infrastructure failures separately from a missing thread", () => {
   const projectId = ProjectId.make("project:thread-management:projection-failure");
