@@ -38,14 +38,13 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { linkCommitSubject } from "./forkChangelog.logic";
+import { ForkChangelogAgentMenu } from "./ForkChangelogAgentMenu";
+import { type ForkChangelogTab, linkCommitSubject } from "./forkChangelog.logic";
 
 /** How often the open changelog re-reads a queued or running Fork Sync run. */
 const SYNC_REFRESH_MS = 5_000;
 /** Each release reads GitHub, so the timeline adds older releases on request. */
 const RELEASE_PAGE_SIZE = 10;
-
-type ForkChangelogTab = "releases" | "upstream";
 
 interface ChangelogClock {
   readonly nowMs: number;
@@ -75,6 +74,7 @@ export function ForkChangelogDialog({
   readonly onOpenChange: (open: boolean) => void;
 }) {
   const [tab, setTab] = useState<ForkChangelogTab>("releases");
+  const environmentId = usePrimaryEnvironmentId();
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -85,21 +85,30 @@ export function ForkChangelogDialog({
             Fork releases, and the upstream changes that fork main does not have yet.
           </DialogDescription>
           {/* The header stays in place while the panel below scrolls. */}
-          <ToggleGroup
-            aria-label="Changelog view"
-            value={[tab]}
-            onValueChange={(next) => {
-              const value = next[0];
-              if (value === "releases" || value === "upstream") setTab(value);
-            }}
-          >
-            <Toggle value="releases">Releases</Toggle>
-            <Toggle value="upstream">Upstream</Toggle>
-          </ToggleGroup>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <ToggleGroup
+              aria-label="Changelog view"
+              value={[tab]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "releases" || value === "upstream") setTab(value);
+              }}
+            >
+              <Toggle value="releases">Releases</Toggle>
+              <Toggle value="upstream">Upstream</Toggle>
+            </ToggleGroup>
+            {environmentId === null ? null : (
+              <ForkChangelogAgentMenu
+                environmentId={environmentId}
+                tab={tab}
+                onOpened={() => onOpenChange(false)}
+              />
+            )}
+          </div>
         </DialogHeader>
         <DialogPanel>
           <ChangelogClockProvider>
-            <ForkChangelogBody tab={tab} />
+            <ForkChangelogBody environmentId={environmentId} tab={tab} />
           </ChangelogClockProvider>
         </DialogPanel>
       </DialogPopup>
@@ -107,8 +116,13 @@ export function ForkChangelogDialog({
   );
 }
 
-function ForkChangelogBody({ tab }: { readonly tab: ForkChangelogTab }) {
-  const environmentId = usePrimaryEnvironmentId();
+function ForkChangelogBody({
+  environmentId,
+  tab,
+}: {
+  readonly environmentId: EnvironmentId | null;
+  readonly tab: ForkChangelogTab;
+}) {
   if (environmentId === null) {
     return <Notice>Connect to an environment to read the changelog.</Notice>;
   }
