@@ -1,5 +1,6 @@
 import {
   EventId,
+  GitManagerError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -322,7 +323,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     ),
   );
 
-  it.effect("periodic passes back off idle threads while events still sync at once", () =>
+  it.effect("periodic passes back off idle threads but retry a failed lookup the next minute", () =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* TestClock.setTime(DateTime.toEpochMillis(NOW));
@@ -344,6 +345,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         const events = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
         const fullReads = yield* Queue.unbounded<void>();
         const lookups = yield* Queue.unbounded<string>();
+        let failLookups = false;
         const layerDependencies = Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromPubSub(events),
@@ -363,7 +365,20 @@ describe("ThreadPullRequestServiceV2 reads", () => {
             listShells: () => Effect.succeed([project]),
           }),
           Layer.mock(GitManager.GitManager)({
-            branchPullRequest: ({ branch }) => Queue.offer(lookups, branch).pipe(Effect.as(null)),
+            branchPullRequest: ({ branch }) =>
+              Queue.offer(lookups, branch).pipe(
+                Effect.andThen(
+                  failLookups
+                    ? Effect.fail(
+                        new GitManagerError({
+                          operation: "branchPullRequest",
+                          cwd: "/workspace/project",
+                          detail: "rate limited",
+                        }),
+                      )
+                    : Effect.succeed(null),
+                ),
+              ),
           }),
           Layer.mock(PullRequestService.PullRequestService)({}),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
@@ -416,6 +431,12 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           for (let minute = 8; minute < 22; minute++) {
             expect(yield* nextPass).toEqual([]);
           }
+          expect(yield* nextPass).toEqual(["feature/idle"]);
+
+          failLookups = true;
+          yield* PubSub.publish(events, metadataUpdated(idle));
+          expect(yield* Queue.take(lookups)).toBe("feature/idle");
+          yield* service.drain;
           expect(yield* nextPass).toEqual(["feature/idle"]);
         }).pipe(Effect.provide(layerDependencies));
       }),

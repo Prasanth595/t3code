@@ -134,8 +134,9 @@ export const make = Effect.gen(function* () {
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
   };
-  const failBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
+  const failDiscovery = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) {
+      lastCheckedAt.delete(thread.id);
       const remaining = pendingBackfill.get(thread.id);
       if (remaining === undefined) continue;
       if (remaining <= 1) pendingBackfill.delete(thread.id);
@@ -305,7 +306,7 @@ export const make = Effect.gen(function* () {
                     threadId: thread.id,
                     cause: Cause.pretty(cause),
                   }).pipe(
-                    Effect.tap(() => Effect.sync(() => failBackfill([thread]))),
+                    Effect.tap(() => Effect.sync(() => failDiscovery([thread]))),
                     Effect.as(null),
                   ),
               ),
@@ -330,7 +331,7 @@ export const make = Effect.gen(function* () {
                 repositoryIdentity: currentIdentity,
               })
             ) {
-              return failBackfill(updates.map((update) => update.thread));
+              return failDiscovery(updates.map((update) => update.thread));
             }
           }
 
@@ -343,7 +344,7 @@ export const make = Effect.gen(function* () {
                 // workspace root cannot apply a result from the old checkout.
                 const currentProject = yield* projectStore.getShell(project.id);
                 if (!projectWorkspaceMatchesSnapshot(currentProject, project.workspaceRoot)) {
-                  return failBackfill([thread]);
+                  return failDiscovery([thread]);
                 }
                 const uuid = yield* crypto.randomUUIDv4;
                 yield* orchestrator.dispatch({
@@ -370,7 +371,7 @@ export const make = Effect.gen(function* () {
                     : Effect.logWarning("thread pull request update failed", {
                         threadId: thread.id,
                         cause: Cause.pretty(cause),
-                      }).pipe(Effect.tap(() => Effect.sync(() => failBackfill([thread])))),
+                      }).pipe(Effect.tap(() => Effect.sync(() => failDiscovery([thread])))),
                 ),
               ),
             { discard: true },
@@ -382,7 +383,7 @@ export const make = Effect.gen(function* () {
               Effect.logWarning("thread branch pull request lookup failed", {
                 threadIds: group.map((thread) => thread.id),
                 cause: Cause.pretty(cause),
-              }).pipe(Effect.tap(() => Effect.sync(() => failBackfill(group)))),
+              }).pipe(Effect.tap(() => Effect.sync(() => failDiscovery(group)))),
           ),
         ),
       // Wide enough that a sweep's GitHub branch lookups reach the GitHub provider together and share one
