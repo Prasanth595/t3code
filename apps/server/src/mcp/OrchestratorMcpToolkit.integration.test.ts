@@ -616,6 +616,17 @@ describe("orchestrator MCP toolkit", () => {
             layerOrchestrator,
             ThreadManagementService.layer.pipe(
               Layer.provide(layerOrchestrator),
+              Layer.provide(
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: (id) =>
+                    Effect.succeed(
+                      id === projectId
+                        ? Option.some({ id, defaultModelSelection: null } as never)
+                        : Option.none(),
+                    ),
+                  listAgents: () => Effect.succeed([]),
+                }),
+              ),
               Layer.provide(ServerSettings.layerTest()),
               Layer.provide(
                 CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -3819,6 +3830,11 @@ describe("orchestrator MCP toolkit", () => {
           layerOrchestrator,
           ThreadManagementService.layer.pipe(
             Layer.provide(layerOrchestrator),
+            Layer.provide(
+              Layer.mock(ProjectService.ProjectService)({
+                listAgents: () => Effect.succeed([]),
+              }),
+            ),
             Layer.provide(ServerSettings.layerTest()),
             Layer.provide(
               CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -3843,7 +3859,17 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(layerProviderRegistry),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(layerUnusedScheduledTaskStub),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) =>
+                Effect.succeed(
+                  id === projectId
+                    ? Option.some({ id, workspaceRoot: cwd, defaultModelSelection: null } as never)
+                    : Option.none(),
+                ),
+              listAgents: () => Effect.succeed([]),
+            }),
+          ),
           Layer.provideMerge(
             SecretRequests.layer.pipe(
               Layer.provide(layerMemorySecretStore),

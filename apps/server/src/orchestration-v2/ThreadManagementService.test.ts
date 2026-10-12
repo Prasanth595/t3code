@@ -281,9 +281,13 @@ it("derives thread management messages from structural error attributes", () => 
 const layerReceiptsTest = CommandReceiptStore.layer.pipe(
   Layer.provide(SqlitePersistence.layerMemory),
 );
+const layerProjectServiceTest = Layer.mock(ProjectService.ProjectService)({
+  listAgents: () => Effect.succeed([]),
+});
 
 const layerThreadManagementTest = (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
   ThreadManagementService.layer.pipe(
+    Layer.provide(layerProjectServiceTest),
     Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(Layer.mock(Orchestrator.OrchestratorV2)({})),
     Layer.provide(settingsLayer),
@@ -626,6 +630,7 @@ it.effect("classifies projection infrastructure failures separately from a missi
     cause: infrastructureCause,
   });
   const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(layerProjectServiceTest),
     Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
@@ -662,6 +667,7 @@ it.effect("uses thread-not-found only after a projection loads outside the proje
     },
   } as OrchestrationV2ThreadProjection;
   const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(layerProjectServiceTest),
     Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mock(Orchestrator.OrchestratorV2)({
@@ -690,6 +696,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     cause: new Error("checkpoint import failed"),
   });
   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(layerProjectServiceTest),
     Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mergeAll(
@@ -734,6 +741,7 @@ it.effect.each([
         runs: status === "missing" ? [] : [{ id: runId, status }],
       }) as unknown as OrchestrationV2ThreadProjection;
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(layerProjectServiceTest),
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -803,6 +811,7 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
     const stored = (sequence: number, event: object) =>
       ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(layerProjectServiceTest),
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
@@ -949,6 +958,7 @@ it.effect.each([
           }),
     } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(layerProjectServiceTest),
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(Orchestrator.OrchestratorV2)({
@@ -1075,6 +1085,7 @@ it.effect.each([
     const runId = RunId.make("run:thread-management:settle-after-run");
     const dispatched: Array<string> = [];
     const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(layerProjectServiceTest),
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({

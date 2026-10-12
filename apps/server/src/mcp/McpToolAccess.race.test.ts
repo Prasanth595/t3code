@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import { DispatchModeLimit } from "../orchestration-v2/DispatchModeLimit.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
@@ -190,6 +191,11 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       Effect.provide(
         ThreadManagement.layer.pipe(
           Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              listAgents: () => Effect.succeed([]),
+            }),
+          ),
           Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
         ),
       ),
@@ -208,6 +214,11 @@ it.layer(layerOrchestrator)("writesThreads against a mode raise", (it) => {
       Effect.provide(
         ThreadManagement.layer.pipe(
           Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              listAgents: () => Effect.succeed([]),
+            }),
+          ),
           Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
         ),
       ),

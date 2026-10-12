@@ -521,6 +521,7 @@ const make = Effect.gen(function* () {
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const projects = yield* ProjectService.ProjectService;
 
   const assertProviderInstanceEnabled: ThreadManagementServiceShape["assertProviderInstanceEnabled"] =
     (input) =>
@@ -673,42 +674,28 @@ const make = Effect.gen(function* () {
           return Effect.void;
         }
 
-        return Effect.serviceOption(ProjectService.ProjectService).pipe(
-          Effect.flatMap((projects) => {
-            if (Option.isNone(projects)) {
-              return Effect.fail(
-                new Orchestrator.OrchestratorDispatchError({
-                  commandId: command.commandId,
-                  commandType: command.type,
-                  cause: new Error("Project service is unavailable for custom agent validation."),
-                }),
-              );
-            }
-
-            return projects.value.listAgents({ projectId: command.projectId }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new Orchestrator.OrchestratorDispatchError({
+        return projects.listAgents({ projectId: command.projectId }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new Orchestrator.OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+          Effect.flatMap((agents) =>
+            agents.some((agent) => agent.id === command.agentId)
+              ? Effect.void
+              : Effect.fail(
+                  new Orchestrator.OrchestratorCommandRejectedError({
                     commandId: command.commandId,
                     commandType: command.type,
-                    cause,
-                  }),
-              ),
-              Effect.flatMap((agents) =>
-                agents.some((agent) => agent.id === command.agentId)
-                  ? Effect.void
-                  : Effect.fail(
-                      new Orchestrator.OrchestratorCommandRejectedError({
-                        commandId: command.commandId,
-                        commandType: command.type,
-                        cause: new Error(
-                          `Custom agent '${command.agentId}' was not found in the project workspace.`,
-                        ),
-                      }),
+                    cause: new Error(
+                      `Custom agent '${command.agentId}' was not found in the project workspace.`,
                     ),
-              ),
-            );
-          }),
+                  }),
+                ),
+          ),
         );
       }),
     );
@@ -1241,6 +1228,7 @@ export const layer: Layer.Layer<
   ThreadManagementService,
   never,
   | Orchestrator.OrchestratorV2
+  | ProjectService.ProjectService
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
@@ -1254,6 +1242,7 @@ export const layerWithLegacyImporter: Layer.Layer<
   never,
   | LegacyV1ThreadImporter.LegacyV1ThreadImporter
   | Orchestrator.OrchestratorV2
+  | ProjectService.ProjectService
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
