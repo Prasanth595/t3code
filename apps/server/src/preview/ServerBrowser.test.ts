@@ -1,4 +1,5 @@
 import * as NodeEvents from "node:events";
+import * as NodeVM from "node:vm";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -1076,6 +1077,14 @@ it.live.each([
     typed: [],
     tabs: 0,
   },
+  {
+    name: "no writable field in focus gets nothing",
+    url: "https://example.com/login",
+    focused: "none",
+    afterTab: "password",
+    typed: [],
+    tabs: 0,
+  },
 ] as const)("$name", ({ url, focused, afterTab, typed, tabs }) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -1086,7 +1095,7 @@ it.live.each([
       const cdp = contexts[0]!.sessions.at(-1)!;
       const send = cdp.send.getMockImplementation()!;
       // Stands in for the page: Tab moves focus to the next field.
-      let field: "field" | "password" | "frame" = focused;
+      let field: "field" | "password" | "frame" | "none" = focused;
       cdp.send.mockImplementation(async (method, input) => {
         const params = (input ?? {}) as { expression?: string; type?: string; key?: string };
         if (method === "Runtime.evaluate" && params.expression?.includes("activeElement")) {
@@ -1119,6 +1128,41 @@ it.live.each([
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.each([
+  { name: "the page itself", active: { tagName: "BODY" }, field: "none" },
+  { name: "a button", active: { tagName: "BUTTON" }, field: "none" },
+  {
+    name: "a read-only input",
+    active: { tagName: "INPUT", type: "text", readOnly: true },
+    field: "none",
+  },
+  { name: "an email input", active: { tagName: "INPUT", type: "email" }, field: "field" },
+  {
+    name: "an editable region",
+    active: { tagName: "DIV", isContentEditable: true },
+    field: "field",
+  },
+  { name: "a password input", active: { tagName: "INPUT", type: "password" }, field: "password" },
+  {
+    name: "a password input in a same-origin frame",
+    active: {
+      tagName: "IFRAME",
+      contentDocument: { activeElement: { tagName: "INPUT", type: "password" } },
+    },
+    field: "password",
+  },
+  {
+    name: "a cross-origin frame",
+    active: { tagName: "IFRAME", contentDocument: null },
+    field: "frame",
+  },
+])("a login fill reads focus on $name as $field", ({ active, field }) => {
+  const document = { activeElement: active };
+  expect(NodeVM.runInNewContext(`(${ServerBrowser.FOCUSED_FIELD_SCRIPT})()`, { document })).toBe(
+    field,
+  );
+});
 
 it.live("a page download is saved, offered to the controller, and listed for the agent", () =>
   Effect.scoped(
