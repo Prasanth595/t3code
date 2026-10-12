@@ -606,6 +606,11 @@ interface ComposerDraftStoreState {
       replaceOptions?: boolean;
     },
   ) => void;
+  /** Release a sent model override if no newer model choice replaced it. */
+  confirmModelSelection: (
+    threadRef: ComposerThreadTarget,
+    sentDraft: ComposerThreadDraftState,
+  ) => void;
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
     threadRef: ComposerThreadTarget,
@@ -3177,7 +3182,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === nextActiveProvider &&
-              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true)
+              (base.modelSelectionExplicit ?? false) === (opts?.explicit === true) &&
+              opts?.explicit !== true
             ) {
               return state;
             }
@@ -3199,6 +3205,39 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
+        },
+        confirmModelSelection: (threadRef, sentDraft) => {
+          let released = false;
+          set((state) => {
+            const threadKey = resolveComposerDraftKey(state, threadRef);
+            const current = threadKey ? state.draftsByThreadKey[threadKey] : undefined;
+            if (
+              !threadKey ||
+              !current ||
+              current.modelSelectionByProvider !== sentDraft.modelSelectionByProvider ||
+              current.activeProvider !== sentDraft.activeProvider
+            )
+              return state;
+            released = true;
+            const { modelSelectionExplicit: _explicit, ...retained } = current;
+            const nextDraft: ComposerThreadDraftState = {
+              ...retained,
+              modelSelectionByProvider: {},
+              activeProvider: null,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) delete nextDraftsByThreadKey[threadKey];
+            else nextDraftsByThreadKey[threadKey] = nextDraft;
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+          if (released) {
+            try {
+              composerDebouncedStorage.flush();
+            } catch (error) {
+              // Acceptance is durable even if this client's storage is unavailable.
+              console.warn("Could not persist the confirmed composer model", error);
+            }
+          }
         },
         setModelOptions: (threadRef, modelOptions) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";

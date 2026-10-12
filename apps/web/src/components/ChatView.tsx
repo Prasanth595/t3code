@@ -1,3 +1,4 @@
+import { startTurnWithComposerModel } from "../state/start-turn-with-composer-model";
 import { ThreadFind, ThreadFindCanvas, type ThreadFindControls } from "./chat/ThreadFindProvider";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
@@ -1628,9 +1629,22 @@ export default function ChatView(props: ChatViewProps) {
   const setThreadInteractionMode = useOrchestrationCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
   });
-  const startThreadTurn = useOrchestrationCommand(threadEnvironment.startTurn, {
+  const startThreadTurnCommand = useOrchestrationCommand(threadEnvironment.startTurn, {
     reportFailure: false,
   });
+  const startThreadTurn = useCallback(
+    (
+      value: Parameters<typeof startThreadTurnCommand>[0],
+      sentDraft?: Parameters<typeof startTurnWithComposerModel>[3],
+    ) =>
+      startTurnWithComposerModel(
+        scopeThreadRef(value.environmentId, value.input.threadId),
+        value.input.modelSelection,
+        () => startThreadTurnCommand(value),
+        sentDraft,
+      ),
+    [startThreadTurnCommand],
+  );
   const resumeThreadQueue = useOrchestrationCommand(threadEnvironment.resumeThreadQueue, {
     reportFailure: false,
   });
@@ -8921,6 +8935,9 @@ export default function ChatView(props: ChatViewProps) {
       interactionMode: sendInteractionMode,
       interactionModeEnabled: sendInteractionModeEnabled,
     } = sendCtx;
+    const sentComposerDraft = useComposerDraftStore
+      .getState()
+      .getComposerDraft(composerDraftTarget);
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
       sendContextImages.some((image) => image.id === directAnnotation.image?.id);
@@ -9978,51 +9995,54 @@ export default function ChatView(props: ChatViewProps) {
           ? scopeThreadRef(environmentId, threadIdForSend)
           : null;
       if (backgroundThreadRef) beginBackgroundDraftSubmissionByRef(backgroundThreadRef);
-      const startPromise = startThreadTurn({
-        environmentId,
-        input: {
-          threadId: threadIdForSend,
-          message: {
-            messageId: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            attachments: turnAttachmentsResult.value,
-            ...(() => {
-              const context = buildOutgoingMessageContext(
-                turnAttachmentsResult.value.map((attachment, index) =>
-                  "id" in attachment && attachment.id !== undefined
-                    ? attachment.id
-                    : composerAttachmentsSnapshot[index]!.id,
-                ),
-              );
-              if (context === undefined) return {};
-              // Read the capability at dispatch time: the upload and persistence
-              // awaits above can span a server reconnect that changes it. Servers
-              // from before inline context drop the records and forward the links
-              // as literal text, so their turns carry the payload the legacy way.
-              const supportsInlineMessageContext =
-                appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
-                  .capabilities.inlineMessageContext === true;
-              if (!supportsInlineMessageContext) {
-                return {
-                  text: serializeLegacyContextMessage({
-                    text: outgoingMessageText,
-                    records: context.records,
-                  }),
-                };
-              }
-              return { context };
-            })(),
+      const startPromise = startThreadTurn(
+        {
+          environmentId,
+          input: {
+            threadId: threadIdForSend,
+            message: {
+              messageId: messageIdForSend,
+              role: "user",
+              text: outgoingMessageText,
+              attachments: turnAttachmentsResult.value,
+              ...(() => {
+                const context = buildOutgoingMessageContext(
+                  turnAttachmentsResult.value.map((attachment, index) =>
+                    "id" in attachment && attachment.id !== undefined
+                      ? attachment.id
+                      : composerAttachmentsSnapshot[index]!.id,
+                  ),
+                );
+                if (context === undefined) return {};
+                // Read the capability at dispatch time: the upload and persistence
+                // awaits above can span a server reconnect that changes it. Servers
+                // from before inline context drop the records and forward the links
+                // as literal text, so their turns carry the payload the legacy way.
+                const supportsInlineMessageContext =
+                  appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment
+                    .capabilities.inlineMessageContext === true;
+                if (!supportsInlineMessageContext) {
+                  return {
+                    text: serializeLegacyContextMessage({
+                      text: outgoingMessageText,
+                      records: context.records,
+                    }),
+                  };
+                }
+                return { context };
+              })(),
+            },
+            modelSelection: ctxSelectedModelSelection,
+            titleSeed: title,
+            runtimeMode,
+            interactionMode: sendInteractionMode,
+            dispatchMode: turnDispatchMode,
+            ...(bootstrap ? { bootstrap } : {}),
+            createdAt: messageCreatedAt,
           },
-          modelSelection: ctxSelectedModelSelection,
-          titleSeed: title,
-          runtimeMode,
-          interactionMode: sendInteractionMode,
-          dispatchMode: turnDispatchMode,
-          ...(bootstrap ? { bootstrap } : {}),
-          createdAt: messageCreatedAt,
         },
-      });
+        sentComposerDraft,
+      );
       if (backgroundThreadRef) {
         markPromotedDraftThreadByRef(backgroundThreadRef);
         try {

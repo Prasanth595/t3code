@@ -715,6 +715,7 @@ export function useThreadComposerState() {
         attachments,
         context: draft.context,
         modelSelection,
+        modelSelectionId: draft.modelSelectionId,
         runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
         interactionMode: resolveProviderInteractionMode(
           provider,

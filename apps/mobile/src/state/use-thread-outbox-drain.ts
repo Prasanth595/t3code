@@ -69,6 +69,7 @@ import { environmentThreadShells, threadEnvironment } from "./threads";
 import {
   appendComposerDraftAttachments,
   composerDraftsAtom,
+  confirmComposerDraftModelSelection,
   flushComposerDrafts,
   type ComposerDraft,
   getComposerDraftSnapshot,
@@ -296,6 +297,14 @@ export async function completeQueuedMessageDelivery(
     queuedMessage.messageId,
   );
   try {
+    if (queuedMessage.modelSelectionId !== undefined) {
+      confirmComposerDraftModelSelection(
+        scopedThreadKey(queuedMessage.environmentId, queuedMessage.threadId),
+        queuedMessage.modelSelectionId,
+      );
+      // Persist before removing the outbox entry so a restart cannot revive the override.
+      await flushComposerDrafts();
+    }
     await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
       console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
         messageId: queuedMessage.messageId,
@@ -345,6 +354,7 @@ export async function removeAcknowledgedExistingThreadMessage(
   acknowledgedMessageIds: Set<MessageId>,
 ): Promise<boolean> {
   try {
+    await flushComposerDrafts();
     await removeDeliveredCloudQueuedMessage(queuedMessage).catch((error) => {
       console.warn("[thread-outbox] could not update sign-out snapshot after delivery", {
         messageId: queuedMessage.messageId,

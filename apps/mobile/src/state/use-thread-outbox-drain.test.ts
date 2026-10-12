@@ -1,3 +1,4 @@
+import { scopedThreadKey } from "../lib/scopedEntities";
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import {
   CommandId,
@@ -148,7 +149,12 @@ import {
   setThreadComposerError,
   threadComposerErrorsAtom,
 } from "./thread-composer-error";
-import type { QueuedThreadMessage } from "./thread-outbox-model";
+import {
+  decodeQueuedThreadMessage,
+  encodeQueuedThreadMessage,
+  resolveQueuedThreadSettings,
+  type QueuedThreadMessage,
+} from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
 import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
 import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
@@ -476,7 +482,10 @@ describe("thread outbox drain delivery cleanup", () => {
   });
 
   it("clears an error about the delivered message but keeps one about another message", async () => {
-    const threadKey = "environment-1:thread-1";
+    const threadKey = scopedThreadKey(
+      EnvironmentId.make("environment-1"),
+      ThreadId.make("thread-1"),
+    );
     const retried = queuedMessage({ messageId: "message-retried", text: "retried" });
     await harness.manager.enqueue(retried);
     // A failed recovery left this message queued with an error about it.
@@ -884,5 +893,243 @@ describe("thread outbox recovery rollback", () => {
     );
     expect(remainingMessages()).toEqual([]);
     expect(appAtomRegistry.get(threadComposerErrorsAtom)[draftKey]?.message).toBe("too large");
+  });
+});
+
+describe("accepted mobile model overrides", () => {
+  const modelA = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "model-a",
+    options: [{ id: "effort", value: "low" }],
+  };
+  const modelB = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "model-b",
+    options: [{ id: "effort", value: "high" }],
+  };
+  const threadKey = scopedThreadKey(EnvironmentId.make("environment-1"), ThreadId.make("thread-1"));
+
+  it("retains a share receipt when archived delivery consumes its only model setting", async () => {
+    composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: modelA });
+    const draft = composerDrafts.getComposerDraftSnapshot(threadKey);
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [threadKey]: { ...draft, importedShareIds: ["share-receipt"] },
+    });
+    const message = {
+      ...queuedMessage({ messageId: "archived-receipt", text: "Sent" }),
+      modelSelection: draft.modelSelection,
+      modelSelectionId: draft.modelSelectionId,
+    };
+    await harness.manager.enqueue(message);
+    await composerDrafts.archiveCloudComposerDrafts(
+      "account-test",
+      new Set([message.environmentId]),
+    );
+    await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
+    await composerDrafts.restoreCloudComposerDrafts("account-test");
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+    expect(composerDrafts.getComposerDraftSnapshot(threadKey)).toMatchObject({
+      importedShareIds: ["share-receipt"],
+    });
+    expect(composerDrafts.getComposerDraftSnapshot(threadKey).modelSelection).toBeUndefined();
+  });
+
+  it("rolls back the model and its identifier together while keeping a newer re-pick", () => {
+    const snapshot = {
+      text: "before",
+      attachments: [],
+      modelSelection: modelA,
+      modelSelectionId: "before",
+    };
+    const merged = {
+      ...snapshot,
+      text: "before\n\nmerged",
+      modelSelection: modelB,
+      modelSelectionId: "merged",
+    };
+    const edited = { ...merged, text: "before\n\nmerged\nnew text" };
+    expect(
+      composerDrafts.undoComposerDraftMergeState(
+        { [threadKey]: edited },
+        threadKey,
+        snapshot,
+        merged,
+      )[threadKey],
+    ).toMatchObject({
+      modelSelection: modelA,
+      modelSelectionId: "before",
+      text: "before\nnew text",
+    });
+    const repicked = { ...edited, modelSelectionId: "newer" };
+    expect(
+      composerDrafts.undoComposerDraftMergeState(
+        { [threadKey]: repicked },
+        threadKey,
+        snapshot,
+        merged,
+      )[threadKey],
+    ).toMatchObject({ modelSelection: modelB, modelSelectionId: "newer" });
+  });
+
+  it.each([modelA, { ...modelA }, modelB])(
+    "keeps a choice made before offline delivery, through persistence: $model",
+    async (newer) => {
+      composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: modelA });
+      const original = composerDrafts.getComposerDraftSnapshot(threadKey);
+      const message = decodeQueuedThreadMessage(
+        encodeQueuedThreadMessage({
+          ...queuedMessage({ messageId: "offline-choice", text: "Queued offline" }),
+          modelSelection: original.modelSelection,
+          modelSelectionId: original.modelSelectionId,
+        }),
+      );
+      await harness.manager.enqueue(message);
+      composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: newer });
+      composerDrafts.setComposerDraftText(threadKey, "Keep my newer draft");
+      const newerId = composerDrafts.getComposerDraftSnapshot(threadKey).modelSelectionId;
+      expect(newerId).not.toBe(original.modelSelectionId);
+      await composerDrafts.flushComposerDrafts();
+      appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+      composerDrafts.resetComposerDraftsLoadState();
+      await composerDrafts.waitForComposerDraftsLoaded();
+      await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
+      expect(composerDrafts.getComposerDraftSnapshot(threadKey)).toMatchObject({
+        text: "Keep my newer draft",
+        modelSelection: newer,
+        modelSelectionId: newerId,
+      });
+      expect(remainingMessages()).toEqual([]);
+    },
+  );
+
+  it("preserves an ambiguous legacy override instead of guessing its ownership", async () => {
+    const message = {
+      ...queuedMessage({ messageId: "legacy", text: "Sent" }),
+      modelSelection: modelA,
+    };
+    await harness.manager.enqueue(message);
+    composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: modelA });
+    const draft = composerDrafts.getComposerDraftSnapshot(threadKey);
+    await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
+    expect(composerDrafts.getComposerDraftSnapshot(threadKey)).toEqual(draft);
+  });
+
+  it.each([false, true])(
+    "cleans only the consumed signed-out choice; newer choice %s",
+    async (newer) => {
+      composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: modelA });
+      const draft = composerDrafts.getComposerDraftSnapshot(threadKey);
+      const message = {
+        ...queuedMessage({ messageId: "archived", text: "Sent" }),
+        modelSelection: draft.modelSelection,
+        modelSelectionId: draft.modelSelectionId,
+      };
+      await harness.manager.enqueue(message);
+      if (newer) composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: modelA });
+      composerDrafts.setComposerDraftText(threadKey, "Archived unsent text");
+      await composerDrafts.archiveCloudComposerDrafts(
+        "account-test",
+        new Set([message.environmentId]),
+      );
+      await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
+      await composerDrafts.restoreCloudComposerDrafts("account-test");
+      const restored = composerDrafts.getComposerDraftSnapshot(threadKey);
+      expect(restored.text).toBe("Archived unsent text");
+      if (newer) {
+        expect(restored.modelSelection).toEqual(modelA);
+        expect(restored.modelSelectionId).not.toBe(message.modelSelectionId);
+      } else {
+        expect(restored.modelSelection).toBeUndefined();
+        expect(restored.modelSelectionId).toBeUndefined();
+      }
+      expect(remainingMessages()).toEqual([]);
+    },
+  );
+
+  it.each(["", "New unsent text"])(
+    "releases the confirmed choice while retaining draft %j and persists it before outbox removal",
+    async (text) => {
+      const message = {
+        ...queuedMessage({ messageId: "confirmed-model", text: "Sent" }),
+        modelSelection: modelA,
+        modelSelectionId: "sent-choice",
+      };
+      await harness.manager.enqueue(message);
+      composerDrafts.updateComposerDraftSettings(threadKey, {
+        modelSelection: modelA,
+        modelSelectionId: "sent-choice",
+      });
+      composerDrafts.setComposerDraftText(threadKey, text);
+      await expect(
+        completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+      ).resolves.toBe("removed");
+      expect(composerDrafts.getComposerDraftSnapshot(threadKey).modelSelection).toBeUndefined();
+      expect(composerDrafts.getComposerDraftSnapshot(threadKey).text).toBe(text);
+      // A restart must not restore the already-used local override.
+      appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+      composerDrafts.resetComposerDraftsLoadState();
+      await composerDrafts.waitForComposerDraftsLoaded();
+      const draft = composerDrafts.getComposerDraftSnapshot(threadKey);
+      const nextSend = resolveQueuedThreadSettings(
+        {
+          ...queuedMessage({ messageId: "next-send", text: draft.text }),
+          modelSelection: draft.modelSelection,
+        },
+        { modelSelection: modelB, runtimeMode: "full-access", interactionMode: "default" },
+      );
+      expect(nextSend.modelSelection).toEqual(modelB);
+      expect(draft.text).toBe(text);
+    },
+  );
+
+  it.each([modelA, modelB])(
+    "keeps a newer local pick after the earlier send is accepted: $model",
+    async (newer) => {
+      const message = {
+        ...queuedMessage({ messageId: "newer-model", text: "Sent" }),
+        modelSelection: modelA,
+        modelSelectionId: "sent-choice",
+      };
+      await harness.manager.enqueue(message);
+      composerDrafts.updateComposerDraftSettings(threadKey, {
+        modelSelection: modelA,
+        modelSelectionId: "sent-choice",
+      });
+      const newerSelection = { ...newer };
+      composerDrafts.updateComposerDraftSettings(threadKey, { modelSelection: newerSelection });
+      await completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId));
+      expect(composerDrafts.getComposerDraftSnapshot(threadKey).modelSelection).toEqual(
+        newerSelection,
+      );
+    },
+  );
+
+  it("retries persistence before deleting the acknowledged message", async () => {
+    const message = {
+      ...queuedMessage({ messageId: "model-write-failed", text: "Sent" }),
+      modelSelection: modelA,
+      modelSelectionId: "sent-choice",
+    };
+    await harness.manager.enqueue(message);
+    composerDrafts.updateComposerDraftSettings(threadKey, {
+      modelSelection: modelA,
+      modelSelectionId: "sent-choice",
+    });
+    harness.draftFile.setWriteError(new Error("storage failed"));
+    await expect(
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+    ).resolves.toBe("failed");
+    expect(remainingMessages()).toEqual([message]);
+    harness.draftFile.setWriteError(null);
+    await expect(
+      removeAcknowledgedExistingThreadMessage(message, new Set([message.messageId])),
+    ).resolves.toBe(true);
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {});
+    composerDrafts.resetComposerDraftsLoadState();
+    await composerDrafts.waitForComposerDraftsLoaded();
+    expect(composerDrafts.getComposerDraftSnapshot(threadKey).modelSelection).toBeUndefined();
+    expect(remainingMessages()).toEqual([]);
   });
 });

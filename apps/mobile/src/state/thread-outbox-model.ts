@@ -56,6 +56,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
+  modelSelectionId: Schema.optional(Schema.String),
   dispatchMode: Schema.optional(Schema.Literals(["auto", "queue", "steer", "restart"])),
   runtimeMode: Schema.optional(RuntimeMode),
   interactionMode: Schema.optional(ProviderInteractionMode),
@@ -88,6 +89,7 @@ export interface QueuedThreadMessage {
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
+  readonly modelSelectionId?: string;
   readonly runtimeMode?: RuntimeModeType;
   readonly interactionMode?: ProviderInteractionModeType;
   /**

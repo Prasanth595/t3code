@@ -1,3 +1,8 @@
+import { startTurnWithComposerModel } from "./state/start-turn-with-composer-model";
+import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { deriveEffectiveComposerModelState } from "./composerDraftStore";
 import {
   scopedProjectKey,
   scopedThreadKey,
@@ -15,6 +20,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
   type ModelSelection,
+  type ServerProvider,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
@@ -3565,5 +3571,164 @@ describe("composerDraftStore attachment references", () => {
     expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
       prompt,
     );
+  });
+});
+
+function deferredModelSend() {
+  let resolve!: (value: ReturnType<typeof AsyncResult.success<void>>) => void;
+  const promise = new Promise<ReturnType<typeof AsyncResult.success<void>>>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+describe("confirmed composer model selections", () => {
+  beforeEach(resetComposerDraftStore);
+  const threadRef = scopeThreadRef(EnvironmentId.make("sync-env"), ThreadId.make("sync-thread"));
+  const modelA = createModelSelection(CODEX_INSTANCE, "gpt-5.6-sol", [
+    { id: "effort", value: "low" },
+  ]);
+  const modelB = createModelSelection(CODEX_INSTANCE, "gpt-6-astra", [
+    { id: "effort", value: "high" },
+  ]);
+
+  const providers: ReadonlyArray<ServerProvider> = [
+    {
+      instanceId: CODEX_INSTANCE,
+      driver: CODEX_DRIVER,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-01-01T00:00:00.000Z",
+      slashCommands: [],
+      skills: [],
+      models: [modelA.model, modelB.model].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {},
+      })),
+    },
+  ];
+
+  it.each(["", "New text typed during send"])(
+    "follows a remote model after an accepted send with draft %j",
+    async (text) => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, modelA, { explicit: true, replaceOptions: true });
+      store.setPrompt(threadRef, "Sent text");
+      const pending = deferredModelSend();
+      const result = startTurnWithComposerModel(threadRef, modelA, () => pending.promise);
+      store.clearComposerContent(threadRef);
+      store.setPrompt(threadRef, text);
+      pending.resolve(AsyncResult.success(undefined));
+      await result;
+      const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+      const resolved = deriveEffectiveComposerModelState({
+        draft,
+        providers,
+        selectedProvider: CODEX_DRIVER,
+        selectedInstanceId: CODEX_INSTANCE,
+        threadModelSelection: modelB,
+        projectModelSelection: null,
+        settings: DEFAULT_UNIFIED_SETTINGS,
+      });
+      expect(resolved.selectedModel).toBe(modelB.model);
+      expect(resolved.modelOptions?.[CODEX_INSTANCE]).toEqual(modelB.options);
+      expect(draft?.prompt ?? "").toBe(text);
+      expect(draft?.activeProvider ?? null).toBeNull();
+    },
+  );
+
+  it.each([modelA, modelB])(
+    "preserves a newer explicit pick including a same-value pick: $model",
+    async (newer) => {
+      const store = useComposerDraftStore.getState();
+      store.setModelSelection(threadRef, modelA, { explicit: true, replaceOptions: true });
+      const pending = deferredModelSend();
+      const result = startTurnWithComposerModel(threadRef, modelA, () => pending.promise);
+      store.setModelSelection(threadRef, newer, { explicit: true, replaceOptions: true });
+      pending.resolve(AsyncResult.success(undefined));
+      await result;
+      expect(
+        useComposerDraftStore.getState().getComposerDraft(threadRef)?.modelSelectionByProvider[
+          CODEX_INSTANCE
+        ],
+      ).toEqual(newer);
+    },
+  );
+
+  it("retains a choice after a failed send", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelA, { explicit: true, replaceOptions: true });
+    await startTurnWithComposerModel(threadRef, modelA, async () =>
+      AsyncResult.failure(Cause.fail(new Error("offline"))),
+    );
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(threadRef)?.modelSelectionByProvider[
+        CODEX_INSTANCE
+      ],
+    ).toEqual(modelA);
+  });
+
+  it("preserves a pick made during upload before the command starts", async () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelA, { explicit: true, replaceOptions: true });
+    const sentDraft = store.getComposerDraft(threadRef);
+    store.setModelSelection(threadRef, modelA, { explicit: true, replaceOptions: true });
+    await startTurnWithComposerModel(
+      threadRef,
+      modelA,
+      async () => AsyncResult.success(undefined),
+      sentDraft,
+    );
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(threadRef)?.modelSelectionByProvider[
+        CODEX_INSTANCE
+      ],
+    ).toEqual(modelA);
+  });
+
+  it("releases the sent choice after a new-thread draft is promoted", async () => {
+    const store = useComposerDraftStore.getState();
+    const draftId = DraftId.make("sync-draft");
+    store.setProjectDraftThreadId(
+      scopeProjectRef(threadRef.environmentId, ProjectId.make("sync-project")),
+      draftId,
+      { threadId: threadRef.threadId },
+    );
+    store.setModelSelection(draftId, modelA, { explicit: true, replaceOptions: true });
+    const pending = deferredModelSend();
+    const result = startTurnWithComposerModel(threadRef, modelA, () => pending.promise);
+    store.markDraftThreadPromoting(draftId, threadRef);
+    store.finalizePromotedDraftThread(draftId);
+    pending.resolve(AsyncResult.success(undefined));
+    await result;
+    expect(useComposerDraftStore.getState().getComposerDraft(threadRef)).toBeNull();
+  });
+});
+
+describe("confirmed model persistence", () => {
+  beforeEach(resetComposerDraftStore);
+  it("does not restore a confirmed choice when the draft store rehydrates immediately", async () => {
+    const threadRef = scopeThreadRef(
+      EnvironmentId.make("persist-env"),
+      ThreadId.make("persist-thread"),
+    );
+    const store = useComposerDraftStore.getState();
+    const selection = createModelSelection(CODEX_INSTANCE, "gpt-6-astra");
+    store.setModelSelection(threadRef, selection, { explicit: true, replaceOptions: true });
+    store.setPrompt(threadRef, "Keep this unsent text");
+    await startTurnWithComposerModel(threadRef, selection, async () =>
+      AsyncResult.success(undefined),
+    );
+    useComposerDraftStore.setState({ draftsByThreadKey: {} });
+    await useComposerDraftStore.persist.rehydrate();
+    const restored = useComposerDraftStore.getState().getComposerDraft(threadRef);
+    expect(restored?.prompt).toBe("Keep this unsent text");
+    expect(restored?.activeProvider).toBeNull();
+    expect(restored?.modelSelectionByProvider).toEqual({});
   });
 });
