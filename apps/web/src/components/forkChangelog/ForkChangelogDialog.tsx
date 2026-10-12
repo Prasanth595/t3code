@@ -6,10 +6,12 @@ import type {
   ForkWorkflowRun,
   ForkWorkflowState,
 } from "@t3tools/contracts";
+import type { TimestampFormat } from "@t3tools/contracts/settings";
 import { ExternalLinkIcon } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, use, useEffect, useMemo, useRef, useState } from "react";
 
 import { APP_VERSION } from "../../branding";
+import { useClientSettings } from "../../hooks/useSettings";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import {
   forkReleaseChanges,
@@ -20,7 +22,9 @@ import {
 } from "../../state/forkChangelog";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { cn } from "../../lib/utils";
+import { formatChatTimestampTooltip, formatRelativeTimeLabel } from "../../timestampFormat";
+import { useRelativeTimeTick } from "../settings/settingsLayout";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import {
@@ -31,17 +35,37 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Spinner } from "../ui/spinner";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { linkCommitSubject } from "./forkChangelog.logic";
 
 /** How often the open changelog re-reads a queued or running Fork Sync run. */
 const SYNC_REFRESH_MS = 5_000;
+/** Each release reads GitHub, so the timeline adds older releases on request. */
+const RELEASE_PAGE_SIZE = 10;
 
 type ForkChangelogTab = "releases" | "upstream";
 
+interface ChangelogClock {
+  readonly nowMs: number;
+  readonly timestampFormat: TimestampFormat;
+}
+
+/** One minute tick for every time label, so the list itself does not re-render. */
+const ChangelogClockContext = createContext<ChangelogClock | null>(null);
+
+function ChangelogClockProvider({ children }: { readonly children: ReactNode }) {
+  const nowMs = useRelativeTimeTick(60_000);
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
+  const clock = useMemo(() => ({ nowMs, timestampFormat }), [nowMs, timestampFormat]);
+  return <ChangelogClockContext value={clock}>{children}</ChangelogClockContext>;
+}
+
 /**
- * Fork feature: fork releases with their fork and upstream commits, the upstream commits that
- * fork main does not have yet, and the Fork Sync workflow. Reads run only while it is open.
+ * Fork feature: a timeline of fork releases and their fork and upstream commits, the upstream
+ * commits that fork main does not have yet, and the Fork Sync workflow. Reads run only while it
+ * is open.
  */
 export function ForkChangelogDialog({
   open,
@@ -50,6 +74,8 @@ export function ForkChangelogDialog({
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const [tab, setTab] = useState<ForkChangelogTab>("releases");
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogPopup className="max-w-3xl">
@@ -58,87 +84,86 @@ export function ForkChangelogDialog({
           <DialogDescription>
             Fork releases, and the upstream changes that fork main does not have yet.
           </DialogDescription>
+          {/* The header stays in place while the panel below scrolls. */}
+          <ToggleGroup
+            aria-label="Changelog view"
+            value={[tab]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value === "releases" || value === "upstream") setTab(value);
+            }}
+          >
+            <Toggle value="releases">Releases</Toggle>
+            <Toggle value="upstream">Upstream</Toggle>
+          </ToggleGroup>
         </DialogHeader>
-        <ForkChangelogBody />
+        <DialogPanel>
+          <ChangelogClockProvider>
+            <ForkChangelogBody tab={tab} />
+          </ChangelogClockProvider>
+        </DialogPanel>
       </DialogPopup>
     </Dialog>
   );
 }
 
-function ForkChangelogBody() {
+function ForkChangelogBody({ tab }: { readonly tab: ForkChangelogTab }) {
   const environmentId = usePrimaryEnvironmentId();
-  const [tab, setTab] = useState<ForkChangelogTab>("releases");
-
-  return (
-    <DialogPanel>
-      <ToggleGroup
-        aria-label="Changelog view"
-        value={[tab]}
-        onValueChange={(next) => {
-          const value = next[0];
-          if (value === "releases" || value === "upstream") setTab(value);
-        }}
-      >
-        <Toggle value="releases">Releases</Toggle>
-        <Toggle value="upstream">Upstream</Toggle>
-      </ToggleGroup>
-      {environmentId === null ? (
-        <Notice>Connect to an environment to read the changelog.</Notice>
-      ) : tab === "releases" ? (
-        <ReleasesTab environmentId={environmentId} />
-      ) : (
-        <UpstreamTab environmentId={environmentId} />
-      )}
-    </DialogPanel>
+  if (environmentId === null) {
+    return <Notice>Connect to an environment to read the changelog.</Notice>;
+  }
+  return tab === "releases" ? (
+    <ReleasesTab environmentId={environmentId} />
+  ) : (
+    <UpstreamTab environmentId={environmentId} />
   );
 }
 
 function ReleasesTab({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const releases = useEnvironmentQuery(forkReleases({ environmentId, input: {} }));
-  const [selectedTag, setSelectedTag] = useState<string | null>(null);
-  const list = releases.data?.releases ?? [];
-  const selected =
-    list.find((release) => release.tag === selectedTag) ??
-    list.find((release) => release.version === APP_VERSION) ??
-    list[0] ??
-    null;
+  const [shownCount, setShownCount] = useState(RELEASE_PAGE_SIZE);
 
-  if (releases.data === null) return <QueryState error={releases.error} />;
-  if (list.length === 0) return <Notice>The fork has no releases.</Notice>;
+  if (releases.data === null) {
+    return (
+      <QueryState subject="the fork releases" error={releases.error} retry={releases.refresh} />
+    );
+  }
+  const list = releases.data.releases;
+  if (list.length === 0) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyTitle>No releases yet</EmptyTitle>
+          <EmptyDescription>The fork has no published release on GitHub.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+  const hiddenCount = list.length - shownCount;
 
   return (
-    <div className="grid gap-4 sm:grid-cols-[13rem_minmax(0,1fr)]">
-      <ul aria-label="Fork releases" className="flex max-h-96 flex-col gap-0.5 overflow-y-auto">
-        {list.map((release) => (
-          <li key={release.tag}>
-            <button
-              type="button"
-              aria-current={release.tag === selected?.tag ? "true" : undefined}
-              className={cn(
-                "flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                release.tag === selected?.tag && "bg-accent",
-              )}
-              onClick={() => setSelectedTag(release.tag)}
-            >
-              <span className="font-mono text-xs break-all">{release.version}</span>
-              <span className="flex items-center gap-1.5 text-muted-foreground text-xs">
-                {formatDate(release.publishedAt)}
-                {release.version === APP_VERSION ? (
-                  <Badge size="sm" variant="secondary">
-                    Installed
-                  </Badge>
-                ) : null}
-              </span>
-            </button>
-          </li>
+    <div className="flex flex-col gap-3">
+      <ol aria-label="Fork release timeline" className="flex flex-col">
+        {list.slice(0, shownCount).map((release) => (
+          <ReleaseSection environmentId={environmentId} key={release.tag} release={release} />
         ))}
-      </ul>
-      {selected ? <ReleaseChanges environmentId={environmentId} release={selected} /> : null}
+      </ol>
+      {hiddenCount > 0 ? (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setShownCount((count) => count + RELEASE_PAGE_SIZE)}
+        >
+          Show {Math.min(hiddenCount, RELEASE_PAGE_SIZE)} older{" "}
+          {Math.min(hiddenCount, RELEASE_PAGE_SIZE) === 1 ? "release" : "releases"}
+        </Button>
+      ) : null}
     </div>
   );
 }
 
-function ReleaseChanges({
+/** A thin release divider, then the commits that the release adds to the release below it. */
+function ReleaseSection({
   environmentId,
   release,
 }: {
@@ -148,52 +173,50 @@ function ReleaseChanges({
   const changes = useEnvironmentQuery(
     forkReleaseChanges({ environmentId, input: { tag: release.tag } }),
   );
-  const data = changes.data?.tag === release.tag ? changes.data : null;
+  const data = changes.data;
 
   return (
-    <section aria-label={`Changes in ${release.version}`} className="flex min-w-0 flex-col gap-3">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-medium font-mono text-sm break-all">{release.version}</h3>
-        <ExternalLink href={release.url}>Release on GitHub</ExternalLink>
-        {data?.compareUrl ? (
-          <ExternalLink href={data.compareUrl}>Compare on GitHub</ExternalLink>
+    <li aria-label={`Release ${release.version}`} className="flex flex-col">
+      <div className="flex items-center gap-2 px-2 pt-3 pb-1 text-muted-foreground text-xs">
+        <h3 className="font-medium font-mono text-foreground break-all">
+          <TextLink href={release.url}>{release.version}</TextLink>
+        </h3>
+        {release.version === APP_VERSION ? (
+          <Badge size="sm" variant="secondary">
+            Installed
+          </Badge>
         ) : null}
+        <TimeLabel iso={release.publishedAt} />
+        <span aria-hidden className="h-px min-w-4 flex-1 bg-border" />
+        {data?.compareUrl ? <ExternalLink href={data.compareUrl}>Compare</ExternalLink> : null}
       </div>
       {data === null ? (
-        <QueryState error={changes.error} />
+        <QueryState
+          subject={`the commits of ${release.version}`}
+          error={changes.error}
+          retry={changes.refresh}
+        />
       ) : (
         <>
-          {data.previousTag === null ? (
-            <Notice>
-              This is the oldest listed release, so it shows every fork commit it has.
-            </Notice>
-          ) : null}
-          <div className="flex flex-col gap-1.5">
-            <h4 className="font-medium text-xs">Fork changes ({data.forkCommits.length})</h4>
-            {data.forkCommits.length === 0 ? (
-              <Notice>No fork commits in this release.</Notice>
-            ) : (
-              <CommitList commits={data.forkCommits} forkMarker />
-            )}
-          </div>
-          {data.previousTag === null ? null : (
-            <details className="flex flex-col gap-1.5">
-              <summary className="cursor-pointer font-medium text-xs">
-                Upstream changes ({data.upstreamCommits.length})
-              </summary>
-              {data.upstreamCommits.length === 0 ? (
-                <Notice>No upstream commits in this release.</Notice>
-              ) : (
-                <CommitList commits={data.upstreamCommits} />
-              )}
-            </details>
+          {data.commits.length === 0 ? (
+            <Notice>No commits besides merges.</Notice>
+          ) : (
+            <CommitList commits={data.commits} />
           )}
           {data.truncated ? (
-            <Notice>GitHub has more commits for this release than the list shows.</Notice>
+            <Notice>
+              The list stops at 500 commits. GitHub has more for this release.{" "}
+              {data.compareUrl ? (
+                <TextLink href={data.compareUrl}>See all on GitHub</TextLink>
+              ) : null}
+            </Notice>
+          ) : null}
+          {data.previousTag === null ? (
+            <Notice>This is the oldest listed release, so it shows only its fork commits.</Notice>
           ) : null}
         </>
       )}
-    </section>
+    </li>
   );
 }
 
@@ -255,7 +278,7 @@ function UpstreamTab({ environmentId }: { readonly environmentId: EnvironmentId 
         </div>
         {canStart ? null : <Notice>This connection cannot start workflows.</Notice>}
         {sync.data === null ? (
-          <QueryState error={sync.error} />
+          <QueryState subject="the Fork Sync runs" error={sync.error} retry={refreshSync} />
         ) : run === null ? (
           <Notice>Fork Sync has not run yet.</Notice>
         ) : (
@@ -263,9 +286,9 @@ function UpstreamTab({ environmentId }: { readonly environmentId: EnvironmentId 
         )}
       </section>
 
-      <section aria-label="Upstream changes" className="flex flex-col gap-2">
+      <section aria-label="Upstream changes" className="flex flex-col gap-1">
         {pending.data === null ? (
-          <QueryState error={pending.error} />
+          <QueryState subject="the upstream commits" error={pending.error} retry={refreshPending} />
         ) : (
           <>
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -278,7 +301,10 @@ function UpstreamTab({ environmentId }: { readonly environmentId: EnvironmentId 
             </div>
             {pending.data.commits.length > 0 ? <CommitList commits={pending.data.commits} /> : null}
             {pending.data.truncated ? (
-              <Notice>GitHub has more upstream commits than the list shows.</Notice>
+              <Notice>
+                The list stops at 500 commits.{" "}
+                <TextLink href={pending.data.compareUrl}>See all on GitHub</TextLink>
+              </Notice>
             ) : null}
           </>
         )}
@@ -290,14 +316,17 @@ function UpstreamTab({ environmentId }: { readonly environmentId: EnvironmentId 
 function SyncRun({ run }: { readonly run: ForkWorkflowRun }) {
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3">
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="font-medium">Run {run.runNumber}</span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        <span className="font-medium">
+          <TextLink href={run.url}>Run {run.runNumber}</TextLink>
+        </span>
         <StateBadge state={run.state} />
         <span className="text-muted-foreground">
-          {run.event === "workflow_dispatch" ? "Started by hand" : run.event},{" "}
-          {formatDate(run.createdAt)}
+          {run.event === "workflow_dispatch" ? "Started by hand" : run.event}
         </span>
-        <ExternalLink href={run.url}>Run on GitHub</ExternalLink>
+        <span className="text-muted-foreground">
+          <TimeLabel iso={run.createdAt} />
+        </span>
       </div>
       {run.jobs.length === 0 ? (
         <Notice>GitHub has not started the jobs yet.</Notice>
@@ -306,11 +335,7 @@ function SyncRun({ run }: { readonly run: ForkWorkflowRun }) {
           {run.jobs.map((job) => (
             <li className="flex items-center gap-2 text-xs" key={job.url ?? job.name}>
               <StateBadge state={job.state} />
-              {job.url ? (
-                <ExternalLink href={job.url}>{job.name}</ExternalLink>
-              ) : (
-                <span>{job.name}</span>
-              )}
+              {job.url ? <TextLink href={job.url}>{job.name}</TextLink> : <span>{job.name}</span>}
             </li>
           ))}
         </ul>
@@ -319,34 +344,68 @@ function SyncRun({ run }: { readonly run: ForkWorkflowRun }) {
   );
 }
 
-function CommitList({
-  commits,
-  forkMarker = false,
-}: {
-  readonly commits: ReadonlyArray<ForkCommit>;
-  readonly forkMarker?: boolean;
-}) {
+function CommitList({ commits }: { readonly commits: ReadonlyArray<ForkCommit> }) {
   return (
-    <ul className="flex max-h-72 flex-col gap-1 overflow-y-auto">
+    <ul className="flex flex-col">
       {commits.map((commit) => (
-        <li className="flex items-baseline gap-2 text-xs leading-5" key={commit.sha}>
-          {forkMarker ? (
-            <Badge size="sm" variant="info">
-              Fork
-            </Badge>
-          ) : null}
-          <span className="min-w-0 flex-1 break-words">{commit.subject}</span>
-          <a
-            className="shrink-0 font-mono text-muted-foreground hover:text-foreground"
-            href={commit.url}
-            rel="noreferrer noopener"
-            target="_blank"
-          >
-            {commit.sha.slice(0, 7)}
-          </a>
-        </li>
+        <CommitRow commit={commit} key={commit.sha} />
       ))}
     </ul>
+  );
+}
+
+/** Subject first, then the sha, the author and the time in a muted line. */
+function CommitRow({ commit }: { readonly commit: ForkCommit }) {
+  return (
+    <li className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 hover:bg-accent/50">
+      <div className="flex items-baseline gap-1.5">
+        {commit.fork ? (
+          <Badge size="sm" variant="info">
+            Fork
+          </Badge>
+        ) : null}
+        <p className="min-w-0 text-sm leading-5 break-words">
+          {linkCommitSubject(commit).map((part) =>
+            part.url === null ? (
+              part.text
+            ) : (
+              <TextLink href={part.url} key={part.start}>
+                {part.text}
+              </TextLink>
+            ),
+          )}
+        </p>
+      </div>
+      <p className="flex flex-wrap items-center gap-x-1.5 text-muted-foreground text-xs">
+        <span className="font-mono">
+          <TextLink href={commit.url}>{commit.sha.slice(0, 7)}</TextLink>
+        </span>
+        <span aria-hidden>·</span>
+        {commit.authorLogin ? (
+          <TextLink href={`https://github.com/${encodeURIComponent(commit.authorLogin)}`}>
+            {commit.author ?? commit.authorLogin}
+          </TextLink>
+        ) : (
+          <span>{commit.author ?? "Unknown author"}</span>
+        )}
+        <span aria-hidden>·</span>
+        <TimeLabel iso={commit.committedAt} />
+      </p>
+    </li>
+  );
+}
+
+/** The absolute time and the time since, such as `9:41 AM, 12th October 2026 · 3h ago`. */
+function TimeLabel({ iso }: { readonly iso: string | null }) {
+  const clock = use(ChangelogClockContext);
+  if (clock === null) throw new Error("TimeLabel needs a ChangelogClockProvider.");
+  if (iso === null) return <span>No date</span>;
+  const absolute = formatChatTimestampTooltip(iso, clock.timestampFormat);
+  if (absolute === "") return <span>{iso}</span>;
+  return (
+    <time dateTime={iso}>
+      {absolute} · {formatRelativeTimeLabel(iso, clock.nowMs)}
+    </time>
   );
 }
 
@@ -375,10 +434,27 @@ function isActiveState(state: ForkWorkflowState): boolean {
   return state === "queued" || state === "running";
 }
 
+// Plain anchors: the desktop shell opens a new-window link in the system browser, and the web
+// app opens it in a new tab. The changelog has no thread, so an in-app preview does not apply.
+
+/** An inline link that keeps the color of its text. */
+function TextLink({ href, children }: { readonly href: string; readonly children: ReactNode }) {
+  return (
+    <a
+      className="rounded-sm underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      href={href}
+      rel="noreferrer noopener"
+      target="_blank"
+    >
+      {children}
+    </a>
+  );
+}
+
 function ExternalLink({ href, children }: { readonly href: string; readonly children: ReactNode }) {
   return (
     <a
-      className="inline-flex items-center gap-1 text-muted-foreground text-xs underline decoration-dotted underline-offset-4 hover:text-foreground"
+      className="inline-flex shrink-0 items-center gap-1 rounded-sm text-muted-foreground text-xs underline decoration-dotted underline-offset-4 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       href={href}
       rel="noreferrer noopener"
       target="_blank"
@@ -389,22 +465,37 @@ function ExternalLink({ href, children }: { readonly href: string; readonly chil
   );
 }
 
-function QueryState({ error }: { readonly error: string | null }) {
-  return error === null ? (
-    <Spinner size="sm" tone="muted" />
-  ) : (
-    <p className="text-destructive-foreground text-xs">{error}</p>
+/** A spinner that names what it reads, or the failure with a retry. */
+function QueryState({
+  subject,
+  error,
+  retry,
+}: {
+  readonly subject: string;
+  readonly error: string | null;
+  readonly retry: () => void;
+}) {
+  if (error === null) {
+    return (
+      <p className="flex items-center gap-2 px-2 py-1.5 text-muted-foreground text-xs">
+        <Spinner size="xs" tone="muted" />
+        Reading {subject} from GitHub…
+      </p>
+    );
+  }
+  return (
+    <Alert variant="error">
+      <AlertTitle>Could not read {subject}</AlertTitle>
+      <AlertDescription>{error}</AlertDescription>
+      <AlertAction>
+        <Button size="xs" variant="outline" onClick={retry}>
+          Retry
+        </Button>
+      </AlertAction>
+    </Alert>
   );
 }
 
 function Notice({ children }: { readonly children: ReactNode }) {
-  return <p className="text-muted-foreground text-xs">{children}</p>;
-}
-
-function formatDate(iso: string | null): string {
-  if (iso === null) return "Not published";
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime())
-    ? iso
-    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return <p className="px-2 py-1 text-muted-foreground text-xs">{children}</p>;
 }

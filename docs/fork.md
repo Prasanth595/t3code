@@ -118,9 +118,13 @@ The first build creates `current` and sets the setting for apps that start later
 The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is off by default. Turn it on in Settings > General > About > Fork changelog.
 
 - Open it from the Fork changelog row in Settings, or from "Open changelog" in the update button popover on the desktop app. It opens also when no update is available.
-- The Releases tab lists the fork releases, newest version first. Each fork commit of a release shows as its own item with a "Fork" mark. The upstream commits of the release stay in one group.
+- The Releases tab is one timeline of commits, newest first. A thin divider shows each release, its time and an "Installed" mark. The commits that the release adds to the release before it follow the divider.
+- The timeline shows 10 releases first. "Show older releases" adds 10 more, because each release costs GitHub requests.
+- Each commit shows as its own row. A fork commit has a "Fork" mark, and an upstream commit has no mark. A range of more than 500 commits stops at 500 with a note.
+- Each commit, release and Fork Sync run shows its time and the time since, for example "9:41 AM, 12th October 2026 · 3h ago". The time since updates once a minute while the changelog is open.
+- The release version, commit sha, author, run and each job link to GitHub. A `#123` in a fork commit subject links to the fork pull request. In an upstream commit subject, it links to the upstream pull request.
 - A fork commit is a commit that `pingdotgg/t3code` main does not contain. Merge commits do not show.
-- The Upstream tab lists the upstream main commits that fork main does not have yet. Its "Start Fork Sync" button starts `.github/workflows/fork-sync.yml` and shows the run and each job. The tab reads the run again every 5 seconds while the run is queued or running.
+- The Upstream tab lists the upstream main commits that fork main does not have yet, in the same rows. Its "Start Fork Sync" button starts `.github/workflows/fork-sync.yml` and shows the run and each job. The tab reads the run again every 5 seconds while the run is queued or running.
 - The server reads GitHub with the GitHub credential of its machine, the same one that pull requests use (settings, `GH_TOKEN` or `gh auth login`). Without a credential, the changelog shows the GitHub error.
 - Starting Fork Sync needs the `source-control:write` scope on the connection.
 

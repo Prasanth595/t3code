@@ -11,11 +11,21 @@ import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
+/** The GitHub repositories (`owner/name`) that the fork changelog reads. */
+export const FORK_CHANGELOG_REPOSITORIES = {
+  fork: "Yarden-zamir/t3code",
+  upstream: "pingdotgg/t3code",
+} as const;
+
 export const ForkCommit = Schema.Struct({
   sha: TrimmedNonEmptyString,
   /** The first line of the commit message. */
   subject: Schema.String,
+  /** True when upstream main does not contain the commit. Then `#123` in the subject is a fork pull request. */
+  fork: Schema.Boolean,
   author: Schema.NullOr(Schema.String),
+  /** The GitHub account of the author. Null when GitHub cannot match the commit email to an account. */
+  authorLogin: Schema.NullOr(Schema.String),
   committedAt: Schema.NullOr(Schema.String),
   url: Schema.String,
 });
@@ -42,13 +52,13 @@ export const ForkReleaseChangesInput = Schema.Struct({
 });
 export type ForkReleaseChangesInput = typeof ForkReleaseChangesInput.Type;
 
-/** The commits a release adds to the release before it, newest first. Merge commits are left out. */
+/** The commits a release adds to the release before it. Merge commits are left out. */
 export const ForkReleaseChanges = Schema.Struct({
   tag: TrimmedNonEmptyString,
-  /** Null for the oldest listed release. Then `forkCommits` holds every fork commit it has. */
+  /** Null for the oldest listed release. Then `commits` holds only the fork commits it has. */
   previousTag: Schema.NullOr(TrimmedNonEmptyString),
-  forkCommits: Schema.Array(ForkCommit),
-  upstreamCommits: Schema.Array(ForkCommit),
+  /** Fork and upstream commits in one list, newest first. */
+  commits: Schema.Array(ForkCommit),
   /** GitHub held more commits than the server reads. */
   truncated: Schema.Boolean,
   compareUrl: Schema.NullOr(Schema.String),

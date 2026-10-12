@@ -17,6 +17,8 @@ export const GitHubCommit = Schema.Struct({
   sha: Schema.String,
   html_url: Schema.String,
   parents: Schema.Array(Schema.Struct({ sha: Schema.String })),
+  /** The GitHub account that matches the commit author email, or null. */
+  author: Schema.NullOr(Schema.Struct({ login: Schema.String })),
   commit: Schema.Struct({
     message: Schema.String,
     author: Schema.NullOr(
@@ -149,32 +151,31 @@ export function toForkWorkflowRun(
   };
 }
 
-export function toForkCommit(commit: GitHubCommit): ForkCommit {
+function toForkCommit(commit: GitHubCommit, fork: boolean): ForkCommit {
   return {
     sha: commit.sha,
     subject: commit.commit.message.split("\n", 1)[0]?.trim() ?? "",
+    fork,
     author: commit.commit.author?.name ?? null,
+    authorLogin: commit.author?.login ?? null,
     committedAt: commit.commit.author?.date ?? null,
     url: commit.html_url,
   };
 }
 
 /**
- * Splits the commits of a release range into fork commits and upstream commits, newest first.
+ * The commits of a release range, newest first, each marked as a fork or an upstream commit.
  * A commit is a fork commit when `forkShas` (the commits that upstream main does not contain)
  * holds it. Merge commits are left out: a sync merge carries no change of its own.
  */
-export function splitForkCommits(
+export function markForkCommits(
   rangeOldestFirst: ReadonlyArray<GitHubCommit>,
   forkShas: ReadonlySet<string>,
-): { readonly fork: ReadonlyArray<ForkCommit>; readonly upstream: ReadonlyArray<ForkCommit> } {
-  const fork: ForkCommit[] = [];
-  const upstream: ForkCommit[] = [];
-  for (const commit of rangeOldestFirst.toReversed()) {
-    if (commit.parents.length > 1) continue;
-    (forkShas.has(commit.sha) ? fork : upstream).push(toForkCommit(commit));
-  }
-  return { fork, upstream };
+): ForkCommit[] {
+  return rangeOldestFirst
+    .filter((commit) => commit.parents.length <= 1)
+    .toReversed()
+    .map((commit) => toForkCommit(commit, forkShas.has(commit.sha)));
 }
 
 /** Published releases, newest version first. Equal versions keep the newest publication first. */

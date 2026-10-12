@@ -6,6 +6,7 @@
  * @module fork/ForkChangelog
  */
 import {
+  FORK_CHANGELOG_REPOSITORIES,
   ForkChangelogError,
   type ForkReleaseChanges,
   type ForkReleaseChangesInput,
@@ -28,18 +29,17 @@ import {
   GitHubReleases,
   GitHubWorkflowJobs,
   GitHubWorkflowRuns,
+  markForkCommits,
   orderForkReleases,
-  splitForkCommits,
-  toForkCommit,
   toForkWorkflowRun,
 } from "./forkChangelogGitHub.ts";
 
 const HOST = "github.com";
-const REPOSITORY_NAME = "t3code";
-const FORK_OWNER = "Yarden-zamir";
-const UPSTREAM_OWNER = "pingdotgg";
-const FORK_REPOSITORY = `${FORK_OWNER}/${REPOSITORY_NAME}`;
-const UPSTREAM_REPOSITORY = `${UPSTREAM_OWNER}/${REPOSITORY_NAME}`;
+const FORK_REPOSITORY = FORK_CHANGELOG_REPOSITORIES.fork;
+const UPSTREAM_REPOSITORY = FORK_CHANGELOG_REPOSITORIES.upstream;
+/** A compare across the fork network names a ref as `owner:name:ref`. */
+const FORK_REF_PREFIX = FORK_REPOSITORY.replace("/", ":");
+const UPSTREAM_REF_PREFIX = UPSTREAM_REPOSITORY.replace("/", ":");
 const SYNC_WORKFLOW = "fork-sync.yml";
 const RELEASE_PAGE_SIZE = 50;
 const COMPARE_PAGE_SIZE = 100;
@@ -152,17 +152,15 @@ export const make = Effect.gen(function* () {
         previous === null
           ? Effect.succeed(null)
           : compare(FORK_REPOSITORY, `${previous.tag}...${tag}`),
-        compare(UPSTREAM_REPOSITORY, `main...${FORK_OWNER}:${REPOSITORY_NAME}:${tag}`),
+        compare(UPSTREAM_REPOSITORY, `main...${FORK_REF_PREFIX}:${tag}`),
       ],
       { concurrency: 2 },
     );
     const forkShas = new Set(forkOnly.commits.map((commit) => commit.sha));
-    const split = splitForkCommits(range?.commits ?? forkOnly.commits, forkShas);
     return {
       tag,
       previousTag: previous?.tag ?? null,
-      forkCommits: split.fork,
-      upstreamCommits: split.upstream,
+      commits: markForkCommits(range?.commits ?? forkOnly.commits, forkShas),
       truncated: (range?.truncated ?? false) || forkOnly.truncated,
       compareUrl: range?.url ?? null,
     } satisfies ForkReleaseChanges;
@@ -174,15 +172,10 @@ export const make = Effect.gen(function* () {
   });
 
   const upstreamPending = Effect.gen(function* () {
-    const pending = yield* compare(
-      FORK_REPOSITORY,
-      `main...${UPSTREAM_OWNER}:${REPOSITORY_NAME}:main`,
-    );
+    const pending = yield* compare(FORK_REPOSITORY, `main...${UPSTREAM_REF_PREFIX}:main`);
     return {
-      commits: pending.commits
-        .filter((commit) => commit.parents.length <= 1)
-        .toReversed()
-        .map(toForkCommit),
+      // Fork main lacks every one of these commits, so none is a fork commit.
+      commits: markForkCommits(pending.commits, new Set()),
       total: pending.total,
       truncated: pending.truncated,
       compareUrl: pending.url,

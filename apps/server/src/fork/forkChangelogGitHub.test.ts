@@ -4,14 +4,15 @@ import {
   forkWorkflowState,
   type GitHubCommit,
   type GitHubRelease,
+  markForkCommits,
   orderForkReleases,
-  splitForkCommits,
 } from "./forkChangelogGitHub.ts";
 
 const commit = (sha: string, parentCount = 1): GitHubCommit => ({
   sha,
   html_url: `https://github.com/Yarden-zamir/t3code/commit/${sha}`,
   parents: Array.from({ length: parentCount }, (_, index) => ({ sha: `${sha}-parent-${index}` })),
+  author: sha === "u1" ? null : { login: `login-${sha}` },
   commit: {
     message: `subject ${sha}\n\nbody`,
     author: { name: "Author", date: "2026-10-12T00:00:00Z" },
@@ -26,16 +27,22 @@ const release = (tag: string, publishedAt: string | null, draft = false): GitHub
   html_url: `https://github.com/Yarden-zamir/t3code/releases/tag/${tag}`,
 });
 
-describe("splitForkCommits", () => {
-  it("puts commits that upstream main lacks under fork, newest first, and drops merges", () => {
-    const { fork, upstream } = splitForkCommits(
+describe("markForkCommits", () => {
+  it("keeps fork and upstream commits in one list, newest first, and drops merges", () => {
+    const commits = markForkCommits(
       [commit("u1"), commit("f1"), commit("merge", 2), commit("u2"), commit("f2")],
       new Set(["f1", "f2", "merge"]),
     );
 
-    expect(fork.map((entry) => entry.sha)).toEqual(["f2", "f1"]);
-    expect(upstream.map((entry) => entry.sha)).toEqual(["u2", "u1"]);
-    expect(fork[0]?.subject).toBe("subject f2");
+    expect(commits.map((entry) => [entry.sha, entry.fork])).toEqual([
+      ["f2", true],
+      ["u2", false],
+      ["f1", true],
+      ["u1", false],
+    ]);
+    expect(commits[0]?.subject).toBe("subject f2");
+    expect(commits[0]?.authorLogin).toBe("login-f2");
+    expect(commits[3]?.authorLogin).toBeNull();
   });
 });
 
