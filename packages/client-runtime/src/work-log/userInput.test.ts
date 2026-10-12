@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ApprovalRequestId, type UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
-import { getQuestionTextPreview } from "./userInput.ts";
+import { getQuestionAnswerHeading, getQuestionIds, getQuestionTextPreview } from "./userInput.ts";
 
 function answer(
   overrides: Partial<UserInputAttachmentAnswerPayload> = {},
@@ -33,5 +33,36 @@ describe("getQuestionTextPreview", () => {
 
   it("returns an empty string without question texts", () => {
     expect(getQuestionTextPreview(answer({ questionTextById: undefined }))).toBe("");
+  });
+});
+
+describe("getQuestionIds", () => {
+  it("lists each question once, including ones answered only with attachments", () => {
+    expect(
+      getQuestionIds(
+        answer({
+          questionTextById: { scope: "Which repository?" },
+          answers: { scope: "private", name: "t3" },
+          attachmentsByQuestionId: { logo: [] },
+        }),
+      ),
+    ).toEqual(["scope", "name", "logo"]);
+  });
+});
+
+describe("getQuestionAnswerHeading", () => {
+  it("leads with the question when only one was asked", () => {
+    expect(getQuestionAnswerHeading(answer())).toBe("Which repository?");
+  });
+
+  it("counts several questions instead of joining them", () => {
+    expect(
+      getQuestionAnswerHeading(
+        answer({
+          questionTextById: { scope: "Which repository?", name: "What name?" },
+          answers: { scope: "private", name: "t3" },
+        }),
+      ),
+    ).toBe("Answered 2 questions");
   });
 });

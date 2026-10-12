@@ -10,6 +10,7 @@ vi.mock("react-native", () => ({
   Linking: { openURL: vi.fn() },
 }));
 vi.mock("../../components/AppText", () => ({ AppText: "span" }));
+vi.mock("../../components/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../state/assets", () => ({ useAssetUrl: () => null }));
 
 import { QuestionAnswerHistory } from "./QuestionAnswerHistory";

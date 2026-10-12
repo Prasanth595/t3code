@@ -13,6 +13,26 @@ export function getQuestionAnswerText(value: unknown): string {
   return nested ? getQuestionAnswerText(nested.answers) : "";
 }
 
+/** Every question the answer covers, in the order the request asked them. */
+export function getQuestionIds(answer: UserInputAttachmentAnswerPayload): string[] {
+  return [
+    ...new Set([
+      ...Object.keys(answer.questionTextById ?? {}),
+      ...Object.keys(answer.answers),
+      ...Object.keys(answer.attachmentsByQuestionId),
+    ]),
+  ];
+}
+
+/**
+ * Collapsed-row heading for an answered request. One question leads with its
+ * text; several would only fit truncated, so the row counts them instead.
+ */
+export function getQuestionAnswerHeading(answer: UserInputAttachmentAnswerPayload): string {
+  const count = getQuestionIds(answer).length;
+  return count > 1 ? `Answered ${count} questions` : getQuestionTextPreview(answer);
+}
+
 export function getQuestionTextPreview(answer: UserInputAttachmentAnswerPayload): string {
   return Object.values(answer.questionTextById ?? {})
     .map((text) => text.replace(/\s+/g, " ").trim())
