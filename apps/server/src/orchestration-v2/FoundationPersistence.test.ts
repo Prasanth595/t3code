@@ -564,6 +564,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         const thread = makeThread(ThreadId.make("thread:filtered-worker"), now);
         const other = makeThread(ThreadId.make("thread:filtered-worker-other"), now);
         const run: OrchestrationV2Run = {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: RunId.make("run:filtered-worker"),
           threadId: thread.id,
           ordinal: 1,
@@ -1532,6 +1535,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       const attemptId = RunAttemptId.make("run-attempt:foundation-stale-provider-start");
       const thread = makeThread(threadId, now);
       const startingRun: OrchestrationV2Run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId,
         ordinal: 1,
@@ -1670,6 +1676,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       );
       const thread = makeThread(threadId, now);
       const run: OrchestrationV2Run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId,
         ordinal: 1,
@@ -2948,6 +2957,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             providerInstanceId,
             occurredAt: now,
             payload: {
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               id: runId,
               threadId,
               ordinal: 1,
@@ -3075,6 +3087,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
             providerInstanceId,
             occurredAt: now,
             payload: {
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               id: runId,
               threadId: parentId,
               ordinal: 1,
@@ -3282,6 +3297,9 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         providerInstanceId,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,

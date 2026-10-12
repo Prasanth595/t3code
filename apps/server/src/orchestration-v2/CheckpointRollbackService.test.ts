@@ -395,6 +395,9 @@ it.effect.each([
     ],
     checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
     runs: [1, 2, 3].map((ordinal) => ({
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       id: `run-${ordinal}`,
       ordinal,
       status: ordinal === 3 ? "rolled_back" : "completed",

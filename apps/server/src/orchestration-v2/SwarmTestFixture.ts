@@ -18,6 +18,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -50,6 +52,7 @@ const makeSwarmLayer = (
   providerAdapter: ProviderAdapter.ProviderAdapterV2["Service"],
   name: string,
   runContinuationWorker = false,
+  additionalAdapters: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]> = [],
 ) =>
   ThreadManagement.layer.pipe(
     Layer.provideMerge(
@@ -59,18 +62,34 @@ const makeSwarmLayer = (
         ProjectionStore.layer.pipe(Layer.provide(database)),
         ProviderReplayHarness.layerWithRegistry(
           { name },
-          ProviderAdapterRegistry.layerFromAdapters([providerAdapter]),
+          ProviderAdapterRegistry.layerFromAdapters([providerAdapter, ...additionalAdapters]),
           { databaseLayer: database, runEffectWorker: false, runContinuationWorker },
         ),
       ),
     ),
   );
-export const layerTest = makeSwarmLayer(adapter, "swarm");
+export const layerTest = Layer.unwrap(
+  Effect.gen(function* () {
+    const turns = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+    return controlledSwarmLayer({ turns });
+  }),
+);
+
+export const startupFailureLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const turns = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
+    return controlledSwarmLayer({
+      turns,
+      beforeSetup: (threadId) =>
+        threadId === ownerId ? Effect.void : Effect.die("Controlled provider startup failure"),
+    });
+  }),
+);
 export const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
 export const ownerId = ThreadId.make("thread:swarm-owner");
 
 export const boot = Effect.gen(function* () {
-  const scenario = yield* runOrchestratorV2Scenario({
+  yield* runOrchestratorV2Scenario({
     name: "swarm-owner",
     commands: [
       {
@@ -101,15 +120,28 @@ export const boot = Effect.gen(function* () {
     ],
     projectionThreadIds: [ownerId],
   });
-  const parent = scenario.projections.get(ownerId);
+  yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(10);
+  const parent = yield* (yield* Orchestrator.OrchestratorV2).getThreadProjection(ownerId);
   const run = parent?.runs[0];
   if (run === undefined || run.rootNodeId === null) return yield* Effect.die("Owner did not start");
+  yield* (yield* EventSink.EventSinkV2)
+    .stream({ threadId: ownerId, eventType: "provider-turn.updated", afterSequence: 0 })
+    .pipe(
+      Stream.filter(
+        (stored) =>
+          stored.event.type === "provider-turn.updated" &&
+          stored.event.payload.runAttemptId === run.activeAttemptId &&
+          stored.event.payload.status === "running",
+      ),
+      Stream.runHead,
+    );
   return { parent, run };
 });
 
 export const create = (
   key = "create-group",
   runtimeMode: import("@t3tools/contracts").RuntimeMode = "full-access",
+  secondSelection?: import("@t3tools/contracts").ModelSelection,
 ) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -124,10 +156,11 @@ export const create = (
       parentNodeId: run.rootNodeId,
       intentFingerprint: key,
       title: "Research",
-      members: ["A", "B"].map((title) => ({
+      members: ["A", "B"].map((title, index) => ({
         title,
         task: `Work ${title}`,
-        modelSelection,
+        modelSelection:
+          index === 1 && secondSelection !== undefined ? secondSelection : modelSelection,
         runtimeMode,
         interactionMode: "default" as const,
       })),
@@ -153,6 +186,7 @@ export const peer = (
     const recipient = group.members[to];
     if (sender === undefined || recipient === undefined)
       return yield* Effect.die("Missing members");
+    yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(20);
     const child = yield* orchestrator.getThreadProjection(sender.threadId);
     const run = child.runs.findLast((row) =>
       ["starting", "running", "waiting"].includes(row.status),
@@ -251,6 +285,10 @@ export const controlledSwarmLayer = (input: {
   readonly beforeAcceptance?: (
     turn: ProviderAdapter.ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void>;
+  readonly wrapAdapter?: (
+    provider: ProviderAdapter.ProviderAdapterV2["Service"],
+  ) => ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly additionalAdapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
 }) => {
   const controlledAdapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
     ...adapter,
@@ -258,6 +296,7 @@ export const controlledSwarmLayer = (input: {
       Effect.gen(function* () {
         const now = yield* DateTime.now;
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+        const nativeFinishers = new Map<ProviderTurnId, SwarmTestFinisher>();
         const rosters = yield* Ref.make<
           ReadonlyMap<ProviderThreadId, ReadonlyArray<OrchestrationV2PendingBackgroundTask>>
         >(new Map());
@@ -414,6 +453,7 @@ export const controlledSwarmLayer = (input: {
                   input.finishers,
                   (current) => new Map([...current, [turn.runId, finish]]),
                 );
+              nativeFinishers.set(providerTurn.id, finish);
               yield* PubSub.publish(events, {
                 type: "provider_turn.updated",
                 driver: adapter.driver,
@@ -423,9 +463,17 @@ export const controlledSwarmLayer = (input: {
           steerTurn: () => Effect.void,
           compactThread: () => Effect.die("Peer content invoked compaction"),
           interruptTurn: (target) =>
-            input.interrupts === undefined
-              ? Effect.void
-              : Ref.update(input.interrupts, (current) => [...current, target.providerTurnId]),
+            Effect.gen(function* () {
+              if (input.interrupts !== undefined)
+                yield* Ref.update(input.interrupts, (current) => [
+                  ...current,
+                  target.providerTurnId,
+                ]);
+              yield* (
+                nativeFinishers.get(target.providerTurnId)?.({ status: "interrupted", text: "" }) ??
+                  Effect.void
+              );
+            }),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: (setup) =>
             withRoster(setup.providerThread).pipe(
@@ -441,5 +489,10 @@ export const controlledSwarmLayer = (input: {
         } satisfies ProviderAdapter.ProviderAdapterV2SessionRuntime;
       }),
   };
-  return makeSwarmLayer(controlledAdapter, "swarm-r2-provider", input.runContinuationWorker);
+  return makeSwarmLayer(
+    input.wrapAdapter?.(controlledAdapter) ?? controlledAdapter,
+    "swarm-r2-provider",
+    input.runContinuationWorker,
+    input.additionalAdapters,
+  );
 };

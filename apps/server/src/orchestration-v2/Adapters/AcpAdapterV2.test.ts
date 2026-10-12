@@ -547,7 +547,7 @@ function makeTurnInput(input: {
   readonly now: DateTime.Utc;
   readonly ordinal?: number;
   readonly modelSelection?: ModelSelection;
-  /** agent+provider marks a post-settle continuation attach (drains wakeBuffer). */
+  readonly nativeOffer?: ProviderContinuationRequests.ProviderContinuationRequest | undefined;
   readonly messageCreatedBy?: "user" | "agent";
   readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
   readonly messageText?: string;
@@ -556,7 +556,25 @@ function makeTurnInput(input: {
   const suffix = `${input.threadId}:${ordinal}`;
   const modelSelection =
     input.modelSelection ?? ({ instanceId: input.instanceId, model: "default" } as const);
+  const nativeOffer = input.nativeOffer;
+  if (nativeOffer !== undefined && nativeOffer.kind !== "native")
+    assert.fail("Unexpected delegated completion offer");
+  if (nativeOffer?.cause.kind === "incomplete" && nativeOffer.cause.ordinaryProcess === null)
+    assert.fail("An unproved native process cannot be adopted");
   return {
+    executionScope: { kind: "ordinary" as const },
+    executionCause:
+      nativeOffer === undefined
+        ? { kind: "independent" as const }
+        : nativeOffer.cause.kind === "complete"
+          ? {
+              kind: "causal" as const,
+              reason: "native" as const,
+              sources: nativeOffer.cause.sources,
+            }
+          : { kind: "native_unowned" as const, process: nativeOffer.cause.ordinaryProcess! },
+    executionDelivery: nativeOffer?.delivery ?? { kind: "message_text" as const },
+    nativeThreadHasTurns: false,
     appThread: {
       createdBy: "user",
       creationSource: "web",
@@ -3393,7 +3411,7 @@ describe("AcpAdapterV2", () => {
           settings: DEFAULT_GROK_SETTINGS,
           environment: {},
           hostPlatform: yield* HostProcess.Platform,
-          selfInvocation: yield* resolveSelfInvocation(),
+          selfInvocation,
           // Production Grok runtimes are wrapped by the x.ai prompt runtime.
           makeRuntime: (input) =>
             makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
@@ -3440,7 +3458,7 @@ describe("AcpAdapterV2", () => {
         settings: DEFAULT_GROK_SETTINGS,
         environment: {},
         hostPlatform: yield* HostProcess.Platform,
-        selfInvocation: yield* resolveSelfInvocation(),
+        selfInvocation,
         // Production Grok runtimes are wrapped by the x.ai prompt runtime.
         makeRuntime: (input) =>
           makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
@@ -6239,6 +6257,7 @@ describe("AcpAdapterV2", () => {
         const attachNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
+            nativeOffer: continuationRequests.at(-1),
             threadId,
             providerThread,
             instanceId,
@@ -6615,6 +6634,7 @@ describe("AcpAdapterV2", () => {
 
       const continuationNow = yield* DateTime.now;
       const continuationInput = makeTurnInput({
+        nativeOffer: continuationRequests.at(-1),
         threadId,
         providerThread,
         instanceId,
@@ -6902,6 +6922,7 @@ describe("AcpAdapterV2", () => {
         const continuationNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
+            nativeOffer: continuationRequests.at(-1),
             threadId,
             providerThread,
             instanceId,
@@ -7149,6 +7170,7 @@ describe("AcpAdapterV2", () => {
         const attachNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
+            nativeOffer: continuationRequests.at(-1),
             threadId,
             providerThread,
             instanceId,
@@ -7371,6 +7393,7 @@ describe("AcpAdapterV2", () => {
       const attachNow = yield* DateTime.now;
       yield* runtime.startTurn(
         makeTurnInput({
+          nativeOffer: continuationRequests.at(-1),
           threadId,
           providerThread,
           instanceId,
@@ -7609,6 +7632,7 @@ describe("AcpAdapterV2", () => {
         const continuationNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
+            nativeOffer: continuationRequests.at(-1),
             threadId,
             providerThread,
             instanceId,
@@ -7858,6 +7882,7 @@ describe("AcpAdapterV2", () => {
         const continuationNow = yield* DateTime.now;
         yield* runtime.startTurn(
           makeTurnInput({
+            nativeOffer: continuationRequests.at(-1),
             threadId,
             providerThread,
             instanceId,
@@ -9496,8 +9521,17 @@ describe("AcpAdapterV2", () => {
         yield* lateTool("first-late-result");
         assert.lengthOf(continuationRequests, 1);
         const first = continuationRequests[0]!;
-        assert.isDefined(first.dispatchIfCurrent);
-        assert.isTrue(Option.isSome(yield* first.dispatchIfCurrent!(Effect.void)));
+        assert.equal(first.kind, "native");
+        if (first.kind !== "native") return yield* Effect.die("Unexpected app-owned completion");
+        assert.isTrue(
+          Option.isSome(
+            yield* first.isCurrent.pipe(
+              Effect.flatMap((current) =>
+                current ? Effect.void.pipe(Effect.asSome) : Effect.succeedNone,
+              ),
+            ),
+          ),
+        );
 
         yield* lateTool("second-frame-before-dispatched-turn-starts");
         assert.lengthOf(
@@ -9632,7 +9666,9 @@ describe("AcpAdapterV2", () => {
       });
       assert.lengthOf(continuationRequests, 1);
       const continuationRequest = continuationRequests[0]!;
-      assert.isDefined(continuationRequest.dispatchIfCurrent);
+      assert.equal(continuationRequest.kind, "native");
+      if (continuationRequest.kind !== "native")
+        return yield* Effect.die("Unexpected app-owned completion");
 
       yield* runtime.startTurn(
         makeTurnInput({
@@ -9647,10 +9683,14 @@ describe("AcpAdapterV2", () => {
       );
       yield* Deferred.await(userPromptStarted);
       let continuationDispatched = false;
-      const dispatchOutcome = yield* continuationRequest.dispatchIfCurrent!(
-        Effect.sync(() => {
-          continuationDispatched = true;
-        }),
+      const dispatchOutcome = yield* continuationRequest.isCurrent.pipe(
+        Effect.flatMap((current) =>
+          current
+            ? Effect.sync(() => {
+                continuationDispatched = true;
+              }).pipe(Effect.asSome)
+            : Effect.succeedNone,
+        ),
       );
       assert.isTrue(
         Option.isSome(dispatchOutcome),
@@ -9678,6 +9718,7 @@ describe("AcpAdapterV2", () => {
 
       yield* runtime.startTurn(
         makeTurnInput({
+          nativeOffer: continuationRequests.at(-1),
           threadId,
           providerThread,
           instanceId,
@@ -11226,6 +11267,7 @@ describe("AcpAdapterV2", () => {
 
       yield* runtime.startTurn(
         makeTurnInput({
+          nativeOffer: continuationRequests.at(-1),
           threadId,
           providerThread,
           instanceId,
@@ -11482,6 +11524,7 @@ describe("AcpAdapterV2", () => {
 
       // Third turn: hydrate in-turn before lifecycle complete; no offer.
       const firstOffer = continuationRequests[0]!;
+      if (firstOffer.kind !== "native") return yield* Effect.die("Unexpected app-owned completion");
       if (firstOffer.clearIfCurrent !== undefined) {
         yield* firstOffer.clearIfCurrent();
       }
@@ -11921,6 +11964,7 @@ describe("AcpAdapterV2", () => {
       yield* runtime
         .startTurn({
           ...rootInput,
+          executionDelivery: continuationRequests.at(-1)!.delivery,
           message: {
             ...rootInput.message,
             createdBy: "agent",
@@ -12154,6 +12198,7 @@ describe("AcpAdapterV2", () => {
       yield* runtime
         .startTurn({
           ...rootInput,
+          executionDelivery: continuationRequests.at(-1)!.delivery,
           message: {
             ...rootInput.message,
             createdBy: "agent",

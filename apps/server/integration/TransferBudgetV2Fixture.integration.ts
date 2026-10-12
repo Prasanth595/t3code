@@ -66,6 +66,9 @@ export function turnEvents(
   const userMessageId = MessageId.make(`user-${index}`);
   const providerInstanceId = ProviderInstanceId.make(provider);
   const run = {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: runId,
     threadId: THREAD_ID,
     ordinal: index + 1,

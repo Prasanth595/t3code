@@ -39,6 +39,7 @@ import {
   modelSelection,
   adapter,
   layerTest,
+  startupFailureLayer,
   ownerId,
   boot,
   create,
@@ -330,14 +331,14 @@ it.effect("startup effect failures retain the complete durable roster", () =>
     const failedStarts = yield* sql<{
       count: number;
     }>`SELECT COUNT(*) AS count FROM orchestration_v2_effect_outbox WHERE effect_type = 'provider-turn.start' AND last_error IS NOT NULL`;
-    assert.deepEqual(failedStarts, [{ count: 3 }]);
+    assert.deepEqual(failedStarts, [{ count: 2 }]);
     const stored = yield* (yield* ProjectionStore.ProjectionStoreV2).getSwarm(group.id);
     assert.deepEqual(
       stored?.members.map((member) => member.admission.state),
       ["admitted", "admitted"],
     );
     assert.equal(stored?.lifecycle.state, "open");
-  }).pipe(Effect.provide(layerTest)),
+  }).pipe(Effect.provide(startupFailureLayer)),
 );
 
 it.effect("a SQL projection failure rolls back the entire admission and retry admits once", () =>

@@ -31,6 +31,7 @@ import {
   OrchestrationV2ProviderGoal,
   ProviderDriverKind,
   type ProviderSetupError,
+  MessageId,
 } from "@t3tools/contracts";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -1114,6 +1115,7 @@ interface ActiveCodexTurnContext {
   readonly projectionAppThread: OrchestrationV2AppThread;
   readonly projectionThreadId: ThreadId;
   readonly projectionRunId: ProviderAdapter.ProviderAdapterV2TurnInput["runId"] | null;
+  readonly nativeExecution: ProviderContinuationRequests.NativeAcceptedExecution | null;
   readonly nativeTurnId: string;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly providerTurnId: ProviderTurnId;
@@ -1812,6 +1814,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
+        const executionIncarnations = new Map<
+          string,
+          ProviderContinuationRequests.NativeExecutionIncarnation
+        >();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -1981,6 +1987,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               driver: CODEX_PROVIDER,
               nativeTurnId: input.nativeTurnId,
             });
+            const nativeThreadId = yield* getNativeThreadId(input.turnInput.providerThread);
+            let incarnation = executionIncarnations.get(nativeThreadId);
+            if (incarnation === undefined) {
+              incarnation = new ProviderContinuationRequests.NativeExecutionIncarnation(
+                `${session.id}:${nativeThreadId}`,
+                input.turnInput.nativeThreadHasTurns !== false,
+              );
+              executionIncarnations.set(nativeThreadId, incarnation);
+            }
+            const nativeExecution = incarnation.accept(input.turnInput, nativeThreadId);
             const context: ActiveCodexTurnContext = {
               ...(input.waitForNativeStart
                 ? { nativeStartReady: yield* Deferred.make<void>() }
@@ -1989,6 +2005,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               projectionAppThread: input.turnInput.appThread,
               projectionThreadId: input.turnInput.threadId,
               projectionRunId: input.turnInput.runId,
+              nativeExecution,
               nativeTurnId: input.nativeTurnId,
               providerThread: input.turnInput.providerThread,
               providerTurnId,
@@ -2022,6 +2039,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 providerThreadId: input.turnInput.providerThread.id,
                 nodeId: input.turnInput.rootNodeId,
                 runAttemptId: input.turnInput.attemptId,
+                nativeAcceptance: nativeExecution.receipt,
                 nativeTurnRef: {
                   driver: CODEX_PROVIDER,
                   nativeId: input.nativeTurnId,
@@ -2579,6 +2597,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               projectionAppThread: subagent.childThread,
               projectionThreadId: subagent.childThreadId,
               projectionRunId: null,
+              nativeExecution: null,
               nativeTurnId: turn.nativeTurnId,
               providerThread: subagent.providerThread,
               providerTurnId,
@@ -4812,6 +4831,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   );
                   if (!alreadyOffered) {
                     yield* continuationRequests.offer({
+                      kind: "native",
+                      messageId: MessageId.make(
+                        `native-command-completion:${session.id}:${payload.turnId}:${payload.item.id}`,
+                      ),
+                      cause:
+                        context.nativeExecution === null ||
+                        context.projectionRunId !== context.input.runId
+                          ? { kind: "incomplete", knownSources: [], ordinaryProcess: null }
+                          : { kind: "complete", sources: [context.nativeExecution.source] },
+                      delivery: { kind: "message_text" },
+                      isCurrent: Ref.get(interruptingNativeTurns).pipe(
+                        Effect.map((turns) => !turns.has(payload.turnId)),
+                      ),
                       threadId: context.projectionThreadId,
                       providerThreadId: context.providerThread.id,
                       driver: CODEX_PROVIDER,
@@ -6018,6 +6050,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             projectionAppThread: turnInput.appThread,
             projectionThreadId: turnInput.threadId,
             projectionRunId: turnInput.runId,
+            nativeExecution: null,
             nativeTurnId: nativeId,
             providerThread: turnInput.providerThread,
             providerTurnId: idAllocator.derive.providerTurn({

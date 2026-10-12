@@ -1,9 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   MessageId,
   ProviderDriverKind,
   ProviderThreadId,
   RunId,
+  RunAttemptId,
+  ProviderInstanceId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2Notification,
@@ -34,15 +37,36 @@ const projection = {
 } as unknown as OrchestrationV2ThreadProjection;
 
 const request = (
-  dispatchIfCurrent?: ProviderContinuationRequests.ProviderContinuationRequest["dispatchIfCurrent"],
+  isCurrent: Effect.Effect<boolean> = Effect.succeed(true),
   detail: string | null = null,
-): ProviderContinuationRequests.ProviderContinuationRequest => ({
+): Extract<ProviderContinuationRequests.ProviderContinuationRequest, { kind: "native" }> => ({
+  kind: "native",
+  messageId: MessageId.make(`native-wake:${detail ?? "default"}`),
+  cause: { kind: "complete", sources: [nativeSource] },
+  delivery: {
+    kind: "adapter_buffered",
+    bufferId: "held-wake",
+    process: nativeSource,
+    modelSelection: { instanceId: nativeSource.providerInstanceId, model: "fixture-model" },
+    bounds: { kind: "frames", nativeTurnId: "held-native-turn" },
+  },
   threadId,
   providerThreadId,
   driver,
   detail,
-  ...(dispatchIfCurrent === undefined ? {} : { dispatchIfCurrent }),
+  isCurrent,
 });
+
+const nativeSource = {
+  kind: "native" as const,
+  threadId,
+  runId: parentRunId,
+  attemptId: RunAttemptId.make("native-source-attempt"),
+  providerInstanceId: ProviderInstanceId.make("continuation-test"),
+  providerThreadId,
+  nativeThreadId: "native-source-thread",
+  incarnation: "native-source-incarnation",
+};
 
 const delegatedProjection = (disposition: "open" | "stopped" | "disposed" = "open") =>
   ({
@@ -68,19 +92,17 @@ const makeGuard = Effect.fnUntraced(function* (completed?: Deferred.Deferred<voi
   const permit = yield* Semaphore.make(1);
   const capture = Effect.gen(function* () {
     const captured = yield* Ref.updateAndGet(generation, (value) => value + 1);
-    return <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      permit
-        .withPermit(
-          Effect.gen(function* () {
-            if ((yield* Ref.get(generation)) !== captured) return Option.none();
-            return Option.some(yield* effect);
-          }),
-        )
-        .pipe(
-          completed === undefined
-            ? (effect) => effect
-            : Effect.ensuring(Deferred.succeed(completed, undefined)),
-        );
+    return permit
+      .withPermit(
+        Effect.gen(function* () {
+          return (yield* Ref.get(generation)) === captured;
+        }),
+      )
+      .pipe(
+        completed === undefined
+          ? (effect) => effect
+          : Effect.ensuring(Deferred.succeed(completed, undefined)),
+      );
   });
   return {
     capture,
@@ -98,7 +120,12 @@ function layerTest(input: {
   });
   const layerWorker = ProviderContinuationService.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+      Layer.mergeAll(
+        IdAllocator.layer,
+        ProviderContinuationRequests.layer,
+        layerThreads,
+        NodeServices.layer,
+      ),
     ),
   );
   return Layer.merge(ProviderContinuationRequests.layer, layerWorker);
@@ -131,11 +158,12 @@ describe("ProviderContinuationService", () => {
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: { parentRunId, generation: 1, messageId: delegatedMessageId },
         });
         const command = (yield* Queue.take(dispatched)) as {
@@ -205,6 +233,7 @@ describe("ProviderContinuationService", () => {
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          ...request(),
           threadId,
           providerThreadId,
           driver,
@@ -214,7 +243,7 @@ describe("ProviderContinuationService", () => {
             outcome: "updated",
             summary: "Monitor updated",
           },
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
         });
         const command = (yield* Queue.take(dispatched)) as {
           readonly creationSource: string;
@@ -247,11 +276,12 @@ describe("ProviderContinuationService", () => {
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -310,18 +340,24 @@ describe("ProviderContinuationService", () => {
       });
       const layerWorker = ProviderContinuationService.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ProviderContinuationRequests.layer,
+            layerThreads,
+            NodeServices.layer,
+          ),
         ),
       );
 
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -359,18 +395,24 @@ describe("ProviderContinuationService", () => {
       });
       const layerWorker = ProviderContinuationService.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ProviderContinuationRequests.layer,
+            layerThreads,
+            NodeServices.layer,
+          ),
         ),
       );
 
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -434,15 +476,21 @@ describe("ProviderContinuationService", () => {
         });
         const layerWorker = ProviderContinuationService.layer.pipe(
           Layer.provide(
-            Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+            Layer.mergeAll(
+              IdAllocator.layer,
+              ProviderContinuationRequests.layer,
+              layerThreads,
+              NodeServices.layer,
+            ),
           ),
         );
         const completionRequest = {
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text" as const,
+          delivery: { kind: "message_text" } as const,
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -497,18 +545,24 @@ describe("ProviderContinuationService", () => {
       });
       const layerWorker = ProviderContinuationService.layer.pipe(
         Layer.provide(
-          Layer.mergeAll(IdAllocator.layer, ProviderContinuationRequests.layer, layerThreads),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            ProviderContinuationRequests.layer,
+            layerThreads,
+            NodeServices.layer,
+          ),
         ),
       );
 
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -535,11 +589,12 @@ describe("ProviderContinuationService", () => {
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver: ProviderDriverKind.make("grok"),
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -571,11 +626,12 @@ describe("ProviderContinuationService", () => {
           yield* Effect.gen(function* () {
             const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
             yield* requests.offer({
+              kind: "delegated_completion" as const,
               threadId,
               providerThreadId,
               driver,
               detail: null,
-              delivery: "message_text",
+              delivery: { kind: "message_text" },
               delegatedCompletion: {
                 parentRunId,
                 generation: 1,
@@ -605,11 +661,12 @@ describe("ProviderContinuationService", () => {
       yield* Effect.gen(function* () {
         const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
         yield* requests.offer({
+          kind: "delegated_completion" as const,
           threadId,
           providerThreadId,
           driver,
           detail: null,
-          delivery: "message_text",
+          delivery: { kind: "message_text" },
           delegatedCompletion: {
             parentRunId,
             generation: 1,
@@ -642,11 +699,12 @@ describe("ProviderContinuationService", () => {
         yield* Effect.gen(function* () {
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           yield* requests.offer({
+            kind: "delegated_completion" as const,
             threadId,
             providerThreadId,
             driver,
             detail: null,
-            delivery: "message_text",
+            delivery: { kind: "message_text" },
             delegatedCompletion: {
               parentRunId,
               generation: 1,

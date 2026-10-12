@@ -1,5 +1,5 @@
 import { assert, it } from "@effect/vitest";
-import { CommandId, EventId, MessageId, type ThreadId } from "@t3tools/contracts";
+import { CommandId, MessageId, type ThreadId } from "@t3tools/contracts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -32,13 +32,9 @@ import {
   publishBackground,
 } from "./DelegatedTaskTestFixture.ts";
 
-it.effect.each([
-  { creationSource: "web", legacy: false },
-  { creationSource: "mcp", legacy: false },
-  { creationSource: "web", legacy: true },
-] as const)(
-  "r3 generic failure publishes with held $creationSource followup and legacy $legacy initial",
-  ({ creationSource, legacy }) =>
+it.effect.each([{ creationSource: "web" }, { creationSource: "mcp" }] as const)(
+  "r3 generic failure publishes with held $creationSource followup",
+  ({ creationSource }) =>
     Effect.gen(function* () {
       const turns = yield* Ref.make<ReadonlyArray<ProviderAdapter.ProviderAdapterV2TurnInput>>([]);
       const finishers = yield* Ref.make<Finishers>(new Map());
@@ -52,17 +48,6 @@ it.effect.each([
         yield* worker.drain(30);
         const initial = (yield* orchestrator.getThreadProjection(childId)).runs[0]!;
         assert.equal(initial.status, "running");
-        if (legacy) {
-          const { delegatedTaskId: _, ...unbound } = initial;
-          yield* (yield* ProjectionStore.ProjectionStoreV2).apply({
-            id: EventId.make("legacy-initial"),
-            type: "run.updated",
-            threadId: childId,
-            runId: initial.id,
-            occurredAt: initial.requestedAt,
-            payload: unbound,
-          });
-        }
         yield* humanFollowup(childId, "held-human", creationSource);
         const held = yield* Deferred.make<void>();
         const watcher = yield* sink.stream({ threadId: childId, eventType: "run.updated" }).pipe(

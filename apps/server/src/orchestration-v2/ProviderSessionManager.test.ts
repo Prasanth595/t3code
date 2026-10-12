@@ -956,6 +956,9 @@ it.effect("ProviderSessionManagerV2 records provider session and turn metrics", 
         runtimePolicy,
       });
       yield* runtime.startTurn({
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
         threadId,
         runId,
@@ -1334,6 +1337,9 @@ it.effect("ProviderSessionManagerV2 releases an idle session whose turn start wa
       const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
       const starting = yield* runtime
         .startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
           threadId,
           runId,
@@ -1429,6 +1435,9 @@ it.effect(
           Effect.gen(function* () {
             const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
             return yield* runtime.startTurn({
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
               threadId,
               runId,
@@ -1530,6 +1539,9 @@ it.effect(
           Effect.gen(function* () {
             const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
             return yield* runtime.startTurn({
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
               threadId,
               runId,
@@ -2965,6 +2977,9 @@ it.effect(
         // session busy.
         const turnFiber = yield* runtime
           .startTurn({
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             appThread,
             threadId,
             runId,
@@ -3176,6 +3191,9 @@ it.effect(
         yield* runtime.events.pipe(Stream.runDrain, Effect.forkScoped);
         const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
         yield* runtime.startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread,
           threadId,
           runId,
@@ -4001,6 +4019,9 @@ it.effect(
         const firstAppThread = (yield* projectionStore.getThreadProjection(firstThreadId)).thread;
         const secondAppThread = (yield* projectionStore.getThreadProjection(secondThreadId)).thread;
         yield* runtime.startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread: firstAppThread,
           threadId: firstThreadId,
           runId: firstRunId,
@@ -4020,6 +4041,9 @@ it.effect(
           runtimePolicy,
         });
         yield* runtime.startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread: secondAppThread,
           threadId: secondThreadId,
           runId: secondRunId,
@@ -4411,6 +4435,9 @@ function runIdleThreadUnloadScenario(
           yield* resume(threadId);
           const runId = idAllocator.derive.run({ threadId, ordinal });
           yield* runtime.startTurn({
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
             threadId,
             runId,

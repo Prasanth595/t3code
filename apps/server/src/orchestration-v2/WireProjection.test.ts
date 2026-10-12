@@ -12,6 +12,10 @@ import {
   type OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  OrchestrationV2Run,
+  OrchestrationV2RunJson,
+  RunId,
+  type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -21,8 +25,9 @@ import {
   projectTurnItemForWire,
   projectTurnItemForDetail,
   projectDomainEventForWire,
+  projectThreadProjectionForWire,
 } from "./WireProjection.ts";
-import { threadShellFromProjection } from "./ProjectionStore.ts";
+import { emptyProjection, threadShellFromProjection } from "./ProjectionStore.ts";
 import { MAX_TOOL_OUTPUT_IMAGES, toolOutputImages } from "@t3tools/shared/toolOutput";
 
 const decodeTurnItem = Schema.decodeUnknownSync(OrchestrationV2TurnItem);
@@ -50,6 +55,59 @@ const base = {
 };
 
 describe("orchestration V2 wire projection", () => {
+  it.each([null, NodeId.make("owned-task"), undefined])(
+    "keeps protocol 2 run bindings decodable without changing storage, case %#",
+    (taskId) => {
+      const run = OrchestrationV2Run.make({
+        id: RunId.make("wire-run"), threadId: base.threadId, ordinal: 1,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+        providerThreadId: null, userMessageId: MessageId.make("wire-input"),
+        rootNodeId: null, activeAttemptId: null, status: "completed",
+        requestedAt: base.updatedAt, startedAt: base.updatedAt, completedAt: base.updatedAt,
+        checkpointId: null, contextHandoffId: null,
+        executionScope: { kind: "ordinary" }, executionCause: { kind: "independent" },
+        executionDelivery: { kind: "message_text" },
+        ...(taskId === undefined ? {} : { delegatedTaskId: taskId }),
+      });
+      const thread = {
+        id: base.threadId, projectId: ProjectId.make("wire-project"), title: "Wire compatibility",
+        createdBy: "user", creationSource: "web", providerInstanceId: run.providerInstanceId,
+        modelSelection: run.modelSelection, runtimeMode: "full-access", interactionMode: "default",
+        branch: null, worktreePath: null, activeProviderThreadId: null,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: base.threadId },
+        forkedFrom: null, createdAt: base.updatedAt, updatedAt: base.updatedAt,
+        archivedAt: null, settledOverride: null, settledAt: null, lastVisitedAt: null, deletedAt: null,
+      } satisfies OrchestrationV2AppThread;
+      const projection = emptyProjection({
+        id: EventId.make("wire-thread-created"), type: "thread.created",
+        threadId: base.threadId, occurredAt: base.updatedAt, payload: thread,
+      });
+      projection.runs = [run];
+      const legacyRun = Schema.Struct({ id: RunId, delegatedTaskId: Schema.optional(NodeId) });
+      const decodeLegacy = Schema.decodeUnknownSync(legacyRun);
+      const encodeRun = Schema.encodeSync(OrchestrationV2RunJson);
+      const decodeWire = (value: typeof run | undefined) => {
+        if (value === undefined) throw new Error("The snapshot omitted its run");
+        return decodeLegacy(encodeRun(value));
+      };
+      if (taskId === null) expect(() => decodeWire(run)).toThrow();
+      const snapshot = projectThreadProjectionForWire(projection);
+      expect(decodeWire(snapshot.runs[0]).delegatedTaskId).toBe(taskId ?? undefined);
+      expect(snapshot.runs[0]).not.toHaveProperty("delegatedTaskId", null);
+      for (const type of ["run.created", "run.updated"] as const) {
+        const event = { id: EventId.make(`wire-${type}`), type, threadId: base.threadId,
+          runId: run.id, occurredAt: base.updatedAt, payload: run };
+        const projected = projectDomainEventForWire(event);
+        if (projected.type !== "run.created" && projected.type !== "run.updated") {
+          throw new Error("The wire projection changed the event type");
+        }
+        expect(decodeWire(projected.payload).delegatedTaskId).toBe(taskId ?? undefined);
+        expect(event.payload).toBe(run);
+      }
+      expect(projection.runs[0]?.delegatedTaskId).toBe(taskId);
+    },
+  );
   it("keeps copied handoff transcripts out of activity items and live events", () => {
     const item = {
       ...base,

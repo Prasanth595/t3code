@@ -49,7 +49,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type ProviderApprovalDecision,
   type ProviderInstanceId,
@@ -63,7 +63,6 @@ import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
@@ -215,6 +214,7 @@ interface TurnOwner {
 
 interface ActiveTurn {
   readonly input: TurnOwner;
+  nativeExecution: ProviderContinuationRequests.NativeAcceptedExecution | null;
   providerTurn: OrchestrationV2ProviderTurn;
   /** Open text and reasoning blocks, keyed `<assistantMessageID>:<kind>:<ordinal>`. */
   readonly texts: Map<string, OpenBlock>;
@@ -306,6 +306,9 @@ interface SubagentCall {
  * the continuation turn T3 opens for it takes them.
  */
 interface Wake {
+  readonly id: string;
+  readonly cause: import("@t3tools/contracts").OrchestrationV2NativeCause;
+  readonly delivery: import("@t3tools/contracts").OrchestrationV2ExecutionDelivery | null;
   /** The message its continuation run starts from, which names the wake in that turn's input. */
   readonly messageId: MessageId | undefined;
   readonly events: Array<OpenCode2Client.OpenCode2StreamEvent>;
@@ -336,6 +339,8 @@ interface OpenBlock {
 
 interface ThreadState {
   readonly sessionId: string;
+  executionIncarnation: ProviderContinuationRequests.NativeExecutionIncarnation | null;
+  wakeGeneration: number;
   providerThread: OrchestrationV2ProviderThread;
   readonly providerTurns: Map<string, OrchestrationV2ProviderTurn>;
   active: ActiveTurn | undefined;
@@ -402,6 +407,10 @@ interface ThreadState {
       readonly childId: string;
       readonly report: BackgroundWorkReport;
       readonly text: string;
+      readonly origins: ReadonlyArray<
+        import("@t3tools/contracts").OrchestrationV2NativeRunCauseSource
+      >;
+      readonly complete: boolean;
     }
   >;
   /**
@@ -664,7 +673,7 @@ const subagentOutput = (text: string) =>
   /^<subagent\b[^>]*>\n?([\s\S]*?)\n?<\/subagent>$/.exec(text.trim())?.[1] ?? text;
 
 const isContinuation = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
-  turnInput.message.createdBy === "agent" && turnInput.message.creationSource === "provider";
+  turnInput.executionDelivery.kind === "adapter_buffered";
 
 /** The native turn id of a continuation turn, which answers a wake and has no prompt. */
 const wakeTurnId = (sessionId: string, attemptId: string) => `${sessionId}:wake:${attemptId}`;
@@ -955,6 +964,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       subagent: ThreadState["subagent"],
     ): ThreadState => ({
       sessionId,
+      executionIncarnation: null,
+      wakeGeneration: 0,
       providerThread,
       providerTurns: new Map(),
       active: undefined,
@@ -1278,6 +1289,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       options: { readonly scope: string; readonly awaitingStart: boolean },
     ): ActiveTurn => ({
       input: owner,
+      nativeExecution: null,
       providerTurn,
       texts: new Map(),
       tools: new Map(),
@@ -1701,16 +1713,28 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     const offerWake = Effect.fnUntraced(function* (state: ThreadState, wake: Wake) {
       const route = state.providerThread.appThreadId;
       if (route === null || wake.messageId === undefined) return;
+      if (wake.delivery === null) {
+        wake.dropped = true;
+        return yield* Effect.logWarning("opencode-native-wake-policy-unproved", {
+          providerThreadId: state.providerThread.id,
+        });
+      }
       const notification = backgroundWorkNotification(wake.reports);
       yield* continuationRequests.offer({
+        kind: "native",
+        cause: wake.cause,
+        delivery: wake.delivery,
         threadId: route,
         providerThreadId: state.providerThread.id,
         driver,
         detail: wake.detail,
         messageId: wake.messageId,
         ...(notification === null ? {} : { notification }),
-        dispatchIfCurrent: (dispatch) =>
-          wake.dropped ? Effect.succeed(Option.none()) : Effect.map(dispatch, Option.some),
+        isCurrent: Effect.sync(() => !wake.dropped && state.wakes.includes(wake)),
+        clearIfCurrent: () =>
+          Effect.sync(() => {
+            if (state.wakes.includes(wake)) wake.dropped = true;
+          }),
       });
     });
 
@@ -2405,12 +2429,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const { delivered, stopped } = yield* takeReports(state);
       if (stopped) return;
       const route = state.providerThread.appThreadId;
+      const id = `${input.providerSessionId}:${state.sessionId}:wake:${delivered[0]?.inboxId ?? ++state.wakeGeneration}:${delivered.at(-1)?.inboxId ?? "opaque"}`;
+      const origins = delivered.flatMap((entry) => entry.origins);
+      const cause: import("@t3tools/contracts").OrchestrationV2NativeCause =
+        delivered.length !== 0 && delivered.every((entry) => entry.complete) && origins.length !== 0
+          ? {
+              kind: "complete",
+              sources: [
+                ...new Map(
+                  origins.map((origin) => [ProviderContinuationRequests.sourceKey(origin), origin]),
+                ).values(),
+              ],
+            }
+          : (state.executionIncarnation?.incomplete(origins) ?? {
+              kind: "incomplete",
+              knownSources: origins,
+              ordinaryProcess: null,
+            });
       const wake: Wake = {
+        id,
+        cause,
+        delivery:
+          state.executionIncarnation?.buffered(id, {
+            kind: "inbox",
+            messageId: id,
+            first: delivered[0]?.inboxId ?? null,
+            after: delivered.at(-1)?.inboxId ?? null,
+          }) ?? null,
         // Only a thread's wake is offered a continuation; the ordinal is display metadata.
-        messageId:
-          route === null
-            ? undefined
-            : yield* idAllocator.allocate.message({ threadId: route, ordinal: 0 }),
+        messageId: route === null ? undefined : MessageId.make(id),
         events: [],
         running: true,
         reports: delivered.map((entry) => entry.report),
@@ -2448,6 +2495,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
       const outcome = reportOutcome(stringField(payload.metadata, "state"));
       state.reports.set(inboxId, {
+        origins: calls.flatMap((call) =>
+          call.turn.nativeExecution === null || call.turn.input.runId === null
+            ? []
+            : [call.turn.nativeExecution.source],
+        ),
+        complete:
+          calls.length !== 0 &&
+          calls.every(
+            (call) => call.turn.nativeExecution !== null && call.turn.input.runId !== null,
+          ),
         inboxId,
         childId,
         text: payload.text,
@@ -3471,8 +3528,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             cause: streamFailure,
           });
         }
+        state.executionIncarnation ??= new ProviderContinuationRequests.NativeExecutionIncarnation(
+          `${input.providerSessionId}:${state.sessionId}`,
+          turnInput.nativeThreadHasTurns !== false,
+        );
+        turn.nativeExecution = state.executionIncarnation.accept(turnInput, state.sessionId);
+        turn.providerTurn = {
+          ...turn.providerTurn,
+          nativeAcceptance: turn.nativeExecution.receipt,
+        };
         state.active = turn;
-        yield* emitProviderTurn(state, turn, providerTurn);
+        yield* emitProviderTurn(state, turn, turn.providerTurn);
         state.providerThread = {
           ...state.providerThread,
           status: "active",
@@ -3575,19 +3641,37 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       state: ThreadState,
       turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
     ) {
-      yield* beginTurn(state, turnInput, false);
-      yield* lock.withPermit(
+      const wake = yield* lock.withPermit(
         Effect.gen(function* () {
           const index = state.wakes.findIndex(
             (held) => held.messageId === turnInput.message.messageId,
           );
-          if (index < 0) return yield* finishTurn(state, { status: "completed" });
+          if (index < 0)
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: "The exact OpenCode native wake is no longer available.",
+            });
+          const wake = state.wakes[index]!;
+          const delivery = turnInput.executionDelivery;
+          if (
+            delivery.kind !== "adapter_buffered" ||
+            delivery.bufferId !== wake.id ||
+            delivery.process.incarnation !== state.executionIncarnation?.identity ||
+            delivery.bounds.kind !== "inbox" ||
+            delivery.bounds.first !== (wake.first ?? null) ||
+            delivery.bounds.after !== (wake.after ?? null) ||
+            wake.dropped
+          )
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: "The held OpenCode inbox span changed before attachment.",
+            });
+          yield* beginTurn(state, turnInput, false);
           // Queued continuations can't be reordered (they carry a notification),
           // so an earlier wake here lost its continuation to a cancel or a failed
           // dispatch. Dropping it keeps that wake from pinning the session.
           discardWakes(state, state.wakes.splice(0, index));
-          yield* Effect.forkIn(stopStrays(state), sessionScope);
-          const wake = state.wakes.shift()!;
+          state.wakes.shift();
           const turn = state.active;
           if (turn !== undefined && wake.after !== undefined) turn.before = wake.after;
           // Its first report is where its history begins, so fork and rollback cut there.
@@ -3597,9 +3681,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           // The execution still runs, so the run a mark waits on is this one or
           // was over before it started: its end, still to come, is this turn's.
           if (wake.running) state.unsettled = false;
-          yield* replay(wake);
+          return wake;
         }),
       );
+      yield* Effect.forkIn(stopStrays(state), sessionScope);
+      yield* replay(wake);
     });
 
     /**

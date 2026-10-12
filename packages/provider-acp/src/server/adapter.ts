@@ -30,6 +30,7 @@ import {
   type RuntimeRequestId,
   type ThreadTokenUsageSnapshot,
   type ThreadId,
+  MessageId,
 } from "@t3tools/contracts";
 import { AgentScope, AgentScopeThreadId } from "@t3tools/shared/AgentScope";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -97,7 +98,7 @@ import {
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   type BackgroundWork,
   type BackgroundWorkReport,
@@ -1133,6 +1134,7 @@ interface AcpNativeBuildConfiguration {
 
 interface ActiveAcpTurn {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  readonly nativeExecution: ProviderContinuationRequests.NativeAcceptedExecution;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
@@ -1376,6 +1378,7 @@ export function acpCompletedTurnShouldTerminalizeTool(
 }
 
 interface ActiveAcpSubagent {
+  readonly nativeExecution: ProviderContinuationRequests.NativeAcceptedExecution;
   task: OrchestrationV2Subagent;
   readonly childThreadId: ThreadId;
   readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
@@ -1691,6 +1694,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           input.runtimePolicy;
         const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
+        const executionIncarnations = new Map<
+          string,
+          ProviderContinuationRequests.NativeExecutionIncarnation
+        >();
+        let currentExecutionIncarnation:
+          | ProviderContinuationRequests.NativeExecutionIncarnation
+          | undefined;
+        const taskExecutionOrigins = new Map<
+          string,
+          ProviderContinuationRequests.NativeAcceptedExecution
+        >();
         const activeSessionId = yield* Ref.make<string | null>(null);
         const contextUsageBySessionId = yield* Ref.make(
           new Map<string, ThreadTokenUsageSnapshot>(),
@@ -2773,6 +2787,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             updatedAt: now,
           };
           const subagent: ActiveAcpSubagent = existing ?? {
+            nativeExecution: context.nativeExecution,
             task,
             childThreadId,
             childRootNodeId,
@@ -2788,6 +2803,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             terminalStatusProjected: false,
           };
           subagent.task = task;
+          taskExecutionOrigins.set(nativeTaskId, subagent.nativeExecution);
           context.subagents.set(nativeTaskId, subagent);
 
           if (existing === undefined) {
@@ -2844,6 +2860,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
           const childSessionId = update.childSessionId;
           if (childSessionId !== null && subagent.childSessionId === null) {
+            taskExecutionOrigins.set(childSessionId, subagent.nativeExecution);
             subagent.childSessionId = childSessionId;
             context.subagentsBySessionId.set(childSessionId, subagent);
             const providerThread = makeProviderThread({
@@ -3108,6 +3125,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context.tools.set(toolCall.toolCallId, toolCall);
           const backgroundTaskId = flavor.extractBackgroundTaskId?.(toolCall);
           if (backgroundTaskId !== undefined) {
+            taskExecutionOrigins.set(backgroundTaskId, context.nativeExecution);
             context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
             if (flavor.isPersistentBackgroundTool?.(toolCall) === true) {
               context.persistentBackgroundTaskIds.add(backgroundTaskId);
@@ -3739,6 +3757,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (Option.isNone(pending)) return false;
           const { route, generation, reports } = pending.value;
           const notification = backgroundWorkNotification([...reports.values()]);
+          const incarnation = currentExecutionIncarnation;
+          const id = `${input.providerSessionId}:acp-wake:${incarnation?.identity ?? "unknown"}:${generation}`;
+          const delivery = incarnation?.buffered(id, { kind: "frames", nativeTurnId: null });
+          if (incarnation === undefined || delivery === undefined || delivery === null) {
+            yield* Ref.set(continuationRequested, false);
+            yield* Effect.logWarning("orchestration-v2.acp-wake-policy-unproved", {
+              providerThreadId: route.providerThreadId,
+            });
+            return false;
+          }
+          const knownSources = [...reports.keys()].flatMap(
+            (key) => taskExecutionOrigins.get(key)?.source ?? [],
+          );
+          const cause = incarnation.incomplete(knownSources);
+
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
             providerSessionId: input.providerSessionId,
@@ -3746,6 +3779,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerThreadId: route.providerThreadId,
           });
           yield* continuationRequests.offer({
+            kind: "native",
+            messageId: MessageId.make(id),
+            cause,
+            delivery,
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver,
@@ -3759,36 +3796,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                 }),
               ),
-            dispatchIfCurrent: (effect) =>
-              continuationPermit.withPermit(
-                Effect.gen(function* () {
-                  const clearIfOwner = Effect.gen(function* () {
-                    if ((yield* Ref.get(continuationGeneration)) === generation) {
-                      yield* Ref.set(continuationRequested, false);
-                    }
-                  });
-                  if (yield* Ref.get(stoppedRunQuarantine)) {
-                    yield* clearIfOwner;
-                    return Option.none();
-                  }
-                  if ((yield* Ref.get(continuationGeneration)) !== generation) {
-                    // Superseded by a newer offer; do not clear its flag.
-                    return Option.none();
-                  }
-                  if (!(yield* Ref.get(continuationRequested))) return Option.none();
-                  // A successful durable dispatch owns the sticky flag until its
-                  // continuation turn starts. Clearing here opens a dispatch-to-
-                  // start race where every late ACP frame can enqueue another
-                  // synthetic continuation. Failures clear immediately because
-                  // no turn will arrive to do so.
-                  const exit = yield* Effect.exit(effect);
-                  if (Exit.isFailure(exit)) {
-                    yield* clearIfOwner;
-                    return yield* Effect.failCause(exit.cause);
-                  }
-                  return Option.some(exit.value);
-                }),
-              ),
+            isCurrent: continuationPermit.withPermit(
+              Effect.gen(function* () {
+                return (
+                  !(yield* Ref.get(stoppedRunQuarantine)) &&
+                  !(yield* Ref.get(continuationClosed)) &&
+                  (yield* Ref.get(continuationGeneration)) === generation &&
+                  (yield* Ref.get(continuationRequested))
+                );
+              }),
+            ),
           });
           return true;
         });
@@ -6511,6 +6528,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           providerThreadId: context.input.providerThread.id,
           nodeId: context.input.rootNodeId,
           runAttemptId: context.input.attemptId,
+          nativeAcceptance: context.nativeExecution.receipt,
           nativeTurnRef: {
             driver,
             nativeId: context.nativeTurnId,
@@ -6893,6 +6911,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // requests can never inherit the previously active thread's policy.
             latestRuntimePolicy = turnInput.runtimePolicy;
             const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
+            const bufferedDelivery =
+              turnInput.executionDelivery.kind === "adapter_buffered"
+                ? turnInput.executionDelivery
+                : null;
+            if (
+              bufferedDelivery !== null &&
+              ((yield* Ref.get(activeSessionId)) !== requestedSessionId ||
+                (yield* Ref.get(runtimeRestartRequired)))
+            )
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver,
+                detail: "The captured ACP session is no longer active.",
+              });
             const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
               turnInput.threadId,
             );
@@ -6909,9 +6940,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               const configuredSelection = yield* Ref.get(activeSelection);
               const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
               if (
-                configuredSelection === null ||
-                !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
-                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+                bufferedDelivery === null &&
+                (configuredSelection === null ||
+                  !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
+                  configuredInteractionMode !== turnInput.runtimePolicy.interactionMode)
               ) {
                 const currentSessionSetup = yield* Ref.get(activeSessionSetup);
                 if (currentSessionSetup === null) {
@@ -6938,7 +6970,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Continuation turns attach to wake traffic the agent already produced
             // after the prior root turn settled; do not re-prompt the ACP session.
             const isContinuationTurn =
-              postSettleContinuationEnabled && acpIsProviderContinuationMessage(turnInput.message);
+              postSettleContinuationEnabled &&
+              turnInput.executionDelivery.kind === "adapter_buffered";
+            const executionKey = `${requestedSessionId}:${yield* Ref.get(runtimeCallbackGeneration)}`;
+            let incarnation = executionIncarnations.get(executionKey);
+            if (incarnation === undefined) {
+              incarnation = new ProviderContinuationRequests.NativeExecutionIncarnation(
+                `${input.providerSessionId}:${executionKey}`,
+                turnInput.nativeThreadHasTurns !== false,
+              );
+              executionIncarnations.set(executionKey, incarnation);
+            }
+            const nativeIncarnation = incarnation;
             const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
             // An app-owned wake reports on a sibling delegated child and owns
             // none of this session's background work, so it must not discard
@@ -6955,6 +6998,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const continuationWasRequested = yield* continuationPermit.withPermit(
               Effect.gen(function* () {
                 const wasRequested = yield* Ref.get(continuationRequested);
+                if (
+                  bufferedDelivery !== null &&
+                  (!wasRequested ||
+                    bufferedDelivery.process.incarnation !== nativeIncarnation.identity ||
+                    bufferedDelivery.bufferId !==
+                      `${input.providerSessionId}:acp-wake:${nativeIncarnation.identity}:${yield* Ref.get(continuationGeneration)}`)
+                )
+                  return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: "The exact ACP native buffer was lost before attachment.",
+                  });
                 const preserveBufferedContinuation = acpTurnStartShouldPreserveContinuation({
                   continuationRequested: wasRequested,
                   isContinuationTurn,
@@ -7000,7 +7054,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 new Map(current).set(requestedSessionId, initialNativeMetadata),
               );
             }
+            currentExecutionIncarnation = incarnation;
             const context: ActiveAcpTurn = {
+              nativeExecution: incarnation.accept(turnInput, requestedSessionId),
               input: turnInput,
               providerTurnId,
               nativeThreadId: requestedSessionId,

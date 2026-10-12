@@ -9,6 +9,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
+import * as Stream from "effect/Stream";
 
 import {
   modelSelection,
@@ -238,6 +241,17 @@ it.effect(
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const threads = yield* ThreadManagement.ThreadManagementService;
       const member = group.members[0]!;
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(1);
+      yield* (yield* EventSink.EventSinkV2)
+        .stream({ threadId: member.threadId, eventType: "provider-turn.updated", afterSequence: 0 })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-turn.updated" &&
+              stored.event.payload.status === "running",
+          ),
+          Stream.runHead,
+        );
       const child = yield* orchestrator.getThreadProjection(member.threadId);
       const run = child.runs[0]!;
       yield* orchestrator.dispatch({
@@ -317,9 +331,21 @@ it.effect(
       yield* Deferred.await(entered);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(delayed);
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(20);
+      yield* (yield* EventSink.EventSinkV2)
+        .stream({ threadId: target, eventType: "run.updated", afterSequence: 0 })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.userMessageId === MessageId.make("human-after-stop") &&
+              stored.event.payload.status === "running",
+          ),
+          Stream.runHead,
+        );
       const child = yield* orchestrator.getThreadProjection(target);
-      assert.equal(child.runs.at(-1)?.status, "starting");
-      assert.equal(child.runs.at(-1)?.swarmId, undefined);
+      assert.equal(child.runs.at(-1)?.status, "running");
+      assert.deepEqual(child.runs.at(-1)?.executionScope, { kind: "ordinary" });
       assert.isTrue(Exit.isFailure(yield* Effect.exit(peer(group, 1, 0, "post-stop"))));
     }).pipe(Effect.provide(layerTest)),
 );
@@ -406,7 +432,7 @@ it.effect("group Stop preserves unrelated work and member Stop revokes only that
       "starting",
     );
     const owner = yield* orchestrator.getThreadProjection(ownerId);
-    assert.equal(owner.runs[0]?.status, "starting");
+    assert.equal(owner.runs[0]?.status, "running");
     assert.equal(
       owner.subagents.find((task) => task.id === unrelated.id)?.completionDelivery?.state,
       undefined,
@@ -449,6 +475,21 @@ it.effect(
       yield* boot;
       const { group } = yield* create();
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain(1);
+      yield* (yield* EventSink.EventSinkV2)
+        .stream({
+          threadId: group.members[0]!.threadId,
+          eventType: "provider-turn.updated",
+          afterSequence: 0,
+        })
+        .pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "provider-turn.updated" &&
+              stored.event.payload.status === "running",
+          ),
+          Stream.runHead,
+        );
       const member = yield* orchestrator.getThreadProjection(group.members[0]!.threadId);
       const run = member.runs[0]!;
       yield* orchestrator.dispatch({
@@ -477,7 +518,7 @@ it.effect(
       );
       assert.equal(
         (yield* orchestrator.getThreadProjection(member.thread.id)).runs[0]?.status,
-        "starting",
+        "running",
       );
       assert.equal(
         (yield* orchestrator.getThreadProjection(member.thread.id)).subagents[0]?.completionDelivery

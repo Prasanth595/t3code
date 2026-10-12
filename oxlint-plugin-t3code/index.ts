@@ -16,6 +16,7 @@ import noUnscopedHas from "./rules/no-unscoped-has.ts";
 import preferCatchTags from "./rules/prefer-catch-tags.ts";
 import requireCenteredScrollGutter from "./rules/require-centered-scroll-gutter.ts";
 import requireSuppressionReason from "./rules/require-suppression-reason.ts";
+import requirePreparedRun from "./rules/require-prepared-run.ts";
 
 export default definePlugin({
   meta: {
@@ -38,5 +39,6 @@ export default definePlugin({
     "prefer-catch-tags": preferCatchTags,
     "require-centered-scroll-gutter": requireCenteredScrollGutter,
     "require-suppression-reason": requireSuppressionReason,
+    "require-prepared-run": requirePreparedRun,
   },
 });

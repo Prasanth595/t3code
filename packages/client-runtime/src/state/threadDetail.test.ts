@@ -113,6 +113,9 @@ it("does not notify queue consumers for streaming text or execution nodes", () =
     ...v2Projection,
     runs: [
       {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: RunId.make("queued-run"),
         threadId: v2Projection.thread.id,
         ordinal: 1,
@@ -176,6 +179,9 @@ it("does not notify the agents pill for unrelated projection updates", () => {
     ...v2Projection,
     runs: [
       {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: RunId.make("active-run"),
         threadId: v2Projection.thread.id,
         ordinal: 1,

@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  OrchestrationV2Run,
 } from "@t3tools/contracts";
 import {
   compactDynamicToolOutput,
@@ -207,6 +208,12 @@ export function projectContextHandoffForWire(
   return { ...projected, summaryText: "" };
 }
 
+function projectRunForWire(run: OrchestrationV2Run): OrchestrationV2Run {
+  if (run.delegatedTaskId !== null) return run;
+  const { delegatedTaskId: _unowned, ...projected } = run;
+  return projected;
+}
+
 export function projectThreadProjectionForWire(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
@@ -221,6 +228,7 @@ export function projectThreadProjectionForWire(
   };
   return {
     ...projection,
+    runs: projection.runs.map(projectRunForWire),
     contextHandoffs: projection.contextHandoffs.map(projectContextHandoffForWire),
     turnItems: projection.turnItems.map(project),
     visibleTurnItems: projection.visibleTurnItems.map((row) => ({
@@ -233,6 +241,9 @@ export function projectThreadProjectionForWire(
 export function projectDomainEventForWire(
   event: OrchestrationV2DomainEvent,
 ): OrchestrationV2DomainEvent {
+  if (event.type === "run.created" || event.type === "run.updated") {
+    return { ...event, payload: projectRunForWire(event.payload) };
+  }
   return event.type === "turn-item.updated"
     ? { ...event, payload: projectTurnItemForWire(event.payload) }
     : event.type === "context-handoff.updated"

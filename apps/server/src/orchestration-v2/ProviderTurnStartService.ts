@@ -1,5 +1,5 @@
 import { formatPeerMessage } from "@t3tools/provider-core/server/peerMessage";
-import { SwarmAdmissionLost, swarmRunAllowed } from "./SwarmAdmission.ts";
+import { SwarmAdmissionLost, admitPersistedWork } from "./SwarmExecutionPolicy.ts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import {
@@ -237,7 +237,7 @@ export const layer: Layer.Layer<
         return;
       }
       if (
-        !(yield* swarmRunAllowed(projectionStore, projection.thread, run)) &&
+        !(yield* admitPersistedWork(projectionStore, projection.thread, run)) &&
         run.activeAttemptId !== null
       ) {
         yield* eventSink.writeIfRunCurrent({
@@ -551,10 +551,25 @@ export const layer: Layer.Layer<
       });
       const { isCurrentAttemptInStatus } = runControls;
 
-      const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+      const desiredRuntimePolicy = yield* runtimePolicy.resolve({
         thread: projection.thread,
         modelSelection: run.modelSelection,
       });
+      const resolveSubmittedPolicy = Effect.gen(function* () {
+        if (run.executionDelivery.kind !== "adapter_buffered") return desiredRuntimePolicy;
+        const process = run.executionDelivery.process;
+        const records = yield* projectionStore.getThreadRecords(process.threadId, ["attempts"], {
+          runIds: [process.runId],
+        });
+        const accepted = records.attempts.find((attempt) => attempt.id === process.attemptId);
+        if (
+          accepted?.submittedPolicy === undefined ||
+          accepted.nativeAcceptance?.incarnation !== process.incarnation
+        )
+          return yield* new SwarmAdmissionLost({ threadId: input.threadId, runId });
+        return accepted.submittedPolicy;
+      });
+      const resolvedRuntimePolicy = yield* resolveSubmittedPolicy;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,
       );
@@ -1130,6 +1145,19 @@ export const layer: Layer.Layer<
         compact = false,
       ) =>
         Effect.gen(function* () {
+          if (turnInput.executionDelivery.kind === "adapter_buffered") {
+            if (
+              !(yield* admitPersistedWork(
+                projectionStore,
+                projection.thread,
+                run,
+                turnInput.runtimePolicy,
+              )) ||
+              !(yield* isCurrentAttemptInStatus("running"))
+            )
+              return yield* new SwarmAdmissionLost({ threadId: input.threadId, runId });
+            return yield* session.startTurn(turnInput);
+          }
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =
@@ -1203,7 +1231,7 @@ export const layer: Layer.Layer<
               }),
           });
           if (
-            !(yield* swarmRunAllowed(
+            !(yield* admitPersistedWork(
               projectionStore,
               projection.thread,
               run,
@@ -1268,19 +1296,22 @@ export const layer: Layer.Layer<
         missedItems.length === 0 &&
         restartNote === "" &&
         !noteContinuation &&
-        run.swarmId === undefined &&
-        run.swarmPeerDelivery === undefined
+        run.executionScope.kind === "ordinary" &&
+        run.executionDelivery.kind === "message_text"
           ? session
           : makeDeliverySession(session, startWithHandoffs);
-      const swarmId = run.swarmPeerDelivery?.swarmId ?? run.swarmId;
-      const scoped = swarmId !== undefined;
+      const swarmId = run.executionScope.kind === "swarm" ? run.executionScope.swarmId : undefined;
+      const scoped = run.executionScope.kind !== "ordinary";
       const accept = Effect.gen(function* () {
-        const submittedPolicy = scoped
-          ? yield* runtimePolicy.resolve({
-              thread: yield* projectionStore.getThread(input.threadId),
-              modelSelection: run.modelSelection,
-            })
-          : resolvedRuntimePolicy;
+        const submittedPolicy =
+          run.executionDelivery.kind === "adapter_buffered"
+            ? yield* resolveSubmittedPolicy
+            : scoped
+              ? yield* runtimePolicy.resolve({
+                  thread: yield* projectionStore.getThread(input.threadId),
+                  modelSelection: run.modelSelection,
+                })
+              : resolvedRuntimePolicy;
         yield* runExecution.startRootRun({
           commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
           appThread: projection.thread,

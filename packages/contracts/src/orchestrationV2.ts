@@ -6,7 +6,13 @@ import {
   OrchestrationV2Swarms,
   OrchestrationV2SwarmsJson,
   OrchestrationV2SwarmPeerDelivery,
-  OrchestrationV2SwarmRunAdmission,
+  OrchestrationV2ExecutionScope,
+  OrchestrationV2ExecutionCause,
+  OrchestrationV2ExecutionDelivery,
+  OrchestrationV2SubmittedPolicy,
+  OrchestrationV2NativeAcceptance,
+  OrchestrationV2NativeCause,
+  OrchestrationV2RunCauseSource,
   OrchestrationV2StopSwarmInput,
 } from "./swarm.ts";
 import * as Effect from "effect/Effect";
@@ -572,10 +578,17 @@ export const OrchestrationV2Run = Schema.Struct({
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
   /** The delegated task this run answers, including a follow-up in an existing child thread. */
-  delegatedTaskId: Schema.optional(NodeId),
-  swarmPeerDelivery: Schema.optional(OrchestrationV2SwarmPeerDelivery),
-  swarmId: Schema.optional(SwarmId),
-  swarmRunAdmission: Schema.optional(OrchestrationV2SwarmRunAdmission),
+  delegatedTaskId: Schema.optional(Schema.NullOr(NodeId)),
+  peerInput: Schema.optional(OrchestrationV2SwarmPeerDelivery),
+  executionScope: OrchestrationV2ExecutionScope.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ kind: "ordinary" } as const)),
+  ),
+  executionCause: OrchestrationV2ExecutionCause.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ kind: "independent" } as const)),
+  ),
+  executionDelivery: OrchestrationV2ExecutionDelivery.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ kind: "message_text" } as const)),
+  ),
   /**
    * Set on wake runs (background notifications, delegated task results,
    * restart continuations): when the work they continue started. Read it
@@ -615,6 +628,9 @@ export const OrchestrationV2RunAttempt = Schema.Struct({
   id: RunAttemptId,
   // Provider-thread rows can be reused after recovery; retain the native input destination.
   nativeThreadId: Schema.optional(Schema.String),
+  submittedPolicy: Schema.optional(OrchestrationV2SubmittedPolicy),
+  submissionProviderSessionId: Schema.optional(ProviderSessionId),
+  nativeAcceptance: Schema.optional(OrchestrationV2NativeAcceptance),
   runId: RunId,
   attemptOrdinal: PositiveInt,
   rootNodeId: NodeId,
@@ -976,6 +992,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   ownerNodeId: Schema.NullOr(NodeId),
   nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
   nativeConversationHeadRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  nativeAcceptance: Schema.optional(OrchestrationV2NativeAcceptance),
   status: Schema.Literals(["not_loaded", "idle", "active", "archived", "closed", "error"]),
   firstRunOrdinal: Schema.NullOr(PositiveInt),
   lastRunOrdinal: Schema.NullOr(PositiveInt),
@@ -1088,6 +1105,7 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   providerThreadId: ProviderThreadId,
   nodeId: NodeId,
   runAttemptId: Schema.NullOr(RunAttemptId),
+  nativeAcceptance: Schema.optional(OrchestrationV2NativeAcceptance),
   nativeTurnRef: Schema.NullOr(OrchestrationV2ProviderRef),
   ordinal: PositiveInt,
   status: Schema.Literals([
@@ -2136,13 +2154,52 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
 
-export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
+const OrchestrationV2RunJsonFields = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
   requestedAt: Schema.DateTimeUtcFromString,
   startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
   workStartedAt: Schema.optional(Schema.DateTimeUtcFromString),
 }));
+const ArchivedRunPeerDelivery = Schema.Struct({
+  ...OrchestrationV2SwarmPeerDelivery.fields,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+});
+const ArchivedRunJson = OrchestrationV2RunJsonFields.mapFields((fields) => ({
+  ...fields,
+  executionScope: Schema.optional(OrchestrationV2ExecutionScope),
+  swarmId: Schema.optional(SwarmId),
+  swarmRunAdmission: Schema.optional(Schema.Unknown),
+  swarmPeerDelivery: Schema.optional(ArchivedRunPeerDelivery),
+}));
+export const OrchestrationV2RunJson = ArchivedRunJson.pipe(
+  Schema.decodeTo(
+    Schema.toType(OrchestrationV2RunJsonFields),
+    SchemaTransformation.transform({
+      decode: ({ swarmId, swarmRunAdmission, swarmPeerDelivery, executionScope, ...run }) => ({
+        ...run,
+        executionScope:
+          swarmId !== undefined ||
+          swarmRunAdmission !== undefined ||
+          swarmPeerDelivery !== undefined
+            ? { kind: "denied" as const, swarmId: swarmId ?? swarmPeerDelivery?.swarmId ?? null }
+            : (executionScope ?? { kind: "ordinary" as const }),
+        ...(run.peerInput !== undefined || swarmPeerDelivery === undefined
+          ? {}
+          : {
+              peerInput: {
+                swarmId: swarmPeerDelivery.swarmId,
+                ownerThreadId: swarmPeerDelivery.ownerThreadId,
+                senderThreadId: swarmPeerDelivery.senderThreadId,
+                commandId: swarmPeerDelivery.commandId,
+              },
+            }),
+      }),
+      encode: (run) => run,
+    }),
+  ),
+);
 export type OrchestrationV2RunJson = typeof OrchestrationV2RunJson.Type;
 
 export const OrchestrationV2RunAttemptJson = OrchestrationV2RunAttempt.mapFields((fields) => ({
@@ -2736,6 +2793,47 @@ export const OrchestrationV2StoredEventJson = Schema.Struct({
 });
 export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
+const MessageDispatchCommandSchema = Schema.Struct({
+  type: Schema.Literal("message.dispatch"),
+  notification: Schema.optional(OrchestrationV2Notification),
+  ...OrchestrationV2CreationFields,
+  scheduledTaskId: Schema.optional(ScheduledTaskId),
+  senderThreadId: Schema.optional(ThreadId),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  text: Schema.String,
+  context: Schema.optional(OrchestrationMessageContext),
+  attachments: Schema.Array(ChatAttachment),
+  /** Seed the temporary title and generate a durable replacement for the first message. */
+  titleSeed: Schema.optional(TrimmedNonEmptyString),
+  modelSelection: Schema.optional(ModelSelection),
+  sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
+  restartContinuationOfRunId: Schema.optional(RunId),
+  usageLimitContinuationOfRunId: Schema.optional(RunId),
+  manualContinuationOfRunId: Schema.optional(RunId),
+  usageLimitRecoveryRequestId: Schema.optional(CommandId),
+  /** Resolve untargeted delivery against the server's serialized thread state. */
+  deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
+  delegatedCompletion: Schema.optional(
+    Schema.Struct({
+      parentRunId: RunId,
+      generation: PositiveInt,
+      taskIds: Schema.Array(NodeId),
+    }),
+  ),
+  dispatchMode: Schema.Union([
+    Schema.Struct({
+      type: Schema.Literal("defer_start"),
+      workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+    }),
+    Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
+    Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
+    Schema.Struct({ type: Schema.Literal("queue_after_active") }),
+    Schema.Struct({ type: Schema.Literal("start_immediately") }),
+  ]),
+});
+
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.create"),
@@ -2962,46 +3060,7 @@ export const OrchestrationV2Command = Schema.Union([
     providerSessionId: ProviderSessionId,
     reason: Schema.optional(Schema.String),
   }),
-  Schema.Struct({
-    type: Schema.Literal("message.dispatch"),
-    notification: Schema.optional(OrchestrationV2Notification),
-    ...OrchestrationV2CreationFields,
-    scheduledTaskId: Schema.optional(ScheduledTaskId),
-    senderThreadId: Schema.optional(ThreadId),
-    commandId: CommandId,
-    threadId: ThreadId,
-    messageId: MessageId,
-    text: Schema.String,
-    context: Schema.optional(OrchestrationMessageContext),
-    attachments: Schema.Array(ChatAttachment),
-    /** Seed the temporary title and generate a durable replacement for the first message. */
-    titleSeed: Schema.optional(TrimmedNonEmptyString),
-    modelSelection: Schema.optional(ModelSelection),
-    sourcePlanRef: Schema.optional(Schema.Struct({ threadId: ThreadId, planId: PlanId })),
-    restartContinuationOfRunId: Schema.optional(RunId),
-    usageLimitContinuationOfRunId: Schema.optional(RunId),
-    manualContinuationOfRunId: Schema.optional(RunId),
-    usageLimitRecoveryRequestId: Schema.optional(CommandId),
-    /** Resolve untargeted delivery against the server's serialized thread state. */
-    deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
-    delegatedCompletion: Schema.optional(
-      Schema.Struct({
-        parentRunId: RunId,
-        generation: PositiveInt,
-        taskIds: Schema.Array(NodeId),
-      }),
-    ),
-    dispatchMode: Schema.Union([
-      Schema.Struct({
-        type: Schema.Literal("defer_start"),
-        workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
-      }),
-      Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
-      Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
-      Schema.Struct({ type: Schema.Literal("queue_after_active") }),
-      Schema.Struct({ type: Schema.Literal("start_immediately") }),
-    ]),
-  }),
+  MessageDispatchCommandSchema,
   Schema.Struct({
     type: Schema.Literal("prepared-run.release"),
     commandId: CommandId,
@@ -3195,7 +3254,28 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * `OrchestrationV2Command`, the `dispatchCommand` payload, so no client can
  * send them.
  */
+export const OrchestrationV2InternalMessageCause = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("native"),
+    eventId: Schema.String,
+    cause: OrchestrationV2NativeCause,
+    delivery: OrchestrationV2ExecutionDelivery,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("scoped"),
+    reason: Schema.Literals(["answer", "worktree"]),
+    source: OrchestrationV2RunCauseSource.members[0],
+  }),
+]);
+export type OrchestrationV2InternalMessageCause = typeof OrchestrationV2InternalMessageCause.Type;
+
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    ...MessageDispatchCommandSchema.fields,
+    type: Schema.Literal("message.causal-dispatch"),
+    intentFingerprint: Schema.String,
+    cause: OrchestrationV2InternalMessageCause,
+  }),
   Schema.Struct({
     type: Schema.Literal("swarm.create"),
     ownerProviderInstanceId: Schema.optional(ProviderInstanceId),

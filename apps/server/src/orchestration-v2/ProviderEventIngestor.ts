@@ -591,7 +591,53 @@ export const layer: Layer.Layer<
                   })),
                 ];
           }
-          case "provider_turn.updated":
+          case "provider_turn.updated": {
+            const acceptedEvents: Array<OrchestrationV2DomainEvent> = [];
+            const turn = input.event.providerTurn;
+            if (turn.status === "running" && turn.runAttemptId !== null) {
+              const threadId = input.event.threadId ?? input.threadId;
+              const current = yield* projections.getThreadRecords(
+                threadId,
+                ["runs", "attempts", "providerThreads"],
+                input.runId == null ? {} : { runIds: [input.runId] },
+              );
+              const attempt = current.attempts.find((attempt) => attempt.id === turn.runAttemptId);
+              const run = current.runs.find((run) => run.activeAttemptId === turn.runAttemptId);
+              const providerThread = current.providerThreads.find(
+                (thread) => thread.id === turn.providerThreadId,
+              );
+              if (
+                attempt !== undefined &&
+                run?.status === "running" &&
+                providerThread?.lastRunOrdinal === run.ordinal
+              ) {
+                acceptedEvents.push(
+                  yield* makeDomainEvent(input, {
+                    type: "run-attempt.updated",
+                    threadId,
+                    runId: run.id,
+                    payload: {
+                      ...attempt,
+                      providerTurnId: turn.id,
+                      ...(providerThread.nativeThreadRef?.nativeId == null
+                        ? {}
+                        : { nativeThreadId: providerThread.nativeThreadRef.nativeId }),
+                      ...(turn.nativeAcceptance === undefined
+                        ? {}
+                        : { nativeAcceptance: turn.nativeAcceptance }),
+                    },
+                  }),
+                );
+                if (turn.nativeAcceptance !== undefined)
+                  acceptedEvents.push(
+                    yield* makeDomainEvent(input, {
+                      type: "provider-thread.updated",
+                      threadId,
+                      payload: { ...providerThread, nativeAcceptance: turn.nativeAcceptance },
+                    }),
+                  );
+              }
+            }
             return [
               ...(["completed", "interrupted", "failed", "cancelled"].includes(
                 input.event.providerTurn.status,
@@ -608,7 +654,9 @@ export const layer: Layer.Layer<
                 payload: input.event.providerTurn,
                 nodeId: input.event.providerTurn.nodeId,
               }),
+              ...acceptedEvents,
             ];
+          }
           case "node.updated":
             return [
               yield* makeDomainEvent(input, {

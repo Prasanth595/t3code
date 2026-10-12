@@ -96,6 +96,9 @@ it.effect("resolves the thread baseline after a second root run replaces scope o
         providerInstanceId,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: input.runId,
           threadId,
           ordinal: input.ordinal,

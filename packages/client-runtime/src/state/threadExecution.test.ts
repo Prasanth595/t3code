@@ -35,6 +35,9 @@ const now = DateTime.makeUnsafe("2026-07-28T10:00:00.000Z");
 
 function run(id: string, ordinal: number, status: OrchestrationV2RunStatus) {
   return {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: RunId.make(id),
     threadId: v2Projection.thread.id,
     ordinal,

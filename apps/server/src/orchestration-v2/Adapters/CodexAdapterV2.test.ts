@@ -1515,6 +1515,9 @@ function makeCodexTestTurnInput(input: {
   readonly text: string;
 }): ProviderAdapter.ProviderAdapterV2TurnInput {
   return {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     appThread: makeCodexTestAppThread(input),
     threadId: input.threadId,
     runId: RunId.make(`run-${input.attemptId}`),

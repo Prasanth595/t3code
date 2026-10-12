@@ -315,6 +315,9 @@ function runUpdated(
     runId,
     occurredAt: at,
     payload: {
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       id: runId,
       threadId,
       ordinal: 1,

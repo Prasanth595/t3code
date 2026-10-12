@@ -745,6 +745,9 @@ describe("AgentAwarenessRelay", () => {
       const now = yield* DateTime.now;
       const runId = RunId.make("run:held-item");
       const run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId: THREAD_ID,
         ordinal: 1,

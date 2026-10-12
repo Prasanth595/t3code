@@ -11,6 +11,7 @@ import {
   WorktreeMcpHandoffInput,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -60,19 +61,52 @@ interface ThreadFixture {
   readonly deletedAt?: string | null;
 }
 
-const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadProjection =>
-  ({
+const makeProjection = (overrides: ThreadFixture = {}): OrchestrationV2ThreadProjection => {
+  const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+  const providerInstanceId = ProviderInstanceId.make("claudeAgent");
+  return {
     thread: {
       id: threadId,
       projectId,
       title: "Worktree test thread",
-      branch: null,
-      worktreePath: null,
-      archivedAt: null,
-      deletedAt: null,
-      ...overrides,
+      branch: overrides.branch ?? null,
+      worktreePath: overrides.worktreePath ?? null,
+      createdBy: "user",
+      creationSource: "web",
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "claude-sonnet" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeProviderThreadId: null,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: overrides.archivedAt == null ? null : DateTime.makeUnsafe(overrides.archivedAt),
+      deletedAt: overrides.deletedAt == null ? null : DateTime.makeUnsafe(overrides.deletedAt),
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
     },
-  }) as OrchestrationV2ThreadProjection;
+    runs: [],
+    attempts: [],
+    nodes: [],
+    subagents: [],
+    providerSessions: [],
+    providerThreads: [],
+    providerTurns: [],
+    runtimeRequests: [],
+    messages: [],
+    plans: [],
+    turnItems: [],
+    checkpointScopes: [],
+    checkpoints: [],
+    contextHandoffs: [],
+    contextTransfers: [],
+    visibleTurnItems: [],
+    updatedAt: now,
+  };
+};
 
 const project: Project = {
   id: projectId,

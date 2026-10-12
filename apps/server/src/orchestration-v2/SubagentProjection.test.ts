@@ -151,6 +151,9 @@ function taskFixture() {
     payload: makeParentThread(),
   });
   const run: OrchestrationV2Run = {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: RunId.make("initial"),
     threadId: parentThreadId,
     ordinal: 1,

@@ -75,6 +75,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           },
         };
         const staleRun: OrchestrationV2Run = {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,
@@ -426,6 +429,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         },
       });
       const stoppedRun: OrchestrationV2Run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: stoppedRunId,
         threadId: stoppedThreadId,
         ordinal: 2,
@@ -536,6 +542,9 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         },
       });
       const runningRun: OrchestrationV2Run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: cancelledRunId,
         threadId: cancelledThreadId,
         ordinal: 1,

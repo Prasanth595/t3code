@@ -7,6 +7,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   ThreadId,
+  type OrchestrationV2InternalMessageCause,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -17,6 +18,8 @@ import * as Schema from "effect/Schema";
 
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as SwarmExecution from "./SwarmExecutionPolicy.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -56,6 +59,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
+    readonly cause?: OrchestrationV2InternalMessageCause;
   }) => Effect.Effect<void, ProviderTurnControlError>;
   readonly interruptAndAwaitTerminal: (input: {
     readonly threadId: ThreadId;
@@ -75,12 +79,15 @@ export class ProviderTurnControlServiceV2 extends Context.Service<
 export const layer: Layer.Layer<
   ProviderTurnControlServiceV2,
   never,
-  ProjectionStore.ProjectionStoreV2 | ProviderSessionManager.ProviderSessionManagerV2
+  | ProjectionStore.ProjectionStoreV2
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > = Layer.effect(
   ProviderTurnControlServiceV2,
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const executor = yield* ThreadCommandExecutor.ThreadCommandExecutor;
 
     const load = (input: {
       readonly threadId: ThreadId;
@@ -331,7 +338,7 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-          yield* loaded.session.value
+          const send = loaded.session.value
             .steerTurn({
               threadId: input.threadId,
               runId: run.id,
@@ -371,6 +378,42 @@ export const layer: Layer.Layer<
                 }),
               ),
             );
+          const admitted = Effect.gen(function* () {
+            if (
+              input.cause?.kind === "scoped" &&
+              (input.cause.source.runId !== run.id ||
+                input.cause.source.attemptId !== run.activeAttemptId)
+            )
+              return yield* new SwarmExecution.SwarmAdmissionLost({
+                threadId: run.threadId,
+                runId: run.id,
+              });
+            if (run.executionScope.kind !== "ordinary") {
+              const records = yield* projections.getThreadRecords(run.threadId, ["attempts"], {
+                runIds: [run.id],
+              });
+              const actual = records.attempts.find(
+                (attempt) => attempt.id === run.activeAttemptId,
+              )?.submittedPolicy;
+              if (
+                actual === undefined ||
+                !(yield* SwarmExecution.admitPersistedWork(
+                  projections,
+                  records.thread,
+                  run,
+                  actual,
+                ))
+              )
+                return yield* new SwarmExecution.SwarmAdmissionLost({
+                  threadId: run.threadId,
+                  runId: run.id,
+                });
+            }
+            return yield* send;
+          });
+          yield* run.executionScope.kind === "swarm"
+            ? executor.withLock(run.executionScope.ownerThreadId, admitted)
+            : admitted;
         }).pipe(
           Effect.mapError((cause) =>
             isProviderTurnControlError(cause)

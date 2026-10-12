@@ -2,11 +2,14 @@ import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contra
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Crypto from "effect/Crypto";
+import * as Schema from "effect/Schema";
 
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
+
+const encodeContinuationFingerprint = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const CONTINUATION_MESSAGE_TEXT = "Background task completed.";
 
@@ -20,7 +23,10 @@ function delegatedCompletionText(taskIds: ReadonlyArray<string>): string {
 function currentDelegatedCompletionDelivery(
   projection: Pick<OrchestrationV2ThreadProjection, "messages" | "runs" | "providerTurns">,
   completion: NonNullable<
-    ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
+    Extract<
+      ProviderContinuationRequests.ProviderContinuationRequest,
+      { kind: "delegated_completion" }
+    >["delegatedCompletion"]
   >,
 ) {
   const sourceRun = projection.runs.find((candidate) => candidate.id === completion.parentRunId);
@@ -44,7 +50,10 @@ function currentDelegatedCompletionDelivery(
 function delegatedCompletionRetryKey(
   request: ProviderContinuationRequests.ProviderContinuationRequest,
   completion: NonNullable<
-    ProviderContinuationRequests.ProviderContinuationRequest["delegatedCompletion"]
+    Extract<
+      ProviderContinuationRequests.ProviderContinuationRequest,
+      { kind: "delegated_completion" }
+    >["delegatedCompletion"]
   >,
 ): string {
   return `${request.threadId}:${completion.parentRunId}:${completion.generation}:${completion.messageId}`;
@@ -59,7 +68,7 @@ function delegatedCompletionRetryKey(
  */
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const ids = yield* IdAllocator.IdAllocatorV2;
+    const crypto = yield* Crypto.Crypto;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const retryAttempts = yield* Ref.make(new Map<string, number>());
@@ -84,10 +93,10 @@ export const layer = Layer.effectDiscard(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
-          ["messages", "runs", "providerTurns"],
+          request.kind === "delegated_completion" ? ["messages", "runs", "providerTurns"] : [],
           {
             messageIds:
-              request.delegatedCompletion === undefined
+              request.kind !== "delegated_completion"
                 ? []
                 : [request.delegatedCompletion.messageId],
           },
@@ -97,22 +106,15 @@ export const layer = Layer.effectDiscard(
             threadId: request.threadId,
             providerThreadId: request.providerThreadId,
           });
-          if (request.delegatedCompletion !== undefined) {
+          if (request.kind === "delegated_completion") {
             yield* clearRetryAttempt(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
             );
           }
-          // No continuation turn will start to clear the adapter's sticky offer.
-          if (request.clearIfCurrent !== undefined) {
-            yield* request.clearIfCurrent();
-          } else if (request.dispatchIfCurrent !== undefined) {
-            // Backward compatibility for request producers without an explicit
-            // drop callback.
-            yield* request.dispatchIfCurrent(Effect.void);
-          }
+          if (request.kind === "native") yield* request.clearIfCurrent?.() ?? Effect.void;
           return;
         }
-        if (request.delegatedCompletion !== undefined) {
+        if (request.kind === "delegated_completion") {
           const retryKey = delegatedCompletionRetryKey(request, request.delegatedCompletion);
           const delivery = currentDelegatedCompletionDelivery(
             projection,
@@ -122,10 +124,9 @@ export const layer = Layer.effectDiscard(
             yield* clearRetryAttempt(retryKey);
             return;
           }
-          const commandId = yield* ids.allocate.command({
-            fixtureName: "delegated-completion",
-            commandName: "dispatch",
-          });
+          const commandId = CommandId.make(
+            `delegated-completion:${delivery.messageId}:${isUndeliveredMailboxSteer(projection, delivery.messageId) ? "recovery" : "dispatch"}`,
+          );
           yield* threads.dispatch({
             type: "message.dispatch",
             commandId,
@@ -145,20 +146,36 @@ export const layer = Layer.effectDiscard(
           yield* clearRetryAttempt(retryKey);
           return;
         }
-        // The ordinal is display metadata only: allocate.message appends a
-        // random UUID, so a stale projection read here cannot collide ids.
-        const messageId =
-          request.messageId ??
-          (yield* ids.allocate.message({
-            threadId: request.threadId,
-            ordinal: projection.messages.length + 1,
-          }));
-        const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
-          type: "message.dispatch",
+        if (!(yield* request.isCurrent)) {
+          yield* request.clearIfCurrent?.() ?? Effect.void;
+          return;
+        }
+        const commandId = CommandId.make(`provider-continuation:${request.messageId}`);
+        const cause = {
+          kind: "native" as const,
+          eventId: request.messageId,
+          cause: request.cause,
+          delivery: request.delivery,
+        };
+        const encoded = yield* encodeContinuationFingerprint({
+          cause,
+          providerThreadId: request.providerThreadId,
+          detail: request.detail,
+          notification: request.notification,
+        }).pipe(Effect.orDie);
+        const bytes = yield* crypto
+          .digest("SHA-256", new TextEncoder().encode(encoded))
+          .pipe(Effect.orDie);
+        const intentFingerprint = Array.from(bytes, (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join("");
+        yield* threads.dispatch({
+          type: "message.causal-dispatch",
           commandId,
+          intentFingerprint,
+          cause,
           threadId: request.threadId,
-          messageId,
+          messageId: request.messageId,
           text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
           notification: request.notification ?? {
             source: { kind: "background_task" },
@@ -168,17 +185,8 @@ export const layer = Layer.effectDiscard(
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
-          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
-          // detects to attach the buffered CLI output and drop this text. A
-          // message_text wake has no buffered output, so it must not carry that
-          // marker or the turn settles immediately having prompted nothing.
-          creationSource: request.delivery === "message_text" ? "server" : "provider",
+          creationSource: request.delivery.kind === "adapter_buffered" ? "provider" : "server",
         });
-        if (request.dispatchIfCurrent === undefined) {
-          yield* dispatch;
-          return;
-        }
-        yield* request.dispatchIfCurrent(dispatch);
       },
     );
 
@@ -192,7 +200,8 @@ export const layer = Layer.effectDiscard(
                 providerThreadId: request.providerThreadId,
                 cause,
               });
-              if (request.delegatedCompletion !== undefined) {
+              if (request.kind === "native") yield* request.clearIfCurrent?.() ?? Effect.void;
+              if (request.kind === "delegated_completion") {
                 const completion = request.delegatedCompletion;
                 const retryKey = delegatedCompletionRetryKey(request, completion);
                 const retryDelay = yield* nextRetryDelay(retryKey);
@@ -203,7 +212,7 @@ export const layer = Layer.effectDiscard(
                     ["messages", "runs", "providerTurns"],
                     {
                       messageIds:
-                        request.delegatedCompletion === undefined
+                        request.kind !== "delegated_completion"
                           ? []
                           : [request.delegatedCompletion.messageId],
                     },

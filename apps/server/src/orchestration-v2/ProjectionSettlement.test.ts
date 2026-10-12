@@ -85,6 +85,9 @@ const createRun = Effect.fn(function* (
     threadId,
     occurredAt: old,
     payload: {
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       id: runId,
       threadId,
       ordinal,

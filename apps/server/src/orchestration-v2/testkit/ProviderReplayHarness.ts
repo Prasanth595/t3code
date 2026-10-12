@@ -401,6 +401,7 @@ export function layerWithRegistry<Error>(
     ),
   );
   const layerProviderTurnControlServiceProvided = ProviderTurnControlService.layer.pipe(
+    Layer.provide(ThreadCommandExecutor.layer),
     Layer.provide(Layer.merge(layerStores, layerProviderSessionManagerProvided)),
   );
   const layerRuntimeRequestServiceProvided = RuntimeRequestService.layer.pipe(

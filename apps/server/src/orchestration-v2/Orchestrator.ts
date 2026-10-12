@@ -1,11 +1,10 @@
 import { formatPeerMessage } from "@t3tools/provider-core/server/peerMessage";
-import { swarmRunAllowed } from "./SwarmAdmission.ts";
+import * as SwarmExecution from "./SwarmExecutionPolicy.ts";
 import {
   SwarmId,
   SWARM_MAX_BRIEF_BYTES,
   SWARM_MAX_MESSAGE_BYTES,
   SWARM_MAX_PENDING_MESSAGES,
-  type OrchestrationV2SwarmRunAdmission,
   type OrchestrationV2SwarmPeerDelivery,
   type OrchestrationV2Swarm,
 } from "@t3tools/contracts";
@@ -15,8 +14,11 @@ type MessageDispatchCommand = Extract<
   { readonly type: "message.dispatch" }
 > & {
   readonly swarmPeerDelivery?: OrchestrationV2SwarmPeerDelivery | undefined;
-  readonly swarmId?: SwarmId | undefined;
-  readonly swarmRunAdmission?: OrchestrationV2SwarmRunAdmission | undefined;
+  readonly execution?: SwarmExecution.PreparedRunExecution;
+  readonly cause?: Extract<
+    OrchestrationV2ServerCommand,
+    { type: "message.causal-dispatch" }
+  >["cause"];
 };
 import type {
   OrchestrationV2SearchThreadInput,
@@ -292,6 +294,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
+const isOrchestratorV2Error = Schema.is(OrchestratorV2Error);
 
 export interface OrchestratorV2DispatchResult {
   readonly sequence: number;
@@ -511,6 +514,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.model-selection.set":
     case "provider-session.detach":
     case "message.dispatch":
+    case "message.causal-dispatch":
     case "notification.delivery.accept":
     case "prepared-run.release":
     case "prepared-run.progress":
@@ -1160,11 +1164,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       yield* continuationRequests.offer({
+        kind: "delegated_completion",
         threadId,
         providerThreadId: providerThread.id,
         driver: providerThread.driver,
         detail: null,
-        delivery: "message_text",
+        delivery: { kind: "message_text" },
         delegatedCompletion: {
           parentRunId,
           generation: delivery.generation,
@@ -1370,6 +1375,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     });
 
+  const heldQueueBlocks = Effect.fnUntraced(function* (
+    projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs">,
+  ) {
+    for (const run of projection.runs) {
+      if (run.status !== "queued" || run.queueHeld !== true) continue;
+      if (
+        run.executionScope.kind === "ordinary" ||
+        (yield* SwarmExecution.admitPersistedWork(projectionStore, projection.thread, run))
+      )
+        return true;
+    }
+    return false;
+  });
+
   const startNextQueuedRun = (
     threadId: ThreadId,
     options?: { readonly failedRunId?: RunId; readonly endedRunId?: RunId },
@@ -1383,7 +1402,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.runs.some(isBlockingRun) ||
-        projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)
+        (yield* heldQueueBlocks(projection))
       ) {
         return;
       }
@@ -1400,12 +1419,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
         return;
       }
-      let queuedRun = nextQueuedRun(projection);
+      let queuedRun = nextQueuedRun({
+        ...projection,
+        runs: projection.runs.filter((run) => run.queueHeld !== true),
+      });
       if (queuedRun === undefined) {
         return;
       }
       if (
-        ((queuedRun.swarmId !== undefined || queuedRun.swarmPeerDelivery !== undefined) &&
+        (queuedRun.executionScope.kind !== "ordinary" &&
           (yield* stopReachedRun(
             {
               type: "queue.resume",
@@ -1415,7 +1437,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             threadId,
             queuedRun.id,
           ))) ||
-        !(yield* swarmRunAllowed(projectionStore, projection.thread, queuedRun).pipe(
+        !(yield* SwarmExecution.admitPersistedWork(
+          projectionStore,
+          projection.thread,
+          queuedRun,
+        ).pipe(
           mapDispatchError({
             type: "queue.resume",
             commandId: CommandId.make(`command:system:start-queued:${queuedRun.id}`),
@@ -1472,10 +1498,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const ownership = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
       const acceptedMessageId = queuedRun.userMessageId;
       const accepted = projection.messages.find((message) => message.id === acceptedMessageId);
-      if (accepted === undefined && queuedRun.swarmPeerDelivery !== undefined) return;
+      if (accepted === undefined && queuedRun.peerInput !== undefined) return;
       if (accepted !== undefined) {
         const followupCommandId =
-          queuedRun.swarmPeerDelivery?.commandId ??
+          queuedRun.peerInput?.commandId ??
           CommandId.make(`command:system:followup:${queuedRun.id}`);
         yield* recordSubagentFollowup(
           {
@@ -1491,9 +1517,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             text: accepted.text,
             attachments: accepted.attachments,
             dispatchMode: { type: "queue_after_active" },
-            ...(queuedRun.swarmPeerDelivery === undefined
+            ...(queuedRun.peerInput === undefined
               ? {}
-              : { swarmPeerDelivery: queuedRun.swarmPeerDelivery }),
+              : { swarmPeerDelivery: queuedRun.peerInput }),
             ...(accepted.notification === undefined ? {} : { notification: accepted.notification }),
             ...(accepted.scheduledTaskId === undefined
               ? {}
@@ -3971,6 +3997,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     readonly senderThreadId?: OrchestrationV2ConversationMessage["senderThreadId"];
     readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
     readonly forceRestart: boolean;
+    readonly cause?: MessageDispatchCommand["cause"];
   }) =>
     Effect.gen(function* () {
       const targetRun = input.projection.runs.find(
@@ -4252,6 +4279,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               providerThreadId: providerThread.id,
               providerTurnId: providerTurn.id,
               messageId: input.messageId,
+              ...(input.cause === undefined ? {} : { cause: input.cause }),
             },
           } satisfies PendingOrchestrationEffectV2,
         ]);
@@ -4680,37 +4708,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
       const peerMessageDelivery = command.swarmPeerDelivery;
-      const causalRunId =
-        command.restartContinuationOfRunId ??
-        command.usageLimitContinuationOfRunId ??
-        command.manualContinuationOfRunId ??
-        command.delegatedCompletion?.parentRunId;
-      const causalRun =
-        causalRunId === undefined
-          ? undefined
-          : projection.runs.find((run) => run.id === causalRunId);
-      if (causalRun?.swarmId !== undefined) {
-        if (
-          !(yield* swarmRunAllowed(projectionStore, projection.thread, causalRun).pipe(
-            mapDispatchError(command),
-          ))
-        )
-          return yield* new OrchestratorDispatchError({
-            commandId: command.commandId,
-            commandType: command.type,
-            cause: "Swarm causal work has lost admission.",
-          });
-        command = {
-          ...command,
-          swarmId: causalRun.swarmId,
-          ...(causalRun.swarmRunAdmission === undefined
-            ? {}
-            : { swarmRunAdmission: causalRun.swarmRunAdmission }),
-          ...(causalRun.swarmPeerDelivery === undefined
-            ? {}
-            : { swarmPeerDelivery: causalRun.swarmPeerDelivery }),
-        };
-      }
+      const causalAnchors = [
+        ...(command.restartContinuationOfRunId === undefined
+          ? []
+          : [{ runId: command.restartContinuationOfRunId, reason: "restart" as const }]),
+        ...(command.usageLimitContinuationOfRunId === undefined
+          ? []
+          : [{ runId: command.usageLimitContinuationOfRunId, reason: "usage_limit" as const }]),
+        ...(command.manualContinuationOfRunId === undefined
+          ? []
+          : [{ runId: command.manualContinuationOfRunId, reason: "manual" as const }]),
+        ...(command.delegatedCompletion === undefined
+          ? []
+          : [
+              {
+                runId: command.delegatedCompletion.parentRunId,
+                reason: "delegated_completion" as const,
+              },
+            ]),
+      ];
+      if (
+        causalAnchors.length > 1 ||
+        (command.cause !== undefined &&
+          (causalAnchors.length !== 0 || command.execution !== undefined)) ||
+        (peerMessageDelivery !== undefined && command.execution === undefined)
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The execution has conflicting or unprepared causal input.",
+        });
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -4805,7 +4832,53 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
 
-      const continuedTaskId = causalRun?.delegatedTaskId;
+      const anchor = causalAnchors[0];
+      const source =
+        anchor === undefined ? undefined : projection.runs.find((run) => run.id === anchor.runId);
+      if (anchor !== undefined && source === undefined)
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The exact causal execution is unavailable.",
+        });
+      const execution =
+        command.execution ??
+        (yield* SwarmExecution.prepareWork(
+          projectionStore,
+          command.cause?.kind === "native"
+            ? {
+                kind: "native",
+                destination: projection.thread,
+                cause: command.cause.cause,
+                delivery: command.cause.delivery,
+              }
+            : command.cause?.kind === "scoped"
+              ? {
+                  kind: "continuation",
+                  destination: projection.thread,
+                  sources: [command.cause.source],
+                  reason: command.cause.reason,
+                  delivery: { kind: "message_text" },
+                }
+              : source !== undefined && anchor !== undefined
+                ? {
+                    kind: "continuation",
+                    destination: projection.thread,
+                    sources: [
+                      {
+                        kind: "run",
+                        threadId: source.threadId,
+                        runId: source.id,
+                        attemptId: source.activeAttemptId,
+                      },
+                    ],
+                    reason: anchor.reason,
+                    delivery: { kind: "message_text" },
+                  }
+                : { kind: "ordinary", taskId: null },
+        ).pipe(mapDispatchError(command)));
+      if (execution.modelSelection !== null)
+        command = { ...command, modelSelection: execution.modelSelection };
 
       if (projection.thread.settledOverride !== null) {
         const now = yield* DateTime.now;
@@ -5066,6 +5139,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") {
         yield* dispatchSteerIntoRun({
           command,
+          ...(command.cause === undefined ? {} : { cause: command.cause }),
           events,
           effects,
           projection,
@@ -5214,48 +5288,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     }),
                 ),
               );
-        const run: OrchestrationV2Run = {
-          id: runId,
-          threadId: command.threadId,
-          ordinal,
-          providerInstanceId: modelSelection.instanceId,
-          modelSelection,
-          providerThreadId: queuedProviderThread.id,
-          userMessageId: command.messageId,
-          ...(command.swarmPeerDelivery === undefined
-            ? {}
-            : { swarmPeerDelivery: command.swarmPeerDelivery }),
-          ...(command.swarmId === undefined ? {} : { swarmId: command.swarmId }),
-          ...(command.swarmRunAdmission === undefined
-            ? {}
-            : { swarmRunAdmission: command.swarmRunAdmission }),
-          rootNodeId,
-          activeAttemptId: attemptId,
-          status: "queued",
-          ...(worktreeMissingRun !== undefined ||
-          projection.runs.some(
-            (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
-          )
-            ? { queueHeld: true }
-            : {}),
-          queuePosition:
-            Math.max(
-              0,
-              ...projection.runs
-                .filter((candidate) => candidate.status === "queued")
-                .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
-            ) + 1,
-          requestedAt: now,
-          startedAt: null,
-          completedAt: null,
-          checkpointId: null,
-          contextHandoffId: null,
-          ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
-          ...(command.restartContinuationOfRunId === undefined
-            ? {}
-            : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
-          ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-        };
+        const inheritedHold =
+          worktreeMissingRun !== undefined ||
+          (yield* heldQueueBlocks(projection).pipe(mapDispatchError(command)));
+        const run = SwarmExecution.runFromPrepared(
+          {
+            id: runId,
+            threadId: command.threadId,
+            ordinal,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            providerThreadId: queuedProviderThread.id,
+            userMessageId: command.messageId,
+            ...(peerMessageDelivery === undefined ? {} : { peerInput: peerMessageDelivery }),
+            rootNodeId,
+            activeAttemptId: attemptId,
+            status: "queued",
+            ...(inheritedHold ? { queueHeld: true } : {}),
+            queuePosition:
+              Math.max(
+                0,
+                ...projection.runs
+                  .filter((candidate) => candidate.status === "queued")
+                  .map((candidate) => candidate.queuePosition ?? candidate.ordinal),
+              ) + 1,
+            requestedAt: now,
+            startedAt: null,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+            ...(command.sourcePlanRef === undefined
+              ? {}
+              : { sourcePlanRef: command.sourcePlanRef }),
+            ...(command.restartContinuationOfRunId === undefined
+              ? {}
+              : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          },
+          execution,
+        );
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
           runId,
@@ -5574,40 +5644,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   ),
                   mapDispatchError(command),
                 );
-        const run: OrchestrationV2Run = {
-          id: runId,
-          threadId: command.threadId,
-          ordinal,
-          providerInstanceId: modelSelection.instanceId,
-          modelSelection,
-          providerThreadId,
-          userMessageId: command.messageId,
-          ...(command.swarmPeerDelivery === undefined
-            ? {}
-            : { swarmPeerDelivery: command.swarmPeerDelivery }),
-          ...(command.swarmId === undefined ? {} : { swarmId: command.swarmId }),
-          ...(command.swarmRunAdmission === undefined
-            ? {}
-            : { swarmRunAdmission: command.swarmRunAdmission }),
-          rootNodeId,
-          activeAttemptId: attemptId,
-          status: dispatchMode.type === "defer_start" ? "preparing" : "starting",
-          queuePosition: null,
-          requestedAt: now,
-          startedAt: null,
-          completedAt: null,
-          checkpointId: null,
-          contextHandoffId: legacyImportHandoff?.id ?? null,
-          ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
-          ...(command.restartContinuationOfRunId === undefined
-            ? {}
-            : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
-          ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
-            ? { workspacePreparation: dispatchMode.workspaceStrategy }
-            : {}),
-          ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-          ...wakeWorkStartedAt(projection.runs, command),
-        };
+        const run = SwarmExecution.runFromPrepared(
+          {
+            id: runId,
+            threadId: command.threadId,
+            ordinal,
+            providerInstanceId: modelSelection.instanceId,
+            modelSelection,
+            providerThreadId,
+            userMessageId: command.messageId,
+            ...(peerMessageDelivery === undefined ? {} : { peerInput: peerMessageDelivery }),
+            rootNodeId,
+            activeAttemptId: attemptId,
+            status: dispatchMode.type === "defer_start" ? "preparing" : "starting",
+            queuePosition: null,
+            requestedAt: now,
+            startedAt: null,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: legacyImportHandoff?.id ?? null,
+            ...(command.sourcePlanRef === undefined
+              ? {}
+              : { sourcePlanRef: command.sourcePlanRef }),
+            ...(command.restartContinuationOfRunId === undefined
+              ? {}
+              : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+            ...(dispatchMode.type === "defer_start" && dispatchMode.workspaceStrategy !== undefined
+              ? { workspacePreparation: dispatchMode.workspaceStrategy }
+              : {}),
+            ...wakeWorkStartedAt(projection.runs, command),
+          },
+          execution,
+        );
         const attempt: OrchestrationV2RunAttempt = {
           id: attemptId,
           runId,
@@ -6275,42 +6343,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-      const run: OrchestrationV2Run = {
-        id: runId,
-        threadId: command.threadId,
-        ordinal,
-        providerInstanceId: modelSelection.instanceId,
-        modelSelection,
-        providerThreadId: providerThread.id,
-        userMessageId: command.messageId,
-        ...(command.swarmPeerDelivery === undefined
-          ? {}
-          : { swarmPeerDelivery: command.swarmPeerDelivery }),
-        ...(command.swarmId === undefined ? {} : { swarmId: command.swarmId }),
-        ...(command.swarmRunAdmission === undefined
-          ? {}
-          : { swarmRunAdmission: command.swarmRunAdmission }),
-        rootNodeId,
-        activeAttemptId: attemptId,
-        status: "starting",
-        queuePosition: null,
-        requestedAt: now,
-        startedAt: null,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId:
-          portableForkHandoff?.id ??
-          providerSwitchHandoff?.id ??
-          mergeBackHandoff?.id ??
-          legacyImportRecoveryHandoff?.id ??
-          null,
-        ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
-        ...(command.restartContinuationOfRunId === undefined
-          ? {}
-          : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
-        ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
-        ...wakeWorkStartedAt(projection.runs, command),
-      };
+      const run = SwarmExecution.runFromPrepared(
+        {
+          id: runId,
+          threadId: command.threadId,
+          ordinal,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: providerThread.id,
+          userMessageId: command.messageId,
+          ...(peerMessageDelivery === undefined ? {} : { peerInput: peerMessageDelivery }),
+          rootNodeId,
+          activeAttemptId: attemptId,
+          status: "starting",
+          queuePosition: null,
+          requestedAt: now,
+          startedAt: null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId:
+            portableForkHandoff?.id ??
+            providerSwitchHandoff?.id ??
+            mergeBackHandoff?.id ??
+            legacyImportRecoveryHandoff?.id ??
+            null,
+          ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
+          ...(command.restartContinuationOfRunId === undefined
+            ? {}
+            : { restartContinuationOfRunId: command.restartContinuationOfRunId }),
+          ...wakeWorkStartedAt(projection.runs, command),
+        },
+        execution,
+      );
       const attempt: OrchestrationV2RunAttempt = {
         id: attemptId,
         runId,
@@ -6770,6 +6834,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
       storedParent?: OrchestrationV2ThreadProjection,
+      initialSwarm?: { readonly group: OrchestrationV2Swarm; readonly memberThreadId: ThreadId },
     ) {
       const parentProjection = yield* getProjectionWithPendingEvents(
         command.parentThreadId,
@@ -6795,9 +6860,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (
-        !(yield* swarmRunAllowed(projectionStore, parentProjection.thread, parentRun).pipe(
-          mapDispatchError(command),
-        ))
+        !(yield* SwarmExecution.admitPersistedWork(
+          projectionStore,
+          parentProjection.thread,
+          parentRun,
+        ).pipe(mapDispatchError(command)))
       )
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -6970,6 +7037,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: taskTurnItem,
       });
 
+      const parentSource = {
+        kind: "run" as const,
+        threadId: parentProjection.thread.id,
+        runId: parentRun.id,
+        attemptId: parentRun.activeAttemptId,
+      };
+      const execution = yield* SwarmExecution.prepareWork(
+        projectionStore,
+        initialSwarm === undefined
+          ? {
+              kind: "delegation",
+              source: parentSource,
+              destination: childThread,
+              modes: command,
+              limit: yield* DispatchModeLimit,
+              taskId: taskNodeId,
+            }
+          : {
+              kind: "scoped",
+              source: parentSource,
+              destination: childThread,
+              modes: command,
+              limit: yield* DispatchModeLimit,
+              taskId: taskNodeId,
+              group: initialSwarm.group,
+              memberThreadId: initialSwarm.memberThreadId,
+              reason: "delegation",
+            },
+      ).pipe(mapDispatchError(command));
       const childMessageCommand = {
         type: "message.dispatch",
         createdBy: command.createdBy,
@@ -6977,18 +7073,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         threadId: childThreadId,
         senderThreadId: command.parentThreadId,
-        ...(parentRun.swarmId === undefined
-          ? {}
-          : {
-              swarmId: parentRun.swarmId,
-              swarmRunAdmission: {
-                senderThreadId: command.parentThreadId,
-                ...minimumDispatchModes(
-                  parentRun.swarmRunAdmission ?? parentProjection.thread,
-                  parentProjection.thread,
-                ),
-              },
-            }),
+        execution,
         messageId: childMessageId,
         text: command.task,
         attachments: [],
@@ -7006,13 +7091,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Delegated child thread ${childThreadId} did not create a run.`,
         });
       }
-      yield* emitEvent({
-        type: "run.updated",
-        threadId: childThreadId,
-        runId: childRun.id,
-        occurredAt: now,
-        payload: { ...childRun, delegatedTaskId: taskNodeId },
-      });
       const spawnTransferId = yield* mapDispatchError(command)(
         idAllocator.allocate.contextTransfer({
           sourceThreadId: command.parentThreadId,
@@ -7059,13 +7137,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: MessageDispatchCommand,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
   ) {
-    if (
-      command.scheduledTaskId !== undefined ||
-      command.notification !== undefined ||
-      command.restartContinuationOfRunId !== undefined ||
-      (command.createdBy !== "user" && command.creationSource !== "mcp")
-    )
-      return;
     const pending = yield* Ref.get(events);
     const message = pending
       .flatMap((event) =>
@@ -7082,14 +7153,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (accepted?.runId == null) return;
     const child = yield* projectionStore.getThread(command.threadId);
     const parentThreadId = child.lineage.parentThreadId;
-    if (
-      child.lineage.relationshipToParent !== "subagent" ||
-      parentThreadId === null ||
-      (command.createdBy !== "user" &&
-        command.senderThreadId !== parentThreadId &&
-        command.swarmPeerDelivery === undefined)
-    )
-      return;
+    if (child.lineage.relationshipToParent !== "subagent" || parentThreadId === null) return;
     const run =
       pending
         .flatMap((event) =>
@@ -7103,6 +7167,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         (row) => row.id === accepted.runId,
       );
     if (run === undefined) return;
+    const causal =
+      run.executionCause.kind === "causal" &&
+      run.executionCause.reason !== "peer" &&
+      run.executionCause.reason !== "delegation";
+    if (run.executionCause.kind === "native_unowned" || (causal && run.delegatedTaskId === null))
+      return;
+    if (
+      !causal &&
+      (command.scheduledTaskId !== undefined ||
+        command.notification !== undefined ||
+        command.restartContinuationOfRunId !== undefined ||
+        (command.createdBy !== "user" && command.creationSource !== "mcp") ||
+        (command.createdBy !== "user" &&
+          command.senderThreadId !== parentThreadId &&
+          command.swarmPeerDelivery === undefined))
+    )
+      return;
     const parent = yield* projectionStore
       .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"])
       .pipe(mapDispatchError(command));
@@ -7115,7 +7196,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (original === undefined) return;
     const assigned = parent.subagents.find((task) => task.id === run.delegatedTaskId);
     if (assigned !== undefined && assigned.result === null) return;
-    if (original.result === null) {
+    if (causal && assigned === undefined)
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "The exact causal task owner is unavailable.",
+      });
+    if (!causal && original.result === null) {
       yield* emit(
         events,
         command,
@@ -7128,11 +7215,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       return;
     }
-    const owner =
-      parent.runs.filter(isBlockingRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
-      latestExecutedRun(parent.runs);
+    const owner = causal
+      ? (parent.runs.find((run) => run.id === assigned?.runId) ?? null)
+      : (parent.runs.filter(isBlockingRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ??
+        latestExecutedRun(parent.runs));
     if (owner === null || owner.rootNodeId === null) {
-      if (command.swarmPeerDelivery !== undefined)
+      if (causal || command.swarmPeerDelivery !== undefined)
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -7142,14 +7230,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const now = accepted.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
-    const taskId = idAllocator.derive.delegatedTaskNode({ commandId: command.commandId });
+    const taskCommandId = causal
+      ? CommandId.make(`causal-successor:${accepted.id}`)
+      : command.commandId;
+    const taskId = idAllocator.derive.delegatedTaskNode({ commandId: taskCommandId });
+    const template = causal && assigned !== undefined ? assigned : original;
+    const parentNodeId = causal ? template.parentNodeId : owner.rootNodeId;
     const task: OrchestrationV2Subagent = {
-      ...original,
+      ...template,
       createdBy: command.createdBy,
       driver: adapter.driver,
       id: taskId,
       runId: owner.id,
-      parentNodeId: owner.rootNodeId,
+      parentNodeId,
       providerInstanceId: run.providerInstanceId,
       providerThreadId: run.providerThreadId,
       model: run.modelSelection.model,
@@ -7169,7 +7262,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       id: taskId,
       threadId: parentThreadId,
       runId: owner.id,
-      parentNodeId: owner.rootNodeId,
+      parentNodeId,
       rootNodeId: owner.rootNodeId,
       kind: "subagent",
       status: task.status,
@@ -7183,7 +7276,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completedAt: null,
     };
     const turnItem: OrchestrationV2TurnItem = {
-      id: idAllocator.derive.delegatedTaskTurnItem({ commandId: command.commandId }),
+      id: idAllocator.derive.delegatedTaskTurnItem({ commandId: taskCommandId }),
       threadId: parentThreadId,
       runId: owner.id,
       nodeId: taskId,
@@ -7736,7 +7829,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         } = yield* projectionStore
           .getRunningTurnContext(command.threadId)
           .pipe(mapDispatchError(command));
-        if (activeRun && activeProviderTurn && activeProviderThread?.providerSessionId) {
+        const questionRunId = requestNode?.runId ?? approvalTurnItem?.runId;
+        const question =
+          questionRunId == null
+            ? undefined
+            : yield* projectionStore
+                .getThreadRecords(command.threadId, ["runs", "providerTurns"], {
+                  runIds: [questionRunId],
+                })
+                .pipe(mapDispatchError(command));
+        const questionRun = question?.runs.find((run) => run.id === questionRunId);
+        const questionTurn = question?.providerTurns.find(
+          (turn) => turn.id === runtimeRequest.providerTurnId,
+        );
+        const answerCause: MessageDispatchCommand["cause"] =
+          questionRun !== undefined && questionRun.executionScope.kind !== "ordinary"
+            ? {
+                kind: "scoped",
+                reason: "answer",
+                source: {
+                  kind: "run",
+                  threadId: command.threadId,
+                  runId: questionRun.id,
+                  attemptId: questionTurn?.runAttemptId ?? null,
+                },
+              }
+            : undefined;
+        if (
+          activeRun &&
+          activeProviderTurn &&
+          activeProviderThread?.providerSessionId &&
+          (answerCause === undefined ||
+            (activeRun.id === questionRunId && activeProviderTurn.id === questionTurn?.id))
+        ) {
           const activeSession = yield* providerSessions
             .get(activeProviderThread.providerSessionId)
             .pipe(
@@ -7756,22 +7881,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             dispatchMode = { type: "steer_active", targetRunId: activeRun.id };
           }
         }
-        // The resolution and normal message dispatch share one event transaction.
-        return yield* dispatchMessage(
-          {
-            type: "message.dispatch",
-            commandId: command.commandId,
-            threadId: command.threadId,
-            messageId: MessageId.make(`async-answer:${command.requestId}`),
-            text: replies.join("\n\n"),
-            attachments: [],
-            createdBy: "user",
-            creationSource: "server",
-            dispatchMode,
-          },
-          events,
-          effects,
+        const answerCommand: MessageDispatchCommand = {
+          type: "message.dispatch",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: MessageId.make(`async-answer:${command.requestId}`),
+          text: replies.join("\n\n"),
+          attachments: [],
+          createdBy: "user",
+          creationSource: "server",
+          dispatchMode,
+          ...(answerCause === undefined ? {} : { cause: answerCause }),
+        };
+        if (answerCause === undefined)
+          return yield* dispatchMessage(answerCommand, events, effects);
+        const stagedEvents = yield* Ref.make(yield* Ref.get(events));
+        const stagedEffects = yield* Ref.make<Array<PendingOrchestrationEffectV2>>([]);
+        yield* dispatchMessage(answerCommand, stagedEvents, stagedEffects).pipe(
+          Effect.andThen(recordSubagentFollowup(answerCommand, stagedEvents)),
+          Effect.andThen(
+            Effect.gen(function* () {
+              yield* Ref.set(events, yield* Ref.get(stagedEvents));
+              const acceptedEffects = yield* Ref.get(stagedEffects);
+              yield* Ref.update(effects, (current) => [...current, ...acceptedEffects]);
+            }),
+          ),
+          Effect.catch((cause) =>
+            Effect.logWarning(
+              "The scoped answer was retained but its exact execution refused delivery",
+              { requestId: command.requestId, runId: questionRunId, cause },
+            ),
+          ),
         );
+        return;
       }
       if (providerSessionId === null) return;
       yield* Ref.update(effects, (existing) => [
@@ -7870,7 +8012,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Queued run ${command.queuedRunId} is not queued.`,
         });
       }
-      if (queuedRun.swarmPeerDelivery !== undefined)
+      if (queuedRun.peerInput !== undefined)
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -8217,7 +8359,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.type === "user_message" && candidate.messageId === queuedMessage.id,
       );
 
-      if (queuedRun.swarmPeerDelivery !== undefined)
+      if (queuedRun.peerInput !== undefined)
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -8374,9 +8516,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (
-        !(yield* swarmRunAllowed(projectionStore, projection.thread, state.run).pipe(
-          mapDispatchError(command),
-        ))
+        !(yield* SwarmExecution.admitPersistedWork(
+          projectionStore,
+          projection.thread,
+          state.run,
+        ).pipe(mapDispatchError(command)))
       )
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -10921,7 +11065,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         SWARM_MAX_BRIEF_BYTES
       )
         return yield* swarmRefusal(command, "Swarm member briefs exceed the aggregate byte limit.");
-      const members: Array<OrchestrationV2Swarm["members"][number]> = [];
+      const now = yield* DateTime.now;
+      const group: OrchestrationV2Swarm = {
+        id: SwarmId.make(`swarm:${command.commandId}`),
+        ownerThreadId: command.threadId,
+        ownerRunId: command.parentRunId,
+        creationCommandId: command.commandId,
+        title: command.title,
+        members: command.members.map((member, index) => {
+          const commandId = CommandId.make(`${command.commandId}:member:${index}`);
+          return {
+            threadId: idAllocator.derive.delegatedTaskThread({ commandId }),
+            taskId: idAllocator.derive.delegatedTaskNode({ commandId }),
+            title: member.title ?? `Member ${index + 1}`,
+            admission: { state: "admitted" },
+          };
+        }),
+        lifecycle: { state: "open" },
+        createdAt: now,
+        updatedAt: now,
+      };
       for (const [index, member] of command.members.entries()) {
         if (exceededDispatchModeLimit(parent.thread, member) !== undefined)
           return yield* swarmRefusal(command, "A swarm member exceeds its owner's current modes.");
@@ -10941,39 +11104,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           events,
           effects,
           storedParent,
+          { group, memberThreadId: group.members[index]!.threadId },
         );
-        members.push({
-          threadId: idAllocator.derive.delegatedTaskThread({ commandId: memberCommandId }),
-          taskId: idAllocator.derive.delegatedTaskNode({ commandId: memberCommandId }),
-          title: member.title ?? `Member ${index + 1}`,
-          admission: { state: "admitted" },
-        });
-      }
-      const now = yield* DateTime.now;
-      const swarmId = SwarmId.make(`swarm:${command.commandId}`);
-      for (const member of members) {
-        const child = yield* getProjectionWithPendingEvents(member.threadId, events).pipe(
-          mapDispatchError(command),
-        );
-        for (const run of child.runs)
-          yield* emit(
-            events,
-            command,
-          )({
-            type: "run.updated",
-            threadId: child.thread.id,
-            runId: run.id,
-            occurredAt: now,
-            payload: {
-              ...run,
-              swarmId,
-              swarmRunAdmission: {
-                senderThreadId: parent.thread.id,
-                runtimeMode: parent.thread.runtimeMode,
-                interactionMode: parent.thread.interactionMode,
-              },
-            },
-          });
       }
       yield* emit(
         events,
@@ -10982,17 +11114,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         type: "swarm.updated",
         threadId: command.threadId,
         occurredAt: now,
-        payload: {
-          id: swarmId,
-          ownerThreadId: command.threadId,
-          ownerRunId: command.parentRunId,
-          creationCommandId: command.commandId,
-          title: command.title,
-          members,
-          lifecycle: { state: "open" },
-          createdAt: now,
-          updatedAt: now,
-        },
+        payload: group,
       });
     });
 
@@ -11027,14 +11149,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command,
           "Peer delivery requires two admitted members of the same open swarm.",
         );
+      const sourceRun = sender.runs.find((run) => run.id === command.senderRunId);
       if (
-        !sender.runs.some(
-          (run) =>
-            run.id === command.senderRunId &&
-            isBlockingRun(run) &&
-            (command.senderProviderInstanceId === undefined ||
-              run.providerInstanceId === command.senderProviderInstanceId),
-        ) ||
+        sourceRun === undefined ||
+        !isBlockingRun(sourceRun) ||
+        (command.senderProviderInstanceId !== undefined &&
+          sourceRun.providerInstanceId !== command.senderProviderInstanceId) ||
         (yield* stopReachedRun(command, sender.thread.id, command.senderRunId))
       )
         return yield* swarmRefusal(command, "The sender no longer owns the live run.");
@@ -11045,9 +11165,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         if (
           thread.archivedAt !== null ||
           thread.deletedAt !== null ||
-          isProviderNativeSubagentThread(thread) ||
-          exceededDispatchModeLimit(command, thread) !== undefined ||
-          exceededDispatchModeLimit(sender.thread, thread) !== undefined
+          isProviderNativeSubagentThread(thread)
         )
           return yield* swarmRefusal(
             command,
@@ -11060,22 +11178,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         recipient.runs.filter(
           (run) =>
             (run.status === "queued" || run.status === "preparing" || run.status === "starting") &&
-            run.swarmPeerDelivery !== undefined,
+            run.peerInput !== undefined,
         ).length >= SWARM_MAX_PENDING_MESSAGES
       )
         return yield* swarmRefusal(command, "Peer message queue is full, including held entries.");
-      const deliveryModes = minimumDispatchModes(command, sender.thread, owner);
-      if (exceededDispatchModeLimit(deliveryModes, recipient.thread) !== undefined)
-        return yield* swarmRefusal(
-          command,
-          "Peer delivery exceeds the owner's effective admission ceiling.",
-        );
+      const dispatchLimit = yield* DispatchModeLimit;
+      const execution = yield* SwarmExecution.prepareWork(projectionStore, {
+        kind: "scoped",
+        group,
+        source: {
+          kind: "run",
+          threadId: sender.thread.id,
+          runId: sourceRun.id,
+          attemptId: sourceRun.activeAttemptId,
+        },
+        destination: recipient.thread,
+        memberThreadId: recipient.thread.id,
+        modes: command,
+        limit: dispatchLimit === undefined ? command : minimumDispatchModes(command, dispatchLimit),
+        taskId: null,
+        reason: "peer",
+      }).pipe(mapDispatchError(command));
       const delivery = {
         swarmId: group.id,
         ownerThreadId: group.ownerThreadId,
         senderThreadId: command.senderThreadId,
         commandId: command.commandId,
-        ...deliveryModes,
       };
       const messageCommand = {
         type: "message.dispatch",
@@ -11089,7 +11217,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         attachments: [],
         dispatchMode: { type: "queue_after_active" },
         swarmPeerDelivery: delivery,
-        swarmId: group.id,
+        execution,
       } satisfies MessageDispatchCommand;
       yield* dispatchMessage(messageCommand, events, effects);
       yield* recordSubagentFollowup(messageCommand, events);
@@ -11104,7 +11232,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const own = yield* projectionStore
         .getThreadRecords(threadId, ["swarms"])
-        .pipe(mapDispatchError(command));
+        .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       const memberGroup = yield* projectionStore
         .getSwarmForMember(threadId)
         .pipe(mapDispatchError(command));
@@ -11175,10 +11303,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId,
       } satisfies OrchestrationV2InternalCommand;
       for (const run of projection.runs)
-        if (
-          run.status === "queued" &&
-          (run.swarmId !== undefined || run.swarmPeerDelivery !== undefined)
-        )
+        if (run.status === "queued" && run.executionScope.kind !== "ordinary")
           yield* markStoppedRun({
             command: stoppedCommand,
             events,
@@ -11531,6 +11656,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
+      case "message.causal-dispatch": {
+        const normalized: MessageDispatchCommand = { ...command, type: "message.dispatch" };
+        yield* dispatchMessage(normalized, events, effects);
+        yield* recordSubagentFollowup(normalized, events).pipe(mapDispatchError(command));
+        break;
+      }
       case "message.dispatch": {
         // The provider owns a native subagent's conversation, so a sent
         // message has nowhere to go. Answers to a subagent's questions never
@@ -11772,7 +11903,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? command.senderRunId
             : command.type === "swarm.create"
               ? command.parentRunId
-              : command.agentOwnerRunId;
+              : command.type === "swarm.stop"
+                ? command.agentOwnerRunId
+                : undefined;
         if (runId !== undefined) {
           const caller = yield* projectionStore
             .getThreadRecords(callerId, ["runs"])
@@ -11992,18 +12125,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const authority = yield* SwarmInvocation;
       const operation =
-        "intentFingerprint" in command && authority !== undefined
-          ? authority.withLease(dispatchWithReceiptEffect(command)).pipe(mapDispatchError(command))
+        authority !== undefined
+          ? authority.withLease(dispatchWithReceiptEffect(command)).pipe(
+              Effect.mapError((cause) =>
+                isOrchestratorV2Error(cause)
+                  ? cause
+                  : new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause,
+                    }),
+              ),
+            )
           : dispatchWithReceiptEffect(command);
       const threadId = commandThreadId(command);
       const parent =
         command.type === "queue.resume" ||
+        command.type === "message.causal-dispatch" ||
         (command.type === "message.dispatch" &&
           (command.createdBy === "user" || command.creationSource === "mcp") &&
           command.scheduledTaskId === undefined &&
           command.notification === undefined &&
           command.restartContinuationOfRunId === undefined)
-          ? yield* appOwnedSubagentParentThreadId(threadId).pipe(mapDispatchError(command))
+          ? yield* appOwnedSubagentParentThreadId(threadId).pipe(
+              Effect.mapError((cause) =>
+                isOrchestratorV2Error(cause)
+                  ? cause
+                  : new OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause,
+                    }),
+              ),
+            )
           : undefined;
       return yield* ThreadCommandExecutor.withHierarchyLock(
         threadDispatch,
@@ -12014,7 +12168,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...(command.type === "swarm.send" ? [command.senderThreadId] : []),
         ],
         operation,
-      ).pipe(mapDispatchError(command));
+      ).pipe(
+        Effect.mapError((cause) =>
+          isOrchestratorV2Error(cause)
+            ? cause
+            : new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+        ),
+      );
     });
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
@@ -12074,6 +12238,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           stored.event.type === "run.updated" &&
           !String(stored.commandId).startsWith("command:runtime-reconcile:") &&
           (stored.event.payload.status === "completed" ||
+            (stored.event.payload.status === "queued" &&
+              stored.event.payload.queueHeld === true &&
+              stored.event.payload.executionScope.kind !== "ordinary") ||
             stored.event.payload.status === "interrupted" ||
             stored.event.payload.status === "failed" ||
             stored.event.payload.status === "cancelled" ||

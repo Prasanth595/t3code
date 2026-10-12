@@ -167,6 +167,9 @@ it.effect.each(forkCases)(
               runId,
               occurredAt: now,
               payload: {
+                executionScope: { kind: "ordinary" as const },
+                executionCause: { kind: "independent" as const },
+                executionDelivery: { kind: "message_text" as const },
                 id: runId,
                 threadId: sourceThreadId,
                 ordinal,

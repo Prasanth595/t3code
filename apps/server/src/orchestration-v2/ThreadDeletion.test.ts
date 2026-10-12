@@ -70,6 +70,9 @@ function makeProjection(): OrchestrationV2ThreadProjection {
   const runs: Array<OrchestrationV2Run> = (
     ["preparing", "queued", "starting", "running", "waiting", "completed"] as const
   ).map((status, index) => ({
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: RunId.make(`run:delete-plan:${status}`),
     threadId,
     ordinal: index + 1,

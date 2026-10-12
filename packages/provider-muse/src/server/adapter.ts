@@ -20,6 +20,7 @@ import {
   type ProviderApprovalDecision,
   type RuntimeRequestId,
   type ServerProviderModel,
+  MessageId,
 } from "@t3tools/contracts";
 import type { MuseSettings } from "../settings.ts";
 import { AgentScope } from "@t3tools/shared/AgentScope";
@@ -28,7 +29,6 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -77,7 +77,7 @@ import {
   backgroundWorkNotification,
   type BackgroundWorkReport,
 } from "@t3tools/provider-core/server/notification";
-import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
@@ -198,6 +198,7 @@ export interface MuseAdapterV2Options {
 
 interface ActiveTurn {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
+  nativeExecution: ProviderContinuationRequests.NativeAcceptedExecution | null;
   providerTurn: OrchestrationV2ProviderTurn;
   readonly nativeId: string;
   /** Turns Muse started on its own while this run was active, which this run shows. */
@@ -324,11 +325,19 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const seenTerminals = new Set<string>();
       // Workflows and subagents that outlive their turn, by item id, with the turn that owns them.
       const observedChildren = new Map<string, ActiveTurn>();
+      let executionIncarnation: ProviderContinuationRequests.NativeExecutionIncarnation | undefined;
+      const finishedOrigins: Array<
+        import("@t3tools/contracts").OrchestrationV2NativeRunCauseSource
+      > = [];
       // Background work that finished since the last turn, reported to the turn Muse starts for it.
       const finishedBackground: Array<BackgroundWorkReport> = [];
       // A turn Muse started on its own, held until the continuation run T3 opens for it takes it.
       let wake:
-        | { readonly nativeId: string; readonly events: Array<[string, unknown]> }
+        | {
+            readonly id: string;
+            readonly nativeId: string;
+            readonly events: Array<[string, unknown]>;
+          }
         | undefined;
       const emit = (event: ProviderAdapter.ProviderAdapterV2Event) =>
         Queue.offer(events, event).pipe(Effect.asVoid);
@@ -458,8 +467,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         const status = terminal ?? museItemStatus(item);
         if (item.kind === "subagent" || item.kind === "workflow") {
           const wasRunning = observedChildren.has(item.itemId);
+          const childOwner = observedChildren.get(item.itemId);
           if (status === "running") observedChildren.set(item.itemId, turn);
-          else if (observedChildren.delete(item.itemId) && active !== turn)
+          else if (observedChildren.delete(item.itemId) && active !== turn) {
+            if (childOwner?.nativeExecution !== null && childOwner?.nativeExecution !== undefined)
+              finishedOrigins.push(childOwner.nativeExecution.source);
             finishedBackground.push({
               kind: item.kind === "subagent" ? "subagent" : "background_task",
               label: item.objective ?? item.entryId ?? item.fallbackText,
@@ -470,6 +482,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
+          }
           if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
         }
         const streaming = status === "running";
@@ -1062,18 +1075,36 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         ) {
           if (active && !active.compact) active.joined.add(params.turnId);
           else if (!active && !wake) {
-            const held = { nativeId: params.turnId, events: [] };
+            const held = {
+              id: `${input.providerSessionId}:${params.turnId}`,
+              nativeId: params.turnId,
+              events: [],
+            };
             wake = held;
             const notification = backgroundWorkNotification(finishedBackground.splice(0));
-            if (thread?.appThreadId && options.continuationRequests)
+            const cause = executionIncarnation?.incomplete(finishedOrigins.splice(0));
+            const delivery = executionIncarnation?.buffered(held.id, {
+              kind: "frames",
+              nativeTurnId: held.nativeId,
+            });
+            if (
+              thread?.appThreadId &&
+              options.continuationRequests &&
+              cause !== undefined &&
+              delivery !== undefined &&
+              delivery !== null
+            )
               yield* options.continuationRequests.offer({
+                kind: "native",
+                messageId: MessageId.make(held.id),
+                cause,
+                delivery,
                 threadId: thread.appThreadId,
                 providerThreadId: thread.id,
                 driver: MUSE_PROVIDER,
                 detail: null,
                 ...(notification ? { notification } : {}),
-                dispatchIfCurrent: (dispatch) =>
-                  wake === held ? Effect.map(dispatch, Option.some) : Effect.succeed(Option.none()),
+                isCurrent: Effect.sync(() => wake === held && !closed && !broken),
                 clearIfCurrent: () =>
                   Effect.sync(() => {
                     if (wake === held) wake = undefined;
@@ -1648,10 +1679,16 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         if (turnInput.runtimePolicy.runtimeMode !== input.runtimePolicy.runtimeMode)
           return yield* protocolError("Runtime policy changes require a fresh Muse host");
         // A continuation run takes the turn Muse already started; it sends no prompt.
-        const continuation =
-          turnInput.message.createdBy === "agent" &&
-          turnInput.message.creationSource === "provider";
+        const continuation = turnInput.executionDelivery.kind === "adapter_buffered";
         const adopted = continuation ? wake : undefined;
+        if (
+          continuation &&
+          (adopted === undefined ||
+            turnInput.executionDelivery.kind !== "adapter_buffered" ||
+            adopted.id !== turnInput.executionDelivery.bufferId ||
+            executionIncarnation?.identity !== turnInput.executionDelivery.process.incarnation)
+        )
+          return yield* protocolError("The exact held Muse turn is no longer available");
         const effort = continuation ? undefined : yield* selectionEffort(turnInput.modelSelection);
         const parts = compact || continuation ? [] : yield* prompt(turnInput.message);
         const targetModel = continuation
@@ -1683,6 +1720,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         };
         const turn: ActiveTurn = {
           input: turnInput,
+          nativeExecution: null,
           providerTurn,
           nativeId,
           joined: new Set(),
@@ -1700,11 +1738,18 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         yield* Effect.gen(function* () {
           thread = turnInput.providerThread;
           active = turn;
+          if (nativeSessionId === undefined)
+            return yield* protocolError("Muse execution has no native session identity");
+          executionIncarnation ??= new ProviderContinuationRequests.NativeExecutionIncarnation(
+            `${input.providerSessionId}:${nativeSessionId}`,
+            turnInput.nativeThreadHasTurns !== false,
+          );
+          turn.nativeExecution = executionIncarnation.accept(turnInput, nativeSessionId);
           yield* emit({
             type: "provider_turn.updated",
             driver: MUSE_PROVIDER,
             threadId: turnInput.threadId,
-            providerTurn,
+            providerTurn: { ...providerTurn, nativeAcceptance: turn.nativeExecution.receipt },
           });
           yield* updateThread({
             status: "active",
@@ -1716,7 +1761,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           // (and its approvals), and the continuation asked for it is no longer needed.
           const held = wake;
           wake = undefined;
-          if (continuation && !held) return yield* finish(turn, "completed");
+          if (continuation && !held)
+            return yield* protocolError("The held Muse turn was lost before attachment");
           if (held && !continuation) turn.joined.add(held.nativeId);
           for (const [method, data] of held?.events ?? [])
             yield* handleNotification(method, data).pipe(Effect.catch(failHost));

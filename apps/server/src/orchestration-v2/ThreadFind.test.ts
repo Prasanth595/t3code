@@ -156,6 +156,9 @@ function run(
     occurredAt: at(1),
     type: "run.created",
     payload: {
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       id,
       threadId: owner,
       ordinal,

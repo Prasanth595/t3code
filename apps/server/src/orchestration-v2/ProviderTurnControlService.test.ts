@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { assert, it } from "@effect/vitest";
 import {
   type ModelSelection,
@@ -279,9 +280,9 @@ it.effect(
           detach: () => Effect.void,
         }),
       );
-      const layerControl = ProviderTurnControlService.layer.pipe(
-        Layer.provide(Layer.merge(layerProjection, layerSessionManager)),
-      );
+      const layerControl = ProviderTurnControlService.layer
+        .pipe(Layer.provide(ThreadCommandExecutor.layer))
+        .pipe(Layer.provide(Layer.merge(layerProjection, layerSessionManager)));
 
       const [ordinaryInterrupt, unrelatedRestart] = yield* Effect.gen(function* () {
         const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;

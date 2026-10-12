@@ -13,6 +13,7 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  OrchestrationV2InternalMessageCause,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -57,6 +58,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
     messageId: MessageId,
+    cause: Schema.optional(OrchestrationV2InternalMessageCause),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.restart"),

@@ -31,6 +31,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
+  OrchestrationV2RunAttempt,
   OrchestrationV2Subagent,
   OrchestrationV2ThreadShellSnapshot,
   OrchestrationV2ShellThreadStatus,
@@ -58,6 +59,7 @@ import {
   OrchestrationV2ProviderTurnJson as OrchestrationV2ProviderTurnJsonSchema,
   OrchestrationV2RunAttemptJson as OrchestrationV2RunAttemptJsonSchema,
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
+  OrchestrationV2Run as OrchestrationV2RunSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
@@ -218,7 +220,7 @@ export type ProjectionSettlementCandidate = Pick<
 
 const ProjectionCheckpointContext = Schema.Struct({
   runs: Schema.Array(
-    OrchestrationV2RunJsonSchema.mapFields(({ id, ordinal, status }) => ({ id, ordinal, status })),
+    OrchestrationV2RunSchema.mapFields(({ id, ordinal, status }) => ({ id, ordinal, status })),
   ),
   checkpointScopes: Schema.Array(
     OrchestrationV2CheckpointScopeJsonSchema.mapFields(({ id, runId, kind, cwd }) => ({
@@ -665,13 +667,10 @@ function preserveRunRecordedFields(
     ...(next.delegatedTaskId === undefined && current.delegatedTaskId !== undefined
       ? { delegatedTaskId: current.delegatedTaskId }
       : {}),
-    ...(current.swarmId === undefined ? {} : { swarmId: current.swarmId }),
-    ...(current.swarmRunAdmission === undefined
-      ? {}
-      : { swarmRunAdmission: current.swarmRunAdmission }),
-    ...(current.swarmPeerDelivery === undefined
-      ? {}
-      : { swarmPeerDelivery: current.swarmPeerDelivery }),
+    executionScope: current.executionScope,
+    executionCause: current.executionCause,
+    executionDelivery: current.executionDelivery,
+    ...(current.peerInput === undefined ? {} : { peerInput: current.peerInput }),
     ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
       ? { delegatedCompletion: current.delegatedCompletion }
       : {}),
@@ -679,6 +678,100 @@ function preserveRunRecordedFields(
     current.restartCancelledBackgroundWork !== undefined
       ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
       : {}),
+  };
+}
+
+function preserveAttemptRecordedFields(
+  current: OrchestrationV2RunAttempt | undefined,
+  next: OrchestrationV2RunAttempt,
+): OrchestrationV2RunAttempt {
+  if (current === undefined) return next;
+  return {
+    ...next,
+    ...(current.submittedPolicy === undefined ? {} : { submittedPolicy: current.submittedPolicy }),
+    ...(current.submissionProviderSessionId === undefined
+      ? {}
+      : { submissionProviderSessionId: current.submissionProviderSessionId }),
+    ...(current.nativeAcceptance === undefined
+      ? {}
+      : { nativeAcceptance: current.nativeAcceptance }),
+    ...((current.nativeAcceptance !== undefined || current.providerTurnId !== null) &&
+    current.nativeThreadId !== undefined
+      ? { nativeThreadId: current.nativeThreadId }
+      : {}),
+    providerTurnId: current.providerTurnId ?? next.providerTurnId,
+  };
+}
+
+interface AcceptedAttemptEvidence {
+  readonly attempt: OrchestrationV2RunAttempt;
+  readonly runOrdinal: number;
+  readonly threadId: ThreadId;
+}
+
+function mergeProviderThreadAcceptance(
+  current: OrchestrationV2ProviderThread | undefined,
+  next: OrchestrationV2ProviderThread,
+  evidence: ReadonlyArray<AcceptedAttemptEvidence>,
+): OrchestrationV2ProviderThread {
+  const accepted = (thread: OrchestrationV2ProviderThread | undefined) => {
+    const receipt = thread?.nativeAcceptance;
+    if (thread === undefined || receipt === undefined) return undefined;
+    const recorded = evidence.find(({ attempt }) => attempt.id === receipt.acceptedAttemptId);
+    const attempt = recorded?.attempt;
+    if (
+      recorded === undefined ||
+      attempt === undefined ||
+      attempt.nativeAcceptance?.acceptedAttemptId !== attempt.id ||
+      attempt.nativeAcceptance.incarnation !== receipt.incarnation ||
+      attempt.submittedPolicy === undefined ||
+      attempt.providerTurnId === null ||
+      attempt.providerThreadId !== thread.id ||
+      attempt.submissionProviderSessionId !== thread.providerSessionId ||
+      attempt.nativeThreadId !== thread.nativeThreadRef?.nativeId ||
+      recorded.threadId !== thread.appThreadId
+    )
+      return undefined;
+    return { ...recorded, receipt: attempt.nativeAcceptance };
+  };
+  const previous = accepted(current);
+  const incoming = accepted(next);
+  const older = current !== undefined && (next.lastRunOrdinal ?? 0) < (current.lastRunOrdinal ?? 0);
+  const sameBinding =
+    current?.providerSessionId === next.providerSessionId &&
+    current?.nativeThreadRef?.nativeId === next.nativeThreadRef?.nativeId;
+  if (
+    current !== undefined &&
+    !sameBinding &&
+    (older || (incoming !== undefined && incoming.runOrdinal < (current.lastRunOrdinal ?? 0)))
+  )
+    return current;
+  const previousWins =
+    previous !== undefined &&
+    (incoming === undefined ||
+      previous.runOrdinal > incoming.runOrdinal ||
+      (previous.runOrdinal === incoming.runOrdinal &&
+        previous.attempt.attemptOrdinal >= incoming.attempt.attemptOrdinal));
+  const selected =
+    previousWins && (sameBinding || older || incoming !== undefined) ? previous : incoming;
+  const { nativeAcceptance: _receipt, ...fields } =
+    current !== undefined &&
+    (older || (selected !== undefined && selected === previous && !sameBinding))
+      ? current
+      : next;
+  if (selected === undefined) return fields;
+  const sameIncarnation = previous?.receipt.incarnation === incoming?.receipt.incarnation;
+  return {
+    ...fields,
+    nativeAcceptance: {
+      ...selected.receipt,
+      onlyOrdinary:
+        selected.receipt.onlyOrdinary &&
+        !(
+          sameIncarnation &&
+          (previous?.receipt.onlyOrdinary === false || incoming?.receipt.onlyOrdinary === false)
+        ),
+    },
   };
 }
 
@@ -801,7 +894,13 @@ export function applyToProjection(
     case "run-attempt.updated":
       return withLocalVisibleTurnItems({
         ...base,
-        attempts: upsertById(base.attempts, event.payload),
+        attempts: upsertById(
+          base.attempts,
+          preserveAttemptRecordedFields(
+            base.attempts.find((attempt) => attempt.id === event.payload.id),
+            event.payload,
+          ),
+        ),
       });
     case "node.updated":
       return {
@@ -843,7 +942,12 @@ export function applyToProjection(
           (session) => session.id !== event.payload.providerSessionId,
         ),
       };
-    case "provider-thread.updated":
+    case "provider-thread.updated": {
+      const current = base.providerThreads.find((thread) => thread.id === event.payload.id);
+      const acceptedIds = new Set([
+        current?.nativeAcceptance?.acceptedAttemptId,
+        event.payload.nativeAcceptance?.acceptedAttemptId,
+      ]);
       return {
         ...base,
         thread:
@@ -854,8 +958,23 @@ export function applyToProjection(
                 activeProviderThreadId: event.payload.id,
               }
             : base.thread,
-        providerThreads: upsertById(base.providerThreads, event.payload),
+        providerThreads: upsertById(
+          base.providerThreads,
+          mergeProviderThreadAcceptance(
+            current,
+            event.payload,
+            base.attempts
+              .filter((attempt) => acceptedIds.has(attempt.id))
+              .flatMap((attempt) => {
+                const run = base.runs.find((run) => run.id === attempt.runId);
+                return run === undefined
+                  ? []
+                  : [{ attempt, runOrdinal: run.ordinal, threadId: run.threadId }];
+              }),
+          ),
+        ),
       };
+    }
     case "provider-turn.updated":
       return {
         ...base,
@@ -1079,7 +1198,7 @@ const encodeThreadPayload = Schema.encodeEffect(
 );
 const encodeRunPayload = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2RunJsonSchema));
 const encodeRestartCancelledBackgroundWork = Schema.encodeEffect(
-  Schema.fromJsonString(OrchestrationV2RunJsonSchema.fields.restartCancelledBackgroundWork),
+  Schema.fromJsonString(OrchestrationV2RunSchema.fields.restartCancelledBackgroundWork),
 );
 const encodeRunAttemptPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2RunAttemptJsonSchema),
@@ -2008,19 +2127,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     keepRecordedRunField(
                       keepRecordedRunField(
                         keepRecordedRunField(
-                          keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-                          "$.delegatedTaskId",
+                          keepRecordedRunField(
+                            keepRecordedRunField(
+                              sql`excluded.payload_json`,
+                              "$.delegatedCompletion",
+                            ),
+                            "$.delegatedTaskId",
+                          ),
+                          "$.executionScope",
+                          true,
                         ),
-                        "$.swarmId",
+                        "$.executionCause",
                         true,
                       ),
-                      "$.swarmPeerDelivery",
+                      "$.executionDelivery",
                       true,
                     ),
-                    "$.swarmRunAdmission",
-                    true,
+                    "$.restartCancelledBackgroundWork",
                   ),
-                  "$.restartCancelledBackgroundWork",
+                  "$.peerInput",
+                  true,
                 )}
             `;
             break;
@@ -2043,7 +2169,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }
           case "run-attempt.created":
           case "run-attempt.updated": {
-            const payloadJson = yield* encodeRunAttemptPayload(event.payload);
+            const previousRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_run_attempts WHERE attempt_id = ${event.payload.id} LIMIT 1`;
+            const previous =
+              previousRows[0] === undefined
+                ? undefined
+                : yield* decodeRunAttemptPayload(previousRows[0].payload_json);
+            const record = preserveAttemptRecordedFields(previous, event.payload);
+            const payloadJson = yield* encodeRunAttemptPayload(record);
             yield* sql`
               INSERT INTO orchestration_v2_projection_run_attempts (
                 attempt_id,
@@ -2059,16 +2192,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 payload_json
               )
               VALUES (
-                ${event.payload.id},
+                ${record.id},
                 ${event.threadId},
-                ${event.payload.runId},
-                ${event.payload.attemptOrdinal},
-                ${event.payload.rootNodeId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerThreadId},
-                ${event.payload.providerTurnId},
-                ${event.payload.status},
+                ${record.runId},
+                ${record.attemptOrdinal},
+                ${record.rootNodeId},
+                ${record.providerInstanceId},
+                ${record.providerInstanceId},
+                ${record.providerThreadId},
+                ${record.providerTurnId},
+                ${record.status},
                 ${payloadJson}
               )
               ON CONFLICT(attempt_id)
@@ -2282,7 +2415,43 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             break;
           }
           case "provider-thread.updated": {
-            const payloadJson = yield* encodeProviderThreadPayload(event.payload);
+            const previousRows =
+              yield* sql<PayloadRow>`SELECT payload_json FROM orchestration_v2_projection_provider_threads WHERE provider_thread_id = ${event.payload.id} LIMIT 1`;
+            const previous =
+              previousRows[0] === undefined
+                ? undefined
+                : yield* decodeProviderThreadPayload(previousRows[0].payload_json);
+            const acceptedIds = [
+              ...new Set(
+                [previous?.nativeAcceptance, event.payload.nativeAcceptance].flatMap((receipt) =>
+                  receipt === undefined ? [] : [receipt.acceptedAttemptId],
+                ),
+              ),
+            ];
+            const evidenceRows =
+              acceptedIds.length === 0
+                ? []
+                : yield* sql<{
+                    readonly payload_json: string;
+                    readonly run_ordinal: number;
+                    readonly run_thread_id: string;
+                  }>`
+              SELECT attempt.payload_json, run.ordinal AS run_ordinal, run.thread_id AS run_thread_id
+              FROM orchestration_v2_projection_run_attempts attempt
+              JOIN orchestration_v2_projection_runs run ON run.run_id = attempt.run_id
+              WHERE attempt.attempt_id IN ${sql.in(acceptedIds)}
+            `;
+            const evidence = yield* Effect.forEach(evidenceRows, (row) =>
+              decodeRunAttemptPayload(row.payload_json).pipe(
+                Effect.map((attempt) => ({
+                  attempt,
+                  runOrdinal: row.run_ordinal,
+                  threadId: ThreadId.make(row.run_thread_id),
+                })),
+              ),
+            );
+            const record = mergeProviderThreadAcceptance(previous, event.payload, evidence);
+            const payloadJson = yield* encodeProviderThreadPayload(record);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
               INSERT INTO orchestration_v2_projection_provider_threads (
@@ -2300,16 +2469,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 payload_json
               )
               VALUES (
-                ${event.payload.id},
-                ${event.payload.appThreadId},
-                ${event.payload.ownerNodeId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.driver},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerSessionId},
-                ${event.payload.status},
-                ${event.payload.firstRunOrdinal},
-                ${event.payload.lastRunOrdinal},
+                ${record.id},
+                ${record.appThreadId},
+                ${record.ownerNodeId},
+                ${record.providerInstanceId},
+                ${record.driver},
+                ${record.providerInstanceId},
+                ${record.providerSessionId},
+                ${record.status},
+                ${record.firstRunOrdinal},
+                ${record.lastRunOrdinal},
                 ${stringField(payload, "updatedAt")},
                 ${payloadJson}
               )
@@ -2327,14 +2496,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 updated_at = excluded.updated_at,
                 payload_json = excluded.payload_json
             `;
-            if (
-              event.payload.appThreadId !== null &&
-              !isQueuedProviderThreadPlaceholder(event.payload)
-            ) {
+            if (record.appThreadId !== null && !isQueuedProviderThreadPlaceholder(record)) {
               const threadRows = yield* sql<PayloadRow>`
                 SELECT payload_json
                 FROM orchestration_v2_projection_threads
-                WHERE thread_id = ${event.payload.appThreadId}
+                WHERE thread_id = ${record.appThreadId}
                 LIMIT 1
               `;
               const threadRow = threadRows[0];
@@ -2342,17 +2508,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 const thread = yield* decodeThreadPayload(threadRow.payload_json);
                 const updatedThread = {
                   ...thread,
-                  activeProviderThreadId: event.payload.id,
-                  updatedAt: event.payload.updatedAt,
+                  activeProviderThreadId: record.id,
+                  updatedAt: record.updatedAt,
                 };
                 const updatedThreadPayloadJson = yield* encodeThreadPayload(updatedThread);
                 yield* sql`
                   UPDATE orchestration_v2_projection_threads
                   SET
-                    active_provider_thread_id = ${event.payload.id},
+                    active_provider_thread_id = ${record.id},
                     updated_at = ${stringField(parseEncodedPayload(updatedThreadPayloadJson), "updatedAt")},
                     payload_json = ${updatedThreadPayloadJson}
-                  WHERE thread_id = ${event.payload.appThreadId}
+                  WHERE thread_id = ${record.appThreadId}
                 `;
               }
             }
@@ -2796,6 +2962,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }
         }
       }).pipe(
+        (write) =>
+          event.type === "provider-thread.updated" ||
+          event.type === "run-attempt.created" ||
+          event.type === "run-attempt.updated"
+            ? sql.withTransaction(write)
+            : write,
         Effect.mapError(
           (cause) =>
             new ProjectionStoreApplyEventError({
@@ -4883,7 +5055,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs
               WHERE thread_id = ${threadId}
                 AND (status IN ('preparing', 'starting', 'running', 'waiting')
-                  OR (status = 'queued' AND json_extract(payload_json, '$.queueHeld') = 1)))`;
+                  OR (status = 'queued' AND json_extract(payload_json, '$.queueHeld') = 1 AND COALESCE(json_extract(payload_json, '$.executionScope.kind'), 'ordinary') = 'ordinary')))`;
             return rows.length > 0;
           }),
         )
@@ -6681,7 +6853,9 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 run.status === "starting" ||
                 run.status === "running" ||
                 run.status === "waiting" ||
-                (run.status === "queued" && run.queueHeld === true),
+                (run.status === "queued" &&
+                  run.queueHeld === true &&
+                  run.executionScope.kind === "ordinary"),
             )
           );
         }),

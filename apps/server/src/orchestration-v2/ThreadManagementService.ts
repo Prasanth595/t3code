@@ -973,12 +973,7 @@ const make = Effect.gen(function* () {
         const threadId = task.childThreadId;
         yield* Effect.gen(function* () {
           const child = yield* orchestrator.getThreadRecords(threadId, ["runs"]);
-          if (
-            child.runs.some(
-              (run) => run.swarmId !== undefined || run.swarmPeerDelivery !== undefined,
-            )
-          )
-            return;
+          if (child.runs.some((run) => run.executionScope.kind !== "ordinary")) return;
           yield* dispatch({
             type: "thread.stop",
             commandId: CommandId.make(`${input.commandId}:stop:${threadId}`),

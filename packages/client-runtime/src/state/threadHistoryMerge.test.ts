@@ -341,6 +341,9 @@ describe("threadHistoryMerge", () => {
       ...v2Projection,
       runs: [
         {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId: v2ThreadId,
           ordinal: 1,

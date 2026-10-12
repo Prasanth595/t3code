@@ -303,6 +303,9 @@ const turnInput = Effect.fnUntraced(function* (
     deletedAt: null,
   };
   return {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     appThread,
     threadId,
     runId: RunId.make(`run-${runOrdinal}`),
@@ -807,10 +810,16 @@ describe("MuseAdapterV2", () => {
         runtimePolicy,
         { continuationRequests: { offer: (request) => Effect.sync(() => offers.push(request)) } },
       );
-      // A finished workflow's report turn starts while T3 runs nothing: it is held.
+      const ordinary = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: ordinary.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
       yield* fake.emit("turn/started", { turnId: "report-1" });
       yield* Effect.yieldNow;
       assert.lengthOf(offers, 1);
+      const offer = offers[0]!;
+      if (offer.kind !== "native")
+        return yield* Effect.die("Unexpected delegated completion offer");
+      assert.equal(offer.cause.kind, "incomplete");
       // The user sends a message first; Muse runs the report before it.
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("approval/requested", approval("report-1"));
@@ -829,7 +838,11 @@ describe("MuseAdapterV2", () => {
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "completed");
       // The user turn took it, so the continuation is not dispatched.
-      const dispatched = yield* offers[0]!.dispatchIfCurrent!(Effect.succeed("run"));
+      const dispatched = yield* offer.isCurrent.pipe(
+        Effect.flatMap((current) =>
+          current ? Effect.succeed("run").pipe(Effect.asSome) : Effect.succeedNone,
+        ),
+      );
       assert.isTrue(Option.isNone(dispatched));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );

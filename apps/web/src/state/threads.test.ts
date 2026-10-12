@@ -37,6 +37,9 @@ function detail(id: string, status: Status, overrides: Partial<EnvironmentThread
         ? []
         : [
             {
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               id: RunId.make(`run-${id}`),
               threadId,
               ordinal: 1,

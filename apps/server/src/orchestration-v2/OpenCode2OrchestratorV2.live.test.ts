@@ -225,6 +225,7 @@ const layerOrchestration = RuntimeLayer.layer.pipe(
 
 // Starts the continuation run a provider wake asks for, as the production layer does.
 const layerContinuationWorker = ProviderContinuationService.layer.pipe(
+  Layer.provide(NodeServices.layer),
   Layer.provide(
     Layer.unwrap(
       Effect.gen(function* () {

@@ -22,6 +22,9 @@ const now = DateTime.makeUnsafe("2026-06-20T00:00:00.000Z");
 const threadId = ThreadId.make("thread-reducer");
 const runId = RunId.make("run-reducer");
 const run = {
+  executionScope: { kind: "ordinary" as const },
+  executionCause: { kind: "independent" as const },
+  executionDelivery: { kind: "message_text" as const },
   id: runId,
   threadId,
   ordinal: 1,

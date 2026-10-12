@@ -47,6 +47,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderInstanceId,
   type OrchestrationV2ProviderTurnTokenUsage,
+  MessageId,
 } from "@t3tools/contracts";
 import { PiSettings } from "../settings.ts";
 import * as Cause from "effect/Cause";
@@ -480,11 +481,13 @@ function piApprovalRequestKind(title: string): "command" | "file-change" {
 interface PiThreadState {
   providerThread: OrchestrationV2ProviderThread;
   activeTurn: ActivePiTurn | null;
+  executionIncarnation: ProviderContinuationRequests.NativeExecutionIncarnation | null;
 }
 
 interface PiWake {
   readonly state: PiThreadState;
   readonly events: Array<PiRpcRecord>;
+  readonly id: string;
 }
 
 // ── adapter ───────────────────────────────────────────────────
@@ -605,6 +608,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       // turn attaches. The guard remains for sessions with no routable owner.
       let unsolicitedActivityDetected = false;
       let pendingWake: PiWake | null = null;
+      let wakeGeneration = 0;
       let rollbackBarrier: Deferred.Deferred<
         void,
         ProviderAdapter.ProviderAdapterProtocolError
@@ -1755,7 +1759,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       };
 
       const stopPendingWake = Effect.fnUntraced(function* (wake: PiWake) {
-        if (pendingWake !== wake || threadState !== wake.state || closed) return;
+        if (
+          pendingWake !== wake ||
+          threadState !== wake.state ||
+          closed ||
+          wake.state.activeTurn !== null
+        )
+          return;
         pendingWake = null;
         stopRequested = true;
         yield* cancelPendingPrompts(yield* DateTime.now);
@@ -1792,31 +1802,46 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               !closed &&
               !stopRequested
             ) {
-              const wake: PiWake = { state, events: [event] };
+              const id = `${input.providerSessionId}:pi-wake:${state.providerThread.id}:${++wakeGeneration}`;
+              const wake: PiWake = { state, events: [event], id };
               pendingWake = wake;
               if (rollbackBarrier !== null) {
                 yield* stopPendingWake(wake);
                 return;
               }
               yield* updateProviderSession("running", null);
+              const incarnation = state.executionIncarnation;
+              const delivery = incarnation?.buffered(wake.id, {
+                kind: "frames",
+                nativeTurnId: null,
+              });
+              if (incarnation === null || delivery === null || delivery === undefined) {
+                yield* Effect.logWarning("orchestration-v2.pi-wake-policy-unproved", {
+                  providerThreadId: state.providerThread.id,
+                });
+                yield* stopPendingWake(wake);
+                return;
+              }
               yield* continuationRequests
                 .offer({
+                  kind: "native",
+                  messageId: MessageId.make(wake.id),
+                  cause: incarnation.incomplete(),
+                  delivery,
                   threadId: state.providerThread.appThreadId,
                   providerThreadId: state.providerThread.id,
                   driver: PI_PROVIDER,
                   detail: null,
-                  delivery: "adapter_buffered",
-                  dispatchIfCurrent: (dispatch) =>
-                    sessionEventPermit.withPermits(1)(
-                      Effect.suspend(() =>
-                        pendingWake === wake && threadState === state && !closed
-                          ? dispatch.pipe(
-                              Effect.map(Option.some),
-                              Effect.tapError(() => stopPendingWake(wake)),
-                            )
-                          : Effect.succeed(Option.none()),
-                      ),
+                  isCurrent: sessionEventPermit.withPermits(1)(
+                    Effect.sync(
+                      () =>
+                        pendingWake === wake &&
+                        threadState === state &&
+                        !closed &&
+                        !stopRequested &&
+                        rollbackBarrier === null,
                     ),
+                  ),
                   clearIfCurrent: () => sessionEventPermit.withPermits(1)(stopPendingWake(wake)),
                 })
                 .pipe(Effect.tapError(() => stopPendingWake(wake)));
@@ -2406,7 +2431,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 createdAt,
                 updatedAt: createdAt,
               };
-        threadState = { providerThread, activeTurn: null };
+        threadState = { providerThread, activeTurn: null, executionIncarnation: null };
         // Baseline the session-tree leaf so the first turn's user entry can
         // be located with a `since` cursor instead of a full entry scan.
         const baselineEntries = yield* request({ type: "get_entries" }).pipe(
@@ -2591,14 +2616,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             }
             // The orchestrator adopts a fork under its already-allocated row.
             // Future session updates must retain that authoritative identity.
-            const continuation =
-              turnInput.message.createdBy === "agent" &&
-              turnInput.message.creationSource === "provider";
+            const continuation = turnInput.executionDelivery.kind === "adapter_buffered";
             if (!continuation) yield* applySelection(turnInput.modelSelection);
             // Mirror the thread title into pi's session name so the session
             // stays identifiable in pi's own /resume listing. Best-effort:
             // naming must never block a turn.
-            if (turnInput.appThread.title !== appliedSessionName) {
+            if (!continuation && turnInput.appThread.title !== appliedSessionName) {
               yield* request({
                 type: "set_session_name",
                 name: turnInput.appThread.title,
@@ -2683,6 +2706,17 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 return yield* protocolError("Pi turn ownership changed before it could start");
               }
               const wake = pendingWake?.state === state ? pendingWake : null;
+              if (
+                continuation &&
+                (wake === null ||
+                  turnInput.executionDelivery.kind !== "adapter_buffered" ||
+                  wake.id !== turnInput.executionDelivery.bufferId ||
+                  state.executionIncarnation?.identity !==
+                    turnInput.executionDelivery.process.incarnation)
+              )
+                return yield* protocolError(
+                  "The exact Pi wake is no longer available for attachment",
+                );
               if (wake !== null && wake.state.providerThread.appThreadId !== turnInput.threadId) {
                 return yield* protocolError("Pi native wake belongs to a different app thread");
               }
@@ -2708,11 +2742,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   kind: "turn_start",
                 });
               }
+              if (state.executionIncarnation === null)
+                state.executionIncarnation =
+                  new ProviderContinuationRequests.NativeExecutionIncarnation(
+                    `${input.providerSessionId}:${state.providerThread.id}`,
+                    turnInput.nativeThreadHasTurns !== false,
+                  );
+              const nativeId = state.providerThread.nativeThreadRef?.nativeId;
+              if (nativeId === undefined || nativeId === null)
+                return yield* protocolError("Pi native incarnation has no session identity");
+              const accepted = state.executionIncarnation.accept(turnInput, nativeId);
               yield* emit({
                 type: "provider_turn.updated",
                 driver: PI_PROVIDER,
                 threadId: turnInput.threadId,
-                providerTurn,
+                providerTurn: { ...providerTurn, nativeAcceptance: accepted.receipt },
               });
               yield* updateProviderThread(state, {
                 status: "active",

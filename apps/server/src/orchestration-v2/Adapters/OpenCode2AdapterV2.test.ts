@@ -239,6 +239,9 @@ const turnInput = (
   modelSelection: ModelSelection = bigPickle,
   runtimeMode: "full-access" | "approval-required" = "full-access",
 ) => ({
+  executionScope: { kind: "ordinary" as const },
+  executionCause: { kind: "independent" as const },
+  executionDelivery: { kind: "message_text" as const },
   appThread: { title: TITLE } as OrchestrationV2AppThread,
   threadId,
   runId: RunId.make("run:opencode2-adapter"),
@@ -723,20 +726,30 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     thread: OrchestrationV2ProviderThread,
     offer: ProviderContinuationRequests.ProviderContinuationRequest,
     suffix = "wake",
-  ) => ({
-    ...withLineage(thread),
-    runId: RunId.make(`run:opencode2-adapter:${suffix}`),
-    runOrdinal: 2,
-    providerTurnOrdinal: 2,
-    attemptId: RunAttemptId.make(`attempt:opencode2-adapter:${suffix}`),
-    message: {
-      ...turnInput(thread).message,
-      messageId: offer.messageId!,
-      text: offer.detail ?? "",
-      createdBy: "agent" as const,
-      creationSource: "provider" as const,
-    },
-  });
+  ) => {
+    if (offer.kind !== "native") assert.fail("Unexpected app-owned completion offer");
+    return {
+      ...withLineage(thread),
+      executionDelivery: offer.delivery,
+      executionCause:
+        offer.cause.kind === "complete"
+          ? { kind: "causal" as const, reason: "native" as const, sources: offer.cause.sources }
+          : offer.cause.ordinaryProcess === null
+            ? { kind: "independent" as const }
+            : { kind: "native_unowned" as const, process: offer.cause.ordinaryProcess },
+      runId: RunId.make(`run:opencode2-adapter:${suffix}`),
+      runOrdinal: 2,
+      providerTurnOrdinal: 2,
+      attemptId: RunAttemptId.make(`attempt:opencode2-adapter:${suffix}`),
+      message: {
+        ...turnInput(thread).message,
+        messageId: offer.messageId!,
+        text: offer.detail ?? "",
+        createdBy: "agent" as const,
+        creationSource: "provider" as const,
+      },
+    };
+  };
   const CHILD = "ses_f1485c529ffea4URrYruwEg0Ja";
   /**
    * The single reader of the runtime's events: resolves `attached` once the
@@ -4301,6 +4314,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       // subagent's report). The replay fails on a fork request.
       const offered = yield* Deferred.make<void>();
       const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
         event("session.execution.started", { sessionID: SESSION }),
       ]).pipe(
         Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
@@ -4308,6 +4325,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           take: Effect.never,
         }),
       );
+      // Establish the actual submitted process policy before the native follow-up.
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
       yield* Deferred.await(offered);
       const refused = yield* runtime
         .forkThread({

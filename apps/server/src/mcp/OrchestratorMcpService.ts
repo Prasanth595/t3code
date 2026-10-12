@@ -2230,12 +2230,14 @@ const make = Effect.gen(function* () {
           input.interactionMode,
         );
         const key = yield* requestKey(input.clientRequestId);
+        const scopedAuthority =
+          parentRun.executionScope.kind === "swarm" ? yield* swarmAuthority(scope) : undefined;
         const commandId = stableCommandId({
           scope,
           requestKey: key,
           operation: "delegate-task",
         });
-        const result = yield* threadManagement
+        const dispatch = threadManagement
           .dispatch({
             type: "delegated_task.request",
             createdBy: "agent",
@@ -2262,6 +2264,9 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+        const result = yield* scopedAuthority === undefined
+          ? dispatch
+          : dispatch.pipe(Effect.provideService(SwarmInvocation, scopedAuthority));
         const taskEvent = result.storedEvents.find(
           (stored) =>
             stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
@@ -2369,9 +2374,7 @@ const make = Effect.gen(function* () {
         const childWork = yield* threadManagement
           .getThreadRecords(current.childThreadId, ["runs"])
           .pipe(Effect.mapError(threadManagementFailure));
-        const scoped = childWork.runs.some(
-          (run) => run.swarmId !== undefined || run.swarmPeerDelivery !== undefined,
-        );
+        const scoped = childWork.runs.some((run) => run.executionScope.kind !== "ordinary");
         const disposeCompletionDelivery =
           scoped || parentTask?.completionDelivery?.state === "disposed"
             ? Effect.void
@@ -2819,9 +2822,7 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           messageId,
           runId: result.run.id,
-          ...(result.run.delegatedTaskId === undefined
-            ? {}
-            : { taskId: result.run.delegatedTaskId }),
+          ...(result.run.delegatedTaskId == null ? {} : { taskId: result.run.delegatedTaskId }),
           status: result.run.status,
           delivery: result.delivery,
         } satisfies OrchestratorMcpThreadSendResult;

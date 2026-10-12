@@ -206,8 +206,11 @@ it.effect.each([
           [wakeInput.runtimePolicy.runtimeMode, wakeInput.runtimePolicy.interactionMode],
           ["approval-required", "plan"],
         );
-        assert.equal(wake.swarmId, group.id);
-        assert.deepEqual(wake.swarmPeerDelivery, peerRun.swarmPeerDelivery);
+        assert.equal(wake.executionScope.kind, "swarm");
+        if (wake.executionScope.kind === "swarm")
+          assert.equal(wake.executionScope.swarmId, group.id);
+        assert.deepEqual(wake.executionScope, peerRun.executionScope);
+        assert.equal(wake.peerInput, undefined);
         assert.equal(wake.delegatedTaskId, peerRun.delegatedTaskId);
         const message = child.messages.find((row) => row.id === delivery.messageId)!;
         assert.equal(message.swarmPeerDelivery, undefined);

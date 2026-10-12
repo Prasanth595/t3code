@@ -65,6 +65,9 @@ it("does not commit running state when inherited background routing cannot be re
     },
     runs: [
       {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         status: "starting",
         rootNodeId,
@@ -187,6 +190,9 @@ function makeLocalCommandHarness(input: {
   const checkpointScopeId = CheckpointScopeId.make("scope-native-account-command");
   const messageId = MessageId.make("message-native-account-command");
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: runId,
     threadId,
     ordinal: 2,

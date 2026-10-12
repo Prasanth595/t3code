@@ -64,6 +64,9 @@ function makeSourceThread(): OrchestrationV2AppThread {
 
 function makeSourceRun(status: OrchestrationV2Run["status"]): OrchestrationV2Run {
   return {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: sourceRunId,
     threadId: sourceThreadId,
     ordinal: 1,

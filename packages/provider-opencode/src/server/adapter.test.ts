@@ -188,6 +188,9 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     startProviderThread: OrchestrationV2ProviderThread = providerThread,
   ) =>
     runtime.startTurn({
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       appThread: {
         id: threadId,
         projectId: ProjectId.make(`project-opencode-${suffix}`),
@@ -1568,6 +1571,9 @@ describe("OpenCodeAdapterV2", () => {
       const runId = RunId.make("run-opencode-admission-race");
       const start = yield* runtime
         .startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread: {
             id: threadId,
             projectId: ProjectId.make("project-opencode-admission-race"),
@@ -1868,6 +1874,9 @@ describe("OpenCodeAdapterV2", () => {
       const now = yield* DateTime.now;
       const start = yield* runtime
         .startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread: {
             id: threadId,
             projectId: ProjectId.make("project-opencode-initial-stop"),

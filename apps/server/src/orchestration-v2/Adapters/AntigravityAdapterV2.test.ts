@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem lacks junction type selection and lstat.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -11,6 +13,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -234,10 +237,26 @@ describe("AntigravityAdapterV2 client file system", () => {
       assert.isTrue(Exit.isFailure(outsideWrite));
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "planted.txt")));
 
-      // An in-workspace symlink to an outside file must not carry a read or
-      // write out of the workspace.
-      const linkPath = path.join(workspace, "linked-secret.txt");
-      yield* fileSystem.symlink(outsideFile, linkPath);
+      const windows = (yield* HostProcess.Platform) === "win32";
+      const createJunction = (target: string, link: string) =>
+        Effect.gen(function* () {
+          yield* Effect.tryPromise(() => NodeFSP.symlink(target, link, "junction"));
+          const linkStat = yield* Effect.tryPromise(() => NodeFSP.lstat(link));
+          assert.isTrue(linkStat.isSymbolicLink(), "the fixture is a real directory junction");
+          const destination = yield* fileSystem.readLink(link);
+          assert.equal(
+            path.normalize(destination.replace(/^\\\\\?\\/, "")),
+            path.normalize(target),
+          );
+        });
+      const linkPath = windows
+        ? path.join(workspace, "linked-outside", "secret.txt")
+        : path.join(workspace, "linked-secret.txt");
+      if (windows) {
+        yield* createJunction(outside, path.dirname(linkPath));
+      } else {
+        yield* fileSystem.symlink(outsideFile, linkPath);
+      }
       const linkedRead = yield* readTextFile(
         { sessionId: "mock-session-1", path: linkPath },
         context("fs/read_text_file"),
@@ -249,18 +268,31 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedWrite), "a write through an escaping symlink is denied");
       assert.equal(yield* fileSystem.readFileString(outsideFile), "secret");
-      // A dangling in-workspace symlink to an outside path must not create it.
-      const plantedTarget = path.join(outside, "created-through-link.txt");
-      const danglingLink = path.join(workspace, "dangling.txt");
-      yield* fileSystem.symlink(plantedTarget, danglingLink);
+      const missingOutsideDirectory = path.join(outside, "missing-directory");
+      const plantedTarget = windows
+        ? path.join(missingOutsideDirectory, "created-through-link.txt")
+        : path.join(outside, "created-through-link.txt");
+      const danglingLink = windows
+        ? path.join(workspace, "dangling-directory", "created-through-link.txt")
+        : path.join(workspace, "dangling.txt");
+      if (windows) {
+        assert.isFalse(yield* fileSystem.exists(missingOutsideDirectory));
+        yield* createJunction(missingOutsideDirectory, path.dirname(danglingLink));
+      } else {
+        yield* fileSystem.symlink(plantedTarget, danglingLink);
+      }
       const danglingWrite = yield* writeTextFile(
         { sessionId: "mock-session-1", path: danglingLink, content: "planted" },
         context("fs/write_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(danglingWrite), "a write through a dangling symlink is denied");
       assert.isFalse(yield* fileSystem.exists(plantedTarget));
-      // A new file under an in-workspace directory link to outside is denied.
-      yield* fileSystem.symlink(outside, path.join(workspace, "linked-dir"));
+      if (windows) {
+        assert.isFalse(yield* fileSystem.exists(missingOutsideDirectory));
+        yield* createJunction(outside, path.join(workspace, "linked-dir"));
+      } else {
+        yield* fileSystem.symlink(outside, path.join(workspace, "linked-dir"));
+      }
       const linkedDirWrite = yield* writeTextFile(
         {
           sessionId: "mock-session-1",
@@ -271,9 +303,14 @@ describe("AntigravityAdapterV2 client file system", () => {
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(linkedDirWrite), "a write under an escaping directory link");
       assert.isFalse(yield* fileSystem.exists(path.join(outside, "new.txt")));
-      // A symlink that stays inside the workspace keeps working.
-      const insideLink = path.join(workspace, "inside-link.ts");
-      yield* fileSystem.symlink(insidePath, insideLink);
+      const insideLink = windows
+        ? path.join(workspace, "inside-directory", "inside.ts")
+        : path.join(workspace, "inside-link.ts");
+      if (windows) {
+        yield* createJunction(path.dirname(insidePath), path.dirname(insideLink));
+      } else {
+        yield* fileSystem.symlink(insidePath, insideLink);
+      }
       const viaInsideLink = yield* readTextFile(
         { sessionId: "mock-session-1", path: insideLink },
         context("fs/read_text_file"),
@@ -349,6 +386,9 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const now = yield* DateTime.now;
       yield* session
         .startTurn({
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           appThread: {
             createdBy: "user",
             creationSource: "web",

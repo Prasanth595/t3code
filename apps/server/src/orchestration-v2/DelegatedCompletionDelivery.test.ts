@@ -223,6 +223,9 @@ const seedParentWithTerminalTask = (input: {
           providerInstanceId: modelSelection.instanceId,
           occurredAt: input.now,
           payload: {
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: input.runId,
             threadId: input.threadId,
             ordinal: 1,
@@ -771,6 +774,9 @@ const runEvent = (input: {
   providerInstanceId: modelSelection.instanceId,
   occurredAt: input.now,
   payload: {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: input.runId,
     threadId: input.threadId,
     ordinal: input.ordinal,
@@ -951,6 +957,8 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
           yield* orchestrator.recoverDelegatedTasks;
           let firstWake = yield* requests.take;
           while (firstWake.threadId !== parentThreadId) firstWake = yield* requests.take;
+          if (firstWake.kind !== "delegated_completion")
+            return yield* Effect.die("Unexpected native completion offer");
           assert.equal(firstWake.delegatedCompletion?.parentRunId, parentRunId);
           yield* orchestrator.dispatch({
             type: "delegated_task.completion-delivery.acknowledge",
@@ -1125,6 +1133,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             let wake = yield* requests.take;
             while (
               wake.threadId !== parentThreadId ||
+              wake.kind !== "delegated_completion" ||
               wake.delegatedCompletion?.messageId === firstWake.delegatedCompletion?.messageId
             ) {
               wake = yield* requests.take;
@@ -1167,7 +1176,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             const automatic = (yield* orchestrator.getThreadProjection(
               child.childThreadId,
             )).runs.find((run) => run.userMessageId === automaticMessageId)!;
-            assert.isUndefined(automatic.delegatedTaskId);
+            assert.isNull(automatic.delegatedTaskId);
             yield* eventSink.write({
               commandId: reconcileCommandId("followup-automatic-finished"),
               events: [

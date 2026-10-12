@@ -1432,6 +1432,9 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             providerInstanceId: modelSelection.instanceId,
             occurredAt: now,
             payload: {
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               id: sourceRunId,
               threadId: sourceThreadId,
               ordinal: 1,

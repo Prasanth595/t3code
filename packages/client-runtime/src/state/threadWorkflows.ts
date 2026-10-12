@@ -151,8 +151,7 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       left.ordinal - right.ordinal,
   ).map((run) => {
     const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-    const isPeerDelivery =
-      run.swarmPeerDelivery !== undefined || message?.swarmPeerDelivery !== undefined;
+    const isPeerDelivery = run.peerInput !== undefined || message?.swarmPeerDelivery !== undefined;
     return {
       run,
       text: message?.text ?? "Queued message",

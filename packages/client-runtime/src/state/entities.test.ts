@@ -391,6 +391,9 @@ describe("V2 client presentation", () => {
       ...v2Projection,
       runs: [
         {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId: v2Projection.thread.id,
           ordinal: 1,
@@ -490,6 +493,9 @@ describe("V2 client presentation", () => {
     const runId = RunId.make("run-background-presentation");
     const now = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
     const run = {
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       id: runId,
       threadId: v2Projection.thread.id,
       ordinal: 1,

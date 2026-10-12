@@ -423,11 +423,34 @@ const startTurn = Effect.fnUntraced(function* (
   selection?: ModelSelection,
   runOrdinal = 1,
   threadId = THREAD_ID,
-  continuation = false,
+  continuation:
+    | false
+    | Extract<ProviderContinuationRequests.ProviderContinuationRequest, { kind: "native" }> = false,
 ) {
+  if (
+    continuation !== false &&
+    continuation.cause.kind === "incomplete" &&
+    continuation.cause.ordinaryProcess === null
+  )
+    return yield* Effect.die("An unproved native wake cannot be adopted");
   const appThread = yield* makeAppThread(model, threadId);
   const runId = RunId.make(`run:${threadId}:${runOrdinal}`);
   yield* runtime.startTurn({
+    executionScope: { kind: "ordinary" as const },
+    executionCause:
+      continuation === false ||
+      (continuation.cause.kind === "incomplete" && continuation.cause.ordinaryProcess === null)
+        ? { kind: "independent" as const }
+        : continuation.cause.kind === "complete"
+          ? {
+              kind: "causal" as const,
+              reason: "native" as const,
+              sources: continuation.cause.sources,
+            }
+          : { kind: "native_unowned" as const, process: continuation.cause.ordinaryProcess! },
+    executionDelivery:
+      continuation === false ? { kind: "message_text" as const } : continuation.delivery,
+    nativeThreadHasTurns: false,
     appThread,
     threadId,
     runId,
@@ -440,12 +463,39 @@ const startTurn = Effect.fnUntraced(function* (
       messageId: `message:${threadId}:${runOrdinal}` as never,
       text,
       attachments,
-      createdBy: continuation ? "agent" : "user",
-      creationSource: continuation ? "provider" : "web",
+      createdBy: continuation !== false ? "agent" : "user",
+      creationSource: continuation !== false ? "provider" : "web",
     },
     modelSelection: selection ?? modelSelection(model),
     runtimePolicy,
   });
+});
+
+const takeNativeOffer = (
+  offers: Queue.Queue<ProviderContinuationRequests.ProviderContinuationRequest>,
+) =>
+  Queue.take(offers).pipe(
+    Effect.flatMap((offer) =>
+      offer.kind === "native"
+        ? Effect.succeed(offer)
+        : Effect.die("Unexpected delegated completion offer"),
+    ),
+  );
+
+const primeOrdinaryIncarnation = Effect.fnUntraced(function* (
+  runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
+  providerThread: OrchestrationV2ProviderThread,
+  fake: FakePi,
+  takeEvent: (
+    matches: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean,
+  ) => Effect.Effect<ProviderAdapter.ProviderAdapterV2Event>,
+) {
+  yield* startTurn(runtime, providerThread);
+  yield* fake.takeRequest("prompt");
+  yield* fake.emit({ type: "response", command: "prompt", success: true });
+  yield* fake.emit({ type: "agent_start" });
+  yield* fake.emit({ type: "agent_settled" });
+  yield* takeEvent((event) => event.type === "turn.terminal");
 });
 
 const expectModelFailure = (errorMessage: string) =>
@@ -510,6 +560,7 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
+        yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
         fake.deferNextLifecycle("fork");
         const rollingBack = yield* runtime
           .rollbackThread({
@@ -580,7 +631,7 @@ describe("PiAdapterV2", () => {
             (event) =>
               event.type === "provider_session.updated" &&
               event.providerSession.status === "stopped",
-          ).pipe(Effect.as(true), Effect.raceFirst(Queue.take(offers).pipe(Effect.as(false))));
+          ).pipe(Effect.as(true), Effect.raceFirst(takeNativeOffer(offers).pipe(Effect.as(false))));
           assert.isTrue(retired, "Pi offered native work while rollback was changing its binding");
           const result = yield* Fiber.join(rollingBack);
           assert.equal(result._tag, "Failure");
@@ -594,10 +645,13 @@ describe("PiAdapterV2", () => {
             undefined,
             1,
             THREAD_ID,
-            true,
+            false,
           ).pipe(Effect.result);
           assert.equal(staleTurn._tag, "Failure");
-          assert.isFalse(fake.allRequests().some((request) => request["type"] === "prompt"));
+          assert.equal(
+            fake.allRequests().filter((request) => request["type"] === "prompt").length,
+            1,
+          );
           return;
         }
         fake.queueState({ sessionFile: "/fake/rolled-back-session.jsonl" });
@@ -648,9 +702,10 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
+        yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
         yield* fake.takeRequest("get_state");
         yield* fake.emit({ type: "agent_start" });
-        yield* Queue.take(offers);
+        yield* takeNativeOffer(offers);
         yield* fake.emit({ type: "agent_settled" });
         yield* fake.emit({ type: "compaction_start", reason: "manual" });
         yield* startTurn(runtime, providerThread);
@@ -731,8 +786,9 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
       yield* fake.emit({ type: "agent_start" });
-      yield* Queue.take(offers);
+      const wakeOffer = yield* takeNativeOffer(offers);
       yield* fake.emit({ type: "message_start", message: { role: "assistant" } });
       yield* fake.emit({
         type: "message_update",
@@ -790,7 +846,7 @@ describe("PiAdapterV2", () => {
         undefined,
         1,
         THREAD_ID,
-        true,
+        wakeOffer,
       );
       const message = yield* takeEvent((event) => event.type === "message.updated");
       assert.equal(
@@ -819,8 +875,9 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
       yield* fake.emit({ type: "agent_start" });
-      yield* Queue.take(offers);
+      yield* takeNativeOffer(offers);
       const requests: Array<
         Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
       > = [];
@@ -897,8 +954,9 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
       yield* fake.emit({ type: "agent_start" });
-      const offer = yield* Queue.take(offers).pipe(
+      const offer = yield* takeNativeOffer(offers).pipe(
         Effect.raceFirst(
           takeEvent(
             (event) =>
@@ -910,13 +968,17 @@ describe("PiAdapterV2", () => {
       );
       assert.equal(offer.threadId, THREAD_ID);
       assert.equal(offer.providerThreadId, providerThread.id);
-      assert.equal(offer.delivery, "adapter_buffered");
+      assert.equal(offer.delivery.kind, "adapter_buffered");
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
       let dispatchCommitted = false;
-      yield* offer.dispatchIfCurrent!(
-        Effect.sync(() => {
-          dispatchCommitted = true;
-        }),
+      yield* offer.isCurrent.pipe(
+        Effect.flatMap((current) =>
+          current
+            ? Effect.sync(() => {
+                dispatchCommitted = true;
+              }).pipe(Effect.asSome)
+            : Effect.succeedNone,
+        ),
       );
       assert.isTrue(dispatchCommitted);
       assert.isTrue(yield* runtime.hasPendingBackgroundWork!);
@@ -945,7 +1007,7 @@ describe("PiAdapterV2", () => {
         undefined,
         1,
         THREAD_ID,
-        true,
+        offer,
       );
       const message = yield* takeEvent((event) => event.type === "message.updated");
       assert.equal(
@@ -953,13 +1015,17 @@ describe("PiAdapterV2", () => {
         "Background review finished",
       );
       yield* takeEvent((event) => event.type === "turn.terminal");
-      assert.equal(fake.allRequests().filter((request) => request["type"] === "prompt").length, 0);
+      assert.equal(fake.allRequests().filter((request) => request["type"] === "prompt").length, 1);
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       let dispatched = false;
-      yield* offer.dispatchIfCurrent!(
-        Effect.sync(() => {
-          dispatched = true;
-        }),
+      yield* offer.isCurrent.pipe(
+        Effect.flatMap((current) =>
+          current
+            ? Effect.sync(() => {
+                dispatched = true;
+              }).pipe(Effect.asSome)
+            : Effect.succeedNone,
+        ),
       );
       assert.isFalse(dispatched);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
@@ -987,8 +1053,9 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
+        yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
         yield* fake.emit({ type: "agent_start" });
-        const offer = yield* Queue.take(offers);
+        const offer = yield* takeNativeOffer(offers);
         if (settled) {
           yield* fake.emit({ type: "agent_settled" });
           yield* takeEvent(
@@ -1036,10 +1103,14 @@ describe("PiAdapterV2", () => {
         assert.isTrue(message.type === "message.updated" && message.message.runId !== null);
         yield* takeEvent((event) => event.type === "turn.terminal");
         let dispatched = false;
-        yield* offer.dispatchIfCurrent!(
-          Effect.sync(() => {
-            dispatched = true;
-          }),
+        yield* offer.isCurrent.pipe(
+          Effect.flatMap((current) =>
+            current
+              ? Effect.sync(() => {
+                  dispatched = true;
+                }).pipe(Effect.asSome)
+              : Effect.succeedNone,
+          ),
         );
         assert.isFalse(dispatched);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
@@ -1067,8 +1138,9 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
+        yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
         yield* fake.emit({ type: "agent_start" });
-        yield* Queue.take(offers);
+        yield* takeNativeOffer(offers);
         yield* startTurn(runtime, providerThread);
         yield* fake.takeRequest("prompt");
         yield* fake.emit({ type: "agent_settled", aborted });
@@ -1120,8 +1192,9 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
+        yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
         yield* fake.emit({ type: "agent_start" });
-        yield* Queue.take(offers);
+        const wakeOffer = yield* takeNativeOffer(offers);
         yield* fake.emit({ type: "agent_settled", aborted });
         yield* takeEvent(
           (event) =>
@@ -1134,7 +1207,7 @@ describe("PiAdapterV2", () => {
         if (resumes) yield* fake.emit({ type: "agent_settled", aborted: false });
         const terminal = yield* takeEvent((event) => event.type === "turn.terminal");
         assert.isTrue(terminal.type === "turn.terminal" && terminal.status === expected);
-        yield* startTurn(
+        const stale = yield* startTurn(
           runtime,
           providerThread,
           "default",
@@ -1143,12 +1216,12 @@ describe("PiAdapterV2", () => {
           undefined,
           2,
           THREAD_ID,
-          true,
-        );
-        yield* takeEvent((event) => event.type === "turn.terminal");
+          wakeOffer,
+        ).pipe(Effect.result);
+        assert.equal(stale._tag, "Failure");
         assert.equal(
           fake.allRequests().filter((request) => request["type"] === "prompt").length,
-          1,
+          2,
         );
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
@@ -1173,8 +1246,9 @@ describe("PiAdapterV2", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
       yield* fake.emit({ type: "agent_start" });
-      const offer = yield* Queue.take(offers);
+      const offer = yield* takeNativeOffer(offers);
       assert.isTrue(yield* runtime.hasPendingBackgroundWorkForThread!(providerThread));
       const otherThread = {
         ...providerThread,
@@ -1197,10 +1271,14 @@ describe("PiAdapterV2", () => {
       );
       assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
       let dispatched = false;
-      yield* offer.dispatchIfCurrent!(
-        Effect.sync(() => {
-          dispatched = true;
-        }),
+      yield* offer.isCurrent.pipe(
+        Effect.flatMap((current) =>
+          current
+            ? Effect.sync(() => {
+                dispatched = true;
+              }).pipe(Effect.asSome)
+            : Effect.succeedNone,
+        ),
       );
       assert.isFalse(dispatched);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
@@ -1228,8 +1306,9 @@ describe("PiAdapterV2", () => {
           modelSelection: modelSelection("default"),
           runtimePolicy,
         });
+        yield* primeOrdinaryIncarnation(runtime, providerThread, fake, takeEvent);
         yield* fake.emit({ type: "agent_start" });
-        const offer = yield* Queue.take(offers);
+        const offer = yield* takeNativeOffer(offers);
         yield* fake.emit({
           type: "extension_ui_request",
           id: "wake-dialog",
@@ -1275,10 +1354,14 @@ describe("PiAdapterV2", () => {
         assert.isTrue(itemCancelled);
         assert.isFalse(yield* runtime.hasPendingBackgroundWork!);
         let dispatched = false;
-        yield* offer.dispatchIfCurrent!(
-          Effect.sync(() => {
-            dispatched = true;
-          }),
+        yield* offer.isCurrent.pipe(
+          Effect.flatMap((current) =>
+            current
+              ? Effect.sync(() => {
+                  dispatched = true;
+                }).pipe(Effect.asSome)
+              : Effect.succeedNone,
+          ),
         );
         assert.isFalse(dispatched);
       }).pipe(Effect.scoped, Effect.provide(layerTest)),

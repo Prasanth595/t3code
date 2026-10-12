@@ -128,6 +128,9 @@ describe("thread workflows", () => {
     "keeps %s peer provenance queue-only while ordinary messages remain editable and steerable",
     (provenance) => {
       const queued = (id: string, ordinal: number): OrchestrationV2Run => ({
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: RunId.make(id),
         threadId: v2Projection.thread.id,
         ordinal,
@@ -155,13 +158,11 @@ describe("thread workflows", () => {
         createdAt: v2Now,
         updatedAt: v2Now,
       };
-      const peerDelivery: NonNullable<OrchestrationV2Run["swarmPeerDelivery"]> = {
+      const peerDelivery: NonNullable<OrchestrationV2Run["peerInput"]> = {
         swarmId: SwarmId.make("swarm"),
         ownerThreadId: ThreadId.make("parent"),
         senderThreadId: ThreadId.make("a"),
         commandId: CommandId.make("peer-send"),
-        runtimeMode: "full-access",
-        interactionMode: "default",
       };
       const activeAttemptId = RunAttemptId.make("active-attempt");
       const providerThreadId = ProviderThreadId.make("provider-thread");
@@ -174,7 +175,7 @@ describe("thread workflows", () => {
               {
                 ...queued("peer", 2),
                 queueHeld,
-                ...(provenance !== "message" ? { swarmPeerDelivery: peerDelivery } : {}),
+                ...(provenance !== "message" ? { peerInput: peerDelivery } : {}),
               },
               queued("human", 3),
               queued("generic", 4),

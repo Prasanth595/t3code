@@ -215,6 +215,7 @@ export const layerExecutor: Layer.Layer<
                 providerThreadId: effect.request.providerThreadId,
                 providerTurnId: effect.request.providerTurnId,
                 messageId: effect.request.messageId,
+                ...(effect.request.cause === undefined ? {} : { cause: effect.request.cause }),
               })
               .pipe(
                 Effect.tap(() =>
@@ -256,7 +257,7 @@ export const layerExecutor: Layer.Layer<
                     if (message === undefined || run === undefined) return yield* error;
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
-                    yield* threads.dispatch({
+                    const fallback = {
                       type: "message.dispatch",
                       commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                       threadId: effect.threadId,
@@ -290,7 +291,17 @@ export const layerExecutor: Layer.Layer<
                       ...(message.senderThreadId === undefined
                         ? {}
                         : { senderThreadId: message.senderThreadId }),
-                    });
+                    } as const;
+                    yield* threads.dispatch(
+                      effect.request.cause === undefined
+                        ? fallback
+                        : {
+                            ...fallback,
+                            type: "message.causal-dispatch",
+                            cause: effect.request.cause,
+                            intentFingerprint: effect.id,
+                          },
+                    );
                   }),
                 ),
                 Effect.mapError(

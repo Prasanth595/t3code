@@ -1,67 +1,129 @@
 import {
+  type ModelSelection,
   type OrchestrationV2Notification,
+  type OrchestrationV2NativeCause,
+  type OrchestrationV2ExecutionDelivery,
+  type OrchestrationV2NativeAcceptance,
+  type OrchestrationV2NativeRunCauseSource,
   MessageId,
   ProviderDriverKind,
   ProviderThreadId,
   RunId,
   ThreadId,
+  OrchestrationV2RunCauseSource,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
 
-export interface ProviderContinuationRequest {
+export const sourceKey = Schema.encodeSync(Schema.fromJsonString(OrchestrationV2RunCauseSource));
+
+interface ContinuationContent {
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly driver: ProviderDriverKind;
   readonly detail: string | null;
   readonly notification?: OrchestrationV2Notification;
-  /**
-   * Durable ownership for an app-owned delegated-task completion delivery.
-   * The continuation worker re-reads the cohort before dispatching so a later
-   * task can join a queued wake and a stopped or acknowledged cohort is dropped.
-   */
-  readonly delegatedCompletion?: {
-    readonly parentRunId: RunId;
-    readonly generation: number;
-    readonly messageId: MessageId;
-  };
-  /**
-   * How the continuation turn gets its content.
-   *
-   * `adapter_buffered` (default) is the provider-native wake: the adapter has
-   * already buffered the CLI's wake output, and the dispatched message only
-   * triggers ingestion. `ClaudeAdapterV2` deliberately discards the message
-   * text on that path.
-   *
-   * `message_text` is for app-owned work with no buffered provider output, such
-   * as a delegated child finishing. The text is the entire wake, so it must
-   * reach the provider as a real prompt.
-   */
-  readonly delivery?: "adapter_buffered" | "message_text";
-  /**
-   * The message the continuation run starts from, when the adapter picks it:
-   * its turn input carries this id, so the adapter can tell which of its held
-   * wakes a run was dispatched for. Otherwise the service allocates one.
-   */
-  readonly messageId?: MessageId;
-  readonly dispatchIfCurrent?: <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<Option.Option<A>, E, R>;
-  /** Clears a pending offer that the continuation worker intentionally drops. */
-  readonly clearIfCurrent?: () => Effect.Effect<void>;
 }
 
-/**
- * Adapters offer a continuation request when provider-native work completes
- * outside an active turn (for example a Claude background task wake turn) so
- * the orchestrator can start a run that ingests it. The default reference
- * drops requests, keeping adapter construction dependency-free in tests; the
- * live layer must be shared with the ProviderContinuationService worker that
- * drains it.
- */
+export type ProviderContinuationRequest = ContinuationContent &
+  (
+    | {
+        readonly kind: "delegated_completion";
+        readonly delegatedCompletion: {
+          readonly parentRunId: RunId;
+          readonly generation: number;
+          readonly messageId: MessageId;
+        };
+        readonly delivery: { readonly kind: "message_text" };
+      }
+    | {
+        readonly kind: "native";
+        readonly messageId: MessageId;
+        readonly cause: OrchestrationV2NativeCause;
+        readonly delivery: OrchestrationV2ExecutionDelivery;
+        readonly isCurrent: Effect.Effect<boolean>;
+        readonly clearIfCurrent?: () => Effect.Effect<void>;
+      }
+  );
+
+export interface NativeAcceptedExecution {
+  readonly source: OrchestrationV2NativeRunCauseSource;
+  readonly modelSelection: ModelSelection;
+  readonly receipt: OrchestrationV2NativeAcceptance;
+}
+
+export class NativeExecutionIncarnation {
+  private ordinaryOnly: boolean;
+  private process: NativeAcceptedExecution | undefined;
+  readonly identity: string;
+  constructor(identity: string, restored: boolean) {
+    this.identity = identity;
+    this.ordinaryOnly = !restored;
+  }
+
+  accept(input: ProviderAdapterV2TurnInput, nativeThreadId: string): NativeAcceptedExecution {
+    if (input.executionScope.kind !== "ordinary") this.ordinaryOnly = false;
+    const source: OrchestrationV2NativeRunCauseSource = {
+      kind: "native",
+      threadId: input.threadId,
+      runId: input.runId,
+      attemptId: input.attemptId,
+      providerInstanceId: input.modelSelection.instanceId,
+      providerThreadId: input.providerThread.id,
+      nativeThreadId,
+      incarnation: this.identity,
+    };
+    const policyAttemptId =
+      input.executionDelivery.kind === "adapter_buffered"
+        ? input.executionDelivery.process.attemptId
+        : input.attemptId;
+    const accepted = {
+      source,
+      modelSelection: input.modelSelection,
+      receipt: {
+        incarnation: this.identity,
+        onlyOrdinary: this.ordinaryOnly,
+        policyAttemptId,
+        acceptedAttemptId: input.attemptId,
+      },
+    };
+    if (input.executionDelivery.kind !== "adapter_buffered") this.process = accepted;
+    return accepted;
+  }
+
+  incomplete(
+    knownSources: ReadonlyArray<OrchestrationV2NativeRunCauseSource> = [],
+  ): OrchestrationV2NativeCause {
+    return {
+      kind: "incomplete",
+      knownSources,
+      ordinaryProcess: this.ordinaryOnly ? (this.process?.source ?? null) : null,
+    };
+  }
+
+  buffered(
+    bufferId: string,
+    bounds: Extract<OrchestrationV2ExecutionDelivery, { kind: "adapter_buffered" }>["bounds"],
+  ): OrchestrationV2ExecutionDelivery | null {
+    if (this.process === undefined) return null;
+    return {
+      kind: "adapter_buffered",
+      bufferId,
+      process: this.process.source,
+      modelSelection: this.process.modelSelection,
+      bounds,
+    };
+  }
+
+  invalidate(): void {
+    this.ordinaryOnly = false;
+  }
+}
+
 export class ProviderContinuationRequests extends Context.Reference<{
   readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
   readonly take: Effect.Effect<ProviderContinuationRequest>;

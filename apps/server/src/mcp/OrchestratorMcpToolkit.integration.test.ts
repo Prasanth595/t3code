@@ -40,6 +40,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -130,7 +131,7 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
   function* () {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(
-      decodeURIComponent(delegatedTaskStatusTranscriptFile.pathname),
+      yield* (yield* Path.Path).fromFileUrl(delegatedTaskStatusTranscriptFile),
     );
     return yield* decodeProviderReplayNdjson(text);
   },
@@ -412,15 +413,16 @@ function waitForProjection(
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
   return Effect.gen(function* () {
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
-      const projection = yield* orchestrator.getThreadProjection(threadId);
-      if (predicate(projection)) {
-        return projection;
-      }
-      yield* Effect.sleep("5 millis");
-    }
-    return yield* Effect.die(
-      new Error(`Timed out waiting for orchestration projection ${threadId}.`),
+    const events = yield* EventSink.EventSinkV2;
+    const afterSequence = yield* events.latestSequence({ threadId });
+    const current = yield* orchestrator.getThreadProjection(threadId);
+    if (predicate(current)) return current;
+    // Replay closes the race between the first read and the live subscription.
+    return yield* events.stream({ threadId, afterSequence }).pipe(
+      Stream.mapEffect(() => orchestrator.getThreadProjection(threadId)),
+      Stream.filter(predicate),
+      Stream.runHead,
+      Effect.map(Option.getOrThrow),
     );
   });
 }
@@ -514,197 +516,215 @@ const layerUnusedScheduledTaskStub = Layer.succeed(
 );
 
 describe("orchestrator MCP toolkit", () => {
-  it.live(
+  it.live.each([
     "delegates cross-provider tasks, polls and cancels children, and creates ordinary threads",
-    () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
-          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-          const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
-          const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
-          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-            makeDeterministicAdapter({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              // Exercise queued completion ownership on a session without native steering.
-              // Native mailbox delivery and its completion races have dedicated integration tests.
-              capabilities: {
-                ...CodexProviderCapabilitiesV2,
-                turns: { ...CodexProviderCapabilitiesV2.turns, supportsActiveSteering: false },
-              },
-              capturedTurns,
-              shouldComplete: (turn) =>
-                turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
-              terminalGate: (turn) =>
-                turn.message.text.startsWith("Delegated task") ||
-                turn.message.text.startsWith("Delegated tasks")
-                  ? deliveryTerminalGates.get(turn.threadId)
-                  : parentTerminalGates.get(turn.threadId),
-              response: (turn) => `Codex completed: ${turn.message.text}`,
-            }),
-            makeDeterministicAdapter({
-              instanceId: claudeInstanceId,
-              driver: ProviderDriverKind.make("claudeAgent"),
-              capabilities: ClaudeProviderCapabilitiesV2,
-              capturedTurns,
-              shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
-              terminalGate: (turn) =>
-                turn.message.text.startsWith("Delegated task") ||
-                turn.message.text.startsWith("Delegated tasks")
-                  ? deliveryTerminalGates.get(turn.threadId)
-                  : parentTerminalGates.get(turn.threadId),
-              response: (turn) =>
-                turn.message.text === delegatedPrompt
-                  ? delegatedResult
-                  : `Claude completed: ${turn.message.text}`,
-            }),
-          ]);
-          // Captures parent-wake offers made when a delegated child
-          // terminalizes after the parent run settled.
-          const continuationOffers = yield* Ref.make<
-            ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
-          >([]);
-          const layerContinuationProbe = Layer.succeed(
-            ProviderContinuationRequests.ProviderContinuationRequests,
-            {
-              offer: (request) =>
-                Ref.update(continuationOffers, (existing) => [...existing, request]),
-              take: Effect.never,
+    "coalesces late completions and disposes a removed delivery",
+    "drains twelve delegated children through three batched deliveries",
+  ] as const)("%s", (scenario) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("orchestrator-mcp-toolkit");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+        const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeDeterministicAdapter({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            // Exercise queued completion ownership on a session without native steering.
+            // Native mailbox delivery and its completion races have dedicated integration tests.
+            capabilities: {
+              ...CodexProviderCapabilitiesV2,
+              turns: { ...CodexProviderCapabilitiesV2.turns, supportsActiveSteering: false },
             },
-          );
-          // Offers land after the finalize projection writes, so poll briefly
-          // instead of asserting counts immediately.
-          const waitForContinuationOffers = (count: number) =>
-            Effect.gen(function* () {
-              for (let attempt = 0; attempt < 1_000; attempt += 1) {
-                const current = yield* Ref.get(continuationOffers);
-                if (current.length >= count) {
-                  return current;
-                }
-                yield* Effect.sleep("5 millis");
+            capturedTurns,
+            shouldComplete: (turn) =>
+              turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
+            terminalGate: (turn) =>
+              turn.message.text.startsWith("Delegated task") ||
+              turn.message.text.startsWith("Delegated tasks")
+                ? deliveryTerminalGates.get(turn.threadId)
+                : parentTerminalGates.get(turn.threadId),
+            response: (turn) => `Codex completed: ${turn.message.text}`,
+          }),
+          makeDeterministicAdapter({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            capabilities: ClaudeProviderCapabilitiesV2,
+            capturedTurns,
+            shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
+            terminalGate: (turn) =>
+              turn.message.text.startsWith("Delegated task") ||
+              turn.message.text.startsWith("Delegated tasks")
+                ? deliveryTerminalGates.get(turn.threadId)
+                : parentTerminalGates.get(turn.threadId),
+            response: (turn) =>
+              turn.message.text === delegatedPrompt
+                ? delegatedResult
+                : `Claude completed: ${turn.message.text}`,
+          }),
+        ]);
+        // Captures parent-wake offers made when a delegated child
+        // terminalizes after the parent run settled.
+        const continuationOffers = yield* Ref.make<
+          ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+        >([]);
+        const layerContinuationProbe = Layer.succeed(
+          ProviderContinuationRequests.ProviderContinuationRequests,
+          {
+            offer: (request) =>
+              Ref.update(continuationOffers, (existing) => [...existing, request]),
+            take: Effect.never,
+          },
+        );
+        // Offers land after the finalize projection writes, so poll briefly
+        // instead of asserting counts immediately.
+        const waitForContinuationOffers = (count: number) =>
+          Effect.gen(function* () {
+            for (let attempt = 0; attempt < 1_000; attempt += 1) {
+              const current = yield* Ref.get(continuationOffers);
+              if (current.length >= count) {
+                return current;
               }
-              return yield* Ref.get(continuationOffers);
-            });
-          // Absence has no event to await, so sample repeatedly instead of
-          // trusting a single sleep to outlast a late offer.
-          const expectOffersToStay = (count: number) =>
-            Effect.gen(function* () {
-              for (let sample = 0; sample < 4; sample += 1) {
-                yield* Effect.sleep("50 millis");
-                expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
-              }
-            });
-          const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-            {
-              name: "orchestrator-mcp-toolkit",
-              runtimePolicyOverride: {
-                cwd,
-                approvalPolicy: "never",
-                sandboxPolicy: {
-                  type: "readOnly",
-                  access: { type: "fullAccess" },
-                  networkAccess: false,
-                },
+              yield* Effect.sleep("5 millis");
+            }
+            return yield* Ref.get(continuationOffers);
+          });
+        // Absence has no event to await, so sample repeatedly instead of
+        // trusting a single sleep to outlast a late offer.
+        const expectOffersToStay = (count: number) =>
+          Effect.gen(function* () {
+            for (let sample = 0; sample < 4; sample += 1) {
+              yield* Effect.sleep("50 millis");
+              expect(yield* Ref.get(continuationOffers)).toHaveLength(count);
+            }
+          });
+        const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+          {
+            name: "orchestrator-mcp-toolkit",
+            runtimePolicyOverride: {
+              cwd,
+              approvalPolicy: "never",
+              sandboxPolicy: {
+                type: "readOnly",
+                access: { type: "fullAccess" },
+                networkAccess: false,
               },
             },
-            layerRegistry,
-          ).pipe(Layer.provide(layerContinuationProbe));
-          const layerOrchestration = Layer.merge(
-            layerOrchestrator,
-            ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
-          );
-          const layerProviderRegistry = ProviderRegistryMock.layer([
-            makeProviderSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              model: codexModel,
-              optionDescriptors: [
-                {
-                  id: "reasoning",
-                  label: "Reasoning effort",
-                  type: "select",
-                  options: [
-                    { id: "low", label: "Low" },
-                    { id: "medium", label: "Medium" },
-                    { id: "high", label: "High" },
-                  ],
-                },
-              ],
-            }),
-            makeProviderSnapshot({
-              instanceId: claudeInstanceId,
-              driver: ProviderDriverKind.make("claudeAgent"),
-              model: claudeModel,
-            }),
-            makeProviderSnapshot({
-              instanceId: ProviderInstanceId.make("opencode"),
-              driver: ProviderDriverKind.make("opencode"),
-              model: "opencode/test",
-            }),
-          ]);
-          // In-memory ScheduledTaskService stub so the schedule/list/update/
-          // delete tools can be exercised without SQL/launch wiring.
-          const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
-          const layerScheduledTaskStub = Layer.succeed(
-            ScheduledTaskService.ScheduledTaskService,
-            ScheduledTaskService.ScheduledTaskService.of({
-              list: () => Ref.get(scheduledStore).pipe(Effect.map((tasks) => ({ tasks }))),
-              subscribeList: () => Stream.empty,
-              upsert: (input) =>
-                Effect.gen(function* () {
-                  const task = scheduledTaskFromUpsert(input);
-                  yield* Ref.update(scheduledStore, (all) => [
-                    ...all.filter((candidate) => candidate.id !== task.id),
-                    task,
-                  ]);
-                  return { task };
-                }),
-              setEnabled: () =>
-                Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
-              delete: (input) =>
-                Ref.update(scheduledStore, (all) =>
-                  all.filter((candidate) => candidate.id !== input.id),
-                ).pipe(Effect.as({ id: input.id })),
-              runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
-              rotateWebhookToken: () => Effect.die("unused in this test"),
-              listWebhookDeliveries: () => Effect.die("unused in this test"),
-              getWebhookDelivery: () => Effect.die("unused in this test"),
-              triggerWebhook: () => Effect.die("unused in this test"),
-            }),
-          );
-          const layerTest = Layer.merge(
-            McpHttpServer.layerOrchestratorToolkit,
-            McpHttpServer.layerThreadToolkit,
-          ).pipe(
-            Layer.provideMerge(McpServer.McpServer.layer),
-            Layer.provideMerge(layerOrchestration),
-            Layer.provide(layerRegistry),
-            Layer.provide(layerProviderRegistry),
-            Layer.provide(ServerSettings.layerTest()),
-            Layer.provide(layerScheduledTaskStub),
-            Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
-            Layer.provide(
-              Layer.mock(ProjectService.ProjectService)({
-                getById: (id) =>
-                  Effect.succeed(
-                    id === projectId
-                      ? Option.some({ id, defaultModelSelection: null } as never)
-                      : Option.none(),
-                  ),
+          },
+          layerRegistry,
+        ).pipe(Layer.provide(layerContinuationProbe));
+        const layerOrchestration = Layer.merge(
+          layerOrchestrator,
+          ThreadManagementService.layer.pipe(Layer.provide(layerOrchestrator)),
+        );
+        const layerProviderRegistry = ProviderRegistryMock.layer([
+          makeProviderSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: codexModel,
+            optionDescriptors: [
+              {
+                id: "reasoning",
+                label: "Reasoning effort",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low" },
+                  { id: "medium", label: "Medium" },
+                  { id: "high", label: "High" },
+                ],
+              },
+            ],
+          }),
+          makeProviderSnapshot({
+            instanceId: claudeInstanceId,
+            driver: ProviderDriverKind.make("claudeAgent"),
+            model: claudeModel,
+          }),
+          makeProviderSnapshot({
+            instanceId: ProviderInstanceId.make("opencode"),
+            driver: ProviderDriverKind.make("opencode"),
+            model: "opencode/test",
+          }),
+        ]);
+        // In-memory ScheduledTaskService stub so the schedule/list/update/
+        // delete tools can be exercised without SQL/launch wiring.
+        const scheduledStore = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+        const layerScheduledTaskStub = Layer.succeed(
+          ScheduledTaskService.ScheduledTaskService,
+          ScheduledTaskService.ScheduledTaskService.of({
+            list: () => Ref.get(scheduledStore).pipe(Effect.map((tasks) => ({ tasks }))),
+            subscribeList: () => Stream.empty,
+            upsert: (input) =>
+              Effect.gen(function* () {
+                const task = scheduledTaskFromUpsert(input);
+                yield* Ref.update(scheduledStore, (all) => [
+                  ...all.filter((candidate) => candidate.id !== task.id),
+                  task,
+                ]);
+                return { task };
               }),
+            setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
+            delete: (input) =>
+              Ref.update(scheduledStore, (all) =>
+                all.filter((candidate) => candidate.id !== input.id),
+              ).pipe(Effect.as({ id: input.id })),
+            runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+            rotateWebhookToken: () => Effect.die("unused in this test"),
+            listWebhookDeliveries: () => Effect.die("unused in this test"),
+            getWebhookDelivery: () => Effect.die("unused in this test"),
+            triggerWebhook: () => Effect.die("unused in this test"),
+          }),
+        );
+        const layerTest = Layer.merge(
+          McpHttpServer.layerOrchestratorToolkit,
+          McpHttpServer.layerThreadToolkit,
+        ).pipe(
+          Layer.provideMerge(McpServer.McpServer.layer),
+          Layer.provideMerge(layerOrchestration),
+          Layer.provide(layerRegistry),
+          Layer.provide(layerProviderRegistry),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(layerScheduledTaskStub),
+          Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) =>
+                Effect.succeed(
+                  id === projectId
+                    ? Option.some({ id, defaultModelSelection: null } as never)
+                    : Option.none(),
+                ),
+            }),
+          ),
+          Layer.provideMerge(
+            SecretRequests.layer.pipe(
+              Layer.provide(layerMemorySecretStore),
+              Layer.provide(layerOrchestration),
             ),
-            Layer.provideMerge(
-              SecretRequests.layer.pipe(
-                Layer.provide(layerMemorySecretStore),
-                Layer.provide(layerOrchestration),
-              ),
-            ),
-            Layer.provide(NodeServices.layer),
-          );
+          ),
+          Layer.provide(NodeServices.layer),
+        );
 
-          yield* Effect.gen(function* () {
-            const orchestrator = yield* Orchestrator.OrchestratorV2;
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const taskFromDispatch = (
+            result: Effect.Success<ReturnType<Orchestrator.OrchestratorV2Shape["dispatch"]>>,
+          ) => {
+            const taskEvent = result.storedEvents.find(
+              (stored) =>
+                stored.event.type === "subagent.updated" &&
+                stored.event.payload.origin === "app_owned",
+            );
+            if (taskEvent?.event.type !== "subagent.updated") {
+              throw new Error("Late completion delegated task projection missing.");
+            }
+            return taskEvent.event.payload;
+          };
+          if (
+            scenario ===
+            "delegates cross-provider tasks, polls and cancels children, and creates ordinary threads"
+          ) {
             const server = yield* McpServer.McpServer;
             yield* orchestrator.dispatch({
               type: "thread.create",
@@ -1281,7 +1301,9 @@ describe("orchestrator MCP toolkit", () => {
               text: "🙂".repeat(16000),
               truncated: true,
             });
-            const missingQueueRead = yield* invoke("t3_queue_read", { queuedRunId: parentRun.id });
+            const missingQueueRead = yield* invoke("t3_queue_read", {
+              queuedRunId: parentRun.id,
+            });
             expect(declaredFailure(missingQueueRead)).toMatchObject({ code: "invalid_request" });
             const queueRaceStatus = yield* invoke("task_status", { taskId: queueRace.task.id });
             expect(queueRaceStatus.isError).toBe(false);
@@ -1536,7 +1558,9 @@ describe("orchestrator MCP toolkit", () => {
             });
 
             // delete_scheduled_task removes it entirely.
-            const scheduledDeleteCall = yield* invoke("delete_scheduled_task", { scheduledTaskId });
+            const scheduledDeleteCall = yield* invoke("delete_scheduled_task", {
+              scheduledTaskId,
+            });
             expect(scheduledDeleteCall.isError).toBe(false);
             expect(scheduledDeleteCall.structuredContent).toMatchObject({
               scheduledTaskId,
@@ -2226,7 +2250,10 @@ describe("orchestrator MCP toolkit", () => {
               settled: true,
               settledAt: "2026-01-01T00:00:00.000Z",
             });
-            const settledListCall = yield* invoke("t3_thread_list", { settled: true, limit: 100 });
+            const settledListCall = yield* invoke("t3_thread_list", {
+              settled: true,
+              limit: 100,
+            });
             const settledList = yield* decodeThreadListResult(
               settledListCall.structuredContent,
             ).pipe(Effect.orDie);
@@ -2237,7 +2264,10 @@ describe("orchestrator MCP toolkit", () => {
               settled: true,
               settledAt: "2026-01-01T00:00:00.000Z",
             });
-            const activeListCall = yield* invoke("t3_thread_list", { settled: false, limit: 100 });
+            const activeListCall = yield* invoke("t3_thread_list", {
+              settled: false,
+              limit: 100,
+            });
             const activeList = yield* decodeThreadListResult(activeListCall.structuredContent).pipe(
               Effect.orDie,
             );
@@ -2258,7 +2288,10 @@ describe("orchestrator MCP toolkit", () => {
               threadId: emptyThread.threadId,
               snoozedUntil: "2099-01-01T00:00:00.000Z",
             });
-            const snoozedListCall = yield* invoke("t3_thread_list", { snoozed: true, limit: 100 });
+            const snoozedListCall = yield* invoke("t3_thread_list", {
+              snoozed: true,
+              limit: 100,
+            });
             const snoozedList = yield* decodeThreadListResult(
               snoozedListCall.structuredContent,
             ).pipe(Effect.orDie);
@@ -2929,7 +2962,8 @@ describe("orchestrator MCP toolkit", () => {
               )?.completionWake,
             ).toBe("always");
             yield* expectOffersToStay(0);
-
+          }
+          if (scenario === "coalesces late completions and disposes a removed delivery") {
             // A child that terminalizes after the coalesced delivery started
             // is held for one successor. It must not fan out into a second
             // concurrent delivery for the same parent run.
@@ -3004,17 +3038,7 @@ describe("orchestrator MCP toolkit", () => {
               interactionMode: "default",
               completionWake: "always",
             });
-            const taskFromDispatch = (result: typeof earlyLateDelivery) => {
-              const taskEvent = result.storedEvents.find(
-                (stored) =>
-                  stored.event.type === "subagent.updated" &&
-                  stored.event.payload.origin === "app_owned",
-              );
-              if (taskEvent?.event.type !== "subagent.updated") {
-                throw new Error("Late completion delegated task projection missing.");
-              }
-              return taskEvent.event.payload;
-            };
+
             const earlyLateTask = taskFromDispatch(earlyLateDelivery);
             const lateTask = taskFromDispatch(lateChild);
             const thirdLateChild = yield* orchestrator.dispatch({
@@ -3478,7 +3502,8 @@ describe("orchestrator MCP toolkit", () => {
               removedDelivery.subagents.find((task) => task.id === removeTask.id),
             ).toMatchObject({ result: expect.any(String), status: "completed" });
             yield* expectOffersToStay(0);
-
+          }
+          if (scenario === "drains twelve delegated children through three batched deliveries") {
             // A wide fan-out keeps waking its parent until every result is
             // delivered. Two children finish before the first delivery starts,
             // five while it runs, three before the successor starts, and two
@@ -3774,8 +3799,10 @@ describe("orchestrator MCP toolkit", () => {
             );
             expect(sortedIds(deliveredTaskIds)).toEqual(idsOf(fanoutTasks));
             const offeredDeliveries = new Set(
-              (yield* Ref.get(continuationOffers)).map(
-                (offer) => offer.delegatedCompletion?.messageId,
+              (yield* Ref.get(continuationOffers)).map((offer) =>
+                offer.kind === "delegated_completion"
+                  ? offer.delegatedCompletion.messageId
+                  : undefined,
               ),
             );
             expect(offeredDeliveries).toEqual(
@@ -3785,9 +3812,10 @@ describe("orchestrator MCP toolkit", () => {
                 thirdFanoutDelivery.messageId,
               ]),
             );
-          }).pipe(Effect.provide(layerTest));
-        }),
-      ),
+          }
+        }).pipe(Effect.provide(layerTest));
+      }),
+    ),
   );
 
   it.live("reports running and queued child follow-ups from a Codex replay transcript", () =>

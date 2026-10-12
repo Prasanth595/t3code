@@ -8,6 +8,7 @@ import {
   type WorktreeMcpHandoffResult,
   type WorktreeMcpSetupScriptStatus,
   type WorktreeMcpStatusResult,
+  type OrchestrationV2InternalMessageCause,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -24,6 +25,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
 import type { McpInvocationScope, McpThreadInvocationScope } from "./McpInvocationContext.ts";
+import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 
 export class WorktreeMcpService extends Context.Service<
   WorktreeMcpService,
@@ -59,6 +61,7 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const path = yield* Path.Path;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+  const credentialRegistry = yield* Effect.serviceOption(McpSessionRegistry.McpSessionRegistry);
   const projects = yield* ProjectService.ProjectService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
@@ -88,8 +91,11 @@ const make = Effect.gen(function* () {
           failure("capability_denied", "This MCP credential does not grant worktree capabilities."),
         );
 
-  const loadThread = (scope: McpThreadInvocationScope) =>
-    threadManagement.getThreadRecords(scope.thread.threadId, []).pipe(
+  const loadThread = (
+    scope: McpThreadInvocationScope,
+    records: ReadonlyArray<"runs" | "providerThreads"> = [],
+  ) =>
+    threadManagement.getThreadRecords(scope.thread.threadId, records).pipe(
       Effect.mapError((error) =>
         error._tag === "OrchestratorProjectionError"
           ? failure("thread_not_found", `Thread '${scope.thread.threadId}' was not found.`)
@@ -152,7 +158,43 @@ const make = Effect.gen(function* () {
         `Thread '${scope.thread.threadId}' is already attached to worktree '${worktreePath}'.`,
       );
 
-    const projection = yield* loadThread(scope);
+    const projection = yield* loadThread(scope, ["runs", "providerThreads"]);
+    const callingThread = projection.providerThreads.find(
+      (thread) =>
+        thread.id === projection.thread.activeProviderThreadId &&
+        thread.providerInstanceId === scope.thread.providerInstanceId,
+    );
+    const callingRun =
+      callingThread === undefined
+        ? undefined
+        : projection.runs.find(
+            (run) =>
+              run.providerThreadId === callingThread.id &&
+              run.ordinal === callingThread.lastRunOrdinal &&
+              ["running", "waiting"].includes(run.status),
+          );
+    const continuationCause: OrchestrationV2InternalMessageCause | undefined =
+      callingRun !== undefined && callingRun.executionScope.kind !== "ordinary"
+        ? {
+            kind: "scoped",
+            reason: "worktree",
+            source: {
+              kind: "run",
+              threadId: callingRun.threadId,
+              runId: callingRun.id,
+              attemptId: callingRun.activeAttemptId,
+            },
+          }
+        : undefined;
+    if (
+      continuationCause !== undefined &&
+      (Option.isNone(credentialRegistry) ||
+        !(yield* credentialRegistry.value.isCurrentCredential(scope)))
+    )
+      return yield* failure(
+        "invalid_request",
+        "The scoped worktree caller no longer has its current issued credential.",
+      );
     if (projection.thread.worktreePath !== null) {
       return yield* alreadyInWorktree(projection.thread.worktreePath);
     }
@@ -366,27 +408,49 @@ const make = Effect.gen(function* () {
           Effect.suspend(() =>
             input.continuationPrompt === undefined
               ? Effect.succeed<WorktreeMcpContinuationStatus>({ status: "skipped" })
-              : threadManagement
-                  .sendToThread({
-                    projectId: projection.thread.projectId,
-                    commandId: ids.continuationCommandId,
-                    threadId: scope.thread.threadId,
-                    messageId: ids.continuationMessageId,
-                    text: input.continuationPrompt,
-                    attachments: [],
-                    mode: "queue",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                  })
-                  .pipe(
-                    Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
-                      status: "scheduled",
-                      delivery: sendResult.delivery,
-                    })),
-                    // catchCause via reportFailed: the binding is already recorded,
-                    // so a failed continuation must be reported, not fail the handoff.
-                    reportFailed("worktree handoff continuation failed to queue"),
-                  ),
+              : continuationCause !== undefined
+                ? threadManagement
+                    .dispatch({
+                      type: "message.causal-dispatch",
+                      commandId: ids.continuationCommandId,
+                      intentFingerprint: ids.continuationCommandId,
+                      cause: continuationCause,
+                      threadId: scope.thread.threadId,
+                      messageId: ids.continuationMessageId,
+                      text: input.continuationPrompt,
+                      attachments: [],
+                      dispatchMode: { type: "queue_after_active" },
+                      createdBy: "agent",
+                      creationSource: "mcp",
+                    })
+                    .pipe(
+                      Effect.as<WorktreeMcpContinuationStatus>({
+                        status: "scheduled",
+                        delivery: "queued",
+                      }),
+                      reportFailed("worktree handoff continuation failed to queue"),
+                    )
+                : threadManagement
+                    .sendToThread({
+                      projectId: projection.thread.projectId,
+                      commandId: ids.continuationCommandId,
+                      threadId: scope.thread.threadId,
+                      messageId: ids.continuationMessageId,
+                      text: input.continuationPrompt,
+                      attachments: [],
+                      mode: "queue",
+                      createdBy: "agent",
+                      creationSource: "mcp",
+                    })
+                    .pipe(
+                      Effect.map((sendResult): WorktreeMcpContinuationStatus => ({
+                        status: "scheduled",
+                        delivery: sendResult.delivery,
+                      })),
+                      // catchCause via reportFailed: the binding is already recorded,
+                      // so a failed continuation must be reported, not fail the handoff.
+                      reportFailed("worktree handoff continuation failed to queue"),
+                    ),
           );
 
         const continuation = yield* recheckAndBind.pipe(Effect.andThen(queueContinuation));

@@ -605,6 +605,9 @@ describe("orchestration V2 contracts", () => {
       runId: "run-1",
       occurredAt: now,
       payload: {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: "run-1",
         threadId: "thread-1",
         ordinal: 1,

@@ -445,6 +445,9 @@ describe("V2 environment commands", () => {
         ...v2Projection,
         runs: [
           {
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: activeRunId,
             threadId: v2ThreadId,
             ordinal: 1,
@@ -571,6 +574,9 @@ describe("V2 environment commands", () => {
         ...v2Projection,
         runs: [
           {
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: waitingRunId,
             threadId: v2ThreadId,
             ordinal: 1,

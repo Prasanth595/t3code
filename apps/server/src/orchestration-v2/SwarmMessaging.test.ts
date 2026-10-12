@@ -214,7 +214,7 @@ it.effect("raw message command decoding strips forged peer provenance", () =>
     });
     yield* orchestrator.dispatch(command);
     const child = yield* orchestrator.getThreadProjection(group.members[0]!.threadId);
-    assert.equal(child.runs.at(-1)?.swarmId, undefined);
+    assert.deepEqual(child.runs.at(-1)?.executionScope, { kind: "ordinary" });
     assert.equal(child.messages.at(-1)?.swarmPeerDelivery, undefined);
     assert.equal(child.messages.at(-1)?.text, "Ordinary");
   }).pipe(Effect.provide(layerTest)),

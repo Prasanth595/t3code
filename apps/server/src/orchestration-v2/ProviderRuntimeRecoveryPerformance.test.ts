@@ -131,6 +131,9 @@ const seedScenario = Effect.fn(function* (scenario: Scenario) {
       threadId,
       runId,
       payload: {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId,
         ordinal,

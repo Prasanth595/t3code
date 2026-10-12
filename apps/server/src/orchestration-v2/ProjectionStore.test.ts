@@ -80,6 +80,9 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
   const runId = RunId.make(`run:${suffix}:rolled-back`);
   const rootNodeId = NodeId.make(`node:${suffix}:rolled-back`);
   const run = {
+    executionScope: { kind: "ordinary" as const },
+    executionCause: { kind: "independent" as const },
+    executionDelivery: { kind: "message_text" as const },
     id: runId,
     threadId,
     ordinal: 1,
@@ -474,6 +477,9 @@ const assertProjectScopedShells = Effect.fn("assertProjectScopedShells")(functio
     driver,
     occurredAt: now,
     payload: {
+      executionScope: { kind: "ordinary" as const },
+      executionCause: { kind: "independent" as const },
+      executionDelivery: { kind: "message_text" as const },
       id: sourceRunId,
       threadId: sourceThreadId,
       ordinal: 1,
@@ -935,6 +941,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           runId,
           occurredAt: now,
           payload: {
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: runId,
             threadId,
             ordinal: 1,
@@ -1169,6 +1178,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ) VALUES (
             ${runId}, ${threadId}, ${ordinal}, 'codex', NULL, 'completed', ${nowIso}, ${nowIso},
             ${encodeUnknownJsonString({
+              executionScope: { kind: "ordinary" as const },
+              executionCause: { kind: "independent" as const },
+              executionDelivery: { kind: "message_text" as const },
               id: runId,
               threadId,
               ordinal,
@@ -1348,6 +1360,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ) VALUES (
           ${hiddenRunId}, ${threadId}, 1001, 'codex', NULL, 'rolled_back', ${nowIso}, ${nowIso},
           ${encodeUnknownJsonString({
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: hiddenRunId,
             threadId,
             ordinal: 1001,
@@ -1439,6 +1454,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ) VALUES (
           ${cancelledRunId}, ${threadId}, 1002, 'codex', NULL, 'cancelled', ${nowIso}, ${nowIso},
           ${encodeUnknownJsonString({
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: cancelledRunId,
             threadId,
             ordinal: 1002,
@@ -1591,6 +1609,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           ${interruptRunId}, ${threadId}, 1003, 'codex', 'provider-thread:interrupt', 'completed',
           ${nowIso}, ${nowIso},
           ${encodeUnknownJsonString({
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: interruptRunId,
             threadId,
             ordinal: 1003,
@@ -2224,6 +2245,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         deletedAt: null,
       };
       const run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId,
         ordinal: 1,
@@ -2345,6 +2369,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const runId = RunId.make("run:projection-shell-interruptible");
       const rootNodeId = NodeId.make("node:projection-shell-interruptible");
       const run = {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId,
         ordinal: 1,
@@ -2628,6 +2655,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         providerInstanceId,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId: runningThreadId,
           ordinal: 1,
@@ -3343,6 +3373,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         providerInstanceId,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,
@@ -3478,6 +3511,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           threadId,
           occurredAt: now,
           payload: {
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: runId,
             threadId,
             ordinal: 1,
@@ -3841,6 +3877,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: sourceRunId,
           threadId: sourceThreadId,
           ordinal: 1,
@@ -3989,6 +4028,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,
@@ -4243,6 +4285,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,
@@ -4421,6 +4466,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           driver,
           occurredAt: now,
           payload: {
+            executionScope: { kind: "ordinary" as const },
+            executionCause: { kind: "independent" as const },
+            executionDelivery: { kind: "message_text" as const },
             id: runId,
             threadId: sourceThreadId,
             ordinal,
@@ -4520,6 +4568,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: sourceRun2Id,
           threadId: sourceThreadId,
           ordinal: 2,
@@ -4601,6 +4652,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: sourceRun3Id,
           threadId: sourceThreadId,
           ordinal: 4,
@@ -4701,6 +4755,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: emptyBoundaryRunId,
           threadId: sourceThreadId,
           ordinal: 3,
@@ -4753,6 +4810,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: targetRunId,
           threadId: targetThreadId,
           ordinal: 1,
@@ -5076,6 +5136,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         driver,
         occurredAt: now,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: emptyMiddleRunId,
           threadId: emptyMiddleThreadId,
           ordinal: 1,
@@ -5256,6 +5319,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         providerInstanceId,
         occurredAt: at,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,
@@ -5397,6 +5463,9 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         providerInstanceId,
         occurredAt: completedAt,
         payload: {
+          executionScope: { kind: "ordinary" as const },
+          executionCause: { kind: "independent" as const },
+          executionDelivery: { kind: "message_text" as const },
           id: runId,
           threadId,
           ordinal: 1,

@@ -166,6 +166,13 @@ export function subagentResultForRun(
   readonly messageId: OrchestrationV2ConversationMessage["id"] | null;
   readonly turnItemId: OrchestrationV2TurnItem["id"] | null;
 } {
+  const messageOrdinals = new Map(
+    projection.turnItems.flatMap((item) =>
+      item.runId === run.id && item.type === "assistant_message"
+        ? [[item.messageId, item.ordinal] as const]
+        : [],
+    ),
+  );
   const message =
     projection.messages
       .filter(
@@ -176,7 +183,8 @@ export function subagentResultForRun(
       )
       .toSorted(
         (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+          (messageOrdinals.get(right.id) ?? -1) - (messageOrdinals.get(left.id) ?? -1),
       )[0] ?? null;
   const turnItem =
     projection.turnItems

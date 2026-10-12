@@ -11,7 +11,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
-import { swarmRunAllowed } from "./SwarmAdmission.ts";
+import { admitPersistedWork } from "./SwarmExecutionPolicy.ts";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { type RunId } from "@t3tools/contracts";
@@ -222,7 +222,7 @@ it.effect("r2 admission reads current recipient availability and checks the subm
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const recipient = yield* orchestrator.getThreadProjection(group.members[0]!.threadId);
     const run = recipient.runs[0]!;
-    assert.isTrue(yield* swarmRunAllowed(store, recipient.thread, run, recipient.thread));
+    assert.isTrue(yield* admitPersistedWork(store, recipient.thread, run, recipient.thread));
     const now = yield* DateTime.now;
     yield* store.apply({
       id: EventId.make("r2-current-recipient-unavailable"),
@@ -231,7 +231,7 @@ it.effect("r2 admission reads current recipient availability and checks the subm
       occurredAt: now,
       payload: { ...recipient.thread, archivedAt: now },
     });
-    assert.isFalse(yield* swarmRunAllowed(store, recipient.thread, run, recipient.thread));
+    assert.isFalse(yield* admitPersistedWork(store, recipient.thread, run, recipient.thread));
     yield* store.apply({
       id: EventId.make("r2-current-recipient-low"),
       type: "thread.metadata-updated",
@@ -239,9 +239,9 @@ it.effect("r2 admission reads current recipient availability and checks the subm
       occurredAt: now,
       payload: { ...recipient.thread, runtimeMode: "approval-required", interactionMode: "plan" },
     });
-    assert.isFalse(yield* swarmRunAllowed(store, recipient.thread, run, recipient.thread));
+    assert.isFalse(yield* admitPersistedWork(store, recipient.thread, run, recipient.thread));
     assert.isTrue(
-      yield* swarmRunAllowed(store, recipient.thread, run, {
+      yield* admitPersistedWork(store, recipient.thread, run, {
         runtimeMode: "approval-required",
         interactionMode: "plan",
       }),
@@ -267,14 +267,16 @@ it.effect(
       yield* peer(group, 0, 1, "lowered");
       const b = yield* orchestrator.getThreadProjection(group.members[1]!.threadId);
       const queued = b.runs.at(-1)!;
-      assert.equal(queued.swarmPeerDelivery?.runtimeMode, "approval-required");
+      assert.equal(queued.executionScope.kind, "swarm");
+      if (queued.executionScope.kind === "swarm")
+        assert.equal(queued.executionScope.submissionCeiling.runtimeMode, "approval-required");
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("raise-b"),
         threadId: b.thread.id,
         runtimeMode: "full-access",
       });
-      assert.equal(yield* swarmRunAllowed(store, b.thread, queued), false);
+      assert.equal(yield* admitPersistedWork(store, b.thread, queued), false);
     }).pipe(Effect.provide(layerTest)),
 );
 
@@ -293,7 +295,10 @@ it.effect(
       });
       const { group, command } = yield* create("low-initial", "approval-required");
       const child = yield* orchestrator.getThreadProjection(group.members[0]!.threadId);
-      assert.equal(child.runs[0]?.swarmRunAdmission?.runtimeMode, "approval-required");
+      const initialScope = child.runs[0]!.executionScope;
+      assert.equal(initialScope.kind, "swarm");
+      if (initialScope.kind === "swarm")
+        assert.equal(initialScope.submissionCeiling.runtimeMode, "approval-required");
       yield* orchestrator.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("initial-raised-owner"),
@@ -306,7 +311,7 @@ it.effect(
         threadId: child.thread.id,
         runtimeMode: "full-access",
       });
-      assert.equal(yield* swarmRunAllowed(store, child.thread, child.runs[0]!), false);
+      assert.equal(yield* admitPersistedWork(store, child.thread, child.runs[0]!), false);
       assert.isTrue(
         Exit.isFailure(
           yield* Effect.exit(
@@ -345,7 +350,7 @@ it.effect(
         const sink = yield* EventSink.EventSinkV2;
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         const sql = yield* SqlClient.SqlClient;
-        let accepted = 0;
+        let accepted = 1;
         const observer = yield* sink.stream({ eventType: "provider-turn.updated" }).pipe(
           Stream.runForEach((stored) =>
             Effect.gen(function* () {
@@ -464,7 +469,7 @@ it.effect(
           dispatchMode: { type: "start_immediately" },
         });
         const acceptedHuman = (yield* orchestrator.getThreadProjection(target)).runs.at(-1)!;
-        assert.equal(acceptedHuman.swarmId, undefined);
+        assert.deepEqual(acceptedHuman.executionScope, { kind: "ordinary" });
         yield* sql`UPDATE orchestration_v2_effect_outbox SET available_at = '2000-01-01T00:00:00.000Z' WHERE command_id = ${stopCommandId}`;
         yield* worker.drain(30);
         const surviving = (yield* orchestrator.getThreadProjection(target)).runs.find(

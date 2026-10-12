@@ -937,6 +937,13 @@ export const layer: Layer.Layer<
           const terminalEvent = yield* Ref.make<ProviderTerminalEvent | null>(null);
           const latestTurnItemOrdinal = yield* Ref.make(input.providerTurnOrdinal * 100);
           const latestProviderThread = yield* Ref.make(input.providerThread);
+          const latestAttempt = yield* Ref.make(input.attempt);
+          const writeCurrentFinal = (
+            final: Omit<Parameters<typeof writeFinalRunEvents>[0], "attempt">,
+          ) =>
+            Ref.get(latestAttempt).pipe(
+              Effect.flatMap((attempt) => writeFinalRunEvents({ ...final, attempt })),
+            );
           const routeIdentity: ProviderEventRouteIdentity = {
             threadId: input.run.threadId,
             runId: input.run.id,
@@ -992,12 +999,11 @@ export const layer: Layer.Layer<
               }
               const providerThread = yield* Ref.get(latestProviderThread);
               const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-              yield* writeFinalRunEvents({
+              yield* writeCurrentFinal({
                 run: input.run,
                 rootNode: input.rootNode,
                 checkpointScope: input.checkpointScope,
                 providerThread,
-                attempt: input.attempt,
                 ...(input.shouldFinalizeRun === undefined
                   ? {}
                   : {
@@ -1284,6 +1290,19 @@ export const layer: Layer.Layer<
                   });
                   storedEventCount = storedEvents.length;
                   if (
+                    storedEventCount > 0 &&
+                    event.type === "provider_turn.updated" &&
+                    event.providerTurn.runAttemptId === input.attempt.id
+                  ) {
+                    yield* Ref.update(latestAttempt, (attempt) => ({
+                      ...attempt,
+                      providerTurnId: event.providerTurn.id,
+                      ...(event.providerTurn.nativeAcceptance === undefined
+                        ? {}
+                        : { nativeAcceptance: event.providerTurn.nativeAcceptance }),
+                    }));
+                  }
+                  if (
                     providerAccepted !== undefined &&
                     storedEventCount > 0 &&
                     event.type === "provider_turn.updated" &&
@@ -1350,12 +1369,11 @@ export const layer: Layer.Layer<
                                 Effect.flatMap((latestItemOrdinal) =>
                                   Ref.get(openRunOwnedSubagents).pipe(
                                     Effect.flatMap((openSubagents) =>
-                                      writeFinalRunEvents({
+                                      writeCurrentFinal({
                                         run: input.run,
                                         rootNode: input.rootNode,
                                         checkpointScope: input.checkpointScope,
                                         providerThread,
-                                        attempt: input.attempt,
                                         // The failure may be the ownership
                                         // read itself, so check in the write.
                                         writeIfRunCurrent: {
@@ -1456,6 +1474,9 @@ export const layer: Layer.Layer<
             attemptId: input.attemptId,
             rootNodeId: input.rootNode.id,
             providerThread: input.providerThread,
+            executionScope: input.run.executionScope,
+            executionCause: input.run.executionCause,
+            executionDelivery: input.run.executionDelivery,
             message: {
               ...input.message,
               text: formatPeerMessage(input.message.text, input.message.swarmPeerDelivery),
@@ -1481,7 +1502,42 @@ export const layer: Layer.Layer<
                 }),
               ))
             : input.session.startTurn(turnInput);
-          const accepted = yield* Effect.andThen(shouldStart, startTurn).pipe(
+          const submit = Effect.gen(function* () {
+            yield* shouldStart;
+            const attempt = {
+              ...(yield* Ref.get(latestAttempt)),
+              submittedPolicy: input.runtimePolicy,
+              submissionProviderSessionId: input.providerSessionId,
+            };
+            const now = yield* DateTime.now;
+            const stored = yield* eventSink.writeIfRunCurrent({
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              activeAttemptId: input.attemptId,
+              expectedStatus: "running",
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                  type: "run-attempt.updated",
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  occurredAt: now,
+                  payload: attempt,
+                },
+              ],
+            });
+            if (stored.storedEvents.length === 0)
+              return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
+                driver: input.session.driver,
+                threadId: input.run.threadId,
+                providerThreadId: input.providerThread.id,
+                runId: input.run.id,
+                cause: "The exact attempt was superseded before submission.",
+              });
+            yield* Ref.set(latestAttempt, attempt);
+            return yield* startTurn;
+          });
+          const accepted = yield* submit.pipe(
             Effect.as(true),
             Effect.catchCause((cause) =>
               Effect.logError("orchestration V2 provider turn start failed", {
@@ -1495,12 +1551,11 @@ export const layer: Layer.Layer<
                     Effect.flatMap((latestItemOrdinal) =>
                       Ref.get(openRunOwnedSubagents).pipe(
                         Effect.flatMap((openSubagents) =>
-                          writeFinalRunEvents({
+                          writeCurrentFinal({
                             run: input.run,
                             rootNode: input.rootNode,
                             checkpointScope: input.checkpointScope,
                             providerThread,
-                            attempt: input.attempt,
                             // Checked in the write transaction, not by another
                             // read that can fail like the one before the start.
                             writeIfRunCurrent: {

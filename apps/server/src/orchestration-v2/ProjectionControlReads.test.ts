@@ -1,3 +1,4 @@
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -97,6 +98,9 @@ function fixtureEvents(now: DateTime.Utc): ReadonlyArray<OrchestrationV2DomainEv
       id: EventId.make("control:run"),
       type: "run.created",
       payload: {
+        executionScope: { kind: "ordinary" as const },
+        executionCause: { kind: "independent" as const },
+        executionDelivery: { kind: "message_text" as const },
         id: runId,
         threadId,
         ordinal: 1,
@@ -345,9 +349,10 @@ it.effect.each(storageCases)(
         assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
       }).pipe(
         Effect.provide(
-          Layer.merge(ProviderTurnControlService.layer, RuntimeRequestService.layer).pipe(
-            Layer.provide(layerSessions),
-          ),
+          Layer.merge(
+            ProviderTurnControlService.layer.pipe(Layer.provide(ThreadCommandExecutor.layer)),
+            RuntimeRequestService.layer,
+          ).pipe(Layer.provide(layerSessions)),
         ),
       );
     }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistence.layerMemory))),
