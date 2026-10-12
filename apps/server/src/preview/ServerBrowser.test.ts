@@ -1,4 +1,6 @@
 import * as NodeEvents from "node:events";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- fake Playwright download callbacks use Promise-based filesystem I/O.
+import * as NodeFSP from "node:fs/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -16,6 +18,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -785,6 +788,7 @@ it.live("a tab opened to a file the browser cannot show reports the file to down
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {},
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -830,6 +834,7 @@ it.live("a file a blank tab opened is offered to download if the tab moves on wh
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {},
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -873,6 +878,7 @@ it.live("a download from a superseded navigation leaves the newer navigation loa
       const written = Promise.withResolvers<void>();
       page.emit("download", {
         failure: async () => null,
+        delete: async () => {},
         saveAs: (path: string) => {
           Queue.offerUnsafe(saved, path);
           return written.promise;
@@ -1043,24 +1049,28 @@ it.live("a page download is saved, offered to the controller, and listed for the
       const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
       yield* viewer.input({ type: "takeControl" });
       yield* Queue.clear(viewer.output);
-      // Stands in for Chromium, which writes the file itself.
-      const saved = yield* Queue.unbounded<string>();
-      const written = Promise.withResolvers<void>();
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const sourceDir = yield* fs.makeTempDirectoryScoped();
+      const source = pathService.join(sourceDir, "original.csv");
+      yield* fs.writeFileString(source, "a,b");
+      const deleted = Promise.withResolvers<void>();
+      const deleteOriginal = vi.fn(async () => {
+        await NodeFSP.rm(source);
+        deleted.resolve();
+      });
       page.emit("download", {
         failure: async () => null,
-        saveAs: (path: string) => {
-          Queue.offerUnsafe(saved, path);
-          return written.promise;
-        },
+        delete: deleteOriginal,
+        saveAs: (path: string) => NodeFSP.copyFile(source, path),
         suggestedFilename: () => "report.csv",
         url: () => "blob:http://localhost:5173/1",
       });
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Queue.take(saved);
-      yield* fs.writeFileString(path, "a,b");
-      written.resolve();
       let offered = yield* Queue.take(viewer.output);
       while (offered._tag !== "download") offered = yield* Queue.take(viewer.output);
+      expect(deleteOriginal).toHaveBeenCalledOnce();
+      yield* Effect.promise(() => deleted.promise);
+      expect(yield* fs.exists(source)).toBe(false);
       expect(offered).toMatchObject({ _tag: "download", fileName: "report.csv", sizeBytes: 3 });
       const file = yield* browser.openDownload({
         threadId: scope.thread.threadId,
@@ -1068,6 +1078,7 @@ it.live("a page download is saved, offered to the controller, and listed for the
         downloadId: offered.id,
       });
       expect(Option.isSome(file) && file.value.fileName).toBe("report.csv");
+      if (Option.isSome(file)) expect(yield* fs.readFileString(file.value.path)).toBe("a,b");
       const status = yield* broker.invoke<PreviewAutomationStatus>({
         scope,
         tabId,
@@ -1088,6 +1099,157 @@ it.live("a page download is saved, offered to the controller, and listed for the
       ).toBe(true);
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live("a file navigation settles before artifact deletion can start another navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const events = yield* manager.subscribeEvents;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      const page = contexts[0]!.page;
+      const url = "https://example.com/report.csv";
+      page.emit("requestfailed", {
+        url: () => url,
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+        failure: () => ({ errorText: "net::ERR_ABORTED" }),
+      });
+      const saved = yield* Queue.unbounded<string>();
+      const written = Promise.withResolvers<void>();
+      const deleting = Promise.withResolvers<void>();
+      page.emit("download", {
+        failure: async () => null,
+        saveAs: (path: string) => {
+          Queue.offerUnsafe(saved, path);
+          return written.promise;
+        },
+        delete: async () => {
+          page.emit("request", {
+            url: () => "https://example.com/next",
+            method: () => "GET",
+            isNavigationRequest: () => true,
+            frame: () => page,
+          });
+          deleting.resolve();
+        },
+        suggestedFilename: () => "report.csv",
+        url: () => url,
+      });
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(yield* Queue.take(saved), "a,b");
+      written.resolve();
+      yield* Effect.promise(() => deleting.promise);
+      // The newer navigation's status follows any status settled before deletion.
+      const received = [];
+      let event;
+      do {
+        event = yield* PubSub.take(events);
+        received.push(event);
+      } while (
+        event.type !== "navigated" ||
+        event.snapshot.navStatus._tag !== "Loading" ||
+        event.snapshot.navStatus.url !== "https://example.com/next"
+      );
+      expect(received).toContainEqual(
+        expect.objectContaining({
+          type: "failed",
+          download: { id: expect.any(String), fileName: "report.csv" },
+        }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
+it.live.each(["saved", "oversized", "save failed", "delete failed"] as const)(
+  "a %s download releases its original without losing the saved copy or status",
+  (outcome) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const browser = yield* ServerBrowser.ServerBrowser;
+        const broker = yield* Broker.PreviewAutomationBroker;
+        const manager = yield* Manager.PreviewManager;
+        const events = yield* manager.subscribeEvents;
+        yield* Effect.yieldNow;
+        const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+        const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+        const page = contexts[0]!.page;
+        const fs = yield* FileSystem.FileSystem;
+        const sourceDir = yield* fs.makeTempDirectoryScoped();
+        const pathService = yield* Path.Path;
+        const source = pathService.join(sourceDir, "original");
+        yield* fs.writeFileString(source, "a,b");
+        const url = "https://example.com/report.csv";
+        page.emit("requestfailed", {
+          url: () => url,
+          method: () => "GET",
+          isNavigationRequest: () => true,
+          frame: () => page,
+          failure: () => ({ errorText: "net::ERR_ABORTED" }),
+        });
+        let savedPath = "";
+        const deleted = Promise.withResolvers<void>();
+        const deleteOriginal = vi.fn(async () => {
+          try {
+            if (outcome === "delete failed") throw new Error("context closed");
+            await NodeFSP.rm(source);
+          } finally {
+            deleted.resolve();
+          }
+        });
+        page.emit("download", {
+          failure: async () => null,
+          saveAs: async (path: string) => {
+            savedPath = path;
+            await NodeFSP.copyFile(source, path);
+            if (outcome === "oversized") {
+              // Sparse artifacts exercise the real size limit without allocating 1 GiB.
+              await NodeFSP.truncate(source, 1024 * 1024 * 1024 + 1);
+              await NodeFSP.truncate(path, 1024 * 1024 * 1024 + 1);
+            }
+            if (outcome === "save failed") throw new Error("save interrupted");
+          },
+          delete: deleteOriginal,
+          suggestedFilename: () => "report.csv",
+          url: () => url,
+        });
+        // Wait for both navigation status and artifact cleanup without polling.
+        let settled = yield* PubSub.take(events);
+        while (settled.type !== "failed") settled = yield* PubSub.take(events);
+        expect(deleteOriginal).toHaveBeenCalledOnce();
+        yield* Effect.promise(() => deleted.promise);
+        const retainedBytes = (yield* fs.exists(source))
+          ? Number((yield* fs.stat(source)).size)
+          : 0;
+        yield* Effect.logInfo("download artifact measurement", {
+          outcome,
+          originalBytes: retainedBytes,
+        });
+        expect(retainedBytes).toBe(outcome === "delete failed" ? 3 : 0);
+        const accepted = outcome === "saved" || outcome === "delete failed";
+        expect(yield* fs.exists(savedPath)).toBe(accepted);
+        const status = yield* broker.invoke<PreviewAutomationStatus>({
+          scope,
+          tabId: PreviewTabId.make(opened.tabId),
+          operation: "status",
+          input: {},
+        });
+        expect(status.downloads).toHaveLength(accepted ? 1 : 0);
+        if (accepted) {
+          expect(settled).toMatchObject({ download: { fileName: "report.csv" } });
+          expect(yield* fs.readFileString(savedPath)).toBe("a,b");
+        } else {
+          expect(settled).not.toHaveProperty("download");
+        }
+        expect((yield* Queue.clear(viewer.output)).some((item) => item._tag === "download")).toBe(
+          false,
+        );
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("a page's file picker goes to the controller and takes its uploaded files", () =>
