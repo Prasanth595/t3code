@@ -378,6 +378,11 @@ List and read results report `snoozed` and `snoozedUntil`, and
 client's `effectiveSnoozed`, so agents and the sidebar agree: a snoozed thread
 wakes early when it has a pending request, fails, or completes after the snooze.
 
+Both thread read and list return `goal` from the active provider conversation, or
+`null` when that conversation reports none. Thread read includes the full reported
+text. List bounds objective and evaluator text and sets `goalTextTruncated` when
+clipped; use thread read for the full goal. Older servers can omit these fields.
+
 ### `t3_thread_update`
 
 Updates metadata for the calling thread or any other thread in the environment.
