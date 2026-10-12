@@ -329,7 +329,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       onClick={() => handleOptionSelection(activeQuestion.id, optionValue)}
                       className="absolute inset-0 rounded-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25"
                     />
-                    <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2">
+                    <div className="pointer-events-none relative flex min-w-0 flex-1 items-center gap-2 [&_[data-slot^=scroll-area-]]:pointer-events-auto [&_pre]:pointer-events-auto [&_.overflow-x-auto]:pointer-events-auto">
                       {content}
                     </div>
                   </div>
