@@ -9078,6 +9078,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           );
           assert.equal(stopCalls, 0);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          // A new Stop before continuation replay must reach the resumed native task,
+          // not return its prior terminal outcome or discard the buffered resume.
+          const stopping = yield* harness.runtime.stopSubagent!({
+            providerThread: harness.providerThread,
+            nativeTaskId: "idle-outcome",
+          }).pipe(Effect.exit, Effect.forkScoped);
+          yield* TestClock.adjust("2 seconds");
+          assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
+          assert.equal(stopCalls, 1);
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-idle-resume"),
+              providerTurnOrdinal: 2,
+              text: "Continue work.",
+              attachments: [],
+              messageCreatedBy: "agent",
+              messageCreationSource: "provider",
+            }),
+          );
+          let reopened = yield* Queue.take(harness.subagentReceipts);
+          while (reopened.subagent.status !== "running") {
+            reopened = yield* Queue.take(harness.subagentReceipts);
+          }
+          assert.equal(reopened.subagent.nativeTaskRef?.nativeId, "idle-outcome");
+          assert.isNull(reopened.subagent.completedAt);
         }).pipe(
           Effect.provide(
             Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

@@ -4819,12 +4819,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const discardBufferedSubagentStarts = (
           nativeThreadId: string,
           taskId: string,
-          outcome?: SDKMessage,
+          outcome: SDKMessage,
         ) =>
           Ref.update(wakeBuffers, (current) => {
             const entry = current.get(nativeThreadId);
             if (entry === undefined) return current;
-            const outcomeIndex = outcome === undefined ? -1 : entry.messages.indexOf(outcome);
+            const outcomeIndex = entry.messages.indexOf(outcome);
             const messages = entry.messages.filter(
               (buffered, index) =>
                 !(
@@ -9069,11 +9069,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             )
               return;
             const confirmed = confirmedSubagentOutcome(subagent.task);
-            if (confirmed !== undefined) {
-              if (nativeThreadId != null)
-                yield* discardBufferedSubagentStarts(nativeThreadId, input.nativeTaskId);
-              return confirmed;
-            }
+            if (confirmed !== undefined) return confirmed;
             if (
               existing === null ||
               existing.nativeThreadId !== nativeThreadId ||
