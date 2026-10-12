@@ -19,7 +19,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.
-- **VPS deploy:** the VPS follows fork main and switches only when no agent runs.
+- **VPS deploy:** the VPS follows fork main. It skips the build for docs-only commits, builds once per burst of merges at low priority, and switches only when no agent runs.
 
 **Agents**
 
