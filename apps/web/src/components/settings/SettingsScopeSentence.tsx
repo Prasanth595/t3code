@@ -24,6 +24,7 @@ import {
   ALL_PROJECTS_VALUE,
   environmentAxisValue,
   projectAxisValue,
+  projectScopeMenuEntries,
   selectEnvironmentAxis,
   selectProjectAxis,
   settingsScopeEnvironmentLabel,
@@ -189,8 +190,9 @@ function EnvironmentScopeMenu({
   );
 }
 
-function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
+function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
   const selected = groups.find((group) => group.projectKey === value.project);
+  const entries = projectScopeMenuEntries(groups, environments, value.machine);
   return (
     <ScopeMenu
       ariaLabel="Project scope"
@@ -210,11 +212,27 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
           </span>
         </MenuRadioItem>
         <MenuSeparator />
-        {groups.map((group) => (
+        {entries.map(({ group, environments: groupEnvironments, detail }) => (
           <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />
-              <span className="min-w-0 flex-1 truncate">{group.displayName}</span>
+              <span className="min-w-0 flex-1 truncate">
+                {group.displayName}
+                {detail ? <span className="text-muted-foreground"> · {detail}</span> : null}
+              </span>
+              {groupEnvironments.map((environment) => (
+                <span
+                  key={environment.environmentId}
+                  className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
+                >
+                  <EnvironmentMachineIcon
+                    aria-hidden
+                    kind={resolveEnvironmentMachineKind(environment.serverConfig)}
+                    className="size-3"
+                  />
+                  {settingsScopeEnvironmentLabel(environment, environments)}
+                </span>
+              ))}
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>

@@ -1,3 +1,4 @@
+import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
 import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
 
@@ -52,6 +53,65 @@ export function selectProjectAxis(search: SettingsScopeSearch, value: string): S
   if (value !== ALL_PROJECTS_VALUE) next.project = value;
   if (search.machine) next.machine = search.machine;
   return next;
+}
+
+export interface ProjectScopeMenuEntry<E extends ScopeEnvironment> {
+  readonly group: SidebarProjectSnapshot;
+  /** Where the project's checkouts live; empty when the environment axis already says it. */
+  readonly environments: readonly E[];
+  /** A folder hint, only for same-name projects the environments cannot tell apart. */
+  readonly detail: string | null;
+}
+
+function folderTail(workspaceRoot: string): string {
+  return workspaceRoot
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .slice(-2)
+    .join("/");
+}
+
+/**
+ * The project picker's rows. A chosen environment lists only projects with a
+ * checkout there; otherwise each row names the environments its checkouts are on.
+ */
+export function projectScopeMenuEntries<E extends ScopeEnvironment>(
+  groups: readonly SidebarProjectSnapshot[],
+  environments: readonly E[],
+  machine: string | undefined,
+): ProjectScopeMenuEntry<E>[] {
+  const visible =
+    machine === undefined
+      ? groups
+      : groups.filter((group) =>
+          group.memberProjects.some((member) => member.environmentId === machine),
+        );
+  const rows = visible.map((group) => {
+    const memberEnvironmentIds = new Set(group.memberProjects.map((m) => m.environmentId));
+    const groupEnvironments =
+      machine === undefined && environments.length > 1
+        ? environments.filter((environment) => memberEnvironmentIds.has(environment.environmentId))
+        : [];
+    const shownMember =
+      group.memberProjects.find((member) => member.environmentId === machine) ??
+      group.memberProjects[0];
+    return {
+      group,
+      environments: groupEnvironments,
+      // Rows look alike when their name and shown environments match.
+      sameNameKey: `${group.displayName}\u0000${groupEnvironments.map((e) => e.environmentId).join(",")}`,
+      workspaceRoot: shownMember?.workspaceRoot ?? group.workspaceRoot,
+    };
+  });
+  const sameNameCounts = new Map<string, number>();
+  for (const row of rows) {
+    sameNameCounts.set(row.sameNameKey, (sameNameCounts.get(row.sameNameKey) ?? 0) + 1);
+  }
+  return rows.map((row) => ({
+    group: row.group,
+    environments: row.environments,
+    detail: (sameNameCounts.get(row.sameNameKey) ?? 0) > 1 ? folderTail(row.workspaceRoot) : null,
+  }));
 }
 
 /** Provider configuration always belongs to one environment, including project scopes. */
