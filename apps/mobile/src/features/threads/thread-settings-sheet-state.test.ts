@@ -4,19 +4,15 @@ import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contr
 
 import type { ModelOption } from "../../lib/modelOptions";
 import {
-  resolvePendingModelForCommit,
+  canCommitPendingModel,
   favoritesFirst,
-  getModelDaybreakToggleState,
-  modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
-  toggleModelFavorite,
 } from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection> = [],
-  programs?: ReadonlyArray<string>,
 ): ModelOption {
   return {
     key: `codex:${model}`,
@@ -27,19 +23,7 @@ function modelOption(
     providerDriver: "codex",
     isDefault: false,
     isLegacy: false,
-    capabilities: programs
-      ? {
-          optionDescriptors: [
-            {
-              id: "cyberAccessProgram",
-              label: "Daybreak",
-              type: "select",
-              options: ["standard", ...programs].map((id) => ({ id, label: id })),
-              currentValue: "standard",
-            },
-          ],
-        }
-      : null,
+    capabilities: null,
     selection: {
       instanceId: ProviderInstanceId.make("codex"),
       model,
@@ -70,23 +54,6 @@ describe("thread settings sheet state", () => {
       "third",
       "fourth",
     ]);
-  });
-
-  it("adds and removes favorites for one provider instance", () => {
-    const codexModel = modelOption("shared");
-    const otherProvider = ProviderInstanceId.make("codex_personal");
-    const personalModel = {
-      ...codexModel,
-      key: modelFavoriteKey(otherProvider, "shared"),
-      selection: { ...codexModel.selection, instanceId: otherProvider },
-    };
-    const favorites = toggleModelFavorite([], codexModel);
-
-    expect(toggleModelFavorite(favorites, personalModel)).toEqual([
-      { provider: ProviderInstanceId.make("codex"), model: "shared" },
-      { provider: otherProvider, model: "shared" },
-    ]);
-    expect(toggleModelFavorite(favorites, codexModel)).toEqual([]);
   });
 
   it("matches visible model and provider terms", () => {
@@ -134,9 +101,9 @@ describe("thread settings sheet state", () => {
     ).toBeNull();
   });
 
-  it("refreshes model capabilities while preserving staged options on another press", () => {
+  it("refreshes catalog capabilities without discarding staged options", () => {
     const pending = modelOption("gpt-next", [{ id: "effort", value: "high" }]);
-    const refreshed = modelOption("gpt-next", [], ["daybreakBlue"]);
+    const refreshed = { ...modelOption("gpt-next"), capabilities: { optionDescriptors: [] } };
 
     expect(
       pendingModelAfterPress({
@@ -156,98 +123,31 @@ describe("thread settings sheet state", () => {
         pressed,
         pressedIsApplied: false,
       }),
-    ).toEqual(pressed);
+    ).toBe(pressed);
   });
 
-  it("applies Daybreak when a model is chosen while preserving other options", () => {
-    const reasoning = [{ id: "reasoningEffort", value: "high" }];
-    const programs = ["daybreakBlue", "daybreakRed"];
-    const redOptions = [...reasoning, { id: "cyberAccessProgram", value: "daybreakRed" }];
-    const model = modelOption("gpt-test", reasoning, programs);
-    for (const program of ["daybreakBlue", "daybreakRed", "standard"]) {
-      const pending = pendingModelAfterPress({
-        current: null,
-        pressed: model,
-        pressedIsApplied: true,
-        daybreakProgram: program,
-      });
-      expect(pending?.selection.options).toEqual([
-        { id: "reasoningEffort", value: "high" },
-        { id: "cyberAccessProgram", value: program },
-      ]);
-      expect(
-        pendingModelAfterPress({ current: pending, pressed: model, pressedIsApplied: false })
-          ?.selection.options,
-      ).toEqual(pending?.selection.options);
-    }
-    expect(model.selection.options).toEqual([{ id: "reasoningEffort", value: "high" }]);
-    expect(getModelDaybreakToggleState({ ...model, providerDriver: "claudeAgent" })).toBeNull();
-    expect(getModelDaybreakToggleState({ ...model, isUnavailable: true })).toBeNull();
-    const blueOnly = modelOption("gpt-test", reasoning, ["daybreakBlue"]);
-    const staged = modelOption("gpt-test", redOptions, programs);
+  it("cannot select a hidden model exposed only for visibility management", () => {
+    const pending = modelOption("gpt-next");
     expect(
-      pendingModelAfterPress({
-        current: staged,
-        pressed: modelOption("gpt-other"),
-        pressedIsApplied: false,
-        daybreakProgram: "daybreakRed",
-      }),
-    ).toBe(staged);
-    for (const pressed of [blueOnly, { ...model, capabilities: null }]) {
-      for (const daybreakProgram of [undefined, "daybreakRed"]) {
-        const cleaned = pendingModelAfterPress({
-          current: staged,
-          pressed,
-          pressedIsApplied: false,
-          daybreakProgram,
-        });
-        expect(cleaned).toEqual({ ...pressed, selection: model.selection });
-      }
-      expect(
-        pendingModelAfterPress({
-          current: null,
-          pressed: { ...pressed, selection: staged.selection },
-          pressedIsApplied: false,
-        }),
-      ).toEqual({ ...pressed, selection: model.selection });
-    }
+      canCommitPendingModel(pending, [
+        { providerKey: "codex", providerLabel: "Codex", models: [{ ...pending, isHidden: true }] },
+      ]),
+    ).toBe(false);
   });
 
   it("cannot save a staged model after sign-out removes it from the catalog", () => {
     const pending = modelOption("gemini-native");
     const group = { providerKey: "codex", providerLabel: "Codex", models: [pending] };
 
-    expect(resolvePendingModelForCommit(pending, [group])).toEqual(pending);
-    expect(resolvePendingModelForCommit(pending, [])).toBeNull();
+    expect(canCommitPendingModel(pending, [group])).toBe(true);
+    expect(canCommitPendingModel(pending, [])).toBe(false);
     expect(
-      resolvePendingModelForCommit(pending, [
+      canCommitPendingModel(pending, [
         {
           ...group,
           models: [{ ...pending, isUnavailable: true }],
         },
       ]),
-    ).toBeNull();
-  });
-
-  it("revalidates staged Daybreak access at Save without discarding other options", () => {
-    for (const reasoning of [[], [{ id: "reasoningEffort", value: "high" }]]) {
-      const options = [...reasoning, { id: "cyberAccessProgram", value: "daybreakBlue" }];
-      const pending = modelOption("gpt-test", options, ["daybreakBlue"]);
-      for (const programs of [["daybreakBlue"], ["daybreakRed"], [], undefined]) {
-        const refreshed = modelOption("gpt-test", [], programs);
-        expect(
-          resolvePendingModelForCommit(pending, [
-            { providerKey: "codex", providerLabel: "Codex", models: [refreshed] },
-          ]),
-        ).toEqual({
-          ...refreshed,
-          selection: {
-            ...pending.selection,
-            options: programs?.includes("daybreakBlue") ? options : reasoning,
-          },
-        });
-      }
-      expect(pending.selection.options).toEqual(options);
-    }
+    ).toBe(false);
   });
 });

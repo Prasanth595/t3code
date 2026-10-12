@@ -1,25 +1,8 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import type { ProviderInstanceId } from "@t3tools/contracts";
-import { getCodexDaybreakState, withCodexDaybreakProgram } from "@t3tools/shared/model";
-
-export type ModelFavorite = {
-  readonly provider: ProviderInstanceId;
-  readonly model: string;
-};
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
   return `${provider}:${model}`;
-}
-
-export function toggleModelFavorite(
-  favorites: ReadonlyArray<ModelFavorite>,
-  option: ModelOption,
-): ReadonlyArray<ModelFavorite> {
-  const provider = option.selection.instanceId;
-  const model = option.selection.model;
-  return favorites.some((favorite) => favorite.provider === provider && favorite.model === model)
-    ? favorites.filter((favorite) => favorite.provider !== provider || favorite.model !== model)
-    : [...favorites, { provider, model }];
 }
 
 /** Keep catalog order within each group when favorites move to the front. */
@@ -54,55 +37,30 @@ export function modelMatchesCatalogQuery(input: {
   ].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-/** Preserve staged options using current capabilities, dropping revoked Daybreak access. */
+/** Refresh catalog metadata on another tap without discarding staged options. */
 export function pendingModelAfterPress(input: {
   readonly current: ModelOption | null;
   readonly pressed: ModelOption;
   readonly pressedIsApplied: boolean;
-  readonly daybreakProgram?: string;
 }): ModelOption | null {
-  const daybreak = getModelDaybreakToggleState(input.pressed);
-  const program = daybreak ? input.daybreakProgram : undefined;
-  const previous =
-    input.current?.key === input.pressed.key ? input.current.selection : input.pressed.selection;
-  const selection = {
-    ...previous,
-    options: previous.options?.filter(
-      (option) =>
-        option.id !== "cyberAccessProgram" ||
-        option.value === "standard" ||
-        daybreak?.programs.some((program) => program === option.value),
-    ),
-  };
-  if (
-    input.daybreakProgram &&
-    input.daybreakProgram !== "standard" &&
-    !daybreak?.programs.some((program) => program === input.daybreakProgram)
-  )
-    return input.current?.key === input.pressed.key
-      ? { ...input.pressed, selection }
-      : input.current;
-  if (input.pressedIsApplied && program === undefined) return null;
-  return { ...input.pressed, selection: withCodexDaybreakProgram(selection, program) };
+  if (input.pressedIsApplied) {
+    return null;
+  }
+  return input.current?.key === input.pressed.key
+    ? { ...input.pressed, selection: input.current.selection }
+    : input.pressed;
 }
 
-export function getModelDaybreakToggleState(model: ModelOption) {
-  return model.providerDriver === "codex" && !model.isUnavailable && model.capabilities
-    ? getCodexDaybreakState(model.capabilities.optionDescriptors)
-    : null;
-}
-
-/** Refresh staged options against the catalog before saving; missing models cannot commit. */
-export function resolvePendingModelForCommit(
+/** A model can disappear while the picker is open. */
+export function canCommitPendingModel(
   pending: ModelOption,
   groups: ReadonlyArray<ProviderGroup>,
-) {
-  const model = groups
-    .flatMap((group) => group.models)
-    .find((model) => model.key === pending.key && !model.isUnavailable);
-  return model
-    ? pendingModelAfterPress({ current: pending, pressed: model, pressedIsApplied: false })
-    : null;
+): boolean {
+  return groups.some((group) =>
+    group.models.some(
+      (model) => model.key === pending.key && !model.isUnavailable && !model.isHidden,
+    ),
+  );
 }
 
 /**

@@ -1,52 +1,15 @@
 import { assert, it } from "@effect/vitest";
+import { CodexSettings } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  applyPreferredCodexDefaultModel,
+  makePendingCodexProvider,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
 
-it("advertises only approved Daybreak programs with Off as the default", () => {
-  const options = [
-    { id: "standard", label: "Off", isDefault: true },
-    { id: "daybreakBlue", label: "Blue" },
-    { id: "daybreakRed", label: "Red" },
-  ];
-  for (const [programs, supported] of [
-    [undefined, false],
-    [[], false],
-    [["standard"], false],
-    [["daybreakBlue"], false],
-    [["daybreakRed"], false],
-    [["standard", "daybreakBlue"], true],
-    [["standard", "daybreakRed"], true],
-    [["standard", "daybreakBlue", "daybreakRed"], true],
-  ] as const) {
-    const [descriptor] =
-      mapCodexModelCapabilities({
-        additionalSpeedTiers: [],
-        defaultReasoningEffort: "medium",
-        description: "Test",
-        displayName: "Test",
-        hidden: false,
-        id: "test",
-        isDefault: true,
-        model: "test",
-        supportedReasoningEfforts: [],
-        ...(programs === undefined ? {} : { availableAccessPrograms: { cyber: programs } }),
-      }).optionDescriptors ?? [];
-    assert.deepStrictEqual(
-      descriptor,
-      supported
-        ? {
-            id: "cyberAccessProgram",
-            label: "Daybreak",
-            type: "select",
-            options: options.filter(({ id }) => programs?.some((program) => program === id)),
-            currentValue: "standard",
-          }
-        : undefined,
-    );
-  }
-});
-
-it("maps current Codex model capability fields", () => {
+it.effect("maps Codex capabilities while keeping Daybreak out of custom models", () => {
   const capabilities = mapCodexModelCapabilities({
     additionalSpeedTiers: [],
     defaultReasoningEffort: "super-high",
@@ -56,6 +19,7 @@ it("maps current Codex model capability fields", () => {
     id: "gpt-test",
     isDefault: true,
     model: "gpt-test",
+    availableAccessPrograms: { cyber: ["daybreakRed"] },
     defaultServiceTier: "flex",
     serviceTiers: [
       {
@@ -105,7 +69,24 @@ it("maps current Codex model capability fields", () => {
       ],
       currentValue: "flex",
     },
+    {
+      id: "cyberAccessProgram",
+      label: "Daybreak",
+      type: "select",
+      options: [{ id: "daybreakRed", label: "Red" }],
+    },
   ]);
+
+  return makePendingCodexProvider(
+    Schema.decodeSync(CodexSettings)({ customModels: [{ slug: "custom", capabilities }] }),
+  ).pipe(
+    Effect.map((provider) =>
+      assert.deepStrictEqual(
+        provider.models[0]?.capabilities?.optionDescriptors,
+        capabilities.optionDescriptors?.slice(0, 2),
+      ),
+    ),
+  );
 });
 
 it("uses standard routing when the catalog has no default service tier", () => {

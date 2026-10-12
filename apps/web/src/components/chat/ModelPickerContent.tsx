@@ -1,22 +1,17 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
+  type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
-  type ModelSelection,
 } from "@t3tools/contracts";
-import {
-  createModelSelection,
-  CODEX_DAYBREAK_CHOICES,
-  getCodexDaybreakState,
-  getModelSelectionStringOptionValue,
-  resolveSelectableModel,
-  withCodexDaybreakProgram,
-} from "@t3tools/shared/model";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
+import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
+import { useNavigate } from "@tanstack/react-router";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { BadgeCheckIcon, ChevronRightIcon, LockKeyholeIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -43,12 +38,14 @@ import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
 } from "../../keybindings";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import {
+  useEnvironmentModelPreferences,
+  useToggleEnvironmentModelFavorite,
+} from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import {
   isProviderInstancePickerReady,
   isProviderInstancePickerVisible,
@@ -71,39 +68,7 @@ type ModelPickerItem = {
   continuationGroupKey?: string | undefined;
   isLegacy?: boolean | undefined;
   isUnavailable?: boolean | undefined;
-  daybreakPrograms?: ReadonlyArray<string> | undefined;
 };
-
-export function modelPickerDaybreakPrograms(
-  models: ReadonlyArray<Pick<ModelPickerItem, "instanceId" | "slug" | "daybreakPrograms">>,
-  selectedInstanceId: ProviderInstanceId | "favorites",
-  favorites: ReadonlySet<string>,
-  searching = false,
-) {
-  const contextual = models.filter((model) =>
-    selectedInstanceId === "favorites"
-      ? favorites.has(providerModelKey(model.instanceId, model.slug))
-      : model.instanceId === selectedInstanceId,
-  );
-  if (!contextual.some((model) => model.daybreakPrograms?.length)) return [];
-  return [
-    ...new Set((searching ? models : contextual).flatMap((model) => model.daybreakPrograms ?? [])),
-  ];
-}
-
-/** Attach the picker mode only when a model is chosen; changing the filter never edits a selection. */
-export function modelPickerSelection(
-  target: Pick<ModelPickerItem, "instanceId" | "slug" | "daybreakPrograms">,
-  current: ModelSelection | null | undefined,
-  program: string | undefined,
-) {
-  const selection =
-    current?.instanceId === target.instanceId && current.model === target.slug
-      ? current
-      : createModelSelection(target.instanceId, target.slug);
-  if (program && program !== "standard" && !target.daybreakPrograms?.includes(program)) return null;
-  return withCodexDaybreakProgram(selection, target.daybreakPrograms?.length ? program : null);
-}
 
 export function resolveModelPickerSelectedModel(input: {
   driverKind: ProviderDriverKind | undefined;
@@ -192,12 +157,12 @@ function ModelListSeparator() {
 }
 
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
+  environmentId: EnvironmentId | null;
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
-  onToggleModel?: (selection: ModelSelection) => void;
-  modelSelection?: ModelSelection | null | undefined;
+  onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   /**
    * When set, the picker is locked to the given driver kind — typically
    * because the user is editing a previously-sent message and can't change
@@ -225,7 +190,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   onRequestClose?: () => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
-  onInstanceModelChange: (selection: ModelSelection) => void;
+  onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const {
     keybindings: providedKeybindings,
@@ -242,7 +207,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const modelListRef = useRef<LegendListRef | null>(null);
   const pickerContentRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
-  const favorites = useClientSettings((s) => s.favorites ?? []);
+  const { favorites } = useEnvironmentModelPreferences(props.environmentId);
   const activeEntry = props.instanceEntries.find(
     (entry) => entry.instanceId === props.activeInstanceId,
   );
@@ -316,7 +281,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   );
   const serverKeybindings = useAtomValue(primaryServerKeybindingsAtom);
   const keybindings = providedKeybindings ?? serverKeybindings;
-  const updateSettings = useUpdateClientSettings();
+  const navigate = useNavigate();
+  const toggleFavorite = useToggleEnvironmentModelFavorite(props.environmentId);
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -364,19 +330,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Map(instanceEntries.map((entry) => [entry.instanceId, entry])),
     [instanceEntries],
   );
-  const [daybreakProgram, setDaybreakProgram] = useState<string>(
-    () =>
-      getCodexDaybreakState(
-        activeEntry?.driverKind === "codex"
-          ? activeEntry.models.find((model) => model.slug === activeModelSlug)?.capabilities
-              ?.optionDescriptors
-          : undefined,
-        props.modelSelection?.instanceId === props.activeInstanceId &&
-          props.modelSelection.model === activeModelSlug
-          ? getModelSelectionStringOptionValue(props.modelSelection, "cyberAccessProgram")
-          : undefined,
-      )?.program ?? "standard",
-  );
   const matchesLockedProvider = useCallback(
     (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
       if (props.lockedProvider === null) return true;
@@ -423,12 +376,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         // its models — stale options shouldn't appear in the picker.
         continue;
       }
-      const descriptorsBySlug =
-        entry.driverKind === "codex"
-          ? new Map(
-              entry.models.map(({ slug, capabilities }) => [slug, capabilities?.optionDescriptors]),
-            )
-          : null;
       for (const model of models) {
         if (
           !shouldIncludeModelPickerOption({
@@ -450,9 +397,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           ...(model.isUnavailable ? { isUnavailable: true } : {}),
           instanceId,
           driverKind: entry.driverKind,
-          daybreakPrograms: model.isUnavailable
-            ? undefined
-            : getCodexDaybreakState(descriptorsBySlug?.get(model.slug))?.programs,
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
           ...(entry.acpRegistryAgentId ? { acpRegistryAgentId: entry.acpRegistryAgentId } : {}),
@@ -465,18 +409,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     }
     return out;
   }, [modelOptionsByInstance, entryByInstanceId, props.activeInstanceId, activeModelSlug]);
-  const daybreakPrograms =
-    props.modelSelection === undefined
-      ? []
-      : modelPickerDaybreakPrograms(
-          flatModels.filter(matchesLockedProvider),
-          selectedInstanceId,
-          favoritesSet,
-          searchQuery.trim().length > 0,
-        );
-  const selectedDaybreakProgram = daybreakPrograms.includes(daybreakProgram)
-    ? daybreakProgram
-    : "standard";
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -516,10 +448,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
-    let result =
-      selectedDaybreakProgram !== "standard"
-        ? flatModels.filter((model) => model.daybreakPrograms?.includes(selectedDaybreakProgram))
-        : flatModels;
+    let result = flatModels;
 
     // Apply tokenized fuzzy search across the combined provider/model search fields.
     if (searchQuery.trim()) {
@@ -616,7 +545,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [
     favoritesSet,
     flatModels,
-    selectedDaybreakProgram,
     instanceOrder,
     matchesLockedProvider,
     props.lockedProvider,
@@ -668,6 +596,21 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )
       : [];
 
+  // Models the manifest announces that this provider's installed CLI is too
+  // old to run. Without this, a new model just seems missing until the user
+  // happens to update the CLI.
+  // A search spans every instance, so it can explain gated matches from any of them.
+  const updateRequiredNotices = (
+    isSearching
+      ? instanceEntries.filter(matchesLockedProvider)
+      : selectedEntry
+        ? [selectedEntry]
+        : []
+  ).flatMap((entry) => {
+    const notice = formatProviderUpdateRequiredNotice(entry.snapshot, searchQuery);
+    return notice ? [{ instanceId: entry.instanceId, notice }] : [];
+  });
+
   const toggleLegacySection = useCallback((instanceId: ProviderInstanceId) => {
     setExpandedLegacyInstances((expanded) => {
       const next = new Set(expanded);
@@ -698,21 +641,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       // normalization rules, so pass the driver kind here.
       const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
       if (resolvedModel) {
-        const selection = modelPickerSelection(
-          flatModels.find(
-            (model) => model.instanceId === instanceId && model.slug === resolvedModel,
-          ) ?? {
-            instanceId,
-            slug: resolvedModel,
-          },
-          props.modelSelection,
-          props.modelSelection === undefined ? undefined : selectedDaybreakProgram,
-        );
-        if (!selection) return;
         if (additive && onToggleModel) {
-          onToggleModel(selection);
+          onToggleModel(instanceId, resolvedModel);
         } else {
-          onInstanceModelChange(selection);
+          onInstanceModelChange(instanceId, resolvedModel);
         }
       }
     },
@@ -720,26 +652,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       entryByInstanceId,
       getModelDisabledReason,
       modelOptionsByInstance,
-      flatModels,
       onInstanceModelChange,
       onToggleModel,
-      props.modelSelection,
-      selectedDaybreakProgram,
     ],
-  );
-
-  const toggleFavorite = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
-      const newFavorites = [...favorites];
-      const index = newFavorites.findIndex((f) => f.provider === instanceId && f.model === model);
-      if (index >= 0) {
-        newFavorites.splice(index, 1);
-      } else {
-        newFavorites.push({ provider: instanceId, model });
-      }
-      updateSettings({ favorites: newFavorites });
-    },
-    [favorites, updateSettings],
   );
 
   const modelJumpCommandByKey = useMemo(() => {
@@ -842,8 +757,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     return mapping.size > 0 ? mapping : EMPTY_MODEL_JUMP_LABELS;
   }, [keybindings, modelJumpCommandByKey, modelJumpShortcutContext]);
   const modelListExtraData = useMemo(
-    () => [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet, legacySection],
-    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet, legacySection],
+    () => ({ favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet }),
+    [favoritesSet, modelJumpLabelByKey, activeModelKey, selectedModelKeySet],
   );
 
   useEffect(() => {
@@ -1170,39 +1085,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             ) : (
               <ComboboxEmpty className="empty:h-0">No models found</ComboboxEmpty>
             )}
+            {updateRequiredNotices.map(({ instanceId, notice }) => (
+              <p
+                key={instanceId}
+                className="shrink-0 border-t border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
+              >
+                {notice}{" "}
+                <InlineButton
+                  onClick={() => {
+                    props.onRequestClose?.();
+                    void navigate({ to: "/settings/providers" });
+                  }}
+                >
+                  Provider settings
+                </InlineButton>
+              </p>
+            ))}
           </div>
         </Combobox>
       </div>
-      {daybreakPrograms.length > 0 ? (
-        <div className="flex items-center justify-between gap-4 border-t px-3 py-2 text-xs text-muted-foreground">
-          <span className="flex items-center gap-2">
-            <BadgeCheckIcon className="size-3.5" aria-hidden="true" />
-            Daybreak
-          </span>
-          <ToggleGroup
-            aria-label="Daybreak program"
-            value={[selectedDaybreakProgram]}
-            onValueChange={(values) => {
-              if (values[0]) setDaybreakProgram(values[0]);
-            }}
-          >
-            {CODEX_DAYBREAK_CHOICES.map(({ value, label }) => {
-              const disabled = value !== "standard" && !daybreakPrograms.includes(value);
-              return (
-                <Toggle
-                  key={value}
-                  value={value}
-                  disabled={disabled}
-                  aria-label={`Daybreak ${label}${disabled ? " (unavailable for this account)" : ""}`}
-                >
-                  {disabled ? <LockKeyholeIcon className="size-3" aria-hidden="true" /> : null}
-                  {label}
-                </Toggle>
-              );
-            })}
-          </ToggleGroup>
-        </div>
-      ) : null}
     </TooltipProvider>
   );
 });

@@ -80,18 +80,20 @@ describe("getComposerProviderState", () => {
     { id: "daybreakBlue", label: "Blue" },
   ]);
   it.each([
-    ["reasoningEffort", "high", "high"],
-    ["serviceTier", "priority", null],
-    [null, "", null],
-  ] as const)("keeps traits independent of Daybreak access: %s", (id, value, effort) => {
-    for (const available of [true, false]) {
+    [CODEX, "reasoningEffort", "high", "high", true],
+    [CODEX, "serviceTier", "priority", null, true],
+    [CODEX, null, "", null, false],
+    [PROVIDER, null, "", "daybreakBlue", true],
+  ] as const)(
+    "keeps Codex Daybreak independent of other traits: %s / %s",
+    (provider, id, value, effort, visible) => {
       const options = selections(["cyberAccessProgram", "daybreakBlue"]);
       const modelOptions = id ? [...options, { id, value }] : options;
       const input = {
-        provider: CODEX,
+        provider,
         model: MODEL,
         models: modelWith([
-          ...(available ? [daybreak] : []),
+          daybreak,
           ...(id ? [selectDescriptor(id, [{ id: value, label: value, isDefault: true }])] : []),
         ]),
         modelOptions,
@@ -100,12 +102,11 @@ describe("getComposerProviderState", () => {
       };
       const state = getComposerProviderState(input);
       expect(state.promptEffort).toBe(effort);
-      expect(state.modelOptionsForDispatch ?? []).toEqual(
-        available ? modelOptions : modelOptions.slice(1),
-      );
-      if (!id) expect(shouldRenderTraitsControls(input)).toBe(false);
-    }
-  });
+      expect(state.modelOptionsForDispatch).toEqual(modelOptions);
+      expect(shouldRenderTraitsControls(input)).toBe(true);
+      expect(shouldRenderTraitsControls({ ...input, allowDaybreak: false })).toBe(visible);
+    },
+  );
 
   it("derives a stable prompt injection state for ordinary prompt edits", () => {
     expect(getComposerPromptInjectionState("Investigate this failure")).toBe("none");

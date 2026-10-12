@@ -13,6 +13,9 @@ function recordModelOptionsInState(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection>,
 ): ModelOptionMemoryState {
+  if (options.length === 0) {
+    return state;
+  }
   return {
     ...state,
     [instanceId]: {
@@ -31,14 +34,15 @@ function lookupModelOptionsInState(
   return state[instanceId]?.[model];
 }
 
-/** Records explicit options, optionally clearing memory with an empty set. */
+/** Records an explicitly chosen option set for one instance and model. */
 export function rememberModelOptions(
   instanceId: string,
   model: string,
   options: ReadonlyArray<ProviderOptionSelection>,
-  clearEmpty = false,
 ): void {
-  if (options.length === 0 && !clearEmpty) return;
+  if (options.length === 0) {
+    return;
+  }
   const current = appAtomRegistry.get(modelOptionMemoryAtom);
   const next = recordModelOptionsInState(current, String(instanceId), model, options);
   if (next !== current) {

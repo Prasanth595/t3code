@@ -1,26 +1,29 @@
+import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import {
+  modelPreferencesMigrationPatch,
+  resolveModelPreferences,
+} from "@t3tools/shared/serverSettings";
 import type {
   EnvironmentId,
   ModelSelection,
+  ProjectId,
   ProviderInstanceId,
   ProviderOptionDescriptor,
   ProviderOptionSelection,
   RuntimeMode,
+  ServerSettings,
 } from "@t3tools/contracts";
 import type { LegendListRenderItemProps } from "@legendapp/list/react-native";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
-  getCodexDaybreakState,
-  CODEX_DAYBREAK_CHOICES,
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { useNavigation, useRoute, type RouteProp } from "@react-navigation/native";
-import {
-  createNativeStackNavigator,
-  type NativeStackNavigationProp,
-} from "@react-navigation/native-stack";
+import { type NativeStackNavigationProp } from "@react-navigation/native-stack";
 import * as Haptics from "expo-haptics";
 import { AsyncResult } from "effect/reactivity";
 import {
@@ -29,6 +32,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -52,9 +56,13 @@ import { MaterialButton } from "../../components/MaterialButton";
 import { MaterialIconButton } from "../../components/MaterialIconButton";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ThemedSwitch";
-import { SegmentedControl } from "../../components/SegmentedControl";
 import { cn } from "../../lib/cn";
-import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
+import {
+  buildModelOptions,
+  groupByProvider,
+  type ModelOption,
+  type ProviderGroup,
+} from "../../lib/modelOptions";
 import { applyProviderOptionSelection } from "../../lib/providerOptions";
 import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
@@ -70,7 +78,7 @@ import {
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { MaterialScreenContent } from "../../components/MaterialScreenContent";
@@ -81,8 +89,8 @@ import {
 import {
   createNativeMailSearchToolbarItem,
   NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET,
-  NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
+import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
   compatibleRuntimeModeForChoices,
@@ -90,15 +98,14 @@ import {
   selectableChoices,
 } from "./thread-settings-options";
 import {
-  resolvePendingModelForCommit,
+  canCommitPendingModel,
   favoritesFirst,
-  getModelDaybreakToggleState,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
   providerSectionIsCollapsed,
-  toggleModelFavorite,
 } from "./thread-settings-sheet-state";
+import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
 
 /**
  * Everyday harnesses start expanded; every other provider (OpenRouter catalogs
@@ -249,7 +256,9 @@ type ThreadSettingsSubmenuPage =
 
 type ThreadSettingsSessionProps = {
   readonly environmentId: EnvironmentId | null;
+  readonly projectId: ProjectId | null;
   readonly providerInstanceId?: ProviderInstanceId;
+  readonly lockedProviderInstanceId?: ProviderInstanceId;
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly selectedModel: ModelSelection | null;
   readonly reportedModelSelection?: ModelSelection | null;
@@ -308,13 +317,14 @@ type ThreadSettingsSessionValue = {
   readonly favoriteKeys: ReadonlySet<string>;
   readonly favoritesLoaded: boolean;
   readonly toggleFavorite: (option: ModelOption) => void;
+  readonly toggleHidden: (option: ModelOption) => void;
+  readonly pendingHiddenKeys: ReadonlySet<string>;
+  readonly manageHidden: boolean;
+  readonly setManageHidden: (value: boolean) => void;
   readonly runtimeMode: RuntimeMode;
   readonly runtimeModeChoices: ReturnType<typeof runtimeModeChoicesForSupportedModes>;
   readonly onUpdateRuntimeMode: (mode: RuntimeMode) => void;
   readonly displayedDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
-  readonly daybreakPrograms: ReadonlySet<string>;
-  readonly selectedDaybreakProgram: string;
-  readonly setDaybreakProgram: (program: string) => void;
   readonly displayedModelSelection: ModelSelection | null;
   readonly reportedModelSelection: ModelSelection | null;
   readonly providerExpansionOverrides: ReadonlySet<string>;
@@ -340,12 +350,53 @@ const ThreadSettingsSessionContext = createContext<ThreadSettingsSessionValue | 
 function ThreadSettingsSessionProvider(
   props: ThreadSettingsSessionProps & { readonly children: ReactNode },
 ) {
+  const registry = use(RegistryContext);
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
-  const favoritesLoaded = AsyncResult.isSuccess(preferences);
-  const modelFavorites = favoritesLoaded
+  const configs = useAtomValue(environmentServerConfigsAtom);
+  const config = props.environmentId ? configs.get(props.environmentId) : undefined;
+  const settings = config?.settings;
+  const [manageHidden, setManageHidden] = useState(false);
+  const pendingHidden = useRef(new Set<string>());
+  const pendingFavorites = useRef(
+    new Map<string, { favorite: boolean; settings: ServerSettings; pending: boolean }>(),
+  );
+  const [pendingHiddenKeys, setPendingHiddenKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const providerGroups = useMemo(
+    () =>
+      manageHidden && config
+        ? groupByProvider(
+            buildModelOptions(
+              config,
+              props.selectedModel,
+              props.lockedProviderInstanceId,
+              props.projectId,
+              true,
+            ),
+          )
+        : props.providerGroups,
+    [
+      config,
+      manageHidden,
+      props.providerGroups,
+      props.selectedModel,
+      props.lockedProviderInstanceId,
+      props.projectId,
+    ],
+  );
+  const legacyFavorites = AsyncResult.isSuccess(preferences)
     ? (preferences.value.modelFavorites ?? EMPTY_MODEL_FAVORITES)
     : EMPTY_MODEL_FAVORITES;
+  const favoritesLoaded =
+    settings !== undefined && (settings.favorites !== null || AsyncResult.isSuccess(preferences));
+  const modelFavorites = resolveModelPreferences(settings ?? DEFAULT_SERVER_SETTINGS, {
+    favorites: legacyFavorites,
+  }).favorites;
+  const saveSettings = useAtomCommand(serverEnvironment.updateSettings, "model favorites update");
+  useEffect(() => {
+    if (!props.environmentId || !settings || !AsyncResult.isSuccess(preferences)) return;
+    const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
+    if (patch) void saveSettings({ environmentId: props.environmentId, input: { patch } });
+  }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
   const favoriteKeys = useMemo(
     () =>
       new Set(
@@ -354,53 +405,120 @@ function ThreadSettingsSessionProvider(
     [modelFavorites],
   );
   const toggleFavorite = useCallback(
-    (option: ModelOption) => {
-      if (!favoritesLoaded) return;
+    async (option: ModelOption) => {
+      if (!favoritesLoaded || !props.environmentId) return;
+      const currentSettings = registry
+        .get(environmentServerConfigsAtom)
+        .get(props.environmentId)?.settings;
+      if (!currentSettings) return;
+      const favorites = resolveModelPreferences(currentSettings, {
+        favorites: legacyFavorites,
+      }).favorites;
+      const key = JSON.stringify([
+        props.environmentId,
+        option.selection.instanceId,
+        option.selection.model,
+      ]);
+      const previous = pendingFavorites.current.get(key);
+      const previousFavorite =
+        previous && (previous.pending || previous.settings.favorites === currentSettings.favorites)
+          ? previous.favorite
+          : favorites.some(
+              (favorite) =>
+                favorite.provider === option.selection.instanceId &&
+                favorite.model === option.selection.model,
+            );
+      const pending = { favorite: !previousFavorite, settings: currentSettings, pending: true };
+      pendingFavorites.current.set(key, pending);
       void Haptics.selectionAsync();
-      savePreferences({
-        transform: (current) => ({
-          modelFavorites: toggleModelFavorite(
-            current.modelFavorites ?? EMPTY_MODEL_FAVORITES,
-            option,
-          ),
-        }),
+      try {
+        const result = await saveSettings({
+          environmentId: props.environmentId,
+          input: {
+            patch: {
+              setModelFavorites: [
+                {
+                  provider: option.selection.instanceId,
+                  model: option.selection.model,
+                  favorite: pending.favorite,
+                },
+              ],
+              ...(currentSettings.favorites === null
+                ? { migrateModelPreferences: { favorites } }
+                : {}),
+            },
+          },
+        });
+        if (
+          AsyncResult.isSuccess(result) &&
+          registry.get(environmentServerConfigsAtom).get(props.environmentId)?.settings
+            .favorites === currentSettings.favorites
+        ) {
+          pending.pending = false;
+        }
+      } finally {
+        if (pending.pending && pendingFavorites.current.get(key) === pending) {
+          if (
+            previous &&
+            !previous.pending &&
+            registry.get(environmentServerConfigsAtom).get(props.environmentId)?.settings
+              .favorites === previous.settings.favorites
+          ) {
+            pendingFavorites.current.set(key, previous);
+          } else {
+            pendingFavorites.current.delete(key);
+          }
+        }
+      }
+    },
+    [favoritesLoaded, legacyFavorites, props.environmentId, registry, saveSettings],
+  );
+  const toggleHidden = useCallback(
+    (option: ModelOption) => {
+      if (
+        !settings ||
+        !props.environmentId ||
+        !option.canHide ||
+        pendingHidden.current.has(option.key)
+      )
+        return;
+      pendingHidden.current.add(option.key);
+      setPendingHiddenKeys(new Set(pendingHidden.current));
+      void Haptics.selectionAsync();
+      void saveSettings({
+        environmentId: props.environmentId,
+        input: {
+          patch: {
+            setModelsHidden: [
+              {
+                provider: option.selection.instanceId,
+                model: option.selection.model,
+                hidden: !option.isHidden,
+              },
+            ],
+          },
+        },
+      }).then(() => {
+        pendingHidden.current.delete(option.key);
+        setPendingHiddenKeys(new Set(pendingHidden.current));
       });
     },
-    [favoritesLoaded, savePreferences],
+    [props.environmentId, saveSettings, settings],
   );
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
-  const [daybreakProgram, setDaybreakProgram] = useState<string>(
-    () => getCodexDaybreakState(props.optionDescriptors)?.program ?? "standard",
-  );
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+
   const isApplied = useCallback(
     (option: ModelOption) =>
       option.selection.instanceId === props.selectedModel?.instanceId &&
       option.selection.model === props.selectedModel.model,
     [props.selectedModel],
   );
-  const daybreakPrograms = useMemo(
-    () =>
-      new Set<string>(
-        props.providerGroups
-          .flatMap((group) => group.models)
-          .filter((option) =>
-            providerFilter === FAVORITES_PROVIDER_FILTER
-              ? favoriteKeys.has(option.key)
-              : option.providerKey === providerFilter,
-          )
-          .flatMap((option) => getModelDaybreakToggleState(option)?.programs ?? []),
-      ),
-    [favoriteKeys, props.providerGroups, providerFilter],
-  );
-  const selectedDaybreakProgram = daybreakPrograms.has(daybreakProgram)
-    ? daybreakProgram
-    : "standard";
   // The list highlights the staged pick; Save turns it into the applied one.
   const isDisplayed = useCallback(
     (option: ModelOption) => (pendingModel ? option.key === pendingModel.key : isApplied(option)),
@@ -443,8 +561,7 @@ function ThreadSettingsSessionProvider(
   );
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
-      const model = resolvePendingModelForCommit(pendingModel, props.providerGroups);
-      if (!model) {
+      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Alert.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
@@ -453,12 +570,11 @@ function ThreadSettingsSessionProvider(
       }
       void Haptics.selectionAsync();
       rememberModelOptions(
-        model.selection.instanceId,
-        model.selection.model,
-        model.selection.options ?? [],
-        pendingModel.selection.options?.some((option) => option.id === "cyberAccessProgram"),
+        pendingModel.selection.instanceId,
+        pendingModel.selection.model,
+        pendingModel.selection.options ?? [],
       );
-      props.onSelectModel(model);
+      props.onSelectModel(pendingModel);
     }
     return true;
   }, [pendingModel, props.onSelectModel, props.providerGroups]);
@@ -470,7 +586,6 @@ function ThreadSettingsSessionProvider(
         return;
       }
       if (pendingModel) {
-        rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
         setPendingModel({
           ...pendingModel,
           selection: { ...pendingModel.selection, options: next },
@@ -499,29 +614,29 @@ function ThreadSettingsSessionProvider(
         pendingModelAfterPress({
           current,
           pressed:
-            daybreakPrograms.size > 0 && !isApplied(option)
+            !isApplied(option) && current?.key !== option.key
               ? { ...option, selection: withRememberedModelOptions(option.selection) }
               : option,
           pressedIsApplied: isApplied(option),
-          daybreakProgram: daybreakPrograms.size > 0 ? selectedDaybreakProgram : undefined,
         }),
       );
     },
-    [daybreakPrograms, selectedDaybreakProgram, isApplied],
+    [isApplied],
   );
 
   const value = useMemo<ThreadSettingsSessionValue>(
     () => ({
       environmentId: props.environmentId,
       providerInstanceId: props.providerInstanceId,
-      providerGroups: props.providerGroups,
+      providerGroups,
+      manageHidden,
+      setManageHidden,
+      toggleHidden,
+      pendingHiddenKeys,
       runtimeMode: compatibleRuntimeMode,
       runtimeModeChoices,
       onUpdateRuntimeMode: props.onUpdateRuntimeMode,
       displayedDescriptors,
-      daybreakPrograms,
-      selectedDaybreakProgram,
-      setDaybreakProgram,
       displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
       reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
       favoriteKeys,
@@ -548,8 +663,6 @@ function ThreadSettingsSessionProvider(
       commitPendingModel,
       compatibleRuntimeMode,
       displayedDescriptors,
-      daybreakPrograms,
-      selectedDaybreakProgram,
       favoriteKeys,
       favoritesLoaded,
       providerExpansionOverrides,
@@ -564,7 +677,10 @@ function ThreadSettingsSessionProvider(
       pressModel,
       providerFilter,
       props.onUpdateRuntimeMode,
-      props.providerGroups,
+      providerGroups,
+      manageHidden,
+      toggleHidden,
+      pendingHiddenKeys,
       runtimeModeChoices,
       searchQuery,
       showLegacyToggle,
@@ -613,6 +729,11 @@ type ThreadSettingsCatalogItem =
       readonly isLast: boolean;
     }
   | {
+      readonly kind: "notice";
+      readonly key: string;
+      readonly text: string;
+    }
+  | {
       readonly kind: "empty";
       readonly key: "empty";
     }
@@ -640,6 +761,12 @@ function ThreadSettingsModelListRow(props: {
       isFavorite={session.favoriteKeys.has(props.option.key)}
       favoritesLoaded={session.favoritesLoaded}
       onToggleFavorite={() => session.toggleFavorite(props.option)}
+      onToggleHidden={
+        session.manageHidden && props.option.canHide
+          ? () => session.toggleHidden(props.option)
+          : undefined
+      }
+      hiddenUpdatePending={session.pendingHiddenKeys.has(props.option.key)}
       option={props.option}
       selected={session.isDisplayed(props.option)}
     />
@@ -683,7 +810,9 @@ function useThreadSettingsCatalogItems(
         }
         const driver = group.models[0]?.providerDriver ?? group.providerKey;
         const catalogModels =
-          session.showLegacy || session.providerFilter === FAVORITES_PROVIDER_FILTER
+          session.manageHidden ||
+          session.showLegacy ||
+          session.providerFilter === FAVORITES_PROVIDER_FILTER
             ? group.models
             : group.models.filter(
                 (model) =>
@@ -694,10 +823,6 @@ function useThreadSettingsCatalogItems(
         const visibleModels = favoritesFirst(
           catalogModels.filter(
             (model) =>
-              (session.selectedDaybreakProgram === "standard" ||
-                getModelDaybreakToggleState(model)?.programs.some(
-                  (program) => program === session.selectedDaybreakProgram,
-                )) &&
               (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
                 session.favoriteKeys.has(model.key)) &&
               modelMatchesCatalogQuery({
@@ -708,7 +833,12 @@ function useThreadSettingsCatalogItems(
           ),
           session.favoriteKeys,
         );
-        if (visibleModels.length === 0) {
+        // Favorites list only selectable models, so it never explains gated ones.
+        const updateRequiredNotice =
+          group.updateRequired && session.providerFilter !== FAVORITES_PROVIDER_FILTER
+            ? formatProviderUpdateRequiredNotice(group.updateRequired, session.searchQuery)
+            : null;
+        if (visibleModels.length === 0 && !updateRequiredNotice) {
           return [];
         }
         const isPrimary = driver !== undefined && PRIMARY_PROVIDER_DRIVERS.has(driver);
@@ -746,11 +876,19 @@ function useThreadSettingsCatalogItems(
             isFirst: index === 0,
             isLast: index === provider.models.length - 1,
           })),
+          ...(!collapsed && updateRequiredNotice
+            ? [
+                {
+                  kind: "notice" as const,
+                  key: `notice:${group.providerKey}`,
+                  text: updateRequiredNotice,
+                },
+              ]
+            : []),
         ];
       }),
     [
       session.isApplied,
-      session.selectedDaybreakProgram,
       session.isDisplayed,
       session.favoriteKeys,
       session.providerExpansionOverrides,
@@ -758,6 +896,7 @@ function useThreadSettingsCatalogItems(
       session.providerGroups,
       session.searchQuery,
       session.showLegacy,
+      session.manageHidden,
     ],
   );
 }
@@ -774,10 +913,10 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
-  const bottomToolbarInset =
-    Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED
-      ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
-      : 0;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const bottomToolbarInset = usesNativeMailSearchToolbar
+    ? NATIVE_MAIL_SEARCH_TOOLBAR_CONTENT_INSET
+    : 0;
 
   return (
     <View style={{ paddingBottom: insets.bottom + bottomToolbarInset + 12 }}>
@@ -788,7 +927,6 @@ function ThreadSettingsOptionsItem(props: {
         layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
       >
         {session.displayedDescriptors.map((descriptor) => {
-          if (descriptor.id === "cyberAccessProgram") return null;
           if (descriptor.type === "select") {
             return (
               <Animated.View
@@ -839,21 +977,23 @@ function ThreadSettingsOptionsItem(props: {
         </Animated.View>
       </Animated.View>
 
-      {Platform.OS !== "ios" && session.hasLegacyModels ? (
-        <>
-          <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">
-            Catalog
-          </Text>
-          <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
-            <SwitchRow
-              isLast
-              label="Legacy models"
-              onValueChange={session.setShowLegacy}
-              value={session.showLegacy}
-            />
-          </View>
-        </>
-      ) : null}
+      <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">Catalog</Text>
+      <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
+        <SwitchRow
+          label="Manage hidden models"
+          value={session.manageHidden}
+          onValueChange={session.setManageHidden}
+          isLast={Platform.OS === "ios" || !session.hasLegacyModels}
+        />
+        {Platform.OS !== "ios" && session.hasLegacyModels ? (
+          <SwitchRow
+            isLast
+            label="Legacy models"
+            onValueChange={session.setShowLegacy}
+            value={session.showLegacy}
+          />
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -906,6 +1046,8 @@ function ThreadSettingsMainContent(props: {
             option={item.option}
           />
         );
+      } else if (item.kind === "notice") {
+        content = <Text className="mx-8 mt-2 text-xs text-foreground-muted">{item.text}</Text>;
       } else if (item.kind === "empty") {
         content = (
           <View className="items-center px-8 py-14">
@@ -970,23 +1112,6 @@ function ThreadSettingsMainContent(props: {
       maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
       ListHeaderComponent={
         <>
-          {session.daybreakPrograms.size > 0 ? (
-            <View className="mx-4 flex-row items-center justify-between rounded-2xl bg-grouped-card px-4 py-1">
-              <Text className="text-sm font-t3-medium text-foreground">Daybreak</Text>
-              <SegmentedControl
-                size="compact"
-                className="w-48"
-                selected={session.selectedDaybreakProgram}
-                onSelect={session.setDaybreakProgram}
-                options={CODEX_DAYBREAK_CHOICES.map(({ value, label }) => ({
-                  value,
-                  label,
-                  accessibilityLabel: `Daybreak ${label}`,
-                  disabled: value !== "standard" && !session.daybreakPrograms.has(value),
-                }))}
-              />
-            </View>
-          ) : null}
           {Platform.OS === "android" ? (
             <View className="px-4 pb-2 pt-3">
               <View
@@ -1155,7 +1280,7 @@ function ThreadSettingsModelsScreen() {
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
-  const usesNativeMailSearchToolbar = Platform.OS === "ios" && NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED;
+  const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useCallback(() => {
     if (!session.commitPendingModel()) return;
@@ -1499,6 +1624,7 @@ export function NewTaskThreadSettingsRouteScreen() {
   return (
     <ThreadSettingsPickerScreen
       environmentId={flow.selectedEnvironmentId}
+      projectId={flow.selectedProject?.id ?? null}
       {...(flow.selectedModel ? { providerInstanceId: flow.selectedModel.instanceId } : {})}
       providerGroups={flow.providerGroups}
       selectedModel={flow.selectedModel}

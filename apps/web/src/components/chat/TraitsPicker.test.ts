@@ -56,9 +56,14 @@ const CONTEXT_WINDOW = selectDescriptor(
 
 const CODEX = ProviderDriverKind.make("codex");
 
-function display(descriptors: ReadonlyArray<ProviderOptionDescriptor>) {
+function display(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  provider = CODEX,
+  allowDaybreak = true,
+) {
   return buildTraitsTriggerDisplay({
-    provider: CODEX,
+    provider,
+    allowDaybreak,
     descriptors,
     primarySelectDescriptorId: "reasoningEffort",
     ultrathinkPromptControlled: false,
@@ -171,8 +176,11 @@ describe("buildTraitsTriggerDisplay", () => {
     );
     expect(display([EFFORT, serviceTierDescriptor("default")])).toEqual({ label: "High" });
     expect(display([EFFORT, serviceTierDescriptor("priority"), daybreak])).toEqual({
-      label: "High Fast",
+      label: "High Fast · Daybreak Blue",
     });
+    expect(display([{ ...daybreak, currentValue: undefined }])).toEqual({ label: "Daybreak" });
+    expect(display([EFFORT, daybreak], CODEX, false)).toEqual({ label: "High" });
+    expect(display([daybreak], ProviderDriverKind.make("claudeAgent"))).toEqual({ label: "Blue" });
   });
 
   it("keeps Codex Ultrafast distinct from Fast", () => {

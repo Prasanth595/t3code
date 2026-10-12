@@ -140,6 +140,7 @@ function getSelectedTraits(
   modelOptions: ProviderOptions | null | undefined,
   allowPromptInjectedEffort: boolean,
   planModeEnabled: boolean,
+  allowDaybreak: boolean,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider, planModeEnabled);
   const modelIsUnavailable =
@@ -157,7 +158,8 @@ function getSelectedTraits(
       });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
-      descriptor.type === "select" && descriptor.id !== "cyberAccessProgram",
+      descriptor.type === "select" &&
+      (allowDaybreak || provider !== "codex" || descriptor.id !== "cyberAccessProgram"),
   );
   const booleanDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
@@ -225,6 +227,7 @@ function getTraitsSectionVisibility(input: {
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  allowDaybreak?: boolean;
 }) {
   const selected = getSelectedTraits(
     input.provider,
@@ -234,28 +237,12 @@ function getTraitsSectionVisibility(input: {
     input.modelOptions,
     input.allowPromptInjectedEffort ?? true,
     input.planModeEnabled,
+    input.allowDaybreak ?? true,
   );
-
-  const showEffort = selected.primarySelectDescriptor !== null;
-  const showThinking = selected.thinkingDescriptor !== null;
-  const showFastMode = selected.fastModeDescriptor !== null;
-  const showContextWindow = selected.contextWindowDescriptor !== null;
-  const showAgent = selected.agentDescriptor !== null;
 
   return {
     ...selected,
-    showEffort,
-    showThinking,
-    showFastMode,
-    showContextWindow,
-    showAgent,
-    hasAnyControls:
-      showEffort ||
-      showThinking ||
-      showFastMode ||
-      showContextWindow ||
-      showAgent ||
-      (selected.modelIsUnavailable && selected.descriptors.length > 0),
+    hasAnyControls: selected.selectDescriptors.length > 0 || selected.booleanDescriptors.length > 0,
   };
 }
 
@@ -267,6 +254,7 @@ export function shouldRenderTraitsControls(input: {
   modelOptions: ProviderOptions | null | undefined;
   allowPromptInjectedEffort?: boolean;
   planModeEnabled: boolean;
+  allowDaybreak?: boolean;
 }): boolean {
   return getTraitsSectionVisibility(input).hasAnyControls;
 }
@@ -281,6 +269,8 @@ export interface TraitsMenuContentProps {
   modelOptions?: ProviderOptions | null | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
   allowPromptInjectedEffort?: boolean;
+  /** CLI text generation cannot request native Codex access programs. */
+  allowDaybreak?: boolean;
   planModeEnabled: boolean;
   triggerClassName?: string;
   isComposerOwned?: boolean;
@@ -296,6 +286,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
+  allowDaybreak = true,
   planModeEnabled,
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
@@ -336,6 +327,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
     prompt,
     modelOptions,
     allowPromptInjectedEffort,
+    allowDaybreak,
     planModeEnabled,
   });
   const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
@@ -495,13 +487,15 @@ export function buildTraitsTriggerDisplay(input: {
   ultrathinkPromptControlled: boolean;
   modelSelection?: ModelSelection | null;
   reportedModelSelection?: ModelSelection | null | undefined;
+  allowDaybreak?: boolean;
 }): { label: string } {
   let fastModeFallbackLabel: string | null = null;
   let speedLabel: string | null = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
-    if (descriptor.id === "cyberAccessProgram") continue;
+    const isDaybreak = input.provider === "codex" && descriptor.id === "cyberAccessProgram";
+    if (isDaybreak && input.allowDaybreak === false) continue;
     if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
       speedLabel = descriptor.currentValue === true ? "Fast" : null;
       fastModeFallbackLabel = speedLabel ?? "Normal";
@@ -531,7 +525,7 @@ export function buildTraitsTriggerDisplay(input: {
         continue;
       }
     }
-    const label =
+    let label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
         ? "Ultrathink"
         : descriptor.type === "boolean"
@@ -541,6 +535,7 @@ export function buildTraitsTriggerDisplay(input: {
               input.modelSelection,
               input.reportedModelSelection,
             );
+    if (isDaybreak) label = label ? `Daybreak ${label}` : "Daybreak";
     if (typeof label === "string" && label.length > 0) {
       // Custom models retain descriptor order, so the primary select can be context.
       if (
@@ -580,19 +575,22 @@ export const TraitsPicker = memo(function TraitsPicker({
   modelOptions,
   reportedModelSelection,
   allowPromptInjectedEffort = true,
+  allowDaybreak = true,
   planModeEnabled,
   triggerClassName,
   isComposerOwned,
   size = "sm",
   hidden = false,
+  disabled = false,
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
     size?: ComposerControlSize;
     hidden?: boolean;
+    disabled?: boolean;
   }) {
   const composerFloatingLayerProps = useComposerMenuProps();
-  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden);
+  const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
   const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
     getTraitsSectionVisibility({
       provider,
@@ -601,6 +599,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       prompt,
       modelOptions,
       allowPromptInjectedEffort,
+      allowDaybreak,
       planModeEnabled,
     });
   if (
@@ -611,6 +610,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       prompt,
       modelOptions,
       allowPromptInjectedEffort,
+      allowDaybreak,
       planModeEnabled,
     })
   ) {
@@ -624,6 +624,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     ultrathinkPromptControlled,
     modelSelection: instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
     reportedModelSelection,
+    allowDaybreak,
   });
   const isCodexStyle = provider === "codex";
 
@@ -631,7 +632,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     <Menu
       open={isMenuOpen}
       onOpenChange={(open) => {
-        setIsMenuOpen(open);
+        setIsMenuOpen(open && !disabled);
       }}
     >
       <Tooltip>
@@ -640,6 +641,7 @@ export const TraitsPicker = memo(function TraitsPicker({
             <MenuTrigger
               render={
                 <ComposerControl
+                  disabled={disabled}
                   aria-label={triggerLabel}
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
                   size={size}
@@ -690,6 +692,7 @@ export const TraitsPicker = memo(function TraitsPicker({
           modelOptions={modelOptions}
           reportedModelSelection={reportedModelSelection}
           allowPromptInjectedEffort={allowPromptInjectedEffort}
+          allowDaybreak={allowDaybreak}
           planModeEnabled={planModeEnabled}
           {...persistence}
         />

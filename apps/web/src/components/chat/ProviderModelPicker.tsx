@@ -1,9 +1,9 @@
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   type ProviderInstanceId,
+  type EnvironmentId,
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
-  type ModelSelection,
 } from "@t3tools/contracts";
 import { memo, useEffect, useMemo, useState } from "react";
 import { Badge } from "../ui/badge";
@@ -28,6 +28,7 @@ import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
+  environmentId: EnvironmentId | null;
   /**
    * The instance currently selected in the composer. Drives the trigger
    * icon, label and the default-highlighted combobox row.
@@ -35,15 +36,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   activeInstanceId: ProviderInstanceId;
   model: string;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
-  onToggleModel?: (selection: ModelSelection) => void;
+  onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
   /** Instance entries rendered in the sidebar + used to resolve display name. */
   instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
-  /** Native-turn selectors provide the current options and enable Daybreak picker mode. */
-  modelSelection?: ModelSelection | null | undefined;
   activeProviderIconClassName?: string;
   instanceIndicatorBackground?: string;
   size?: ComposerControlSize;
@@ -59,7 +58,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   onOpenChange?: (open: boolean) => void;
   onOpenProviderSetup?: (instanceId: ProviderInstanceId) => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
-  onInstanceModelChange: (selection: ModelSelection) => void;
+  onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
@@ -153,9 +152,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     };
   }, [isMenuOpen]);
 
-  const handleInstanceModelChange = (selection: ModelSelection) => {
+  const handleInstanceModelChange = (instanceId: ProviderInstanceId, model: string) => {
     if (props.disabled) return;
-    props.onInstanceModelChange(selection);
+    props.onInstanceModelChange(instanceId, model);
     setIsMenuOpen(false);
   };
 
@@ -294,14 +293,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         padding="none"
       >
         <ModelPickerContent
+          environmentId={props.environmentId}
           activeInstanceId={activeInstanceId}
           model={props.model}
-          modelSelection={props.modelSelection}
           {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
           {...(props.onToggleModel
             ? {
-                onToggleModel: (selection: ModelSelection) => {
-                  if (!props.disabled) props.onToggleModel?.(selection);
+                onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+                  if (!props.disabled) props.onToggleModel?.(instanceId, model);
                 },
               }
             : {})}

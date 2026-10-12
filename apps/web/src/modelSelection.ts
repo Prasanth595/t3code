@@ -11,7 +11,6 @@ import {
 import {
   type CustomModelDefinition,
   createModelSelection,
-  getCodexDaybreakState,
   normalizeCustomModelSlug,
   readCustomModelEntries,
   resolveSelectableModel,
@@ -67,15 +66,7 @@ function readInstanceCustomModels(
       return readCustomModelEntries(value);
     }
   }
-  const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
-  if (instanceId !== defaultInstanceId) {
-    return [];
-  }
-  const legacyProviders = settings.providers as Record<
-    string,
-    { readonly customModels: ReadonlyArray<unknown> } | undefined
-  >;
-  return readCustomModelEntries(legacyProviders[driverKind]?.customModels ?? []);
+  return [];
 }
 
 export interface AppModelOption {
@@ -229,11 +220,8 @@ function getAppModelOptions(
  * come from the instance's own `entry.models` snapshot (rather than the
  * first-matching-kind fallback in `getProviderModels`), so each custom
  * instance gets the precise model list its driver reported. Custom model
- * slugs come from the instance's own `providerInstances[id].config.customModels`
- * when present, falling back to the legacy per-kind
- * `settings.providers[driverKind].customModels` bucket for default
- * instances only. This keeps two instances of the same kind from leaking
- * custom slugs into each other. Custom rows reported by the server are
+ * slugs come from the instance's own `providerInstances[id].config.customModels`,
+ * so two instances of the same kind never leak custom slugs into each other. Custom rows reported by the server are
  * ignored so a slug removed in Settings disappears without waiting for the
  * next provider probe.
  */
@@ -322,29 +310,6 @@ export function resolveAppModelSelectionForInstance(
     }
   }
   return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
-}
-
-/** Restore remembered options with explicit choices taking precedence and current Daybreak access. */
-export function mergeRememberedModelOptions(
-  selection: ModelSelection,
-  rememberedOptions: ModelSelection["options"],
-  provider: ServerProvider | undefined,
-): ModelSelection {
-  const explicitIds = new Set(selection.options?.map((option) => option.id));
-  const descriptors =
-    provider?.instanceId === selection.instanceId && provider.driver === "codex"
-      ? provider.models.find((model) => model.slug === selection.model)?.capabilities
-          ?.optionDescriptors
-      : undefined;
-  return createModelSelection(selection.instanceId, selection.model, [
-    ...(rememberedOptions ?? []).filter(
-      (option) =>
-        !explicitIds.has(option.id) &&
-        (option.id !== "cyberAccessProgram" ||
-          getCodexDaybreakState(descriptors, option.value)?.program === option.value),
-    ),
-    ...(selection.options ?? []),
-  ]);
 }
 
 /**
