@@ -149,18 +149,20 @@ function SettingsContentLayout() {
   );
 }
 
-function SettingsRouteLayout() {
+/** Starts Settings on the environment filter's selection; renders nothing. */
+function SettingsMachineSeed() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
   const { resolved: environmentSelection } = useEnvironmentSelection();
+  const { allGroups } = useSettingsScope();
   // Seed once on entry, after the selection resolves; later "All environments"
   // choices stay explicit.
   const seededRef = useRef(false);
   useEffect(() => {
     if (seededRef.current || environmentSelection.status === "pending") return;
     seededRef.current = true;
-    const seeded = seedSettingsMachine(rawSearch, environmentSelection);
+    const seeded = seedSettingsMachine(rawSearch, environmentSelection, allGroups);
     if (seeded === null) return;
     void navigate({
       to: pathname,
@@ -169,7 +171,14 @@ function SettingsRouteLayout() {
       replace: true,
       resetScroll: false,
     });
-  }, [environmentSelection, navigate, pathname, rawSearch]);
+  }, [allGroups, environmentSelection, navigate, pathname, rawSearch]);
+  return null;
+}
+
+function SettingsRouteLayout() {
+  const rawSearch = Route.useSearch();
+  const navigate = Route.useNavigate();
+  const pathname = useLocation({ select: (location) => location.pathname });
   return (
     <SettingsScopeProvider
       search={rawSearch}
@@ -189,6 +198,7 @@ function SettingsRouteLayout() {
         });
       }}
     >
+      <SettingsMachineSeed />
       <SettingsContentLayout />
     </SettingsScopeProvider>
   );

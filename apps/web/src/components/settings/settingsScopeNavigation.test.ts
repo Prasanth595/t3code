@@ -303,33 +303,53 @@ describe("scheduled task scope navigation", () => {
 describe("seedSettingsMachine", () => {
   const environmentId = EnvironmentId.make("fedora");
   const active = { status: "active", environmentId, online: true } as const;
+  const groups = [
+    { projectKey: "repository:t3code", memberProjects: [{ environmentId }] },
+    {
+      projectKey: "repository:notes",
+      memberProjects: [{ environmentId: EnvironmentId.make("laptop") }],
+    },
+  ];
 
-  it("starts on the selected environment, keeping the project", () => {
-    expect(seedSettingsMachine({}, active)).toEqual({ machine: environmentId });
-    expect(seedSettingsMachine({ project: "repository:t3code" }, active)).toEqual({
+  it("starts on the selected environment, keeping a project with a checkout there", () => {
+    expect(seedSettingsMachine({}, active, groups)).toEqual({ machine: environmentId });
+    expect(seedSettingsMachine({ project: "repository:t3code" }, active, groups)).toEqual({
       project: "repository:t3code",
       machine: environmentId,
     });
   });
 
+  it("leaves a project without a checkout on the selected environment on every environment", () => {
+    expect(seedSettingsMachine({ project: "repository:notes" }, active, groups)).toBeNull();
+    expect(seedSettingsMachine({ project: "repository:unknown" }, active, groups)).toBeNull();
+  });
+
   it("starts on a selected environment that is offline", () => {
-    expect(seedSettingsMachine({}, { ...active, online: false })).toEqual({
+    expect(seedSettingsMachine({}, { ...active, online: false }, groups)).toEqual({
       machine: environmentId,
     });
   });
 
   it("leaves links that name their own target alone", () => {
-    expect(seedSettingsMachine({ machine: "other" }, active)).toBeNull();
-    expect(seedSettingsMachine({ project: "p", checkout: "other:/repo" }, active)).toBeNull();
+    expect(seedSettingsMachine({ machine: "other" }, active, groups)).toBeNull();
+    expect(
+      seedSettingsMachine(
+        { project: "repository:t3code", checkout: "other:/repo" },
+        active,
+        groups,
+      ),
+    ).toBeNull();
   });
 
   it("does nothing while every environment is shown", () => {
-    expect(seedSettingsMachine({}, { status: "all", environmentIds: [environmentId] })).toBeNull();
+    expect(
+      seedSettingsMachine({}, { status: "all", environmentIds: [environmentId] }, groups),
+    ).toBeNull();
   });
 
   it("never seeds a missing, disabled or still-loading environment", () => {
     // A disabled environment resolves as missing.
-    expect(seedSettingsMachine({}, { status: "missing", environmentId })).toBeNull();
-    expect(seedSettingsMachine({}, { status: "pending", environmentId })).toBeNull();
+    expect(seedSettingsMachine({}, { status: "missing", environmentId }, groups)).toBeNull();
+    expect(seedSettingsMachine({}, { status: "pending", environmentId }, groups)).toBeNull();
   });
 });

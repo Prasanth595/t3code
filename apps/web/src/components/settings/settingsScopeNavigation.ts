@@ -37,15 +37,31 @@ export const retainSettingsScope: SearchMiddleware<SettingsScopeSearch> = ({ sea
  * that already names a machine or checkout keeps its own target, and choosing
  * "All environments" inside Settings is not overridden afterwards. Only an
  * active selection seeds: a missing, disabled or loading one never does.
+ * `groups` must span every environment.
  */
 export function seedSettingsMachine(
   search: SettingsScopeSearch,
   selection: ResolvedEnvironmentSelection,
+  groups: readonly {
+    readonly projectKey: string;
+    readonly memberProjects: readonly { readonly environmentId: string }[];
+  }[],
 ): SettingsScopeSearch | null {
   if (
     selection.status !== "active" ||
     search.machine !== undefined ||
     search.checkout !== undefined
+  ) {
+    return null;
+  }
+  // A project link opens on the environment only when the project has a checkout there.
+  if (
+    search.project !== undefined &&
+    !groups.some(
+      (group) =>
+        group.projectKey === search.project &&
+        group.memberProjects.some((member) => member.environmentId === selection.environmentId),
+    )
   ) {
     return null;
   }
