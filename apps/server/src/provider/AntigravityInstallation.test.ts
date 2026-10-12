@@ -308,61 +308,73 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     }),
   );
 
-  it.effect.each([
-    {
-      name: "the expected release with protocol 1",
-      protocolVersion: 1,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "the expected release with protocol 2 and legacy fields",
-      protocolVersion: 2,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "an unsupported protocol version",
-      protocolVersion: 3,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: false,
-    },
-    { name: "a different agent", agentName: "other-agent", version: "fixture-new", valid: false },
-    {
-      name: "a different version",
-      agentName: "antigravity-acp",
-      version: "other-version",
-      valid: false,
-    },
-    {
-      name: "the Windows ARM release with locked child processes",
-      platform: "win32" as const,
-      arch: "arm64" as const,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      valid: true,
-    },
-    {
-      name: "an invalid Windows ARM release with locked child processes",
-      platform: "win32" as const,
-      arch: "arm64" as const,
-      agentName: "antigravity-acp",
-      version: "other-version",
-      valid: false,
-    },
-    {
-      name: "a cancelled Windows ARM verification with locked child processes",
-      platform: "win32" as const,
-      arch: "arm64" as const,
-      agentName: "antigravity-acp",
-      version: "fixture-new",
-      cancel: true,
-      valid: false,
-    },
-  ])("validates $name with initialize only and removes the disposable profile", (testCase) =>
+  it.effect.each(
+    [
+      {
+        name: "the expected release with protocol 1",
+        protocolVersion: 1,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: true,
+      },
+      {
+        name: "the expected release with protocol 2 and legacy fields",
+        protocolVersion: 2,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: true,
+      },
+      {
+        name: "an unsupported protocol version",
+        protocolVersion: 3,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: false,
+      },
+      { name: "a different agent", agentName: "other-agent", version: "fixture-new", valid: false },
+      {
+        name: "a different version",
+        agentName: "antigravity-acp",
+        version: "other-version",
+        valid: false,
+      },
+      {
+        name: "the Windows ARM release with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        valid: true,
+      },
+      {
+        name: "an invalid Windows ARM release with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "other-version",
+        valid: false,
+      },
+      {
+        name: "a cancelled Windows ARM verification with locked child processes",
+        platform: "win32" as const,
+        arch: "arm64" as const,
+        agentName: "antigravity-acp",
+        version: "fixture-new",
+        cancel: true,
+        valid: false,
+      },
+    ].flatMap((testCase) => {
+      const cleanupErrorTags =
+        testCase.platform === "win32"
+          ? (["Unknown", "PermissionDenied", "Busy"] as const)
+          : (["Unknown"] as const);
+      return cleanupErrorTags.map((cleanupErrorTag) => ({
+        ...testCase,
+        cleanupErrorTag,
+        name: `${cleanupErrorTag}: ${testCase.name}`,
+      }));
+    }),
+  )("validates $name with initialize only and removes the disposable profile", (testCase) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const platform = testCase.platform ?? hostPlatform;
@@ -496,10 +508,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
                     Effect.andThen(
                       Effect.fail(
                         PlatformError.systemError({
-                          _tag: "Unknown",
+                          _tag: testCase.cleanupErrorTag,
                           module: "FileSystem",
                           method: "remove",
-                          description: "EPERM: unpacked DLL is in use",
+                          description: "Unpacked DLL is in use",
                         }),
                       ),
                     ),

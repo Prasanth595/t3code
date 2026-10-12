@@ -360,7 +360,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                 times: platform === "win32" ? 10 : 0,
                 schedule: Schedule.spaced("100 millis"),
                 while: (error) =>
-                  error.reason._tag === "PermissionDenied" || error.reason._tag === "Unknown",
+                  error.reason._tag === "PermissionDenied" ||
+                  error.reason._tag === "Busy" ||
+                  error.reason._tag === "Unknown",
               }),
               Effect.orDie,
             ),
