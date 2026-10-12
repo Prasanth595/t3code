@@ -629,6 +629,7 @@ const make = Effect.gen(function* () {
   const writeSemaphore = yield* Semaphore.make(1);
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
+  const settingsFileReadable = yield* Ref.make(true);
   const startedRef = yield* Ref.make(false);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
@@ -852,6 +853,7 @@ const make = Effect.gen(function* () {
         yield* secretStore.remove(move.from).pipe(Effect.ignore);
       }
     }
+    yield* Ref.set(settingsFileReadable, settingsFileTrusted);
     return migrated;
   });
 
@@ -1068,7 +1070,16 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
+        // Patch the file as it is now. The watcher reloads external edits only after 100 ms of
+        // quiet, so the cached copy can predate an edit and writing it would revert that edit.
+        yield* Cache.invalidate(settingsCache, cacheKey);
         const current = yield* getSettingsFromCache;
+        // Writing now would replace the file the user has to repair with defaults plus this patch.
+        if (!(yield* Ref.get(settingsFileReadable))) {
+          return yield* Effect.fail(
+            new ServerSettingsError({ settingsPath, operation: "read-file" }),
+          );
+        }
         const updated = yield* update(current);
         const persisted = yield* persistSettingsSecrets(current, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
