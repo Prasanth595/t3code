@@ -622,12 +622,6 @@ export function resolveSidebarScopedProjectGroup<G extends { readonly projectKey
 }
 
 /**
- * A persisted project scope whose project is gone falls back to all projects,
- * but only once every environment has a live snapshot and the environment
- * filter is settled and online. A loading, offline or missing environment
- * cannot prove the project is gone.
- */
-/**
  * Whether a persisted project scope whose project is gone may fall back to all
  * projects. Cached, disconnected or missing environments cannot establish that
  * the project is gone, so the environment filter must be settled and online.
