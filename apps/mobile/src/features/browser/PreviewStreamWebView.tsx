@@ -261,6 +261,13 @@ function PreviewStreamDocumentView({
   const webView = useRef<WebView<object>>(null);
   const active = useRef(true);
   const failed = useRef(false);
+  // The system passkey sheet outlives this view unless the view closes it.
+  const passkeyRequest = useRef<string | null>(null);
+  const closePasskeySheet = () => {
+    const id = passkeyRequest.current;
+    passkeyRequest.current = null;
+    if (id) cancelBrowserPasskey(id);
+  };
   const [status, setStatus] = useState<"connecting" | "streaming" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
@@ -290,6 +297,7 @@ function PreviewStreamDocumentView({
     if (!active.current || failed.current) return;
     failed.current = true;
     webView.current?.injectJavaScript("window.T3PreviewStream?.stop(); true;");
+    closePasskeySheet();
     onStreamingChange?.(false);
     onPageInput?.(false);
     setControl(null);
@@ -325,6 +333,8 @@ function PreviewStreamDocumentView({
     return () => {
       active.current = false;
       view?.injectJavaScript("window.T3PreviewStream?.stop(); true;");
+      const pending = passkeyRequest.current;
+      if (pending) cancelBrowserPasskey(pending);
     };
   }, []);
   useEffect(() => () => onStreamingChange?.(false), [onStreamingChange]);
@@ -424,9 +434,11 @@ function PreviewStreamDocumentView({
               return;
             case "passkey": {
               const { request } = message;
-              void performBrowserPasskey(request).then((result) =>
-                command({ type: "passkeyResult", id: request.id, result }),
-              );
+              passkeyRequest.current = request.id;
+              void performBrowserPasskey(request).then((result) => {
+                if (passkeyRequest.current === request.id) passkeyRequest.current = null;
+                command({ type: "passkeyResult", id: request.id, result });
+              });
               return;
             }
             case "passkeyCancel":
