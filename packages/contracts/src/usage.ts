@@ -98,6 +98,16 @@ export const UsageCategoryCost = Schema.Struct({
 });
 export type UsageCategoryCost = typeof UsageCategoryCost.Type;
 
+/** Explicit request effort, with token usage and API-equivalent cost at that effort. */
+export const UsageReasoningEffortTotals = Schema.Struct({
+  effort: TrimmedNonEmptyString,
+  totals: UsageTokenTotals,
+  costUsd: Schema.Number,
+  records: NonNegativeInt,
+  unpricedRecords: NonNegativeInt,
+});
+export type UsageReasoningEffortTotals = typeof UsageReasoningEffortTotals.Type;
+
 /**
  * One `(day, hourStart?, provider, model)` cell. `hourStart` is the UTC start
  * instant of a rolling bucket and is present only for hourly requests.
@@ -115,6 +125,8 @@ export const UsageBucket = Schema.Struct({
   /** Source directory, so overlapping multi-home environments merge once per source. */
   sourcePath: Schema.optional(TrimmedNonEmptyString),
   totals: UsageTokenTotals,
+  /** Missing on older servers. Unknown effort is kept as an explicit entry. */
+  reasoningEfforts: Schema.optional(ForwardCompatibleArray(UsageReasoningEffortTotals)),
   costUsd: Schema.Number,
   /**
    * What the cached input would have cost at full input rates minus what it

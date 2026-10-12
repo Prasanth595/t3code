@@ -786,3 +786,105 @@ describe("mergeUsage", () => {
     expect(merged.daily[0]?.costUsd).toBe(10);
   });
 });
+
+describe("reasoning effort merge", () => {
+  it("reconciles deduplicated daily and hourly effort trends, including unknown history", () => {
+    const split = (effort: string, input: number, output: number, costUsd: number) => ({
+      effort,
+      totals: {
+        uncachedInputTokens: input,
+        cachedInputTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: output,
+        reasoningTokens: output / 2,
+      },
+      costUsd,
+      records: 1,
+      unpricedRecords: 0,
+    });
+    const low = split("low", 10, 20, 1);
+    const high = split("high", 30, 40, 4);
+    const usage = summary(
+      [
+        bucket({
+          ...low,
+          hourStart: "2026-08-07T09:00:00.000Z",
+          reasoningEfforts: [low],
+        }),
+        bucket({
+          ...high,
+          hourStart: "2026-08-07T10:00:00.000Z",
+          reasoningEfforts: [high],
+        }),
+      ],
+      [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+    );
+    const older = summary(
+      [bucket({ hourStart: "2026-08-07T10:00:00.000Z" })],
+      [{ provider: "claude", hostId: "linux", homePath: "/b" }],
+    );
+    const merged = mergeUsage(
+      [environment("a", usage), environment("duplicate", usage), environment("b", older)],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect([...merged.daily[0]!.byReasoningEffort!]).toEqual([
+      ["low", { costUsd: 1, totalTokens: 30 }],
+      ["high", { costUsd: 4, totalTokens: 70 }],
+      ["unknown", { costUsd: 10, totalTokens: 1160 }],
+    ]);
+    expect(merged.hourly.map((hour) => [...hour.byReasoningEffort!])).toEqual([
+      [["low", { costUsd: 1, totalTokens: 30 }]],
+      [
+        ["high", { costUsd: 4, totalTokens: 70 }],
+        ["unknown", { costUsd: 10, totalTokens: 1160 }],
+      ],
+    ]);
+    for (const period of [...merged.daily, ...merged.hourly]) {
+      const efforts = [...period.byReasoningEffort!.values()];
+      expect(efforts.reduce((sum, entry) => sum + entry.costUsd, 0)).toBe(period.costUsd);
+      expect(efforts.reduce((sum, entry) => sum + entry.totalTokens, 0)).toBe(period.totalTokens);
+    }
+  });
+
+  it("deduplicates effort splits with their source and preserves unknown older history", () => {
+    const low = {
+      effort: "low",
+      totals: bucket().totals,
+      costUsd: 10,
+      records: 5,
+      unpricedRecords: 0,
+    };
+    const usage = summary(
+      [bucket({ reasoningEfforts: [low] })],
+      [{ provider: "claude", hostId: "mac", homePath: "/a" }],
+    );
+    const older = summary(
+      [bucket({ day: "2026-08-08" as UsageDay })],
+      [{ provider: "claude", hostId: "linux", homePath: "/b" }],
+    );
+    const merged = mergeUsage(
+      [environment("a", usage), environment("duplicate", usage), environment("b", older)],
+      USAGE_CONTRACT_VERSION,
+    );
+    const efforts = merged.models[0]!.reasoningEfforts!;
+    const mergedModel = merged.models[0]!;
+    expect(efforts.reduce((sum, entry) => sum + entry.records, 0)).toBe(mergedModel.records);
+    expect(efforts.reduce((sum, entry) => sum + entry.unpricedRecords, 0)).toBe(
+      mergedModel.unpricedRecords,
+    );
+    for (const key of Object.keys(mergedModel.tokens) as (keyof typeof mergedModel.tokens)[]) {
+      expect(efforts.reduce((sum, entry) => sum + entry.totals[key], 0)).toBe(
+        mergedModel.tokens[key],
+      );
+    }
+
+    expect(efforts.map((entry) => [entry.effort, entry.costUsd])).toEqual([
+      ["low", 10],
+      ["unknown", 10],
+    ]);
+    expect(efforts.reduce((sum, entry) => sum + entry.totals.outputTokens, 0)).toBe(
+      merged.outputTokens,
+    );
+    expect(efforts.reduce((sum, entry) => sum + entry.costUsd, 0)).toBe(merged.costUsd);
+  });
+});

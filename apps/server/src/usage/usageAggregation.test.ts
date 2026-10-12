@@ -302,3 +302,46 @@ describe("resolveModelAliases", () => {
     );
   });
 });
+
+describe("reasoning effort totals", () => {
+  it("reconciles every token category, costs and responses after deduplication", () => {
+    const summary = aggregate([
+      record({ reasoningEffort: "low", dedupeKey: "low" }),
+      record({ reasoningEffort: "low", dedupeKey: "low" }),
+      record({ reasoningEffort: "xhigh", speed: "fast" }),
+      record(),
+    ]);
+    const bucket = summary.buckets[0]!;
+    const efforts = bucket.reasoningEfforts!;
+    expect(efforts.map((entry) => entry.effort)).toEqual(["low", "xhigh", "unknown"]);
+    expect(efforts.reduce((sum, entry) => sum + entry.costUsd, 0)).toBeCloseTo(bucket.costUsd, 12);
+    expect(efforts.reduce((sum, entry) => sum + entry.records, 0)).toBe(bucket.records);
+    expect(efforts.reduce((sum, entry) => sum + entry.unpricedRecords, 0)).toBe(
+      bucket.unpricedRecords,
+    );
+    for (const key of Object.keys(bucket.totals) as (keyof UsageRecord["totals"])[]) {
+      expect(efforts.reduce((sum, entry) => sum + entry.totals[key], 0)).toBe(bucket.totals[key]);
+    }
+    expect(efforts.find((entry) => entry.effort === "xhigh")!.costUsd).toBeCloseTo(
+      2 * efforts.find((entry) => entry.effort === "low")!.costUsd,
+      12,
+    );
+  });
+
+  it("keeps unpriced and future efforts in the token and response totals", () => {
+    const bucket = aggregate([
+      record({ model: "future-model", reasoningEffort: "future-effort" }),
+      record({ model: "future-model" }),
+    ]).buckets[0]!;
+    expect(
+      bucket.reasoningEfforts!.map((entry) => [entry.effort, entry.records, entry.unpricedRecords]),
+    ).toEqual([
+      ["future-effort", 1, 1],
+      ["unknown", 1, 1],
+    ]);
+    expect(
+      bucket.reasoningEfforts!.reduce((sum, entry) => sum + entry.totals.outputTokens, 0),
+    ).toBe(bucket.totals.outputTokens);
+    expect(bucket.costUsd).toBe(0);
+  });
+});

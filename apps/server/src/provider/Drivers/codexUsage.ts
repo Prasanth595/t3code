@@ -11,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 import {
   parseTimestampMs,
+  recordedReasoningEffort,
   tokenCount,
   totalTokens,
   type ProviderUsageReader,
@@ -35,6 +36,7 @@ import { resolveCodexHomeLayout } from "./CodexHomeLayout.ts";
  */
 export const CodexScanState = Schema.Struct({
   model: Schema.mutableKey(Schema.String),
+  reasoningEffort: Schema.mutableKey(Schema.NullOr(Schema.String)),
   speed: Schema.mutableKey(Schema.Literals(["standard", "fast", "ultrafast"])),
   sessionId: Schema.mutableKey(Schema.String),
   lastUsageSignature: Schema.mutableKey(Schema.NullOr(Schema.String)),
@@ -48,6 +50,7 @@ export type CodexScanState = typeof CodexScanState.Type;
 export function initialCodexScanState(): CodexScanState {
   return {
     model: "",
+    reasoningEffort: null,
     speed: "standard",
     sessionId: "",
     lastUsageSignature: null,
@@ -123,6 +126,8 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   if (record["type"] === "turn_context") {
     if (typeof payloadRecord["model"] === "string") state.model = payloadRecord["model"];
+    state.reasoningEffort =
+      recordedReasoningEffort(payloadRecord["effort"] ?? payloadRecord["reasoning_effort"]) ?? null;
     return null;
   }
 
@@ -186,6 +191,7 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): UsageRecord |
 
   return {
     provider: "codex",
+    reasoningEffort: state.reasoningEffort ?? undefined,
     timestampMs,
     model: state.model,
     sessionId: state.sessionId,
@@ -223,6 +229,8 @@ export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {
       id: true,
       session_id: true,
       model: true,
+      effort: true,
+      reasoning_effort: true,
       thread_settings: { service_tier: true },
       forked_from_id: true,
       source: { subagent: { thread_spawn: { parent_thread_id: true } } },

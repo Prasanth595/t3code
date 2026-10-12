@@ -5,6 +5,7 @@ import {
   cacheHitRate,
   costPerMillionTokens,
   modelShare,
+  reasoningEffortRows,
   sortModelsByTokens,
 } from "./usageBreakdown";
 
@@ -88,5 +89,32 @@ describe("model rates", () => {
     expect(cacheHitRate(mixed)).toBe(0.25);
     expect(costPerMillionTokens(mixed)).toBe(2);
     expect(costPerMillionTokens({ ...mixed, unpricedRecords: 4 })).toBeNull();
+  });
+});
+
+describe("reasoning effort presentation", () => {
+  it("orders effort consistently and counts reasoning inside output once", () => {
+    const effort = (name: string) => ({
+      effort: name,
+      totals: {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 1000,
+        cacheCreationTokens: 0,
+        outputTokens: 50,
+        reasoningTokens: 20,
+      },
+      costUsd: 1,
+      records: 1,
+      unpricedRecords: 0,
+    });
+    const rows = reasoningEffortRows(
+      model("gpt-6-astra", 3450, 3, {
+        reasoningEfforts: [effort("unknown"), effort("xhigh"), effort("low")],
+      }),
+    );
+    expect(rows.map((row) => row.effort)).toEqual(["low", "xhigh", "unknown"]);
+    expect(rows.map((row) => row.totalTokens)).toEqual([1150, 1150, 1150]);
+    expect(new Set(rows.map((row) => row.color)).size).toBe(3);
+    expect(reasoningEffortRows(model("old-model", 100, 0))[0]?.effort).toBe("unknown");
   });
 });

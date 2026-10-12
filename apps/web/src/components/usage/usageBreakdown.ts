@@ -84,3 +84,65 @@ export function speedCostSegments(cost: SpeedCost): readonly ShareSegment[] {
     { label: "Ultrafast", value: cost.ultrafast, color: ink(100) },
   ];
 }
+
+const EFFORT_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+const EFFORT_LABELS: Record<string, string> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+  ultra: "Ultra",
+  unknown: "Unknown",
+};
+
+const EFFORT_COLORS: Record<string, string> = {
+  none: ink(58),
+  minimal: "#0891b2",
+  low: "#3b82f6",
+  medium: "#22c55e",
+  high: "#f59e0b",
+  xhigh: "#8b5cf6",
+  max: "#ef4444",
+  ultra: "#ec4899",
+};
+
+/** Stable hues identify effort across providers and reporting windows. */
+export function reasoningEffortRows(model: ModelTotals) {
+  const entries = model.reasoningEfforts ?? [
+    {
+      effort: "unknown",
+      totals: model.tokens,
+      costUsd: model.costUsd,
+      records: model.records,
+      unpricedRecords: model.unpricedRecords,
+    },
+  ];
+  const order = (effort: string) => {
+    const index = EFFORT_ORDER.indexOf(effort);
+    return index >= 0
+      ? index
+      : effort === "unknown"
+        ? EFFORT_ORDER.length + 1
+        : EFFORT_ORDER.length;
+  };
+  return entries
+    .filter((entry) => entry.records > 0)
+    .toSorted((a, b) => order(a.effort) - order(b.effort) || a.effort.localeCompare(b.effort))
+    .map((entry) => ({
+      ...entry,
+      label: EFFORT_LABELS[entry.effort] ?? entry.effort,
+      totalTokens:
+        entry.totals.uncachedInputTokens +
+        entry.totals.cachedInputTokens +
+        entry.totals.cacheCreationTokens +
+        entry.totals.outputTokens,
+      color:
+        EFFORT_COLORS[entry.effort] === undefined
+          ? ink(52)
+          : `color-mix(in oklab, ${EFFORT_COLORS[entry.effort]} 80%, var(--foreground))`,
+      strokeDasharray: entry.effort === "unknown" ? "4 4" : undefined,
+    }));
+}

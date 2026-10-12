@@ -31,16 +31,18 @@ import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptRea
 // v4: records carry Claude fast mode, which v3 rows never captured.
 // v5: Codex records carry their service tier. v4 rows store speed the same
 // way, so v4 entries still load; see `decodeScanCache` for v4 stateful entries.
-const USAGE_SCAN_CACHE_VERSION = 5 as const;
+// v6 captures explicit reasoning effort in Codex and Claude records and reducer state.
+const USAGE_SCAN_CACHE_VERSION = 6 as const;
 const SPEED_COMPATIBLE_SINCE_VERSION = 4;
 
 /**
  * Each cache version writes its own file in the state directory. An older
  * server sharing that directory cannot read a newer cache and would replace
  * it, dropping saved usage for deleted transcripts. Separate files keep both.
- * A v5 server reads the legacy (v4) file once, when its own file is missing.
+ * A new server imports the previous cache only when its own file is missing.
  */
-export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
+export const SCAN_CACHE_FILE_NAME = "usage-scan-cache-v6.json";
+export const PREVIOUS_SCAN_CACHE_FILE_NAME = "usage-scan-cache-v5.json";
 export const LEGACY_SCAN_CACHE_FILE_NAME = "usage-scan-cache.json";
 
 /** Serialised as the index into this list. */
@@ -82,6 +84,7 @@ type SerializedRecord = readonly [
   speed: number,
   /** Optional trailing field keeps existing cache rows readable. */
   rateModelIndex?: number | null,
+  reasoningEffort?: string | null,
 ];
 
 interface SerializedFile {
@@ -143,6 +146,7 @@ function serializeFile(entry: CachedFile, tables: InternTables): SerializedFile 
     record.rateModel === undefined
       ? null
       : intern(tables.models, tables.modelIndex, record.rateModel),
+    record.reasoningEffort ?? null,
   ];
   return {
     s: entry.size,
@@ -270,6 +274,7 @@ export function decodeScanCache(
         reportedCostUsd,
         speedIndex,
         rateModelIndex,
+        reasoningEffort,
       ] = row as SerializedRecord;
       const speed = typeof speedIndex === "number" ? SPEEDS[speedIndex] : undefined;
 
@@ -295,6 +300,7 @@ export function decodeScanCache(
         timestampMs,
         model,
         ...(rateModel === undefined ? {} : { rateModel }),
+        ...(typeof reasoningEffort === "string" ? { reasoningEffort } : {}),
         sessionId: (typeof sessionIndex === "number" ? sessions[sessionIndex] : undefined) ?? "",
         totals: {
           uncachedInputTokens: uncached,
@@ -337,11 +343,11 @@ export function decodeScanCache(
     ) {
       continue;
     }
-    // v4 records of stateful formats (Codex) predate service tiers, so they
-    // all priced as standard. Keep them, because the rollout may be gone, but
-    // make a live rollout re-parse whole: no file has size -1, and a zero
-    // position cannot resume.
-    const legacy = format.state !== undefined && version < USAGE_SCAN_CACHE_VERSION;
+    // Older Codex/Claude caches lack effort metadata. Retain their saved
+    // records for deleted transcripts, but reparse live files from the start
+    // instead of carrying a guessed effort into appended usage.
+    const legacy =
+      version < USAGE_SCAN_CACHE_VERSION && (format.state !== undefined || entry.p === "claude");
     // A corrupt state disqualifies the entry: resuming with it would attach
     // appended usage to the wrong model or replay fork-copied history.
     if (!legacy && !isValidState.get(entry.p)?.(entry.cs)) continue;

@@ -59,6 +59,30 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
 }
 
 describe("scan cache round trip", () => {
+  it("retains known and unknown effort through a cache round trip", () => {
+    const original = cacheWith([
+      [
+        "/effort.jsonl",
+        100,
+        [record({ reasoningEffort: "xhigh" }), record({ dedupeKey: "msg_2:" })],
+      ],
+    ]);
+    const restored = decodeScanCache(
+      JSON.parse(JSON.stringify(encodeScanCache(original))),
+      TEST_FORMAT_MAP,
+    );
+    expect(restored.get("/effort.jsonl")).toEqual(original.get("/effort.jsonl"));
+  });
+
+  it("reparses old live Claude history without dropping saved unknown usage", () => {
+    const encoded = encodeScanCache(cacheWith([["/older.jsonl", 100, [record()]]]));
+    const restored = decodeScanCache({ ...encoded, version: 5 }, TEST_FORMAT_MAP);
+    expect(restored.get("/older.jsonl")!.records).toEqual([record()]);
+    expect(restored.get("/older.jsonl")!.size).toBe(-1);
+    expect(restored.get("/older.jsonl")!.position.resumeOffset).toBe(0);
+    expect(restored.get("/older.jsonl")!.records[0]!.reasoningEffort).toBeUndefined();
+  });
+
   it("restores records unchanged", () => {
     const original = cacheWith([
       [
@@ -89,6 +113,7 @@ describe("scan cache round trip", () => {
       position: position({
         state: {
           model: "gpt-6-astra",
+          reasoningEffort: null,
           speed: "ultrafast",
           sessionId: "session-c",
           lastUsageSignature: '{"input_tokens":1}',

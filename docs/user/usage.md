@@ -12,6 +12,10 @@ cost, split by token type and by speed. These estimates are not your subscriptio
 **Premium** is what Fast and Ultrafast requests cost above standard rates. Cost that cannot be
 split, such as a provider-reported cost for a model without public rates, shows as **Other**.
 Select a model under **Breakdown** to see its trend, cache hit rate, and cost per million tokens.
+On web and desktop, the model detail also groups usage by recorded reasoning effort, so you can
+see which settings account for its tokens and estimated cost. History without effort metadata
+stays **Unknown** and remains included in the totals. Processed tokens include cached input;
+these totals describe usage at each setting, rather than an average cost per task.
 
 Totals depend on the history available on each server. Grok turns without a saved completed-turn
 record are missing from the totals.

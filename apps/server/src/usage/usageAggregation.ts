@@ -17,6 +17,7 @@ import type {
   UsageCategoryCost,
   UsageDay,
   UsageResolution,
+  UsageReasoningEffortTotals,
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
@@ -81,6 +82,7 @@ interface MutableBucket {
   unpricedRecords: number;
   providerReportedRecords: number;
   sessions: Set<string>;
+  reasoningEfforts: Map<string, UsageReasoningEffortTotals>;
 }
 
 export interface AggregateOptions {
@@ -207,6 +209,26 @@ export class UsageAggregator {
 
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
+    const effort = record.reasoningEffort ?? "unknown";
+    const previous = bucket.reasoningEfforts.get(effort);
+    bucket.reasoningEfforts.set(effort, {
+      effort,
+      totals: {
+        uncachedInputTokens:
+          (previous?.totals.uncachedInputTokens ?? 0) + record.totals.uncachedInputTokens,
+        cachedInputTokens:
+          (previous?.totals.cachedInputTokens ?? 0) + record.totals.cachedInputTokens,
+        cacheCreationTokens:
+          (previous?.totals.cacheCreationTokens ?? 0) + record.totals.cacheCreationTokens,
+        outputTokens: (previous?.totals.outputTokens ?? 0) + record.totals.outputTokens,
+        reasoningTokens: (previous?.totals.reasoningTokens ?? 0) + record.totals.reasoningTokens,
+      },
+      costUsd: (previous?.costUsd ?? 0) + priced.costUsd,
+      records: (previous?.records ?? 0) + 1,
+      unpricedRecords:
+        (previous?.unpricedRecords ?? 0) + (priced.costSource === "unpriced" ? 1 : 0),
+    });
+
     const totals = bucket.totals;
     totals.uncachedInputTokens += record.totals.uncachedInputTokens;
     totals.cachedInputTokens += record.totals.cachedInputTokens;
@@ -291,6 +313,7 @@ export class UsageAggregator {
         unpricedRecords: 0,
         providerReportedRecords: 0,
         sessions: new Set<string>(),
+        reasoningEfforts: new Map(),
       };
       this.#buckets.set(key, bucket);
     }
@@ -314,6 +337,7 @@ export class UsageAggregator {
         model,
         ...(sourcePath === "" ? {} : { sourcePath }),
         totals: { ...bucket.totals },
+        reasoningEfforts: [...bucket.reasoningEfforts.values()],
         costUsd: bucket.costUsd,
         cacheSavingsUsd: bucket.cacheSavingsUsd,
         // Zero and unknown figures are omitted to keep payloads small.

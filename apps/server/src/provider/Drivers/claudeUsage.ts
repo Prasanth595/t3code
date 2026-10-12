@@ -12,6 +12,7 @@ import * as Path from "effect/Path";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import {
   parseTimestampMs,
+  recordedReasoningEffort,
   tokenCount,
   type ProviderUsageReader,
   type TranscriptUsageFormat,
@@ -68,6 +69,12 @@ function parseClaudeRecord(parsed: unknown): UsageRecord | null {
 
   return {
     provider: "claude",
+    reasoningEffort: recordedReasoningEffort(
+      record["perTurnEffort"] ??
+        record["effort"] ??
+        record["reasoningEffort"] ??
+        messageRecord["reasoning_effort"],
+    ),
     timestampMs,
     model,
     sessionId: typeof record["sessionId"] === "string" ? record["sessionId"] : "",
@@ -96,7 +103,10 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
     requestId: true,
     sessionId: true,
     costUSD: true,
-    message: { id: true, model: true, usage: true },
+    perTurnEffort: true,
+    effort: true,
+    reasoningEffort: true,
+    message: { id: true, model: true, reasoning_effort: true, usage: true },
   },
   usageMarkers: ['"usage"'],
   parseLine: (line) => orEmpty(parseClaudeLine(line)),

@@ -11,6 +11,7 @@ import {
   type EnvironmentId,
   type UsageBucket,
   type UsageProviderKind,
+  type UsageReasoningEffortTotals,
   type UsageSource,
   type UsageSourceFingerprint,
   type UsageSummary,
@@ -34,6 +35,7 @@ export interface ProviderTotals {
 }
 
 export interface ModelTotals {
+  readonly reasoningEfforts?: readonly UsageReasoningEffortTotals[];
   readonly model: string;
   readonly provider: UsageProviderKind;
   readonly costUsd: number;
@@ -67,6 +69,7 @@ export interface DailyTotals {
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+  readonly byReasoningEffort?: ReadonlyMap<string, { costUsd: number; totalTokens: number }>;
 }
 
 export interface HourlyTotals {
@@ -75,6 +78,7 @@ export interface HourlyTotals {
   readonly costUsd: number;
   readonly totalTokens: number;
   readonly byProvider: ReadonlyMap<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+  readonly byReasoningEffort?: ReadonlyMap<string, { costUsd: number; totalTokens: number }>;
 }
 
 export interface CostQuality {
@@ -314,6 +318,23 @@ function bucketTokens(bucket: UsageBucket): number {
   );
 }
 
+/** Effort trends inherit the same source ownership as the overall trend. */
+function addEffortPeriodTotals(
+  accumulator: Map<string, { costUsd: number; totalTokens: number }>,
+  entries: readonly UsageReasoningEffortTotals[],
+) {
+  for (const entry of entries) {
+    const previous = accumulator.get(entry.effort) ?? { costUsd: 0, totalTokens: 0 };
+    previous.costUsd += entry.costUsd;
+    previous.totalTokens +=
+      entry.totals.uncachedInputTokens +
+      entry.totals.cachedInputTokens +
+      entry.totals.cacheCreationTokens +
+      entry.totals.outputTokens;
+    accumulator.set(entry.effort, previous);
+  }
+}
+
 export function isCompatibleUsageContractVersion(version: number, expected: number): boolean {
   return version >= USAGE_MERGE_COMPATIBLE_SINCE && version <= expected;
 }
@@ -404,6 +425,7 @@ export function mergeUsage(
     UsageProviderKind,
     { costUsd: number; totalTokens: number; records: number; sessions: number }
   >();
+  const reasoningAccumulator = new Map<string, Map<string, UsageReasoningEffortTotals>>();
   const modelAccumulator = new Map<
     string,
     {
@@ -422,6 +444,7 @@ export function mergeUsage(
       costUsd: number;
       totalTokens: number;
       byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+      byReasoningEffort: Map<string, { costUsd: number; totalTokens: number }>;
     }
   >();
   const hourlyAccumulator = new Map<
@@ -432,6 +455,7 @@ export function mergeUsage(
       costUsd: number;
       totalTokens: number;
       byProvider: Map<UsageProviderKind, { costUsd: number; totalTokens: number }>;
+      byReasoningEffort: Map<string, { costUsd: number; totalTokens: number }>;
     }
   >();
   const contributingEnvironments: EnvironmentId[] = [];
@@ -493,6 +517,37 @@ export function mergeUsage(
       providerAccumulator.set(bucket.provider, provider);
 
       const modelKey = `${bucket.provider} ${bucket.model}`;
+      const efforts =
+        reasoningAccumulator.get(modelKey) ?? new Map<string, UsageReasoningEffortTotals>();
+      const bucketEfforts = bucket.reasoningEfforts ?? [
+        {
+          effort: "unknown",
+          totals: bucket.totals,
+          costUsd: bucket.costUsd,
+          records: bucket.records,
+          unpricedRecords: bucket.unpricedRecords,
+        },
+      ];
+      for (const entry of bucketEfforts) {
+        const previous = efforts.get(entry.effort);
+        efforts.set(entry.effort, {
+          effort: entry.effort,
+          totals: {
+            uncachedInputTokens:
+              (previous?.totals.uncachedInputTokens ?? 0) + entry.totals.uncachedInputTokens,
+            cachedInputTokens:
+              (previous?.totals.cachedInputTokens ?? 0) + entry.totals.cachedInputTokens,
+            cacheCreationTokens:
+              (previous?.totals.cacheCreationTokens ?? 0) + entry.totals.cacheCreationTokens,
+            outputTokens: (previous?.totals.outputTokens ?? 0) + entry.totals.outputTokens,
+            reasoningTokens: (previous?.totals.reasoningTokens ?? 0) + entry.totals.reasoningTokens,
+          },
+          costUsd: (previous?.costUsd ?? 0) + entry.costUsd,
+          records: (previous?.records ?? 0) + entry.records,
+          unpricedRecords: (previous?.unpricedRecords ?? 0) + entry.unpricedRecords,
+        });
+      }
+      reasoningAccumulator.set(modelKey, efforts);
       const model = modelAccumulator.get(modelKey) ?? {
         provider: bucket.provider,
         costUsd: 0,
@@ -528,6 +583,7 @@ export function mergeUsage(
         costUsd: 0,
         totalTokens: 0,
         byProvider: new Map<UsageProviderKind, { costUsd: number; totalTokens: number }>(),
+        byReasoningEffort: new Map<string, { costUsd: number; totalTokens: number }>(),
       };
       day.costUsd += bucket.costUsd;
       day.totalTokens += tokens;
@@ -535,6 +591,7 @@ export function mergeUsage(
       dayProvider.costUsd += bucket.costUsd;
       dayProvider.totalTokens += tokens;
       day.byProvider.set(bucket.provider, dayProvider);
+      addEffortPeriodTotals(day.byReasoningEffort, bucketEfforts);
       dailyAccumulator.set(bucket.day, day);
 
       if (bucket.hourStart !== undefined) {
@@ -544,6 +601,7 @@ export function mergeUsage(
           costUsd: 0,
           totalTokens: 0,
           byProvider: new Map<UsageProviderKind, { costUsd: number; totalTokens: number }>(),
+          byReasoningEffort: new Map<string, { costUsd: number; totalTokens: number }>(),
         };
         hour.costUsd += bucket.costUsd;
         hour.totalTokens += tokens;
@@ -554,6 +612,7 @@ export function mergeUsage(
         hourProvider.costUsd += bucket.costUsd;
         hourProvider.totalTokens += tokens;
         hour.byProvider.set(bucket.provider, hourProvider);
+        addEffortPeriodTotals(hour.byReasoningEffort, bucketEfforts);
         hourlyAccumulator.set(bucket.hourStart, hour);
       }
     }
@@ -575,6 +634,7 @@ export function mergeUsage(
 
   const models: ModelTotals[] = [...modelAccumulator.entries()]
     .map(([key, totals]) => ({
+      reasoningEfforts: [...(reasoningAccumulator.get(key)?.values() ?? [])],
       model: key.slice(key.indexOf(" ") + 1),
       provider: totals.provider,
       costUsd: totals.costUsd,
@@ -594,6 +654,7 @@ export function mergeUsage(
       costUsd: totals.costUsd,
       totalTokens: totals.totalTokens,
       byProvider: totals.byProvider,
+      byReasoningEffort: totals.byReasoningEffort,
     }))
     .sort((a, b) => a.day.localeCompare(b.day));
 

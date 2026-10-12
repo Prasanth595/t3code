@@ -14,7 +14,9 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { UsageProviderChart, type UsageChartMetric } from "./UsageProviderChart";
+import { UsageModelTrend } from "./UsageModelTrend";
+import type { UsageChartMetric } from "./UsageProviderChart";
+import { UsageReasoningBreakdown } from "./UsageReasoningBreakdown";
 import { UsageShareBar } from "./UsageShareBar";
 import {
   cacheHitRate,
@@ -61,7 +63,6 @@ export function UsageModelDialog({
       ),
     [environments, model.provider, model.model],
   );
-  const providers = useMemo(() => [model.provider], [model.provider]);
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
   const hitRate = cacheHitRate(model);
@@ -106,18 +107,15 @@ export function UsageModelDialog({
               ))}
             </div>
 
-            {/* Unpriced cost is unknown, not zero, so its trend shows tokens. */}
-            <UsageProviderChart
-              providers={providers}
-              days={chartWindow.days}
+            <UsageModelTrend
+              model={usage.models[0] ?? model}
               daily={usage.daily}
-              hours={chartWindow.hours}
               hourly={usage.hourly}
-              metric={costUnknown ? "tokens" : metric}
-              referenceTime={chartWindow.referenceTime}
-              resolution={chartWindow.resolution}
-              timeZone={chartWindow.timeZone}
+              metric={metric}
+              chartWindow={chartWindow}
             />
+
+            <UsageReasoningBreakdown model={usage.models[0] ?? model} />
 
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
               {costUnknown ? null : (

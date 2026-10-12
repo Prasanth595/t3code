@@ -46,6 +46,32 @@ describe("parseCodexLine", () => {
     expect(record?.totals.reasoningTokens).toBe(116);
   });
 
+  it("attributes each turn to its recorded effort and clears missing metadata", () => {
+    const state = initialCodexScanState();
+    const context = (extra: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "turn_context",
+        payload: { model: "gpt-5.6-sol", ...extra },
+      });
+    parseCodexLine(context({ effort: "low" }), state);
+    const low = parseCodexLine(tokenCount(100, 50, 10, 5), state);
+    parseCodexLine(context({ reasoning_effort: " XHIGH " }), state);
+    const high = parseCodexLine(tokenCount(200, 100, 20, 10), state);
+    parseCodexLine(context({}), state);
+    const unknown = parseCodexLine(tokenCount(300, 150, 30, 15), state);
+
+    expect([low?.reasoningEffort, high?.reasoningEffort, unknown?.reasoningEffort]).toEqual([
+      "low",
+      "xhigh",
+      undefined,
+    ]);
+    expect([
+      low?.totals.outputTokens,
+      high?.totals.outputTokens,
+      unknown?.totals.outputTokens,
+    ]).toEqual([10, 20, 30]);
+  });
+
   it("skips a repeated token_count so deltas are not double counted", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);

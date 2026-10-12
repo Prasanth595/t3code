@@ -36,6 +36,8 @@ export interface UsageRecord {
    * does not know, such as Cursor's `claude-opus-5-5-high`. Defaults to `model`.
    */
   readonly rateModel?: string;
+  /** Explicitly recorded effort; missing metadata must not assume a default. */
+  readonly reasoningEffort?: string | undefined;
   readonly sessionId: string;
   readonly totals: UsageTokenTotals;
   readonly reportedCostUsd: number | null;
@@ -69,6 +71,13 @@ export function totalTokens(totals: UsageTokenTotals): number {
 /** A token count from untrusted JSON: a positive finite number, truncated, else 0. */
 export function tokenCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+}
+
+/** Keep future effort names, but reject malformed transcript metadata. */
+export function recordedReasoningEffort(value: unknown): string | undefined {
+  return typeof value === "string" && /^[a-z][a-z0-9_-]{0,31}$/i.test(value.trim())
+    ? value.trim().toLowerCase()
+    : undefined;
 }
 
 /** Epoch milliseconds of an ISO timestamp string, or `null`. */
