@@ -292,6 +292,8 @@ page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. Removing an environment from a device's connection
 settings only forgets it on that device; it stays registered to your account.
+On mobile, tapping a T3 Connect environment in **Settings → Environments** that
+isn't added to the device offers to deregister it.
 
 When idle tunnel cleanup is enabled, T3 Connect removes a linked environment's
 tunnel after it stays offline for several minutes. The environment stays linked

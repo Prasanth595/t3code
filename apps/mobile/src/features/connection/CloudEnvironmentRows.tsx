@@ -13,6 +13,11 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useState } from "react";
 import { Pressable, type TextLayoutEvent, View } from "react-native";
 
@@ -23,7 +28,10 @@ import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { availableCloudEnvironmentPresentation } from "../cloud/cloudEnvironmentPresentation";
+import { alertDeregisterFailure, confirmDeregister } from "../cloud/deregisterRelayEnvironment";
+import { deregisterManagedRelayEnvironmentCommand } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
@@ -95,6 +103,28 @@ function CloudEnvironmentRowsContent(
     [controller],
   );
 
+  // An account environment that is not saved here has nothing to remove from
+  // this device, so its only way out of the list is deregistering it.
+  const relaySession = useAtomValue(managedRelaySessionAtom);
+  const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
+    reportFailure: false,
+  });
+  const handleDeregisterCloudEnvironment = (entry: RelayEnvironmentView) =>
+    confirmDeregister(entry.environment, async () => {
+      const accountId = relaySession?.accountId;
+      if (!accountId) return;
+      const result = await deregisterEnvironment({
+        accountId,
+        environmentId: entry.environment.environmentId,
+      });
+      if (result._tag === "Success") {
+        void controller.refreshRelayEnvironments();
+        return;
+      }
+      if (isAtomCommandInterrupted(result)) return;
+      alertDeregisterFailure(entry.environment.environmentId, squashAtomCommandFailure(result));
+    });
+
   // The relay's health probe carries each server's descriptor, so a machine
   // can wear its detected glyph before this device ever connects to it.
   const discoveredDescriptors = new Map(
@@ -143,8 +173,9 @@ function CloudEnvironmentRowsContent(
             <CloudEnvironmentRow
               key={environment.environment.environmentId}
               environment={environment}
-              showChevron={props.onOpenEnvironment !== undefined}
+              opensActions={props.onOpenEnvironment !== undefined}
               onConnect={() => handleConnectCloudEnvironment(environment)}
+              onDeregister={() => handleDeregisterCloudEnvironment(environment)}
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
             />
@@ -247,11 +278,18 @@ function ConnectedCloudEnvironmentRow(props: {
   );
 }
 
+/**
+ * An environment on the signed-in account that is not saved on this device.
+ * The switch adds it here; tapping or long-pressing the row offers to
+ * deregister it from the account.
+ */
 function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
-  readonly showChevron: boolean;
+  /** Tapping the row offers to deregister it, not only long-pressing. */
+  readonly opensActions: boolean;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
+  readonly onDeregister: () => void;
   readonly onToggleError: () => void;
 }) {
   const presentation = availableCloudEnvironmentPresentation({
@@ -262,33 +300,42 @@ function CloudEnvironmentRow(props: {
   });
 
   return (
-    <CloudEnvironmentRowShell
-      showChevron={props.showChevron}
-      connectionError={presentation.connectionError}
-      connectionErrorTraceId={presentation.connectionErrorTraceId}
-      connectionState={presentation.connectionState}
-      errorExpanded={props.errorExpanded}
-      label={props.environment.environment.label}
-      machine={resolveEnvironmentMachineKind(
-        props.environment.status?.descriptor === undefined
-          ? null
-          : { environment: props.environment.status.descriptor },
-      )}
-      onValueChange={(enabled) => {
-        if (enabled) {
-          props.onConnect();
-        }
-      }}
-      onToggleError={props.onToggleError}
-      disabled={presentation.connectionState === "unsupported"}
-      statusText={presentation.statusText}
-      value={false}
-    />
+    <Pressable
+      accessibilityHint="Long press to deregister from your T3 Connect account"
+      accessibilityRole={props.opensActions ? "button" : undefined}
+      accessibilityLabel={
+        props.opensActions ? `Manage ${props.environment.environment.label}` : undefined
+      }
+      onPress={props.opensActions ? props.onDeregister : undefined}
+      onLongPress={props.onDeregister}
+    >
+      <CloudEnvironmentRowShell
+        opensDetails={props.opensActions}
+        connectionError={presentation.connectionError}
+        connectionErrorTraceId={presentation.connectionErrorTraceId}
+        connectionState={presentation.connectionState}
+        errorExpanded={props.errorExpanded}
+        label={props.environment.environment.label}
+        machine={resolveEnvironmentMachineKind(
+          props.environment.status?.descriptor === undefined
+            ? null
+            : { environment: props.environment.status.descriptor },
+        )}
+        onValueChange={(enabled) => {
+          if (enabled) {
+            props.onConnect();
+          }
+        }}
+        onToggleError={props.onToggleError}
+        disabled={presentation.connectionState === "unsupported"}
+        statusText={presentation.statusText}
+        value={false}
+      />
+    </Pressable>
   );
 }
 
 function CloudEnvironmentRowShell(props: {
-  readonly showChevron?: boolean;
   readonly opensDetails?: boolean;
   readonly connectionError: string | null;
   readonly connectionErrorTraceId: string | null;
@@ -412,10 +459,8 @@ function CloudEnvironmentRowShell(props: {
         onValueChange={props.onValueChange}
         value={props.value}
       />
-      {props.opensDetails || props.showChevron ? (
-        <View style={{ opacity: props.opensDetails ? 1 : 0.4 }}>
-          <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
-        </View>
+      {props.opensDetails ? (
+        <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-subtle" />
       ) : null}
     </View>
   );
