@@ -22,6 +22,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+import { settledRunWithOpenBackgroundWork } from "./RecoverInterruptedTurns.ts";
 import {
   endOrphanedNativeSubagent,
   endRunlessRootTurns,
@@ -190,6 +191,7 @@ export const make = Effect.gen(function* () {
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      recoverInterruptedTurns: boolean,
     ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
@@ -561,7 +563,8 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection)
+          ? (restartContinuationRun(projection) ??
+            (recoverInterruptedTurns ? settledRunWithOpenBackgroundWork(projection) : undefined))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -658,11 +661,18 @@ export const make = Effect.gen(function* () {
               }),
           ),
         );
+        const recoverInterruptedTurns = continueAfterRestart?.recoverInterruptedTurns === true;
         const enabled =
           continueAfterRestart !== null &&
-          resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
-            .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+          (recoverInterruptedTurns ||
+            resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
+              .continueThreadsAfterServerUpdate);
+        const result = yield* reconcileProjection(
+          projection,
+          trigger,
+          enabled,
+          recoverInterruptedTurns,
+        );
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;
@@ -693,11 +703,16 @@ export const make = Effect.gen(function* () {
       yield* Effect.gen(function* () {
         const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
         if (
+          !enabled.recoverInterruptedTurns &&
           !resolveProjectSettings(enabled, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate
         )
           return;
-        const run = restartContinuationRun(projection);
+        const run =
+          restartContinuationRun(projection) ??
+          (enabled.recoverInterruptedTurns
+            ? settledRunWithOpenBackgroundWork(projection)
+            : undefined);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({

@@ -129,7 +129,7 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
 
 - When main has a new commit, the script builds it while the old server keeps running. It builds each commit once.
-- It switches only when no agent turn runs. A server restart cancels running turns, and T3 does not resume them. While agents run, the next run tries again.
+- It switches only when no agent turn runs. A server restart cancels running turns. T3 resumes them only when "Recover interrupted agents" or "Continue threads after restarts" is on. While agents run, the next run tries again.
 - `/opt/t3code` is a link to `/opt/t3code-a` or `/opt/t3code-b`. The script builds in the other folder, moves the link and restarts `t3-server`.
 - If the new server does not answer, the script moves the link back.
 
@@ -142,6 +142,21 @@ cp /opt/t3code/scripts/fork-vps/t3-deploy.{service,timer} /etc/systemd/system/ &
 ```
 
 To read the result, run `journalctl -u t3-deploy.service -n 50`.
+
+## Recover interrupted agents
+
+Every agent runs as a child process of the T3 server. An update, a crash or a quit stops them all. When the setting is on, the next server start sends each stopped thread a short message, so that its agent continues.
+
+- Turn it on in Settings > General > Recover interrupted agents. It is off by default.
+- The server settings keys are `recoverInterruptedTurns` (default `false`), `recoverInterruptedTurnsMessage` (default "Recover and continue") and `recoverInterruptedTurnsSubagentMessage` (default "Recover and continue. Your parent thread was also restarted."). They are in `settings.json` in the T3 home `userdata` folder, for example `~/.t3/userdata/settings.json`.
+- It extends the upstream setting "Continue threads after restarts" (`continueThreadsAfterServerUpdate`). When the fork setting is on, it replaces the upstream behavior on every project, with the configured messages.
+- A thread gets the message when the restart stopped its turn, or when its turn was finished but background work of that turn was still open. Background work is a native subagent, a monitor or a background shell.
+- A native subagent, for example a Claude Code Task subagent, lives inside the process of its parent agent. It is not a T3 thread and gets no message. The message to its parent thread covers it, together with a note that names the stopped work.
+- A thread that another thread delegated work to gets the delegated thread message.
+- No message goes to a thread that the user stopped, to a turn that ended on its own, to a turn that waited for an answer or an approval, to a turn that did not start, to a thread without a saved provider session, or to a thread with newer work. Held queued messages stay held.
+- Each stopped turn gets one message at most. A recovery turn that a restart stops before it answers gets no second message, so a restart loop does not repeat it.
+- The thread shows the message as a "T3 Code restarted" notice. The agent receives the message text.
+- The code is in `apps/server/src/orchestration-v2/RecoverInterruptedTurns.ts`.
 
 ## Secrets and variables
 

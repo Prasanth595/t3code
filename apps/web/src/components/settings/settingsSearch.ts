@@ -473,6 +473,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "recover-interrupted-turns",
+    title: "Recover interrupted agents",
+    to: "/settings/general",
+    searchTerms: [
+      "recover continue resume restart crash update quit interrupted agent subagent message background",
+    ],
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
