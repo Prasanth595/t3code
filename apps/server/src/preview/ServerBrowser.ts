@@ -2272,8 +2272,20 @@ const make = Effect.gen(function* () {
         const password = typeof message.password === "string" ? message.password : "";
         // The site the viewer confirmed. The page's own URL decides, which its scripts cannot fake.
         const origin = typeof message.origin === "string" ? message.origin : "";
+        // Each step awaits Chromium, and the page can navigate meanwhile, so every step
+        // first checks that the document the fill started on is still showing.
+        const generation = tab.navigationGeneration;
+        const onConfirmedPage = () =>
+          origin !== "" &&
+          tab.navigationGeneration === generation &&
+          httpOrigin(tab.page.url()) === origin;
+        const insert = async (text: string) => {
+          if (!onConfirmedPage()) return false;
+          await session.send("Input.insertText", { text: text.slice(0, 10_000) });
+          return true;
+        };
         const target = async () => {
-          if (!origin || httpOrigin(tab.page.url()) !== origin) return null;
+          if (!onConfirmedPage()) return null;
           const result = await session.send("Runtime.evaluate", {
             expression: `(${FOCUSED_FIELD_SCRIPT})()`,
             returnByValue: true,
@@ -2284,10 +2296,10 @@ const make = Effect.gen(function* () {
         const first = await target();
         if (first === null) return;
         if (first === "password") {
-          if (password) await session.send("Input.insertText", { text: password.slice(0, 10_000) });
+          if (password) await insert(password);
           return;
         }
-        if (username) await session.send("Input.insertText", { text: username.slice(0, 10_000) });
+        if (username && !(await insert(username))) return;
         if (!password) return;
         for (const type of ["rawKeyDown", "keyUp"] as const) {
           await session.send("Input.dispatchKeyEvent", {
@@ -2298,9 +2310,7 @@ const make = Effect.gen(function* () {
           });
         }
         // A password never lands in a field that would show it.
-        if ((await target()) === "password") {
-          await session.send("Input.insertText", { text: password.slice(0, 10_000) });
-        }
+        if ((await target()) === "password") await insert(password);
         return;
       }
       case "resize": {

@@ -1139,6 +1139,52 @@ it.live.each([
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("a page that navigates during a login fill gets no password", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      yield* Effect.promise(() => page.goto("https://example.com/login"));
+      const viewer = yield* browser.attachViewer(viewerInput(tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const cdp = contexts[0]!.sessions.at(-1)!;
+      const send = cdp.send.getMockImplementation()!;
+      let field = "field";
+      cdp.send.mockImplementation(async (method, input) => {
+        const params = (input ?? {}) as { expression?: string; type?: string; key?: string };
+        if (method === "Runtime.evaluate" && params.expression?.includes("activeElement")) {
+          return { result: { value: field } };
+        }
+        if (
+          method === "Input.dispatchKeyEvent" &&
+          params.key === "Tab" &&
+          params.type === "keyUp"
+        ) {
+          // Tab reaches a password field just as the page starts loading another document.
+          field = "password";
+          page.emit("request", {
+            url: () => "https://example.com/next",
+            method: () => "GET",
+            isNavigationRequest: () => true,
+            frame: () => page,
+          });
+        }
+        return send(method, input);
+      });
+      yield* viewer.input({
+        type: "fillLogin",
+        origin: "https://example.com",
+        username: "nick",
+        password: "hunter2",
+      });
+      const inserted = cdp.send.mock.calls
+        .filter(([method]) => method === "Input.insertText")
+        .map(([, input]) => (input as { text: string }).text);
+      expect(inserted).toEqual(["nick"]);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 /** SHA-256 of `example.com`, which authenticator data starts with. */
 const EXAMPLE_RP_ID_HASH = "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947";
 /** What the phone's authenticator would sign for a sign-in on example.com. */
