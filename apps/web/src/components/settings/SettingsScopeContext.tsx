@@ -7,10 +7,10 @@ import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { getProjectFileQueryAtom, optimisticFileAtom } from "../files/projectFilesQueryState";
-import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+import { useSettingsProjectGroupBuilder } from "./useSettingsProjectGroups";
 import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
-import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
+import { resolveSettingsScopeSearch } from "./settingsScopeAxis";
 
 /**
  * Each member's decoded t3.json, so file-backed settings show the file as a
@@ -55,20 +55,19 @@ function useMemberProjectFiles(scope: ReturnType<typeof resolveSettingsScope>) {
 }
 
 function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironment: boolean) {
-  const groups = useSettingsProjectGroups(rawSearch.machine);
+  const buildGroups = useSettingsProjectGroupBuilder();
   const { environments: availableEnvironments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const search = useMemo(
+  const { search, groups, allGroups } = useMemo(
     () =>
-      singleEnvironment
-        ? selectSingleEnvironmentScope(
-            rawSearch,
-            resolveSettingsScope(rawSearch, groups, availableEnvironments),
-            availableEnvironments,
-            primaryEnvironmentId,
-          )
-        : rawSearch,
-    [availableEnvironments, groups, primaryEnvironmentId, rawSearch, singleEnvironment],
+      resolveSettingsScopeSearch({
+        rawSearch,
+        singleEnvironment,
+        environments: availableEnvironments,
+        primaryEnvironmentId,
+        groupsFor: buildGroups,
+      }),
+    [availableEnvironments, buildGroups, primaryEnvironmentId, rawSearch, singleEnvironment],
   );
   const scope = useMemo(
     () => resolveSettingsScope(search, groups, availableEnvironments),
@@ -94,8 +93,8 @@ function useResolvedSettingsScope(rawSearch: SettingsScopeSearch, singleEnvironm
       ) ??
       targets[0] ??
       null;
-    return { scope, groups, search, ...selected, targets, target };
-  }, [availableEnvironments, groups, primaryEnvironmentId, projectFiles, scope, search]);
+    return { scope, groups, allGroups, search, ...selected, targets, target };
+  }, [allGroups, availableEnvironments, groups, primaryEnvironmentId, projectFiles, scope, search]);
 }
 
 const SettingsScopeContext = createContext<

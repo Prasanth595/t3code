@@ -9,6 +9,7 @@ import {
   environmentAxisValue,
   projectAxisValue,
   projectScopeMenuEntries,
+  resolveSettingsScopeSearch,
   selectEnvironmentAxis,
   selectProjectAxis,
 } from "./settingsScopeAxis";
@@ -156,5 +157,56 @@ describe("settings scope project menu", () => {
       { project: "astrabit-fedora", environments: ["fedora"] },
       { project: "astrabit-laptop", environments: ["laptop"] },
     ]);
+  });
+
+  describe("resolveSettingsScopeSearch", () => {
+    const connected = environments.map((environment) => ({
+      ...environment,
+      connection: { phase: "connected" as const },
+    }));
+    // Narrowing regroups, so a narrowed group is a different object from the full one.
+    const groupsFor = (machine: string | undefined) =>
+      machine === undefined
+        ? groups
+        : groups.flatMap((candidate) => {
+            const members = candidate.memberProjects.filter(
+              (entry) => entry.environmentId === machine,
+            );
+            return members.length === 0
+              ? []
+              : [group(candidate.projectKey, candidate.displayName, members)];
+          });
+
+    it("groups provider settings by the machine it picks for a project", () => {
+      const { search, groups: resolved } = resolveSettingsScopeSearch({
+        rawSearch: { project: "shared" },
+        singleEnvironment: true,
+        environments: connected,
+        primaryEnvironmentId: laptop.environmentId,
+        groupsFor,
+      });
+      expect(search).toEqual({ project: "shared", machine: laptop.environmentId });
+      expect(
+        resolved.map((entry) => ({
+          project: entry.projectKey,
+          members: entry.memberProjects.map((project) => project.environmentId),
+        })),
+      ).toEqual([
+        { project: "shared", members: [laptop.environmentId] },
+        { project: "notes", members: [laptop.environmentId] },
+      ]);
+    });
+
+    it("keeps every environment's groups when no machine is chosen", () => {
+      const { search, groups: resolved } = resolveSettingsScopeSearch({
+        rawSearch: { project: "shared" },
+        singleEnvironment: false,
+        environments: connected,
+        primaryEnvironmentId: laptop.environmentId,
+        groupsFor,
+      });
+      expect(search).toEqual({ project: "shared" });
+      expect(resolved).toBe(groups);
+    });
   });
 });

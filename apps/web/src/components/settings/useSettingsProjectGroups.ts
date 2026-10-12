@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
 import { selectProjectGroupingSettings, type ProjectGroupingSettings } from "../../logicalProject";
@@ -38,13 +38,14 @@ export function buildSettingsProjectGroups(input: {
   }).sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
-export function useSettingsProjectGroups(machine?: string) {
+/** Builds Settings project groups for a machine, or every environment when undefined. */
+export function useSettingsProjectGroupBuilder() {
   const projects = useProjects();
   const settings = useClientSettings(selectProjectGroupingSettings);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
-  return useMemo(
-    () =>
+  return useCallback(
+    (machine: string | undefined) =>
       buildSettingsProjectGroups({
         projects,
         settings,
@@ -52,6 +53,11 @@ export function useSettingsProjectGroups(machine?: string) {
         environments,
         machine,
       }),
-    [environments, machine, primaryEnvironmentId, projects, settings],
+    [environments, primaryEnvironmentId, projects, settings],
   );
+}
+
+export function useSettingsProjectGroups() {
+  const buildGroups = useSettingsProjectGroupBuilder();
+  return useMemo(() => buildGroups(undefined), [buildGroups]);
 }

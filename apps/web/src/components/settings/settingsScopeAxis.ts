@@ -1,6 +1,10 @@
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { EnvironmentPresentation } from "../../state/environments";
-import type { ResolvedSettingsScope, SettingsScopeSearch } from "./settingsScope";
+import {
+  resolveSettingsScope,
+  type ResolvedSettingsScope,
+  type SettingsScopeSearch,
+} from "./settingsScope";
 
 type ScopeEnvironment = Pick<EnvironmentPresentation, "environmentId" | "label" | "displayUrl">;
 
@@ -100,4 +104,36 @@ export function selectSingleEnvironmentScope(
     candidates.find((environment) => environment.connection.phase === "connected") ??
     candidates[0];
   return selected ? { ...search, machine: selected.environmentId } : search;
+}
+
+/**
+ * The search Settings resolves and the project groups it resolves against.
+ * `groups` are narrowed to the final search's machine, so labels,
+ * representatives and members come from that environment only; `allGroups`
+ * spans every environment.
+ */
+export function resolveSettingsScopeSearch(input: {
+  readonly rawSearch: SettingsScopeSearch;
+  readonly singleEnvironment: boolean;
+  readonly environments: readonly (ScopeEnvironment & {
+    readonly connection: Pick<EnvironmentPresentation["connection"], "phase">;
+  })[];
+  readonly primaryEnvironmentId: string | null;
+  /** Project groups narrowed to `machine`, or every environment's when undefined. */
+  readonly groupsFor: (machine: string | undefined) => readonly SidebarProjectSnapshot[];
+}) {
+  const { rawSearch, environments } = input;
+  const allGroups = input.groupsFor(undefined);
+  // Picking the provider page's machine reads every environment's groups; a
+  // raw `machine` returns before they are used.
+  const search = input.singleEnvironment
+    ? selectSingleEnvironmentScope(
+        rawSearch,
+        resolveSettingsScope(rawSearch, allGroups, environments),
+        environments,
+        input.primaryEnvironmentId,
+      )
+    : rawSearch;
+  const groups = search.machine === undefined ? allGroups : input.groupsFor(search.machine);
+  return { search, groups, allGroups };
 }
