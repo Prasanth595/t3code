@@ -409,6 +409,21 @@ function wakeWorkStartedAt(
   return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }
 
+/** A message one T3 agent thread sent to another through MCP. */
+export function isCrossThreadAgentMessage(message: {
+  readonly createdBy: string;
+  readonly creationSource: string;
+  readonly senderThreadId?: ThreadId | undefined;
+  readonly threadId: ThreadId;
+}): boolean {
+  return (
+    message.createdBy === "agent" &&
+    message.creationSource === "mcp" &&
+    message.senderThreadId !== undefined &&
+    message.senderThreadId !== message.threadId
+  );
+}
+
 /** A native /compact or /logout turn: provider maintenance, not agent work. */
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
@@ -4780,13 +4795,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           taskIds: delivery.taskIds,
         };
       }
-      // Route durable mailbox deliveries under the thread lock, using the live
-      // session's capabilities. Never interrupt/restart a turn for a notification.
+      // With agent follow-ups set to steer, coordination reaches the work in
+      // progress even when the sending agent chooses queue. Resolve this under
+      // the thread lock; never interrupt tools or restart a turn to deliver it.
+      const agentCoordination =
+        isCrossThreadAgentMessage(command) &&
+        (command.dispatchMode.type === "start_immediately" ||
+          command.dispatchMode.type === "queue_after_active") &&
+        !isNativeMaintenanceCommand(command) &&
+        !isGoalCommand(command) &&
+        (yield* serverSettings.getSettings.pipe(Effect.orDie)).agentFollowUpBehavior === "steer";
       if (
-        delegatedCompletion !== undefined &&
-        delegatedCompletion.taskIds.every(
-          (id) => projection.subagents.find((task) => task.id === id)?.completionWake === "always",
-        )
+        agentCoordination ||
+        (delegatedCompletion !== undefined &&
+          delegatedCompletion.taskIds.every(
+            (id) =>
+              projection.subagents.find((task) => task.id === id)?.completionWake === "always",
+          ))
       ) {
         const active = projection.runs.find((run) => run.status === "running");
         const providerThread = projection.providerThreads.find(

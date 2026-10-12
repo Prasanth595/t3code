@@ -466,6 +466,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "agent-follow-up-behavior",
+    title: "Agent follow-up behavior",
+    to: "/settings/general",
+    searchTerms: ["queue steer agent subagent delegate thread send mcp running turn"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

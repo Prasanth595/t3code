@@ -33,8 +33,8 @@ const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
 it.effect.each(
-  [false, true]
-    .flatMap((mailbox) =>
+  (["steering", "mailbox", "agent-auto", "agent-queue", "user-queue", "external-queue"] as const)
+    .flatMap((delivery) =>
       (
         [
           "before delivery",
@@ -44,21 +44,27 @@ it.effect.each(
           "without native steering",
           "with interrupting native steering",
           "settled only",
+          "explicit queue",
         ] as const
       ).map((timing) => ({
-        mailbox,
+        mailbox: delivery === "mailbox",
+        delivery,
         timing,
-        label: mailbox ? "mailbox notification" : "steering",
+        label: delivery,
       })),
     )
-    .filter(
-      ({ mailbox, timing }) =>
-        mailbox ||
-        (timing !== "without native steering" &&
-          timing !== "with interrupting native steering" &&
-          timing !== "settled only"),
+    .filter(({ mailbox, delivery, timing }) =>
+      delivery === "user-queue" || delivery === "external-queue"
+        ? timing === "explicit queue"
+        : timing !== "explicit queue" &&
+          (mailbox ||
+            (delivery.startsWith("agent-") && timing !== "settled only") ||
+            (delivery === "steering" &&
+              timing !== "without native steering" &&
+              timing !== "with interrupting native steering" &&
+              timing !== "settled only")),
     ),
-)("delivers $label when completion wins $timing", ({ mailbox, timing }) =>
+)("delivers $label when completion wins $timing", ({ mailbox, delivery, timing }) =>
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`steering-completion-${timing.replaceAll(" ", "-")}`);
@@ -278,11 +284,24 @@ it.effect.each(
               sizeBytes: 10,
             },
           ],
-          dispatchMode: mailbox
-            ? { type: "queue_after_active" }
-            : { type: "steer_active", targetRunId: first.runId },
-          createdBy: mailbox ? "agent" : "user",
-          creationSource: mailbox ? "server" : "web",
+          dispatchMode:
+            mailbox || delivery.endsWith("-queue")
+              ? { type: "queue_after_active" }
+              : delivery === "agent-auto"
+                ? { type: "start_immediately" }
+                : { type: "steer_active", targetRunId: first.runId },
+          createdBy:
+            mailbox || delivery.startsWith("agent-") || delivery === "external-queue"
+              ? "agent"
+              : "user",
+          creationSource: mailbox
+            ? "server"
+            : delivery.startsWith("agent-") || delivery === "external-queue"
+              ? "mcp"
+              : "web",
+          ...(delivery.startsWith("agent-")
+            ? { senderThreadId: ThreadId.make("thread:sender") }
+            : {}),
           ...(mailbox
             ? {
                 delegatedCompletion: {
@@ -295,9 +314,9 @@ it.effect.each(
         });
         if (timing !== "before dispatch") yield* dispatchSteer;
         if (timing === "after delivery") yield* worker.drain();
-        const delivery =
+        const deliveryFiber =
           timing === "during delivery" ? yield* worker.runOnce.pipe(Effect.forkScoped) : null;
-        if (delivery !== null) yield* Deferred.await(steerEntered);
+        if (deliveryFiber !== null) yield* Deferred.await(steerEntered);
         const completed = yield* watch(
           (event) =>
             event.type === "run.updated" &&
@@ -322,9 +341,9 @@ it.effect.each(
           threadDisposition: "reusable",
         });
         yield* Fiber.join(completed);
-        if (delivery !== null) {
+        if (deliveryFiber !== null) {
           yield* Deferred.succeed(rejectSteer, undefined);
-          yield* Fiber.join(delivery);
+          yield* Fiber.join(deliveryFiber);
         }
         if (timing === "before dispatch") yield* dispatchSteer;
         yield* worker.drain();
@@ -397,7 +416,7 @@ it.effect.each(
           ProviderReplayHarness.layerWithRegistry(
             { name: `steering-completion-${timing}` },
             ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false },
+            { runEffectWorker: false, agentFollowUpBehavior: "steer" },
           ),
         ),
       );

@@ -754,7 +754,15 @@ const make = Effect.gen(function* () {
           type: input.mode === "steer" ? "steer_active" : "restart_active",
           targetRunId: steerableRun.id,
         };
-      } else if (input.mode === "auto" && steerableRun !== undefined) {
+      } else if (
+        input.mode === "auto" &&
+        steerableRun !== undefined &&
+        // Steered agent follow-ups are routed under the thread lock instead.
+        !(
+          Orchestrator.isCrossThreadAgentMessage(input) &&
+          (yield* serverSettings.getSettings.pipe(Effect.orDie)).agentFollowUpBehavior === "steer"
+        )
+      ) {
         dispatchMode = { type: "steer_active", targetRunId: steerableRun.id };
       } else {
         dispatchMode = {

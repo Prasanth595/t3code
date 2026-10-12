@@ -239,6 +239,7 @@ export function layerProviderReplay<Transcript extends ProviderReplayTranscript,
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    readonly agentFollowUpBehavior?: "queue" | "steer";
     readonly replayGate?: ProviderReplayGate;
   } = {},
 ): Layer.Layer<
@@ -275,6 +276,7 @@ export function layerWithRegistry<Error>(
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    readonly agentFollowUpBehavior?: "queue" | "steer";
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -306,6 +308,9 @@ export function layerWithRegistry<Error>(
     ...(options.continueThreadsAfterServerUpdate === undefined
       ? {}
       : { continueThreadsAfterServerUpdate: options.continueThreadsAfterServerUpdate }),
+    ...(options.agentFollowUpBehavior === undefined
+      ? {}
+      : { agentFollowUpBehavior: options.agentFollowUpBehavior }),
   }).pipe(Layer.orDie);
   const layerStores = Layer.mergeAll(
     EventStore.layer,

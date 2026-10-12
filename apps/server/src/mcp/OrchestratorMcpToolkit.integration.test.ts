@@ -65,6 +65,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
+import { makeProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import {
   decodeProviderReplayNdjson,
@@ -3804,10 +3805,14 @@ describe("orchestrator MCP toolkit", () => {
       ),
   );
 
-  it.live("reports running and queued child follow-ups from a Codex replay transcript", () =>
+  it.live("steers agent messages and preserves user-queued child follow-ups through Codex", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("delegated-task-status");
+        const replayGate = makeProviderReplayGate([
+          "child.queue.turn/steer",
+          "child.auto.turn/steer",
+        ]);
         const rawTranscript = yield* readDelegatedTaskStatusTranscript();
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
           materializeReplayTranscriptWorkspace(rawTranscript, cwd),
@@ -3820,12 +3825,13 @@ describe("orchestrator MCP toolkit", () => {
             runtimePolicyOverride: { cwd },
           },
           CodexOrchestratorReplayHarness,
+          { replayGate, agentFollowUpBehavior: "steer" },
         );
         const layerOrchestration = Layer.merge(
           layerOrchestrator,
           ThreadManagementService.layer.pipe(
             Layer.provide(layerOrchestrator),
-            Layer.provide(ServerSettings.layerTest()),
+            Layer.provide(ServerSettings.layerTest({ agentFollowUpBehavior: "steer" })),
             Layer.provide(
               CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
             ),
@@ -4020,15 +4026,45 @@ describe("orchestrator MCP toolkit", () => {
               ),
             );
 
-          const queuedFollowupCall = yield* invoke("t3_thread_send", {
+          for (const mode of ["queue", "auto"] as const) {
+            const update = yield* invoke("t3_thread_send", {
+              threadId: delegated.childThreadId,
+              message: "Apply the latest parent correction before finishing.",
+              mode,
+              clientRequestId: `delegated-child-replay-steer-${mode}`,
+            });
+            const steered = yield* decodeThreadSendResult(update.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(steered).toMatchObject({
+              runId: runningFollowup.runId,
+              delivery: "steered",
+              status: "running",
+            });
+            // The replay cannot reach this response without matching turn/steer.
+            const label = `child.${mode}.turn/steer`;
+            expect(yield* Effect.promise(() => replayGate.waitForReached(label))).toBe(true);
+            replayGate.release(label);
+          }
+
+          const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+          const queued = yield* threadManagement.sendToThread({
+            projectId,
             threadId: delegated.childThreadId,
-            message: queuedFollowupPrompt,
+            commandId: CommandId.make("command:user-replay-queued"),
+            messageId: MessageId.make("message:user-replay-queued"),
+            text: queuedFollowupPrompt,
+            attachments: [],
             mode: "queue",
-            clientRequestId: "delegated-child-replay-queued-1",
+            createdBy: "user",
+            creationSource: "web",
           });
-          const queuedFollowup = yield* decodeThreadSendResult(
-            queuedFollowupCall.structuredContent,
-          ).pipe(Effect.orDie);
+          const queuedFollowup = {
+            runId: queued.run.id,
+            taskId: queued.run.delegatedTaskId,
+            status: queued.run.status,
+            delivery: queued.delivery,
+          };
           expect(queuedFollowup).toMatchObject({
             status: "queued",
             delivery: "queued",
