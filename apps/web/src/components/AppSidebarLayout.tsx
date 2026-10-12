@@ -236,18 +236,19 @@ function ThreadUndoShortcut() {
   const noticeVisible = useSidebarVisibility();
 
   useEffect(() => {
-    let undoKeyHeld = false;
+    let heldUndoKey: string | null = null;
     const onKeyDown = (event: KeyboardEvent) => {
       // A held key undoes once. Cancel its repeats so they cannot fall through
       // to the editor's own undo, even after the last notice is gone.
       if (event.repeat) {
-        if (undoKeyHeld) {
+        if (event.code === heldUndoKey) {
           event.preventDefault();
           event.stopPropagation();
         }
         return;
       }
-      undoKeyHeld = false;
+      // A modifier tapped mid-hold leaves the held key repeating.
+      if (!MODIFIER_KEYS.has(event.key)) heldUndoKey = null;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
@@ -263,7 +264,7 @@ function ThreadUndoShortcut() {
       }
       if (isCommandPaletteOpen() || isModelPickerOpen()) return;
       if (undoLatestThreadAction()) {
-        undoKeyHeld = true;
+        heldUndoKey = event.code;
         event.preventDefault();
         event.stopPropagation();
       }
