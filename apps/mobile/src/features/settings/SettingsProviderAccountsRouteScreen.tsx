@@ -43,7 +43,7 @@ export function SettingsProviderAccountsRouteScreen() {
                 {environment.serverConfig.providers
                   .filter(
                     (provider) =>
-                      provider.setup?.canAuthenticate ||
+                      provider.setup?.canAuthenticate === true ||
                       (provider.driver === "acpRegistry" && provider.installed),
                   )
                   .map((provider) => (
@@ -55,7 +55,7 @@ export function SettingsProviderAccountsRouteScreen() {
                   ))}
                 {!environment.serverConfig.providers.some(
                   (provider) =>
-                    provider.setup?.canAuthenticate ||
+                    provider.setup?.canAuthenticate === true ||
                     (provider.driver === "acpRegistry" && provider.installed),
                 ) ? (
                   <Text className="p-4 text-foreground-muted">
@@ -317,16 +317,26 @@ function ProviderAccount({
             void run(() => cancel({ environmentId, input: { instanceId, flowId: state.flowId! } }));
           }}
         />
-      ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
+      ) : !active &&
+        !needsExternalSetup &&
+        provider.setup?.canAuthenticate === true &&
+        state !== null ? (
+        // `canAuthenticate` is declared by the server, so this row only appears
+        // where an in-app sign-in can actually complete.
         <SettingsActionRow
           icon="person.crop.circle"
           label={signedIn ? "Change account" : "Sign in"}
-          disabled={disabled || !provider.enabled || !provider.installed || state === null}
+          disabled={disabled || !provider.enabled || !provider.installed}
           loading={pending}
           onPress={chooseMethod}
         />
       ) : null}
-      {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
+      {!active &&
+      signedIn &&
+      // `canLogout` is the driver's declaration; providers that support sign-out
+      // without setting it fall back to `canAuthenticate`. A CLI-owned login has
+      // neither, so no sign-out row is offered.
+      (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
         <SettingsActionRow
           icon="person.crop.circle"
           label="Sign out"

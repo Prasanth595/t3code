@@ -18,6 +18,7 @@ import {
   providerModelsFromSettings,
   spawnAndCollect,
   type ProviderProbeResult,
+  type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 
 const MUSE_PRESENTATION = {
@@ -29,12 +30,24 @@ const MUSE_PRESENTATION = {
   supportedRuntimeModes: ["approval-required", "full-access"],
 } as const;
 
+/**
+ * Muse Code authenticates with the installed CLI (`muse login`). T3 Code installs
+ * neither and signs into neither, so it advertises neither. Clients read an absent
+ * `setup` as "unknown" and offer a sign-in that can only fail, so every Muse
+ * snapshot declares this.
+ */
+const MUSE_SETUP = { canAuthenticate: false, canInstall: false } as const;
+
+const buildMuseProvider = (
+  input: Omit<Parameters<typeof buildServerProvider>[0], "setup">,
+): ServerProviderDraft => buildServerProvider({ ...input, setup: MUSE_SETUP });
+
 const FALLBACK_CAPABILITIES = museModelCapabilities();
 
 export const makePendingMuseProvider = Effect.fn("makePendingMuseProvider")(function* (
   settings: MuseSettings,
 ) {
-  return buildServerProvider({
+  return buildMuseProvider({
     presentation: MUSE_PRESENTATION,
     enabled: settings.enabled,
     checkedAt: DateTime.formatIso(yield* DateTime.now),
@@ -63,7 +76,7 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
   // The driver passes a prepared environment; direct callers get the host's without META_API_KEY.
   const museEnvironment = environment ?? makeMuseEnvironment();
   const snapshot = (probe: ProviderProbeResult, models: ReadonlyArray<ServerProviderModel> = []) =>
-    buildServerProvider({
+    buildMuseProvider({
       presentation: MUSE_PRESENTATION,
       enabled: true,
       checkedAt,

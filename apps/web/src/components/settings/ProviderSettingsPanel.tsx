@@ -1025,7 +1025,7 @@ export function EnvironmentProviderSettings({
           ) : mode === "editor" &&
             !readOnly &&
             liveProvider &&
-            (liveProvider.setup?.canAuthenticate ||
+            (liveProvider.setup?.canAuthenticate === true ||
               (liveProvider.driver === "acpRegistry" && liveProvider.installed)) ? (
             <ProviderAuthenticationSection
               key={`${environmentId}:${row.instanceId}`}

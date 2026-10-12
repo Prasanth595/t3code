@@ -232,6 +232,13 @@ export function buildServerProvider(input: {
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
+  /**
+   * Declared when the provider's capabilities are knowable, so clients never
+   * have to infer them from an absent field. Providers that authenticate with
+   * the installed CLI set `canAuthenticate: false`: they have no in-app sign-in,
+   * and a client that reads an absent field will offer a sign-in that cannot work.
+   */
+  setup?: ServerProvider["setup"];
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
     ? createProviderVersionAdvisory({
@@ -272,6 +279,7 @@ export function buildServerProvider(input: {
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
+    ...(input.setup ? { setup: input.setup } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }

@@ -30,6 +30,19 @@ const OPENCODE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 
+/**
+ * OpenCode authenticates with the installed `opencode` CLI (`opencode auth login`)
+ * or with a configured external server's own password. T3 Code installs neither and
+ * signs into neither, so it advertises neither. Clients read an absent `setup` as
+ * "unknown" and offer a sign-in that can only fail, so every OpenCode snapshot
+ * declares this.
+ */
+const OPENCODE_SETUP = { canAuthenticate: false, canInstall: false } as const;
+
+const buildOpenCodeProvider = (
+  input: Omit<Parameters<typeof buildServerProvider>[0], "setup">,
+): ServerProviderDraft => buildServerProvider({ ...input, setup: OPENCODE_SETUP });
+
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
   readonly cause?: unknown;
   readonly detail: string;
@@ -345,7 +358,7 @@ export const makePendingOpenCodeProvider = (
     );
 
     if (!openCodeSettings.enabled) {
-      return buildServerProvider({
+      return buildOpenCodeProvider({
         presentation: OPENCODE_PRESENTATION,
         enabled: false,
         checkedAt,
@@ -363,7 +376,7 @@ export const makePendingOpenCodeProvider = (
       });
     }
 
-    return buildServerProvider({
+    return buildOpenCodeProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -549,7 +562,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
   if (result._tag === "Failure") {
     // The detail can carry a response body; it stays in the log, not the status.
     yield* Effect.logWarning("OpenCode 2 model list failed", result.cause);
-    return buildServerProvider({
+    return buildOpenCodeProvider({
       presentation: OPENCODE_2_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -579,7 +592,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
     settings.customModels,
     DEFAULT_OPENCODE_MODEL_CAPABILITIES,
   );
-  return buildServerProvider({
+  return buildOpenCodeProvider({
     presentation: OPENCODE_2_PRESENTATION,
     enabled: true,
     checkedAt,
@@ -631,7 +644,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       phase,
       serverUrl: openCodeSettings.serverUrl,
     });
-    return buildServerProvider({
+    return buildOpenCodeProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: openCodeSettings.enabled,
       checkedAt,
@@ -647,7 +660,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   };
 
   if (!openCodeSettings.enabled) {
-    return buildServerProvider({
+    return buildOpenCodeProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -682,7 +695,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   }
   let version: string | null = probed.version;
   if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
-    return buildServerProvider({
+    return buildOpenCodeProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: openCodeSettings.enabled,
       checkedAt,
@@ -747,7 +760,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   );
   const skills = openCodeSkillsToServerProviderSkills(inventoryExit.value.inventory.skills);
   const connectedCount = inventoryExit.value.inventory.providerList.connected.length;
-  return buildServerProvider({
+  return buildOpenCodeProvider({
     presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,

@@ -68,8 +68,21 @@ const PI_PRESENTATION = {
   requiresNewThreadForModelChange: false,
 } as const;
 
+/**
+ * Pi authenticates with the installed `pi` CLI (`pi` then `/login`). T3 Code
+ * installs neither and signs into neither, so it advertises neither. Clients read
+ * an absent `setup` as "unknown" and offer a sign-in that can only fail, so every
+ * Pi snapshot declares this.
+ */
+const PI_SETUP = { canAuthenticate: false, canInstall: false } as const;
+
+const buildPiProvider = (
+  input: Omit<Parameters<typeof buildServerProvider>[0], "setup">,
+): ServerProviderDraft => buildServerProvider({ ...input, setup: PI_SETUP });
+
 const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const PI_RPC_DISCOVERY_TIMEOUT_MS = 15_000;
+
 /**
  * get_entries arrived in 0.80.3 and agent_settled landed in source at 0.80.4.
  * Version 0.80.5 was the first published package containing both hooks. T3
@@ -232,7 +245,7 @@ export function buildInitialPiProviderSnapshot(
     const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
     const models = piModelsFromSettings(piSettings.customModels);
     if (!piSettings.enabled) {
-      return buildServerProvider({
+      return buildPiProvider({
         presentation: PI_PRESENTATION,
         enabled: false,
         checkedAt,
@@ -246,7 +259,7 @@ export function buildInitialPiProviderSnapshot(
         },
       });
     }
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -271,7 +284,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   const fallbackModels = piModelsFromSettings(piSettings.customModels);
 
   if (!piSettings.enabled) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -294,7 +307,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   if (Result.isFailure(versionResult)) {
     const error = versionResult.failure;
     yield* Effect.logWarning("Pi CLI health check failed.", { errorTag: error._tag });
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -312,7 +325,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   if (Option.isNone(versionResult.success)) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -330,7 +343,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   const versionOutput = versionResult.success.value;
   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
   if (versionOutput.code !== 0) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -346,7 +359,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   if (version === null) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -362,7 +375,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   if (compareSemverVersions(version, MINIMUM_PI_VERSION) < 0) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -379,7 +392,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
 
   const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
   if (!resolvedLaunchArgs.ok) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -404,7 +417,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     yield* Effect.logWarning("Pi RPC discovery failed.", {
       errorTag: causeErrorTag(discoveryExit.cause),
     });
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -420,7 +433,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
     });
   }
   if (Option.isNone(discoveryExit.value)) {
-    return buildServerProvider({
+    return buildPiProvider({
       presentation: PI_PRESENTATION,
       enabled: piSettings.enabled,
       checkedAt,
@@ -438,7 +451,7 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
 
   const discovery = discoveryExit.value.value;
   const models = piModelsFromSettings(piSettings.customModels, discovery.models);
-  return buildServerProvider({
+  return buildPiProvider({
     presentation: PI_PRESENTATION,
     enabled: piSettings.enabled,
     checkedAt,

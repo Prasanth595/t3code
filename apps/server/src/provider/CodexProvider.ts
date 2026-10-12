@@ -79,6 +79,19 @@ const CODEX_PRESENTATION = {
   reportsContextWindow: true,
 } as const;
 
+/**
+ * The default Codex path authenticates with the installed `codex` CLI
+ * (`codex login`), which T3 Code neither installs nor signs into. Managed Codex
+ * is the exception: it owns the ChatGPT token and advertises `canAuthenticate`
+ * itself, so its snapshot overrides this. Clients read an absent `setup` as
+ * "unknown" and offer a sign-in that can only fail.
+ */
+const CODEX_SETUP = { canAuthenticate: false, canInstall: false } as const;
+
+const buildCodexProvider = (
+  input: Omit<Parameters<typeof buildServerProvider>[0], "setup">,
+): ServerProviderDraft => buildServerProvider({ ...input, setup: CODEX_SETUP });
+
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
   readonly rateLimits?: CodexRateLimitsProbe;
@@ -589,7 +602,7 @@ const makePendingCodexProvider = (
     const models = emptyCodexModelsFromSettings(codexSettings);
 
     if (!codexSettings.enabled) {
-      return buildServerProvider({
+      return buildCodexProvider({
         presentation: CODEX_PRESENTATION,
         enabled: false,
         checkedAt,
@@ -605,7 +618,7 @@ const makePendingCodexProvider = (
       });
     }
 
-    return buildServerProvider({
+    return buildCodexProvider({
       presentation: CODEX_PRESENTATION,
       enabled: true,
       checkedAt,
@@ -682,7 +695,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
 
   if (!codexSettings.enabled) {
-    return buildServerProvider({
+    return buildCodexProvider({
       presentation: CODEX_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -715,7 +728,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
     const installed = !isCodexAppServerSpawnError(error);
-    return buildServerProvider({
+    return buildCodexProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
       checkedAt,
@@ -737,7 +750,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   }
 
   if (Option.isNone(probeResult.success)) {
-    return buildServerProvider({
+    return buildCodexProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
       checkedAt,
@@ -773,7 +786,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
             checkedAt,
           });
 
-  return buildServerProvider({
+  return buildCodexProvider({
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,

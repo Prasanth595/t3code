@@ -272,11 +272,14 @@ export function ProviderAuthenticationSection({
               >
                 Cancel
               </Button>
-            ) : !active && !needsExternalSetup && provider.setup?.canAuthenticate !== false ? (
+            ) : !active &&
+              !needsExternalSetup &&
+              provider.setup?.canAuthenticate === true &&
+              auth ? (
               <Button
                 size="sm"
                 variant="outline"
-                disabled={disabled || !provider.enabled || !provider.installed || !auth}
+                disabled={disabled || !provider.enabled || !provider.installed}
                 onClick={() =>
                   void run(() =>
                     start({
@@ -298,6 +301,10 @@ export function ProviderAuthenticationSection({
                     : "Sign in"}
               </Button>
             ) : null}
+            {/* A provider that signs in with its own CLI has no auth controller, so
+                sign-out cannot be offered here either. `canLogout` is the driver's
+                declaration; a provider that supports sign-out without setting it
+                falls back to `canAuthenticate`, which a CLI-owned login has as false. */}
             {!active && signedIn && (provider.auth.canLogout ?? provider.setup?.canAuthenticate) ? (
               <Button
                 size="sm"
