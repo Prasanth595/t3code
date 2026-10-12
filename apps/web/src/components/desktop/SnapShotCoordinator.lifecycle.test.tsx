@@ -21,6 +21,27 @@ import {
 } from "../../lib/snapShotAnimation";
 import { SnapShotCoordinator } from "./SnapShotCoordinator";
 import { DraftId } from "../../composerDraftStore";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+
+const shellState = await vi.hoisted(async () => {
+  const { Atom } = await import("effect/reactivity");
+  return { threadAAvailable: Atom.make(false) };
+});
+vi.mock("../../state/threads", async (original) => {
+  const state = await original<typeof import("../../state/threads")>();
+  const { Atom } = await import("effect/reactivity");
+  const threadA = Atom.map(shellState.threadAAvailable, (available) =>
+    available ? { id: "thread-a" } : null,
+  );
+  const empty = Atom.make(null);
+  return {
+    ...state,
+    environmentThreadShells: {
+      ...state.environmentThreadShells,
+      threadShellAtom: (ref: ScopedThreadRef) => (ref.threadId === "thread-a" ? threadA : empty),
+    },
+  };
+});
 
 const route = vi.hoisted(() => ({
   current: {
@@ -116,6 +137,7 @@ async function mount(routeThreadRef: ScopedThreadRef | null) {
 }
 
 beforeEach(() => {
+  appAtomRegistry.set(shellState.threadAAvailable, false);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   route.current.handleNewThread = async () => null;
   bridge.listeners.clear();
@@ -123,6 +145,41 @@ beforeEach(() => {
   bridge.readSnapShot.mockClear();
   bridge.onSnapShotEvent.mockClear();
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
+});
+
+it("retries a capture pinned to an unloaded thread when that thread's shell arrives", async () => {
+  await mount(threadA);
+  await act(async () => bridge.emit({ type: "requested", id: pendingCapture.id }));
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  expect(bridge.readSnapShot).not.toHaveBeenCalled();
+  const listsBeforeShell = bridge.listPendingSnapShots.mock.calls.length;
+
+  await act(async () => appAtomRegistry.set(shellState.threadAAvailable, true));
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(listsBeforeShell + 1);
+  expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(pendingCapture.id);
+  for (let update = 2; update <= 10; update++) {
+    setRoute(threadB, update);
+    await act(async () => root.render(<SnapShotCoordinator />));
+  }
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(listsBeforeShell + 1);
+});
+
+it("stops waiting for the pinned shell when a capture fails", async () => {
+  await mount(threadA);
+  await act(async () => bridge.emit({ type: "requested", id: pendingCapture.id }));
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  await act(async () => bridge.emit({ type: "failed", id: pendingCapture.id }));
+  const listsBeforeShell = bridge.listPendingSnapShots.mock.calls.length;
+
+  await act(async () => appAtomRegistry.set(shellState.threadAAvailable, true));
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(listsBeforeShell);
+  expect(bridge.readSnapShot).not.toHaveBeenCalled();
 });
 
 it("keeps the committed route after an earlier target resolution is abandoned", async () => {
