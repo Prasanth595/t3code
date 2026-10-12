@@ -275,12 +275,17 @@ describe("DesktopApplicationMenu", () => {
 
           assert.isUndefined(
             viewMenu.submenu.find((item) =>
-              ["zoom", "reload", "devtools"].some((role) => item.role?.toLowerCase().includes(role)),
+              ["zoom", "reload", "devtools"].some((role) =>
+                item.role?.toLowerCase().includes(role),
+              ),
             ),
           );
 
           const zoomItems = viewMenu.submenu.filter((item) => item.label === "Zoom In");
-          assert.deepEqual(zoomItems.map((item) => item.accelerator), accelerators);
+          assert.deepEqual(
+            zoomItems.map((item) => item.accelerator),
+            accelerators,
+          );
           assert.equal(zoomItems.filter((item) => item.visible !== false).length, 1);
           const zoomIn = zoomItems.find((item) => item.accelerator === accelerator);
           if (typeof zoomIn?.click !== "function") {
