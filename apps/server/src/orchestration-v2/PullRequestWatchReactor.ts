@@ -285,11 +285,18 @@ export const make = Effect.gen(function* () {
   // Reads in a row that failed, per pull request. Kept in memory: a restart only delays the stop.
   const readFailures = new Map<string, number>();
   const lastReads = new Map<string, LastRead>();
-  // Replies past each long thread's first page, per pull request, so a pass pages a thread
-  // again only when the host's count of it moves. A restart pages each thread once more.
+  // Replies past each long thread's first page, per pull request. Reuse them between refreshes
+  // while the count stays unchanged, but reread periodically for edits the count cannot show.
   const threadTails = new Map<
     string,
-    Map<string, { readonly count: number; readonly comments: ReadonlyArray<PullRequestComment> }>
+    Map<
+      string,
+      {
+        readonly count: number;
+        readonly refreshAt: number;
+        readonly comments: ReadonlyArray<PullRequestComment>;
+      }
+    >
   >();
 
   // Host-level identity, with the repository as linked, the way pull request sync reads it.
@@ -340,7 +347,13 @@ export const make = Effect.gen(function* () {
     );
 
   const readRemarks = Effect.fn("PullRequestWatchReactor.readRemarks")(
-    function* (key: string, reference: PullRequestRef, activity: PullRequestActivity) {
+    function* (
+      key: string,
+      reference: PullRequestRef,
+      activity: PullRequestActivity,
+      now: number,
+      rereadMs: number,
+    ) {
       // Comment cursors cannot account for missing threads. Only finish a truncated read
       // when the host confirms that every thread was listed.
       if (activity.commentsTruncated && activity.reviewThreadsTruncated !== false) return null;
@@ -356,7 +369,7 @@ export const make = Effect.gen(function* () {
         if (cursor === null) continue;
         const count = thread.commentCount ?? 0;
         let tail = tails.get(thread.id);
-        if (tail?.count !== count) {
+        if (tail?.count !== count || now >= tail.refreshAt) {
           const comments = new Map<string, PullRequestComment>();
           const cursors = new Set<string>();
           while (cursor !== null) {
@@ -378,7 +391,7 @@ export const make = Effect.gen(function* () {
             cursor = page.nextCursor;
           }
           if (thread.comments.length + comments.size < count) return null;
-          tail = { count, comments: [...comments.values()] };
+          tail = { count, refreshAt: now + rereadMs, comments: [...comments.values()] };
           tails.set(thread.id, tail);
         }
         remarks.push(...tail.comments);
@@ -530,10 +543,26 @@ export const make = Effect.gen(function* () {
       );
     }
 
+    // Refresh tails when known remarks change: reply counts alone cannot rule out edits.
+    if (
+      Option.isSome(activity) &&
+      fingerprint !== null &&
+      last !== undefined &&
+      last.remarks !== null &&
+      last.remarks !== fingerprint.remarks
+    ) {
+      threadTails.delete(group.key);
+    }
     // Never advance the remark watermark past comments an incomplete read could have missed.
     // A pass that did not read the activity has no remarks to report.
     const remarks = Option.isSome(activity)
-      ? yield* readRemarks(group.key, reference, activity.value)
+      ? yield* readRemarks(
+          group.key,
+          reference,
+          activity.value,
+          now,
+          fingerprint === null ? QUIET_REREAD_MS : FINGERPRINT_REREAD_MS,
+        )
       : null;
     lastReads.set(group.key, {
       at: plan.activity || last === undefined ? now : last.at,
