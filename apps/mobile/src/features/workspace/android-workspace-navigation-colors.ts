@@ -6,9 +6,9 @@ import {
 } from "../../lib/mobileTheme";
 
 /** Both navigation positions keep a visible tonal selection against their actual surface. */
-export function androidWorkspaceNavigationColors(colors: MobileThemeVariables, rail: boolean) {
+export function androidWorkspaceNavigationColors(colors: MobileThemeVariables, floating: boolean) {
   const header = flattenThemeColor(colors["--color-header"], colors["--color-screen"]);
-  const containerColor = rail
+  const containerColor = floating
     ? header
     : flattenThemeColor(themeColorWithAlpha(colors["--color-header-foreground"], 0.05), header);
   const indicatorColor = themeColorWithContrast(

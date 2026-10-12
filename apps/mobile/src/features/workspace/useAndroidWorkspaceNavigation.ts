@@ -22,6 +22,23 @@ export function useWorkspaceListNavigation(tab: WorkspaceTab) {
   }, [navigation, dispatch, tab]);
 }
 
+/** Switching Android workspace tabs closes the open detail, as each tab owns its own. */
+export function useSelectAndroidWorkspaceTab() {
+  const navigation = useNavigation();
+  const workspace = useWorkspaceTabs();
+  const selectedTab = workspace?.state.selectedTab;
+  const dispatch = workspace?.dispatch;
+  return useCallback(
+    (tab: WorkspaceTab) => {
+      Keyboard.dismiss();
+      if (tab === selectedTab) return;
+      dispatch?.({ type: "select", tab });
+      navigation.dispatch((state) => CommonActions.reset(androidWorkspaceNavigationState(state)));
+    },
+    [navigation, dispatch, selectedTab],
+  );
+}
+
 /** Only base details own this Back handler; focused sheets and nested screens take priority. */
 export function useAndroidWorkspaceBack(tab: WorkspaceTab) {
   const dispatch = useWorkspaceTabs()?.dispatch;
