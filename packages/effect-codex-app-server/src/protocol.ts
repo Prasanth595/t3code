@@ -69,6 +69,7 @@ export interface CodexAppServerPatchedProtocolOptions {
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
+  // Test override; production uses the 128 MiB default.
   readonly maxIncomingMessageBytes?: number;
   readonly logger?: (event: CodexAppServerProtocolLogEvent) => Effect.Effect<void, never>;
   readonly onNotification?: (
