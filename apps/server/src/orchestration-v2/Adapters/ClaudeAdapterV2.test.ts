@@ -3398,68 +3398,106 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each([
-    { name: "parent limit", parentErrors: ["rate_limit"], expectedLimit: true },
-    {
-      name: "parent limit then nested response",
-      parentErrors: ["rate_limit", "nested-ok"],
-      expectedLimit: true,
-    },
-    { name: "nested limit", parentErrors: ["nested-limit"], expectedLimit: false },
-    {
-      name: "parent limit then parent response",
-      parentErrors: ["rate_limit", "ok"],
-      expectedLimit: false,
-    },
-  ])("classifies retried terminal API failures after $name", ({ parentErrors, expectedLimit }) =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      const now = yield* DateTime.now;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now,
-          attemptId: RunAttemptId.make(`attempt-claude-retry-${parentErrors.join("-")}`),
-          text: "Continue.",
-          attachments: [],
-        }),
-      );
-      for (const [index, evidence] of parentErrors.entries()) {
-        yield* Queue.offer(
-          harness.sdkMessages,
-          makeAssistantErrorFrame({
-            uuid: `00000000-0000-4000-8000-00000000062${index}`,
-            error: evidence.includes("limit") ? "rate_limit" : undefined,
-            parentToolUseId: evidence.startsWith("nested") ? "nested-tool" : null,
+  it.effect.each(
+    [
+      { name: "parent limit", parentErrors: ["rate_limit"], expectedLimit: true },
+      {
+        name: "parent limit then nested response",
+        parentErrors: ["rate_limit", "nested-ok"],
+        expectedLimit: true,
+      },
+      {
+        name: "parent limits with updated reset",
+        parentErrors: ["rate_limit", "rate_limit"],
+        expectedLimit: true,
+      },
+      {
+        name: "parent limit then response then new limit",
+        parentErrors: ["rate_limit", "ok", "rate_limit"],
+        expectedLimit: true,
+      },
+      { name: "nested limit", parentErrors: ["nested-limit"], expectedLimit: false },
+      {
+        name: "parent limit then parent response",
+        parentErrors: ["rate_limit", "ok"],
+        expectedLimit: false,
+      },
+    ].flatMap((scenario) => [
+      { ...scenario, embedded: false },
+      { ...scenario, embedded: true },
+    ]),
+  )(
+    "classifies retried terminal API failures after $name (embedded: $embedded)",
+    ({ parentErrors, expectedLimit, embedded }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-claude-retry-${parentErrors.join("-")}`),
+            text: "Continue.",
+            attachments: [],
           }),
         );
-      }
-      yield* Queue.offer(
-        harness.sdkMessages,
-        makeResultFrame({
-          uuid: "00000000-0000-4000-8000-000000000629",
-          result: "API Error",
-          isError: true,
-          terminalReason: "api_error",
-        }),
-      );
+        for (const [index, evidence] of parentErrors.entries()) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeAssistantErrorFrame({
+              uuid: `00000000-0000-4000-8000-00000000062${index}`,
+              error: evidence.includes("limit") ? "rate_limit" : undefined,
+              ...(embedded && evidence.includes("limit")
+                ? {
+                    apiErrorParams: {
+                      rate_limit_info: {
+                        status: "rejected",
+                        rateLimitType: "five_hour",
+                        resetsAt: 1791804000 + index * 3600,
+                      },
+                    },
+                  }
+                : {}),
+              parentToolUseId: evidence.startsWith("nested") ? "nested-tool" : null,
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000629",
+            result: "API Error",
+            isError: true,
+            terminalReason: "api_error",
+          }),
+        );
 
-      const terminal = yield* Queue.take(harness.terminalReceipts);
-      assert.equal(terminal.status, "failed");
-      if (terminal.status !== "failed") return;
-      assert.equal(terminal.failure.class, expectedLimit ? "usage_limit" : "provider_error");
-      assert.equal(
-        terminal.failure.message,
-        expectedLimit
-          ? "Claude usage limit reached. Send the message again once the limit resets."
-          : "Claude gave up after repeated API errors.",
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, expectedLimit ? "usage_limit" : "provider_error");
+        assert.equal(
+          terminal.failure.resetAt,
+          expectedLimit && embedded
+            ? DateTime.formatIso(
+                DateTime.makeUnsafe(
+                  (1791804000 + parentErrors.lastIndexOf("rate_limit") * 3600) * 1000,
+                ),
+              )
+            : null,
+        );
+        assert.equal(
+          terminal.failure.message,
+          expectedLimit
+            ? "Claude usage limit reached. Send the message again once the limit resets."
+            : "Claude gave up after repeated API errors.",
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    ),
   );
 
   it.effect.each([

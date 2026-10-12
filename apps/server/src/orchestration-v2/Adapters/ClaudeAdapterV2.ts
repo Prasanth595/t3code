@@ -2957,6 +2957,7 @@ interface ActiveClaudeTurnContext {
   readonly rejectedRateLimitTypes: Set<string>;
   readonly rateLimitResetTimes: Map<string, string | null>;
   latestAssistantRateLimited: boolean;
+  latestAssistantRateLimit: { readonly type: string; readonly resetAt: string | null } | null;
   readonly subagentsByTaskId: Map<string, ActiveClaudeSubagent>;
   readonly subagentsByToolUseId: Map<string, ActiveClaudeSubagent>;
   readonly subagentNodesByTaskId: Map<string, OrchestrationV2ExecutionNode["id"]>;
@@ -6826,6 +6827,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
               context.latestAssistantRateLimited = message.error === "rate_limit";
+              context.latestAssistantRateLimit = null;
               if (message.error === "rate_limit" && isClaudeBlockedAssistantRateLimit(message)) {
                 const info = message.api_error_params.rate_limit_info;
                 const overageAllowed =
@@ -6834,13 +6836,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   info.isUsingOverage === true ||
                   info.overageInUse === true;
                 if (!overageAllowed) {
-                  const limitType = info.rateLimitType ?? "unknown";
-                  context.rejectedRateLimitTypes.add(limitType);
-                  context.rateLimitResetTimes.set(
-                    limitType,
-                    context.rateLimitResetTimes.get(limitType) ??
-                      claudeUsageLimitResetAt(info.resetsAt),
-                  );
+                  context.latestAssistantRateLimit = {
+                    type: info.rateLimitType ?? "unknown",
+                    resetAt: claudeUsageLimitResetAt(info.resetsAt),
+                  };
                 }
               }
               if (message.error === "authentication_failed") {
@@ -7641,7 +7640,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
-            const resetTimes = Array.from(context.rateLimitResetTimes.values());
+            const rateLimitResetTimes = new Map(context.rateLimitResetTimes);
+            const assistantLimit = context.latestAssistantRateLimit;
+            if (assistantLimit !== null) {
+              rateLimitResetTimes.set(
+                assistantLimit.type,
+                rateLimitResetTimes.get(assistantLimit.type) ?? assistantLimit.resetAt,
+              );
+            }
+            const resetTimes = Array.from(rateLimitResetTimes.values());
             const resetAt =
               resetTimes.length > 0 && resetTimes.every((time) => time !== null)
                 ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
@@ -8524,6 +8531,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               rejectedRateLimitTypes: new Set(),
               rateLimitResetTimes: new Map(),
               latestAssistantRateLimited: false,
+              latestAssistantRateLimit: null,
               subagentsByTaskId: new Map(),
               subagentsByToolUseId: new Map(),
               subagentNodesByTaskId: new Map(),
