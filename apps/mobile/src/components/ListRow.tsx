@@ -1,13 +1,13 @@
 import { Platform } from "react-native";
 
-import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
+import { useResolveClassNames } from "uniwind";
 import { SymbolView } from "./AppSymbol";
 import { ListRowLayout, type ListRowContentProps } from "./ListRowLayout";
 import { RowPressable } from "./RowPressable";
 
 /** A navigation row owns its look; callers supply content and destination behavior. */
 export function ListRow(props: ListRowContentProps & { readonly onPress: () => void }) {
-  const { themeVariables } = useAppearancePreferences();
+  const rippleStyle = useResolveClassNames("bg-subtle-strong");
   return (
     <RowPressable
       accessibilityRole="button"
@@ -15,7 +15,7 @@ export function ListRow(props: ListRowContentProps & { readonly onPress: () => v
       accessibilityState={{ disabled: Boolean(props.disabled) }}
       disabled={props.disabled}
       onPress={props.onPress}
-      android_ripple={{ color: themeVariables["--color-subtle-strong"] }}
+      android_ripple={{ color: rippleStyle.backgroundColor }}
       unstable_pressDelay={Platform.OS === "android" ? 50 : undefined}
       className="bg-grouped-card"
     >
