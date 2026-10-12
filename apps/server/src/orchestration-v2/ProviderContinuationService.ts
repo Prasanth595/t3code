@@ -127,22 +127,63 @@ export const layer = Layer.effectDiscard(
           const commandId = CommandId.make(
             `delegated-completion:${delivery.messageId}:${isUndeliveredMailboxSteer(projection, delivery.messageId) ? "recovery" : "dispatch"}`,
           );
-          yield* threads.dispatch({
-            type: "message.dispatch",
-            commandId,
-            threadId: request.threadId,
-            messageId: delivery.messageId,
-            text: delegatedCompletionText(delivery.taskIds),
-            attachments: [],
-            dispatchMode: { type: "queue_after_active" },
-            createdBy: "agent",
-            creationSource: "server",
-            delegatedCompletion: {
-              parentRunId: request.delegatedCompletion.parentRunId,
-              generation: delivery.generation,
-              taskIds: delivery.taskIds,
-            },
-          });
+          yield* threads
+            .dispatch({
+              type: "message.dispatch",
+              commandId,
+              threadId: request.threadId,
+              messageId: delivery.messageId,
+              text: delegatedCompletionText(delivery.taskIds),
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "agent",
+              creationSource: "server",
+              delegatedCompletion: {
+                parentRunId: request.delegatedCompletion.parentRunId,
+                generation: delivery.generation,
+                taskIds: delivery.taskIds,
+              },
+            })
+            .pipe(
+              // The project turned the target instance off between the cohort
+              // read above and this dispatch. The finalize that claimed this
+              // delivery already wrote the children's results to the parent's
+              // history unconditionally, so nothing is lost: acknowledge each
+              // task administratively (observedByRunId: null, the same shape
+              // task_status uses when no run observed it) to consume this
+              // delivery instead of leaving it open to retry. The parent's
+              // next turn against an enabled instance reads those results from
+              // history the same way any turn does; nothing here re-offers
+              // this generation.
+              Effect.catchTags({
+                ThreadManagementProviderInstanceDisabledError: (error) =>
+                  Effect.logInfo(
+                    "orchestration-v2.provider-continuation.delegated-completion-disabled",
+                    {
+                      threadId: request.threadId,
+                      projectId: error.projectId,
+                      instanceId: error.instanceId,
+                    },
+                  ).pipe(
+                    Effect.andThen(
+                      Effect.forEach(
+                        delivery.taskIds,
+                        (taskId) =>
+                          threads.dispatch({
+                            type: "delegated_task.completion-delivery.acknowledge",
+                            commandId: CommandId.make(
+                              `delegated-completion-disabled:${delivery.messageId}:${taskId}`,
+                            ),
+                            parentThreadId: request.threadId,
+                            taskId,
+                            observedByRunId: null,
+                          }),
+                        { discard: true },
+                      ),
+                    ),
+                  ),
+              }),
+            );
           yield* clearRetryAttempt(retryKey);
           return;
         }
@@ -186,7 +227,17 @@ export const layer = Layer.effectDiscard(
           dispatchMode: { type: "queue_after_active" },
           createdBy: "agent",
           creationSource: request.delivery.kind === "adapter_buffered" ? "provider" : "server",
-        });
+        }).pipe(
+          Effect.catchTags({
+            ThreadManagementProviderInstanceDisabledError: (error) =>
+              Effect.logInfo("orchestration-v2.provider-continuation.instance-disabled", {
+                threadId: request.threadId,
+                providerThreadId: request.providerThreadId,
+                projectId: error.projectId,
+                instanceId: error.instanceId,
+              }).pipe(Effect.andThen(request.clearIfCurrent?.() ?? Effect.void)),
+          }),
+        );
       },
     );
 
