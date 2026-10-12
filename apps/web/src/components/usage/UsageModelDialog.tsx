@@ -80,7 +80,7 @@ export function UsageModelDialog({
         if (!open) onClose();
       }}
     >
-      <DialogPopup className="max-w-3xl">
+      <DialogPopup className="max-w-3xl border-none ring ring-border/70 shadow-2xl">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <ProviderInstanceIcon
