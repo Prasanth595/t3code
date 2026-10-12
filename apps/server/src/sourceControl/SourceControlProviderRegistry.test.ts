@@ -1006,6 +1006,16 @@ it.effect.each([
     },
     expected: { a: null, b: "https://git.example.internal" },
   },
+  // Forgejo cannot read an SCP path from the root, so a gets no claim and must not key with b.
+  {
+    name: "the host, for an SCP remote with a path from the root",
+    mounts: [""],
+    remotes: {
+      a: "git@git.example.internal:/team/a.git",
+      b: "git@git.example.internal:other/b.git",
+    },
+    expected: { a: null, b: "https://git.example.internal" },
+  },
 ] as const)("gives each remote of one mount its own Forgejo answer: logins at $name", (scenario) =>
   Effect.gen(function* () {
     for (const order of [

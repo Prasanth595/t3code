@@ -173,12 +173,11 @@ function unknownRemoteKey(context: SourceControlProvider.SourceControlProviderCo
     .split("/")
     .slice(0, -2)
     .join("/");
+  // SCP form: the host alone, read as the Forgejo refiner reads it. A remote it cannot read, such
+  // as a path from the root, gets no Forgejo claim, so it keys by itself.
   const server = url
     ? `${url.protocol}//${url.host.toLowerCase()}/${mount}`
-    : remote
-        .replace(/^[^@/]+@/u, "")
-        .replace(/:.*$/u, "")
-        .toLowerCase(); // SCP form: the host alone
+    : (/^(?:[^@/]+@)?([^:/]+):[^/].*$/u.exec(remote)?.[1]?.toLowerCase() ?? remote);
   return [
     context.provider.name,
     context.provider.baseUrl,
