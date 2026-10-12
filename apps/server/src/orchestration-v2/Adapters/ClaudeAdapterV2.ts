@@ -2957,6 +2957,8 @@ interface ActiveClaudeProviderRetry {
 
 interface ActiveClaudeSubagent {
   task: OrchestrationV2Subagent;
+  // Local parent-turn cleanup can end the card without a native task outcome.
+  readonly confirmedOutcome: ProviderAdapter.ProviderAdapterV2SubagentOutcome | undefined;
   // The launch run's root node. task.parentNodeId is that same node, or the
   // owning subagent's node for a subagent another subagent started.
   readonly rootNodeId: OrchestrationV2ExecutionNode["id"];
@@ -4420,6 +4422,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const ids = claudeSubagentIds(resume.context, resume.taskId);
           const now = yield* DateTime.now;
           const subagent: ActiveClaudeSubagent = {
+            confirmedOutcome: undefined,
             childThread: null,
             task: {
               id: ids.nodeId,
@@ -4861,6 +4864,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             "running" | "completed" | "failed" | "cancelled"
           >;
           readonly reopen?: boolean;
+          readonly nativeOutcome?: boolean;
           readonly onlyIfRunningInRun?: RunId | null;
         }) {
           // The session registry lets a wake-replay turn (fresh context maps)
@@ -5027,6 +5031,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } satisfies OrchestrationV2Subagent;
           const subagent = {
             task,
+            confirmedOutcome:
+              input.nativeOutcome === true ? confirmedSubagentOutcome(task) : undefined,
             rootNodeId: existingSubagent?.rootNodeId ?? input.context.input.rootNodeId,
             childThreadId,
             childRootNodeId,
@@ -5244,7 +5250,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
 
-          if (task.status !== "running") {
+          if (subagent.confirmedOutcome !== undefined) {
             const outcome = subagentStopOutcomes.get(input.taskId);
             if (outcome !== undefined) yield* Deferred.succeed(outcome, undefined);
           }
@@ -6269,6 +6275,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               const { progress: _staleProgress, ...priorTask } = registered.task;
               return new Map(current).set(message.task_id, {
                 ...registered,
+                confirmedOutcome: undefined,
                 task: {
                   ...priorTask,
                   status: "running",
@@ -6767,6 +6774,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   taskId: message.task_id,
                   ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                   workflowFrame: message,
+                  nativeOutcome: true,
                   result: message.summary,
                   status: claudeTaskOutcome(message.status),
                   onlyIfRunningInRun: registered.task.runId,
@@ -7317,6 +7325,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...(message.tool_use_id === undefined ? {} : { toolUseId: message.tool_use_id }),
                 // Terminal usage totals arrive here, after the last snapshot.
                 workflowFrame: message,
+                nativeOutcome: true,
                 result: message.summary,
                 status:
                   message.status === "completed"
@@ -9068,7 +9077,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 DateTime.toEpochMillis(input.requestedAt)
             )
               return;
-            const confirmed = confirmedSubagentOutcome(subagent.task);
+            const confirmed = subagent.confirmedOutcome;
             if (confirmed !== undefined) return confirmed;
             if (
               existing === null ||
@@ -9103,9 +9112,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
-            const terminal = confirmedSubagentOutcome(
-              (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId)?.task,
-            );
+            const terminal = (yield* Ref.get(sessionSubagentsByTaskId)).get(
+              input.nativeTaskId,
+            )?.confirmedOutcome;
             if (terminal === undefined) {
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,

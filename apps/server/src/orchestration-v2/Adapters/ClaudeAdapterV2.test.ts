@@ -13039,17 +13039,24 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect.each([
-    ["api_error", false],
-    ["aborted_streaming", false],
-    ["api_error", true],
+    ["api_error", false, false],
+    ["aborted_streaming", false, false],
+    ["api_error", true, false],
+    ["api_error", false, true],
+    ["aborted_streaming", false, true],
   ] as const)(
-    "stops the run's live workflow after root result %s, continuation=%s",
-    ([terminalReason, continuation]) =>
+    "stops the run's live workflow after root result %s, continuation=%s, pending Stop=%s",
+    ([terminalReason, continuation, pendingStop]) =>
       Effect.scoped(
         Effect.gen(function* () {
           const stoppedTasks: Array<string> = [];
+          const stopRequested = yield* Deferred.make<void>();
           const harness = yield* makeWorkflowHarnessWithOptions({
-            stopTask: (taskId) => Effect.sync(() => void stoppedTasks.push(taskId)),
+            stopTask: (taskId) =>
+              Effect.sync(() => void stoppedTasks.push(taskId)).pipe(
+                Effect.andThen(Deferred.succeed(stopRequested, undefined)),
+                Effect.asVoid,
+              ),
           });
           const now = yield* DateTime.now;
           const turnInput = {
@@ -13062,6 +13069,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           };
           yield* harness.runtime.startTurn(makeClaudeTestTurnInput(turnInput));
           yield* launchWorkflow({ harness, snapshotUuid: "00000000-0000-4000-8000-000000001050" });
+          const stopping = pendingStop
+            ? yield* harness.runtime.stopSubagent!({
+                providerThread: harness.providerThread,
+                nativeTaskId: WORKFLOW_TASK_ID,
+              }).pipe(Effect.exit, Effect.forkScoped)
+            : undefined;
+          if (pendingStop) yield* Deferred.await(stopRequested);
           if (continuation) {
             yield* harness.offerAndWait(
               makeResultFrame({
@@ -13103,7 +13117,22 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           // workflow was re-attributed to) stops following it, so it is stopped
           // instead of left running out of sight.
           const settled = terminalReason === "api_error" ? "failed" : "cancelled";
-          assert.deepEqual(stoppedTasks, [WORKFLOW_TASK_ID]);
+          assert.deepEqual(
+            stoppedTasks,
+            pendingStop ? [WORKFLOW_TASK_ID, WORKFLOW_TASK_ID] : [WORKFLOW_TASK_ID],
+          );
+          if (stopping !== undefined) {
+            // Parent failure assigns a local outcome without a task_notification.
+            yield* TestClock.adjust("2 seconds");
+            assert.isTrue(Exit.isFailure(yield* Fiber.join(stopping)));
+            // A subsequent Stop must not return that local status as provider evidence either.
+            const retry = yield* harness.runtime.stopSubagent!({
+              providerThread: harness.providerThread,
+              nativeTaskId: WORKFLOW_TASK_ID,
+            }).pipe(Effect.exit, Effect.forkScoped);
+            yield* TestClock.adjust("2 seconds");
+            assert.isTrue(Exit.isFailure(yield* Fiber.join(retry)));
+          }
           assert.isFalse(yield* harness.hasPendingBackgroundWork);
           assert.equal(workflowCoordinatorEvents(harness.events).at(-1)?.subagent.status, settled);
           for (const index of [1, 2]) {
