@@ -342,6 +342,15 @@ function pullRequestBaseRepositoryKey(url: string): string | null {
   return key === null ? null : canonicalRepositoryKey(key);
 }
 
+/** The pull request's repository in the case its URL writes it, else the path of its `key`. */
+function pullRequestRepositoryName(url: string, key: string): string {
+  // The link's repository is lower-cased, but it spells the start of the URL's own path.
+  const link = parseChangeRequestUrl(url);
+  return link === null
+    ? splitRepositoryKey(key).path
+    : new URL(url).pathname.slice(1, link.repository.length + 1);
+}
+
 /** A repository key's host and the path below it. */
 function splitRepositoryKey(key: string): { readonly host: string; readonly path: string } {
   const slash = key.indexOf("/");
@@ -2715,7 +2724,7 @@ export const make = Effect.gen(function* () {
         pullRequestWithRemoteInfo,
       );
       if (mismatch !== null) {
-        const repository = splitRepositoryKey(mismatch).path;
+        const repository = pullRequestRepositoryName(pullRequest.url, mismatch);
         const baseRemote = forkBaseRemote(remotes, identity, pullRequest.url, mismatch);
         // A fork clone needs the rename, not a project elsewhere, so each message gives one remedy.
         const remedy =

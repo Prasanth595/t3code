@@ -5284,7 +5284,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           pullRequest: {
             number: 64,
             title: "Another repository's PR",
-            url: "https://github.com/pingdotgg/codething-mvp/pull/64",
+            url: "https://github.com/pingdotgg/Codething-MVP/pull/64",
             baseRefName: "main",
             headRefName: "feature/elsewhere",
             state: "open",
@@ -5310,7 +5310,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       const result = yield* preparePullRequestThread(manager, {
         cwd: repoDir,
-        reference: "https://github.com/pingdotgg/codething-mvp/pull/64",
+        reference: "https://github.com/pingdotgg/Codething-MVP/pull/64",
         mode,
         threadId: asThreadId("thread-pr-elsewhere"),
       }).pipe(Effect.result);
@@ -5327,7 +5327,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         _tag: "Failure",
         failure: {
           _tag: "GitManagerError",
-          detail: expect.stringContaining("not a checkout of pingdotgg/codething-mvp"),
+          detail: expect.stringContaining("not a checkout of pingdotgg/Codething-MVP"),
         },
       });
       expect(prepared.ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
@@ -5397,7 +5397,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(prepared.result).toMatchObject({
           failure: {
             detail:
-              "This project is not a checkout of pingdotgg/codething-mvp. Its remote acme names pingdotgg/codething-mvp; run `git remote rename acme upstream` to open the pull request here.",
+              "This project is not a checkout of pingdotgg/Codething-MVP. Its remote acme names pingdotgg/Codething-MVP; run `git remote rename acme upstream` to open the pull request here.",
           },
         });
       }),
