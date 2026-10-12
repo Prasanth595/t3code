@@ -1,10 +1,32 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetUrlState } from "../assets/assetUrls";
 import { AsyncResult } from "effect/reactivity";
 import { act, type ComponentProps, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { expect, it, vi } from "vite-plus/test";
 
 const mint = vi.hoisted(() => vi.fn());
+const asset = vi.hoisted(() => ({
+  state: { _tag: "Loading" } as AssetUrlState,
+  listeners: new Set<() => void>(),
+}));
+vi.mock("../assets/assetUrls", async (importOriginal) => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...(await importOriginal<typeof import("../assets/assetUrls")>()),
+    useAssetUrlState: () =>
+      useSyncExternalStore(
+        (listener) => {
+          asset.listeners.add(listener);
+          return () => {
+            asset.listeners.delete(listener);
+          };
+        },
+        () => asset.state,
+      ),
+  };
+});
+vi.mock("./media/MediaActions", () => ({ MediaActions: () => null }));
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
@@ -58,7 +80,95 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
-import ChatMarkdown from "./ChatMarkdown";
+import ChatMarkdown, { ChatMarkdownAssetImage } from "./ChatMarkdown";
+
+const assetProps = {
+  environmentId: EnvironmentId.make("media-environment"),
+  resource: {
+    _tag: "media-file",
+    threadId: ThreadId.make("media-thread"),
+    path: "/repo/diagram.svg",
+  },
+  alt: "Diagram",
+} satisfies ComponentProps<typeof ChatMarkdownAssetImage>;
+
+async function publishAssetState(state: AssetUrlState) {
+  await act(async () => {
+    asset.state = state;
+    for (const listener of asset.listeners) listener();
+  });
+}
+
+it("does not mint a second URL when the initial file preview request completes", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  mint.mockClear();
+  asset.state = { _tag: "Loading" };
+  let renderer: ReactTestRenderer | undefined;
+  const image = <ChatMarkdownAssetImage {...assetProps} workspaceMutationId="initial" />;
+  try {
+    await act(async () => {
+      renderer = create(image);
+    });
+    await publishAssetState({
+      _tag: "Success",
+      url: "https://host.test/diagram.svg",
+      expiresAt: 1,
+    });
+    expect(mint).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => renderer?.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each(
+  (["Loading", "Success", "Failure"] as const).flatMap((initial) =>
+    (["Success", "Failure"] as const).map((outcome) => [initial, outcome] as const),
+  ),
+)(
+  "refreshes a file changed during a pending %s request after it ends in %s",
+  async (initial, outcome) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mint.mockReset();
+    mint.mockResolvedValue(
+      AsyncResult.success({ relativeUrl: "/api/assets/updated.svg", expiresAt: 1 }),
+    );
+    asset.state =
+      initial === "Success"
+        ? { _tag: "Success", url: "https://host.test/stale.svg", expiresAt: 1, waiting: true }
+        : { _tag: initial, waiting: true };
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdownAssetImage {...assetProps} workspaceMutationId="initial" />);
+      });
+      for (const mutation of ["edit-1", "edit-2"]) {
+        await act(async () => {
+          renderer!.update(
+            <ChatMarkdownAssetImage {...assetProps} workspaceMutationId={mutation} />,
+          );
+        });
+      }
+      expect(mint).not.toHaveBeenCalled();
+      await publishAssetState(
+        outcome === "Failure"
+          ? { _tag: "Failure" }
+          : { _tag: "Success", url: "https://host.test/stale.svg", expiresAt: 1 },
+      );
+      expect(mint).toHaveBeenCalledExactlyOnceWith({
+        environmentId: assetProps.environmentId,
+        input: { resource: assetProps.resource },
+      });
+      await act(async () => {
+        renderer!.update(<ChatMarkdownAssetImage {...assetProps} workspaceMutationId="edit-2" />);
+      });
+      expect(mint).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("opens host media through server authorization before the client grant loads", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);

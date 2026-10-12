@@ -235,6 +235,8 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  /** File previews refresh embedded host assets when opened or after workspace edits. */
+  workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
@@ -1598,11 +1600,34 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       too old to know this resource. Only safe when the client can reach it directly. */
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
+  readonly workspaceMutationId?: string | null | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
+  const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
+  const handledRefreshToken = useRef<string | null>(null);
+  const assetLoading = assetUrl._tag === "Loading" || assetUrl.waiting === true;
+  useEffect(() => {
+    if (
+      props.workspaceMutationId === undefined ||
+      (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
+      handledRefreshToken.current === refreshToken
+    ) {
+      return;
+    }
+    // A first request already reads the current file. Cached URLs and failures
+    // need a new signature after a file is created or atomically replaced.
+    if (assetLoading) {
+      // Only the initial token is covered by that request. Later edits stay
+      // pending until it settles, then refresh the latest file state.
+      handledRefreshToken.current ??= refreshToken;
+      return;
+    }
+    handledRefreshToken.current = refreshToken;
+    void refreshAssetUrl().catch(() => undefined);
+  }, [assetLoading, props.workspaceMutationId, refreshAssetUrl, refreshToken, resource._tag]);
   const path =
     resource._tag === "media-file"
       ? resource.path
@@ -2316,6 +2341,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   onRunShellCommand,
   imageBaseDir,
+  workspaceMutationId,
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
@@ -2730,6 +2756,7 @@ function useChatMarkdownState({
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
+      workspaceMutationId,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2763,6 +2790,7 @@ function useChatMarkdownState({
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
+      workspaceMutationId,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -3219,6 +3247,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       githubMedia,
       imageBaseDir,
       threadRef,
+      workspaceMutationId,
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
@@ -3334,6 +3363,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
           standalone={standalone}
           style={authoredSizeStyle}
           workspaceRoot={cwd}
+          workspaceMutationId={workspaceMutationId}
           onImageExpand={imageExpand}
         />
       );
