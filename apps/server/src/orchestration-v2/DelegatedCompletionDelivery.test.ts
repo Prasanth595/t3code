@@ -2648,3 +2648,188 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
     );
   },
 );
+
+it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
+  "legacy result selection through message dispatch",
+  (it) => {
+    it.effect.each([false, true])(
+      "recovers the legacy background result with independent follow-up %s",
+      (independent) =>
+        Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const store = yield* ProjectionStore.ProjectionStoreV2;
+          const eventStore = yield* EventStore.EventStoreV2;
+          const replaySelection = Effect.gen(function* () {
+            const events = yield* eventStore.read().pipe(Stream.runCollect);
+            const replay = yield* ProjectionStore.ProjectionStoreV2;
+            yield* Effect.forEach(events, (e) => replay.apply(e.event), { discard: true });
+            return (yield* replay.getRecoveryThreadIds("subagent-results")).includes(
+              child.childThreadId,
+            );
+          }).pipe(Effect.provide(ProjectionStore.layerMemory));
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make(`thread:legacy-parent-${independent}`);
+          const projectId = ProjectId.make(`project:legacy-parent-${independent}`);
+          const parentRunId = RunId.make(`run:legacy-parent-${independent}`);
+          const rootNodeId = NodeId.make(`node:legacy-parent-${independent}`);
+          yield* seedParentWithTerminalTask({
+            threadId,
+            projectId,
+            runId: parentRunId,
+            rootNodeId,
+            taskId: NodeId.make(`node:legacy-seed-${independent}`),
+            deliveryState: "delivered",
+            now,
+          });
+          const child = yield* seedRestartCancelledChild({
+            parentThreadId: threadId,
+            projectId,
+            parentRunId,
+            rootNodeId,
+            name: `legacy-legacy-child-${independent}`,
+            completionWake: "always",
+            continuationPending: false,
+            now,
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          const first = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            first.subagents.find((t) => t.id === child.taskId)?.completionDelivery?.resultRunId,
+            child.childRunId,
+          );
+          yield* orchestrator.dispatch({
+            type: "delegated_task.completion-delivery.acknowledge",
+            commandId: CommandId.make(`command:legacy-first-ack-${independent}`),
+            parentThreadId: threadId,
+            taskId: child.taskId,
+            resultRunId: child.childRunId,
+            observedByRunId: null,
+          });
+          const backgroundMessageId = MessageId.make(`message:legacy-background-${independent}`);
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`command:legacy-background-${independent}`),
+            threadId: child.childThreadId,
+            messageId: backgroundMessageId,
+            text: "Finish background work.",
+            notification: {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            creationSource: "server",
+          });
+          const background = (yield* orchestrator.getThreadProjection(
+            child.childThreadId,
+          )).runs.find((r) => r.userMessageId === backgroundMessageId);
+          if (background === undefined) return yield* Effect.die("Missing background run");
+          assert.equal(background.delegatedTaskId, undefined);
+          const followup = yield* Effect.gen(function* () {
+            if (!independent) return undefined;
+            const messageId = MessageId.make(`message:legacy-followup-${independent}`);
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:legacy-followup-${independent}`),
+              threadId: child.childThreadId,
+              messageId,
+              text: "Do independent requested work.",
+              attachments: [],
+              dispatchMode: { type: "queue_after_active" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const run = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+              (run) => run.userMessageId === messageId,
+            );
+            if (run === undefined || run.delegatedTaskId === undefined)
+              return yield* Effect.die("Missing tagged follow-up run.");
+            return run;
+          });
+          yield* orchestrator.recoverDelegatedTasks;
+          assert.deepEqual(
+            (yield* orchestrator.getThreadProjection(threadId)).contextTransfers
+              .filter((t) => t.type === "subagent_result")
+              .map((t) => t.sourcePoint.runId),
+            [child.childRunId],
+          );
+          yield* sink.write({
+            commandId: reconcileCommandId(`legacy-both-completed-${independent}`),
+            events: [background, ...(followup === undefined ? [] : [followup])].map(
+              (run, index) => ({
+                id: EventId.make(`event:legacy-complete-${independent}-${index}`),
+                type: "run.updated",
+                threadId: child.childThreadId,
+                runId: run.id,
+                occurredAt: now,
+                payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+              }),
+            ),
+          });
+          assert.include(
+            yield* store.getRecoveryThreadIds("subagent-results"),
+            child.childThreadId,
+          );
+          assert.equal(yield* replaySelection, true);
+          yield* orchestrator.recoverDelegatedTasks;
+          yield* orchestrator.recoverDelegatedTasks;
+          if (followup?.delegatedTaskId !== undefined)
+            yield* orchestrator.dispatch({
+              type: "delegated_task.completion-delivery.acknowledge",
+              commandId: CommandId.make(`command:legacy-followup-ack-${independent}`),
+              parentThreadId: threadId,
+              taskId: followup.delegatedTaskId,
+              resultRunId: followup.id,
+              observedByRunId: null,
+            });
+          yield* orchestrator.recoverDelegatedTasks;
+          const sqlSelected = (yield* store.getRecoveryThreadIds("subagent-results")).includes(
+            child.childThreadId,
+          );
+          const replaySelected = yield* replaySelection;
+          const result = yield* orchestrator.getThreadProjection(threadId);
+          const transfers = result.contextTransfers
+            .filter((t) => t.type === "subagent_result")
+            .map((t) => t.sourcePoint.runId);
+          assert.include(transfers, background.id);
+          assert.deepEqual(
+            transfers.toSorted(),
+            [
+              child.childRunId,
+              background.id,
+              ...(followup === undefined ? [] : [followup.id]),
+            ].toSorted(),
+          );
+          const original = result.subagents.find((task) => task.id === child.taskId);
+          assert.equal(original?.completionDelivery?.resultRunId, background.id);
+          assert.equal(
+            original?.status,
+            first.subagents.find((task) => task.id === child.taskId)?.status,
+          );
+          assert.equal(
+            original?.result,
+            first.subagents.find((task) => task.id === child.taskId)?.result,
+          );
+          const firstCompletedAt = first.subagents.find(
+            (task) => task.id === child.taskId,
+          )?.completedAt;
+          assert.equal(
+            original?.completedAt == null ? null : DateTime.toEpochMillis(original.completedAt),
+            firstCompletedAt == null ? null : DateTime.toEpochMillis(firstCompletedAt),
+          );
+          if (followup !== undefined) {
+            assert.equal(
+              result.subagents.find((task) => task.id === followup.delegatedTaskId)
+                ?.completionDelivery?.resultRunId,
+              followup.id,
+            );
+          }
+          assert.equal(sqlSelected, false);
+          assert.equal(replaySelected, false);
+        }),
+    );
+  },
+);

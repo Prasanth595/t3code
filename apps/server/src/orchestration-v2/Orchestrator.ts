@@ -10026,7 +10026,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     options: {
       readonly settledContinuationOf?: RunId;
       readonly taskId: NodeId;
-      readonly resultRun?: OrchestrationV2Run;
     },
   ) =>
     Effect.gen(function* () {
@@ -10042,8 +10041,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const taskRuns = childControls.runs.filter((run) => run.delegatedTaskId === options.taskId);
       const childRun =
         taskRuns.length === 0
-          ? options.taskId === forkedFrom.nodeId && options.resultRun?.delegatedTaskId === undefined
-            ? options.resultRun
+          ? options.taskId === forkedFrom.nodeId
+            ? delegatedTaskProgress({
+                ...childControls,
+                runs: childControls.runs.filter((run) => run.delegatedTaskId === undefined),
+              }).resultRun
             : undefined
           : taskRuns.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       if (childRun === undefined) return;
@@ -10362,7 +10364,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         yield* finalizeAppOwnedSubagentTask(childControls, {
           ...options,
           taskId: task.id,
-          ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
         });
       }
     });
