@@ -2298,14 +2298,17 @@ export function makeCursorAdapterV2(
                       status,
                       ...(status === "failed"
                         ? {
-                            failure: makeProviderFailure({
-                              cause:
-                                transportFailure ?? (result as { readonly error?: unknown }).error,
-                              class:
-                                transportFailure === undefined
-                                  ? "provider_error"
-                                  : "transport_error",
-                            }),
+                            failure:
+                              transportFailure === undefined
+                                ? makeProviderFailure({
+                                    message: result.error?.message,
+                                    code: result.error?.code,
+                                    class: "provider_error",
+                                  })
+                                : makeProviderFailure({
+                                    cause: transportFailure,
+                                    class: "transport_error",
+                                  }),
                           }
                         : {}),
                     });

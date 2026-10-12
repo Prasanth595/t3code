@@ -113,6 +113,9 @@ describe("CursorAdapterV2", () => {
                         status,
                         model: { id: "composer-2.5" },
                         durationMs: 1,
+                        ...(status === "error"
+                          ? { error: { message: 'AI Model Not Found: "grok-4.7"' } }
+                          : {}),
                       }),
                       cancel: Effect.void,
                     };
@@ -185,6 +188,11 @@ describe("CursorAdapterV2", () => {
           status === "finished" ? "idle" : status === "cancelled" ? "cancelled" : "failed",
         );
         assert.isNotNull(rows.at(-1)?.subagent.completedAt);
+        const terminal = events.findLast((event) => event.type === "turn.terminal");
+        assert.equal(
+          terminal?.type === "turn.terminal" ? terminal.failure?.message : undefined,
+          status === "error" ? 'AI Model Not Found: "grok-4.7"' : undefined,
+        );
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
