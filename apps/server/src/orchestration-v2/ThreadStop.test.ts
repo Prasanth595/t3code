@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ProviderSessionId,
   ProviderTurnId,
+  RuntimeRequestId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -537,6 +538,90 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
         watched: [],
       });
     }).pipe(Effect.provide(layerTest.pipe(Layer.provideMerge(TestClock.layer())))),
+);
+
+it.effect("a delegated task's async question closes once Stop ends the task", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const parentThreadId = ThreadId.make("thread:stop-question-parent");
+    yield* createWatchingThread(parentThreadId, 20);
+    yield* send(parentThreadId, "first", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, "question task");
+    const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+
+    // A Codex async question: the run keeps going while it waits for an answer.
+    const now = yield* DateTime.now;
+    const requestId = RuntimeRequestId.make("request:stop-question");
+    const nodeId = NodeId.make("node:stop-question");
+    yield* projections.apply({
+      id: EventId.make("event:stop-question:node"),
+      type: "node.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: nodeId,
+        threadId: childThreadId,
+        runId: childRun.id,
+        parentNodeId: childRun.rootNodeId,
+        rootNodeId: childRun.rootNodeId!,
+        kind: "user_input_request",
+        status: "waiting",
+        countsForRun: false,
+        providerThreadId: childRun.providerThreadId,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: requestId,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:stop-question:request"),
+      type: "runtime-request.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      nodeId,
+      occurredAt: now,
+      payload: {
+        id: requestId,
+        nodeId,
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    });
+    const pendingRequest = Effect.map(
+      orchestrator.getThreadProjection(childThreadId),
+      (projection) => projection.runtimeRequests.find((request) => request.id === requestId),
+    );
+
+    // While the task runs, its question stays open.
+    yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+    assert.equal((yield* pendingRequest)?.status, "pending");
+
+    // What task_cancel dispatches.
+    yield* orchestrator.dispatch({
+      type: "thread.stop",
+      commandId: CommandId.make("stop-question-child"),
+      threadId: childThreadId,
+    });
+    yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
+    const parent = yield* orchestrator.getThreadProjection(parentThreadId);
+    assert.equal(parent.subagents[0]?.status, "interrupted");
+    const request = yield* pendingRequest;
+    assert.equal(request?.status, "resolved");
+    assert.equal(request?.decision, "cancel");
+    const child = yield* projections.getThreadShell(childThreadId);
+    assert.isNull(child?.pendingRuntimeRequest);
+  }).pipe(Effect.provide(layerTest)),
 );
 
 it.effect("a delegated task that cannot be stopped fails the walk after its siblings stop", () =>
