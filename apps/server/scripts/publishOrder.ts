@@ -98,14 +98,16 @@ const NpmVersionMetadata = Schema.Struct({
 });
 
 /**
- * Checks once that npm serves a published version: its exact-version metadata,
- * then the tarball that metadata points to. A transport error or a request
- * that takes over 10 seconds is reported like any other not-ready answer.
+ * Checks once that `registry` serves a published version: its exact-version
+ * metadata, then the tarball that metadata points to. A transport error or a
+ * request that takes over 10 seconds is reported like any other not-ready
+ * answer. The requests are anonymous, so a restricted package, or a registry
+ * that needs auth to read, never passes and the launcher is skipped.
  */
-export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable")(function* (spec: {
-  readonly name: string;
-  readonly version: string;
-}) {
+export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable")(function* (
+  registry: string,
+  spec: { readonly name: string; readonly version: string },
+) {
   const client = HttpClient.withScope(yield* HttpClient.HttpClient);
   const packageSpec = `${spec.name}@${spec.version}`;
   const send = <A>(
@@ -149,7 +151,7 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
   const tarballUrl = yield* send(
     "metadata",
     HttpClientRequest.get(
-      `https://registry.npmjs.org/${spec.name.replace("/", "%2f")}/${spec.version}`,
+      `${registry.replace(/\/?$/, "/")}${spec.name.replace("/", "%2f")}/${spec.version}`,
     ).pipe(HttpClientRequest.acceptJson),
     (response) =>
       response.json.pipe(
@@ -159,7 +161,7 @@ export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable"
           (cause) =>
             new ServerCliNpmPackageNotReadyError({
               packageSpec,
-              reason: "metadata has no dist.tarball",
+              reason: "metadata unreadable",
               cause,
             }),
         ),

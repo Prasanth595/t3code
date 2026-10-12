@@ -237,17 +237,18 @@ it.effect("skips the readiness check on a dry run", () =>
   }),
 );
 
+const registry = "https://registry.npmjs.org/";
 const platformPackage = { name: "@t3code/t3-linux-x64", version: "1.2.3" };
 const metadataUrl = "https://registry.npmjs.org/@t3code%2ft3-linux-x64/1.2.3";
 const tarballUrl = "https://registry.npmjs.org/@t3code/t3-linux-x64/-/t3-linux-x64-1.2.3.tgz";
 
 // A fake npm registry that records each request, and the abort signal the
 // client hands it, which fires once the client releases that response. GET
-// answers with `metadata` and HEAD with the tarball status. npm's tarball HEAD
-// sends no Content-Length, and neither does this one.
+// answers with the `metadata` text and HEAD with the tarball status. npm's
+// tarball HEAD sends no Content-Length, and neither does this one.
 const fakeRegistry = (
   status: { readonly metadata: number; readonly tarball: number },
-  metadata: unknown = { ...platformPackage, dist: { tarball: tarballUrl } },
+  metadata = JSON.stringify({ ...platformPackage, dist: { tarball: tarballUrl } }),
 ) => {
   const requests: Array<string> = [];
   const signals: Array<AbortSignal> = [];
@@ -258,7 +259,7 @@ const fakeRegistry = (
       signals.push(signal);
       const response =
         request.method === "GET"
-          ? Response.json(status.metadata === 200 ? metadata : { error: "Not found" }, {
+          ? new Response(status.metadata === 200 ? metadata : '{"error":"Not found"}', {
               status: status.metadata,
             })
           : new Response(null, { status: status.tarball });
@@ -287,25 +288,33 @@ const fakeUnansweredRegistry = Effect.fn("fakeUnansweredRegistry")(function* (
   return { requests, requested, layer };
 });
 
-it.effect("accepts a version once npm serves its metadata and tarball", () =>
+it.effect.each([
+  { registry, metadataUrl },
+  {
+    registry: "https://npm.example.com/prefix",
+    metadataUrl: "https://npm.example.com/prefix/@t3code%2ft3-linux-x64/1.2.3",
+  },
+])("accepts a version once $registry serves its metadata and tarball", (configured) =>
   Effect.gen(function* () {
-    const registry = fakeRegistry({ metadata: 200, tarball: 200 });
+    const fake = fakeRegistry({ metadata: 200, tarball: 200 });
 
     const exit = yield* Effect.exit(
-      checkNpmVersionInstallable(platformPackage).pipe(Effect.provide(registry.layer)),
+      checkNpmVersionInstallable(configured.registry, platformPackage).pipe(
+        Effect.provide(fake.layer),
+      ),
     );
 
-    assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`, `HEAD ${tarballUrl}`]);
+    assert.deepStrictEqual(fake.requests, [`GET ${configured.metadataUrl}`, `HEAD ${tarballUrl}`]);
     assert.isTrue(Exit.isSuccess(exit));
   }),
 );
 
 it.effect("rejects a version npm has no metadata for without requesting its tarball", () =>
   Effect.gen(function* () {
-    const registry = fakeRegistry({ metadata: 404, tarball: 200 });
+    const fake = fakeRegistry({ metadata: 404, tarball: 200 });
 
-    const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
-      Effect.provide(registry.layer),
+    const error = yield* checkNpmVersionInstallable(registry, platformPackage).pipe(
+      Effect.provide(fake.layer),
       Effect.flip,
     );
 
@@ -313,35 +322,44 @@ it.effect("rejects a version npm has no metadata for without requesting its tarb
     assert.strictEqual(error.packageSpec, "@t3code/t3-linux-x64@1.2.3");
     assert.include(error.reason, "404");
     assert.isUndefined(error.cause);
-    assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`]);
+    assert.deepStrictEqual(fake.requests, [`GET ${metadataUrl}`]);
   }),
 );
 
-it.effect("rejects a version whose metadata names no tarball without requesting one", () =>
+it.effect.each([
+  {
+    metadata: "names no tarball",
+    body: JSON.stringify({ ...platformPackage, dist: {} }),
+    isCause: Schema.isSchemaError,
+  },
+  {
+    metadata: "is not JSON",
+    body: "<html>",
+    isCause: (cause: unknown) =>
+      HttpClientError.isHttpClientError(cause) && cause.reason._tag === "DecodeError",
+  },
+])("rejects a version whose metadata $metadata without requesting its tarball", (answer) =>
   Effect.gen(function* () {
-    const registry = fakeRegistry(
-      { metadata: 200, tarball: 200 },
-      { ...platformPackage, dist: {} },
-    );
+    const fake = fakeRegistry({ metadata: 200, tarball: 200 }, answer.body);
 
-    const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
-      Effect.provide(registry.layer),
+    const error = yield* checkNpmVersionInstallable(registry, platformPackage).pipe(
+      Effect.provide(fake.layer),
       Effect.flip,
     );
 
     assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
-    assert.strictEqual(error.reason, "metadata has no dist.tarball");
-    assert.isTrue(Schema.isSchemaError(error.cause));
-    assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`]);
+    assert.strictEqual(error.reason, "metadata unreadable");
+    assert.isTrue(answer.isCause(error.cause));
+    assert.deepStrictEqual(fake.requests, [`GET ${metadataUrl}`]);
   }),
 );
 
 it.effect("rejects a version whose tarball npm does not serve yet", () =>
   Effect.gen(function* () {
-    const registry = fakeRegistry({ metadata: 200, tarball: 404 });
+    const fake = fakeRegistry({ metadata: 200, tarball: 404 });
 
-    const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
-      Effect.provide(registry.layer),
+    const error = yield* checkNpmVersionInstallable(registry, platformPackage).pipe(
+      Effect.provide(fake.layer),
       Effect.flip,
     );
 
@@ -355,7 +373,7 @@ it.effect("rejects a version whose tarball npm does not serve yet", () =>
 it.effect("rejects a version when its metadata request cannot reach npm", () =>
   Effect.gen(function* () {
     const transportErrors: Array<HttpClientError.HttpClientError> = [];
-    const registry = yield* fakeUnansweredRegistry((request) => {
+    const fake = yield* fakeUnansweredRegistry((request) => {
       const transportError = new HttpClientError.HttpClientError({
         reason: new HttpClientError.TransportError({ request, description: "connection reset" }),
       });
@@ -363,8 +381,8 @@ it.effect("rejects a version when its metadata request cannot reach npm", () =>
       return Effect.fail(transportError);
     });
 
-    const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
-      Effect.provide(registry.layer),
+    const error = yield* checkNpmVersionInstallable(registry, platformPackage).pipe(
+      Effect.provide(fake.layer),
       Effect.flip,
     );
 
@@ -372,7 +390,7 @@ it.effect("rejects a version when its metadata request cannot reach npm", () =>
     assert.strictEqual(error.packageSpec, "@t3code/t3-linux-x64@1.2.3");
     assert.include(error.reason, "metadata");
     assert.notInclude(error.message, "connection reset");
-    assert.deepStrictEqual(registry.requests, [`GET ${metadataUrl}`]);
+    assert.deepStrictEqual(fake.requests, [`GET ${metadataUrl}`]);
     assert.strictEqual(transportErrors.length, 1);
     assert.strictEqual(error.cause, transportErrors[0]);
   }),
@@ -380,12 +398,12 @@ it.effect("rejects a version when its metadata request cannot reach npm", () =>
 
 it.effect("rejects a version when npm does not answer within 10 seconds", () =>
   Effect.gen(function* () {
-    const registry = yield* fakeUnansweredRegistry(() => Effect.never);
+    const fake = yield* fakeUnansweredRegistry(() => Effect.never);
 
     const fiber = yield* Effect.forkChild(
-      checkNpmVersionInstallable(platformPackage).pipe(Effect.provide(registry.layer)),
+      checkNpmVersionInstallable(registry, platformPackage).pipe(Effect.provide(fake.layer)),
     );
-    yield* registry.requested.await;
+    yield* fake.requested.await;
 
     yield* TestClock.adjust("9 seconds");
     assert.isUndefined(fiber.pollUnsafe());
@@ -400,17 +418,17 @@ it.effect("rejects a version when npm does not answer within 10 seconds", () =>
 
 it.effect("releases the response when npm answers with an error", () =>
   Effect.gen(function* () {
-    const registry = fakeRegistry({ metadata: 503, tarball: 200 });
+    const fake = fakeRegistry({ metadata: 503, tarball: 200 });
 
-    const error = yield* checkNpmVersionInstallable(platformPackage).pipe(
-      Effect.provide(registry.layer),
+    const error = yield* checkNpmVersionInstallable(registry, platformPackage).pipe(
+      Effect.provide(fake.layer),
       Effect.flip,
     );
 
     assert.strictEqual(error.reason, "metadata HTTP 503");
     assert.isUndefined(error.cause);
     assert.deepStrictEqual(
-      registry.signals.map((signal) => signal.aborted),
+      fake.signals.map((signal) => signal.aborted),
       [true],
     );
   }),

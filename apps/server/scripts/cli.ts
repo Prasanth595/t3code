@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -43,6 +44,39 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
       exitCode,
     });
   }
+});
+
+// The registry `npm publish` run in `cwd` sends `@t3code` packages to:
+// `@t3code:registry` when set, `registry` otherwise. `npm config get` reads the
+// same .npmrc files and npm_config_* variables the publish does.
+const npmPublishRegistry = Effect.fn("npmPublishRegistry")(function* (cwd: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const configGet = Effect.fn("npmConfigGet")(function* (key: string) {
+    const spawnCommand = yield* resolveSpawnCommand("npm", ["config", "get", key]);
+    const child = yield* spawner.spawn(
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        cwd,
+        stderr: "inherit",
+        shell: spawnCommand.shell,
+      }),
+    );
+    const [value, exitCode] = yield* Effect.all(
+      [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+      { concurrency: "unbounded" },
+    );
+    if (exitCode !== 0) {
+      return yield* new ServerCliCommandExitError({
+        command: spawnCommand.command,
+        args: spawnCommand.args,
+        cwd,
+        exitCode,
+      });
+    }
+    return value.trim();
+  }, Effect.scoped);
+
+  const scoped = yield* configGet("@t3code:registry");
+  return scoped === "undefined" ? yield* configGet("registry") : scoped;
 });
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
@@ -226,6 +260,10 @@ const publishCmd = Command.make(
         ),
       );
 
+      // A real run checks for the platform packages where npm publishes them,
+      // read before any upload. A dry run checks nothing.
+      const registry = config.dryRun ? "" : yield* npmPublishRegistry(packagesDir);
+
       const args = ["publish", "--access", config.access, "--tag", config.tag];
       if (config.provenance) args.push("--provenance");
       if (config.dryRun) args.push("--dry-run");
@@ -249,7 +287,8 @@ const publishCmd = Command.make(
         launcherTarball,
         publish,
         dryRun: config.dryRun,
-        checkInstallable: (tarball) => checkNpmVersionInstallable(platformSpecs.get(tarball)!),
+        checkInstallable: (tarball) =>
+          checkNpmVersionInstallable(registry, platformSpecs.get(tarball)!),
       }).pipe(Effect.provide(FetchHttpClient.layer));
     }),
 ).pipe(
