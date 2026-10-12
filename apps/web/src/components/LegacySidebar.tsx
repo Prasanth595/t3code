@@ -88,12 +88,16 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
+import { readThreadShell, useThreadShells, useThreadShellsForProjectRefs } from "../state/entities";
 import {
-  readThreadShell,
-  useProjects,
-  useThreadShells,
-  useThreadShellsForProjectRefs,
-} from "../state/entities";
+  useEnvironmentSelection,
+  useSelectedEnvironmentProjects,
+} from "../state/environmentSelection";
+import {
+  SidebarEnvironmentMenu,
+  SidebarEnvironmentMissingNotice,
+} from "./sidebar/SidebarEnvironmentMenu";
+import { ProjectMachineLabel, useProjectMachineLabels } from "./ProjectMachineLabel";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
@@ -1181,6 +1185,7 @@ interface SidebarProjectItemProps {
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
+  const projectMachineLabels = useProjectMachineLabels();
   const {
     project,
     isThreadListExpanded,
@@ -2496,6 +2501,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="truncate text-sm font-medium text-sidebar-foreground/90">
               {project.displayName}
+              <ProjectMachineLabel
+                environmentIds={project.memberProjects.map((member) => member.environmentId)}
+                labels={projectMachineLabels}
+              />
             </span>
             {project.groupedProjectCount > 1 ? (
               <span className="shrink-0 text-secondary-label text-3xs">
@@ -3046,6 +3055,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     attachProjectListAutoAnimateRef,
     projectsLength,
   } = props;
+  const environmentMissing = useEnvironmentSelection().resolved.status === "missing";
 
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
@@ -3114,6 +3124,11 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
           <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
           <div className="flex items-center gap-1">
+            <SidebarEnvironmentMenu
+              renderTrigger={(label) => (
+                <Button size="icon-xs" variant="ghost-muted" aria-label={label} />
+              )}
+            />
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
@@ -3218,7 +3233,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </SidebarMenu>
         )}
 
-        {projectsLength === 0 && (
+        <SidebarEnvironmentMissingNotice />
+        {projectsLength === 0 && !environmentMissing && (
           <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
         )}
       </SidebarGroup>
@@ -3227,7 +3243,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 });
 
 export default function LegacySidebar() {
-  const projects = useProjects();
+  // Projects, their groups and their thread lists follow the environment filter.
+  const projects = useSelectedEnvironmentProjects();
   const sidebarThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);

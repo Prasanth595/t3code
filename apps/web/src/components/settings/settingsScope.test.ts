@@ -188,6 +188,21 @@ describe("settings scope resolution", () => {
     });
   });
 
+  it("names the environment when groups narrowed to it no longer hold the project", () => {
+    const narrowedToServer = [group("other", [other])];
+    expect(
+      resolveSettingsScope(
+        { project: "t3code", machine: serverId },
+        narrowedToServer,
+        environments,
+      ),
+    ).toMatchObject({ kind: "unavailable", reason: "checkout-missing", members: [] });
+    expect(resolveSettingsScope({ project: "gone" }, groups, environments)).toMatchObject({
+      kind: "unavailable",
+      reason: "project-missing",
+    });
+  });
+
   it("rejects a cached checkout whose environment was removed", () => {
     expect(
       resolveSettingsScope(

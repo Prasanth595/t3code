@@ -8,6 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildHomeProjectScopes,
   findHomeProjectScope,
+  homeProjectScopeLabel,
   sortHomeProjectScopes,
 } from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
@@ -390,5 +391,72 @@ describe("home project scopes", () => {
     expect(findHomeProjectScope(scopes, "environment-local:project-target")).toBe(targetScope);
     expect(findHomeProjectScope(scopes, "environment-local:missing")).toBeNull();
     expect(findHomeProjectScope(scopes, null)).toBeNull();
+  });
+});
+
+describe("homeProjectScopeLabel", () => {
+  const fedora = { environmentId: EnvironmentId.make("fedora"), label: "Fedora" };
+  const swerve = { environmentId: EnvironmentId.make("swerve"), label: "SwerveStation" };
+  const repositoryIdentity = {
+    canonicalKey: "github.com/astrabit/astrabit",
+    locator: {
+      source: "git-remote" as const,
+      remoteName: "origin",
+      remoteUrl: "https://github.com/astrabit/astrabit.git",
+    },
+    name: "astrabit",
+  };
+  const projects = [
+    makeProject({
+      environmentId: fedora.environmentId,
+      id: ProjectId.make("on-fedora"),
+      title: "Astrabit",
+      repositoryIdentity,
+    }),
+    makeProject({
+      environmentId: swerve.environmentId,
+      id: ProjectId.make("on-swerve"),
+      title: "Astrabit",
+      repositoryIdentity,
+    }),
+  ];
+
+  it("names every machine while all environments are shown", () => {
+    const [scope] = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    expect(homeProjectScopeLabel(scope!, [fedora, swerve])).toBe(
+      "Astrabit • Fedora, SwerveStation",
+    );
+  });
+
+  it("names only the filtered machine", () => {
+    const [scope] = buildHomeProjectScopes({
+      projects,
+      environmentId: swerve.environmentId,
+      projectGroupingMode: "repository",
+    });
+    expect(homeProjectScopeLabel(scope!, [fedora, swerve])).toBe("Astrabit • SwerveStation");
+  });
+
+  it("stays plain with a single environment", () => {
+    const [scope] = buildHomeProjectScopes({
+      projects: projects.slice(0, 1),
+      environmentId: null,
+      projectGroupingMode: "repository",
+    });
+    expect(homeProjectScopeLabel(scope!, [fedora])).toBe("Astrabit");
+  });
+
+  it("does not widen a missing environment filter", () => {
+    expect(
+      buildHomeProjectScopes({
+        projects,
+        environmentId: EnvironmentId.make("removed"),
+        projectGroupingMode: "repository",
+      }),
+    ).toEqual([]);
   });
 });

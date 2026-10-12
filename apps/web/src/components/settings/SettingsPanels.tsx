@@ -28,6 +28,7 @@ import {
   type ChatWidth,
   type DiffLayout,
   type EnvironmentIdentificationMode,
+  type ProjectMachineLabelMode,
   MAX_APPEARANCE_CONTRAST,
   MAX_CODE_FONT_SIZE,
   MAX_GLASS_OPACITY,
@@ -176,6 +177,17 @@ const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, s
   pill: "Version pill",
   none: "None",
 };
+
+const PROJECT_MACHINE_LABEL_LABELS: Record<ProjectMachineLabelMode, string> = {
+  name: "Name",
+  icon: "Icon",
+  "icon-name": "Icon and name",
+  off: "Off",
+};
+
+function isProjectMachineLabelMode(value: unknown): value is ProjectMachineLabelMode {
+  return typeof value === "string" && Object.hasOwn(PROJECT_MACHINE_LABEL_LABELS, value);
+}
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
   turn: "Wait for the full response",
@@ -555,6 +567,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode
         ? ["Environment identification"]
         : []),
+      ...(settings.projectMachineLabelMode !== DEFAULT_UNIFIED_SETTINGS.projectMachineLabelMode
+        ? ["Show machine on projects"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -692,6 +707,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffLayout,
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
+      settings.projectMachineLabelMode,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
@@ -808,6 +824,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
+      projectMachineLabelMode: DEFAULT_UNIFIED_SETTINGS.projectMachineLabelMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -1349,6 +1366,51 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          {...searchableSetting("project-machine-label")}
+          description="Name the machine after each project once you use more than one environment."
+          resetAction={
+            settings.projectMachineLabelMode !==
+            DEFAULT_UNIFIED_SETTINGS.projectMachineLabelMode ? (
+              <SettingResetButton
+                label="machine on projects"
+                onClick={() =>
+                  updateSettings({
+                    projectMachineLabelMode: DEFAULT_UNIFIED_SETTINGS.projectMachineLabelMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.projectMachineLabelMode}
+              onValueChange={(value) => {
+                if (isProjectMachineLabelMode(value)) {
+                  updateSettings({ projectMachineLabelMode: value });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Show machine on projects"
+              >
+                <SelectValue>
+                  {PROJECT_MACHINE_LABEL_LABELS[settings.projectMachineLabelMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(PROJECT_MACHINE_LABEL_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}

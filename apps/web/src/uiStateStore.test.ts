@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -12,6 +12,7 @@ import {
   reorderProjects,
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
+  setEnvironmentSelection,
   setProjectExpanded,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
@@ -23,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
+    environmentSelection: { kind: "all" },
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -202,6 +204,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      environmentSelection: { kind: "all" },
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -324,6 +327,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      environmentSelectionId: null,
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -348,6 +352,31 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
       "github.com/pingdotgg/t3code",
     );
+  });
+
+  it("restores the environment selection across reloads", () => {
+    const environmentId = EnvironmentId.make("env-fedora");
+    persistState(setEnvironmentSelection(makeUiState(), { kind: "one", environmentId }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(persisted.environmentSelectionId).toBe("env-fedora");
+    expect(parsePersistedState(persisted).environmentSelection).toEqual({
+      kind: "one",
+      environmentId,
+    });
+  });
+
+  it("reads stored state without an environment selection as all environments", () => {
+    expect(parsePersistedState({}).environmentSelection).toEqual({ kind: "all" });
+    expect(parsePersistedState({ environmentSelectionId: null }).environmentSelection).toEqual({
+      kind: "all",
+    });
+    expect(parsePersistedState({ environmentSelectionId: "" }).environmentSelection).toEqual({
+      kind: "all",
+    });
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {

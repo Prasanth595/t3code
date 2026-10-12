@@ -203,6 +203,14 @@
       "types": "./src/state/projectGrouping.ts",
       "default": "./src/state/projectGrouping.ts"
     },
+    "./state/environment-selection": {
+      "types": "./src/state/environmentSelection.ts",
+      "default": "./src/state/environmentSelection.ts"
+    },
+    "./state/project-machine-label": {
+      "types": "./src/state/projectMachineLabel.ts",
+      "default": "./src/state/projectMachineLabel.ts"
+    },
     "./state/relay": {
       "types": "./src/state/relayDiscovery.ts",
       "default": "./src/state/relayDiscovery.ts"

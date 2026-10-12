@@ -89,7 +89,13 @@ export function resolveSettingsScope(
 
   if (search.project) {
     const group = groups.find((candidate) => candidate.projectKey === search.project);
-    if (!group) return unavailable("project-missing", "This project is no longer available.");
+    // Groups arrive narrowed to `machine`, so a project with no checkout there
+    // is absent rather than empty.
+    if (!group) {
+      return search.machine
+        ? unavailable("checkout-missing", "This project has no checkout on this environment.")
+        : unavailable("project-missing", "This project is no longer available.");
+    }
     const members = group.memberProjects.filter(
       (member) =>
         (search.machine === undefined || member.environmentId === search.machine) &&

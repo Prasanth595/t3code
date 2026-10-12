@@ -1,4 +1,9 @@
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  projectMachineLabelEnvironments,
+  projectMachineLabelText,
+} from "@t3tools/client-runtime/state/project-machine-label";
+import { DEFAULT_PROJECT_MACHINE_LABEL_MODE } from "@t3tools/contracts/settings";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -64,6 +69,25 @@ export function buildHomeProjectScopes(input: {
       projectRefs: group.memberProjectRefs,
     };
   });
+}
+
+/**
+ * The scope's name with the machines its checkouts are on, "Astrabit • Fedora",
+ * once more than one environment exists. Mobile has no machine-label
+ * preference, so it always uses the shared default: the machine name.
+ */
+export function homeProjectScopeLabel(
+  scope: Pick<HomeProjectScope, "title" | "projects">,
+  environments: ReadonlyArray<{ readonly environmentId: string; readonly label: string }>,
+): string {
+  const shown = projectMachineLabelEnvironments(
+    scope.projects.map((project) => project.environmentId),
+    environments,
+    DEFAULT_PROJECT_MACHINE_LABEL_MODE,
+  );
+  return shown.length === 0
+    ? scope.title
+    : `${scope.title} • ${projectMachineLabelText(shown.map((environment) => environment.label))}`;
 }
 
 // Prefers an exact scope key so a caller-supplied project ID that equals another

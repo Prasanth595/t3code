@@ -114,3 +114,20 @@ export function resolveDraftProjectSelection(
   const onlyProject = getOnlySelectableProject(projectScopes);
   return onlyProject ? { kind: "select", project: onlyProject } : { kind: "pick" };
 }
+
+/**
+ * Where a new task starts: an explicit pick in the flow, else the environment
+ * Home is filtered to, else the first project's environment. Each candidate
+ * must still hold a project.
+ */
+export function resolveNewTaskEnvironmentId(
+  projects: ReadonlyArray<Pick<EnvironmentProject, "environmentId">>,
+  override: EnvironmentId | null,
+  homeEnvironmentId: EnvironmentId | null,
+): EnvironmentId | null {
+  const hasProjects = (environmentId: EnvironmentId | null): environmentId is EnvironmentId =>
+    environmentId !== null && projects.some((project) => project.environmentId === environmentId);
+  if (hasProjects(override)) return override;
+  if (hasProjects(homeEnvironmentId)) return homeEnvironmentId;
+  return projects[0]?.environmentId ?? null;
+}

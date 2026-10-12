@@ -27,9 +27,9 @@ import {
   readProjects,
   readThreadShell,
   readThreadShells,
-  useProjects,
   useThreadShell,
 } from "../state/entities";
+import { useSelectedEnvironmentProjects } from "../state/environmentSelection";
 import {
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
@@ -466,7 +466,9 @@ export function useHandleNewThread() {
         : useComposerDraftStore.getState().getDraftSession(routeTarget.draftId)
       : null,
   );
-  const projects = useProjects();
+  // The default target never leaves the environment filter; a missing
+  // environment has no default rather than falling back to another one.
+  const projects = useSelectedEnvironmentProjects();
   const orderedProjects = useMemo(() => {
     return orderItemsByPreferredIds({
       items: projects,

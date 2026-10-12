@@ -1,3 +1,4 @@
+import type { ResolvedEnvironmentSelection } from "@t3tools/client-runtime/state/environment-selection";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
@@ -580,6 +581,45 @@ export function filterSidebarV2VisibleThreads<
       (scopedProjectKeys === null ||
         scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
   );
+}
+
+/**
+ * Thread rows the sidebar may show, as `${environmentId}:${projectId}` keys, or
+ * null for every thread. A project scope wins; otherwise a narrowed environment
+ * limits rows to its projects (none while the environment is missing).
+ */
+export function resolveSidebarScopedProjectKeys(input: {
+  readonly scopedProjectRefs: readonly { environmentId: string; projectId: string }[] | null;
+  readonly environmentNarrowed: boolean;
+  readonly visibleProjects: readonly { environmentId: string; id: string }[];
+}): ReadonlySet<string> | null {
+  if (input.scopedProjectRefs !== null) {
+    return new Set(input.scopedProjectRefs.map((ref) => `${ref.environmentId}:${ref.projectId}`));
+  }
+  if (!input.environmentNarrowed) return null;
+  return new Set(input.visibleProjects.map((project) => `${project.environmentId}:${project.id}`));
+}
+
+/**
+ * A persisted project scope whose project is gone falls back to all projects,
+ * but only once every environment has a live snapshot and the environment
+ * filter is settled and online. A loading, offline or missing environment
+ * cannot prove the project is gone.
+ */
+/**
+ * Whether a persisted project scope whose project is gone may fall back to all
+ * projects. Cached, disconnected or missing environments cannot establish that
+ * the project is gone, so the environment filter must be settled and online.
+ */
+export function canClearMissingSidebarProjectScope(input: {
+  readonly allProjectSnapshotsReady: boolean;
+  readonly allProjectConfigsReady: boolean;
+  readonly environmentSelection: ResolvedEnvironmentSelection;
+}): boolean {
+  const selection = input.environmentSelection;
+  const selectionSettled =
+    selection.status === "all" || (selection.status === "active" && selection.online);
+  return input.allProjectSnapshotsReady && input.allProjectConfigsReady && selectionSettled;
 }
 
 export function getSidebarForkParentThreadId(

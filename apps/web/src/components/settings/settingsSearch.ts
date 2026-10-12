@@ -290,6 +290,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "appearance-interface",
   },
   {
+    id: "project-machine-label",
+    title: "Show machine on projects",
+    to: "/settings/appearance",
+    searchTerms: ["environment machine name icon project label same name"],
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",

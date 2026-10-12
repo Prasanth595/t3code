@@ -156,9 +156,13 @@ import {
 import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
-  useProjects,
   useThreadShells,
 } from "../state/entities";
+import { narrowedEnvironmentId } from "@t3tools/client-runtime/state/environment-selection";
+import {
+  useEnvironmentSelection,
+  useSelectedEnvironmentProjects,
+} from "../state/environmentSelection";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { vcsEnvironment } from "../state/vcs";
@@ -178,7 +182,6 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
-import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
@@ -207,6 +210,8 @@ import {
   resolveSidebarDropVerb,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
+  resolveSidebarScopedProjectKeys,
+  canClearMissingSidebarProjectScope,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   resolveThreadLastVisitedAt,
@@ -280,6 +285,11 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import {
+  SidebarEnvironmentMenu,
+  SidebarEnvironmentMissingNotice,
+} from "./sidebar/SidebarEnvironmentMenu";
+import { ProjectMachineLabel, useProjectMachineLabels } from "./ProjectMachineLabel";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2422,7 +2432,11 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
-  const projects = useProjects();
+  // Everything below lists and groups only the selected environment's projects.
+  const projects = useSelectedEnvironmentProjects();
+  const { resolved: environmentSelection } = useEnvironmentSelection();
+  const narrowedToEnvironmentId = narrowedEnvironmentId(environmentSelection);
+  const environmentNarrowed = narrowedToEnvironmentId !== null;
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
@@ -2688,6 +2702,7 @@ export default function Sidebar() {
     { open: false, query: "" },
   );
   const projectScopeFilter = useComboboxFilter();
+  const projectMachineLabels = useProjectMachineLabels();
   // Filtering derives from the same React state that controls the input, so
   // the visible query and the visible list can never desync — the peer wiring
   // in DiffPanel and BranchToolbarBranchSelector. "All projects" is the default
@@ -2713,17 +2728,16 @@ export default function Sidebar() {
   );
   const scopedProjectKeys = useMemo(
     () =>
-      scopedProjectGroup === null
-        ? null
-        : new Set(
-            scopedProjectGroup.memberProjectRefs.map(
-              (projectRef) => `${projectRef.environmentId}:${projectRef.projectId}`,
-            ),
-          ),
-    [scopedProjectGroup],
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: scopedProjectGroup?.memberProjectRefs ?? null,
+        environmentNarrowed,
+        visibleProjects: projects,
+      }),
+    [environmentNarrowed, projects, scopedProjectGroup],
   );
   // Configs identify scratch projects, so both they and live project snapshots
-  // must arrive before a persisted scope can be considered missing.
+  // must arrive before a persisted scope can be considered missing, and the
+  // environment filter must be settled and online.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
   const allProjectConfigsReady = useAtomValue(environmentProjects.projectConfigsReadyAtom);
   useEffect(() => {
@@ -2731,7 +2745,11 @@ export default function Sidebar() {
       groups: projectGroups,
       key: persistedProjectScopeKey,
       settings: projectGroupingSettings,
-      canClearMissingScope: allProjectSnapshotsReady && allProjectConfigsReady,
+      canClearMissingScope: canClearMissingSidebarProjectScope({
+        allProjectSnapshotsReady,
+        allProjectConfigsReady,
+        environmentSelection,
+      }),
     });
     if (nextKey !== persistedProjectScopeKey) {
       setProjectScopeKey(nextKey);
@@ -2739,6 +2757,7 @@ export default function Sidebar() {
   }, [
     allProjectConfigsReady,
     allProjectSnapshotsReady,
+    environmentSelection,
     persistedProjectScopeKey,
     projectGroups,
     projectGroupingSettings,
@@ -2772,9 +2791,10 @@ export default function Sidebar() {
   });
   // Scope flips drop the selection: rows selected under the old scope may be
   // hidden now, and bulk actions must never count or touch invisible rows.
+  const environmentFilterKey = narrowedToEnvironmentId ?? "all";
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, environmentFilterKey, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
@@ -3029,7 +3049,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = `${environmentFilterKey}:${projectScopeKey ?? "all"}`;
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -5065,6 +5085,11 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              environmentScope={
+                <SidebarEnvironmentMenu
+                  renderTrigger={(label) => <SidebarHeaderIconButton label={label} />}
+                />
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -5166,14 +5191,17 @@ export default function Sidebar() {
                             ) : (
                               <FolderIcon className="size-4 shrink-0" />
                             )}
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
-                            {project && showProjectEnvironments ? (
-                              <ProjectEnvironmentBadge
-                                group={project}
-                                primaryEnvironmentId={primaryEnvironmentId}
-                                machineByEnvironmentId={environmentMachineById}
-                              />
-                            ) : null}
+                            <span className="min-w-0 flex-1 truncate text-sm">
+                              {item.label}
+                              {project ? (
+                                <ProjectMachineLabel
+                                  environmentIds={project.memberProjects.map(
+                                    (member) => member.environmentId,
+                                  )}
+                                  labels={projectMachineLabels}
+                                />
+                              ) : null}
+                            </span>
                             {project ? (
                               <Button
                                 size="icon-xs"
@@ -5632,25 +5660,29 @@ export default function Sidebar() {
             snoozedThreads.length +
             settledThreads.length ===
             0 ? (
-            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
-                <>
-                  <span>No projects yet</span>
-                  <button
-                    type="button"
-                    onClick={openAddProjectCommandPalette}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <PlusIcon className="-mx-0.5 size-3" />
-                    Add project
-                  </button>
-                </>
-              ) : scopedProjectGroup ? (
-                `No threads in ${scopedProjectGroup.displayName} yet`
-              ) : (
-                "No threads yet"
-              )}
-            </div>
+            environmentSelection.status === "missing" ? (
+              <SidebarEnvironmentMissingNotice />
+            ) : (
+              <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
+                {projects.length === 0 ? (
+                  <>
+                    <span>No projects yet</span>
+                    <button
+                      type="button"
+                      onClick={openAddProjectCommandPalette}
+                      className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                    >
+                      <PlusIcon className="-mx-0.5 size-3" />
+                      Add project
+                    </button>
+                  </>
+                ) : scopedProjectGroup ? (
+                  `No threads in ${scopedProjectGroup.displayName} yet`
+                ) : (
+                  "No threads yet"
+                )}
+              </div>
+            )
           ) : null}
         </SidebarGroup>
       </SidebarContent>

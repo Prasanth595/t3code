@@ -34,6 +34,8 @@ import {
   resolveSidebarStageBadgeLabel,
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
+  resolveSidebarScopedProjectKeys,
+  canClearMissingSidebarProjectScope,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
@@ -2336,5 +2338,85 @@ describe("Working shelf (beta)", () => {
         unsnooze: false,
       });
     });
+  });
+});
+
+describe("sidebar environment filter", () => {
+  const environmentA = EnvironmentId.make("env-a");
+  const environmentB = EnvironmentId.make("env-b");
+  const projectA = { environmentId: environmentA, id: ProjectId.make("project-a") };
+
+  it("limits thread rows to the narrowed environment's projects", () => {
+    expect(
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: null,
+        environmentNarrowed: false,
+        visibleProjects: [projectA],
+      }),
+    ).toBeNull();
+    expect(
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: null,
+        environmentNarrowed: true,
+        visibleProjects: [projectA],
+      }),
+    ).toEqual(new Set([`${environmentA}:project-a`]));
+    // A missing environment narrows to nothing rather than widening.
+    expect(
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: null,
+        environmentNarrowed: true,
+        visibleProjects: [],
+      }),
+    ).toEqual(new Set());
+  });
+
+  it("lets the project scope decide when one is chosen", () => {
+    expect(
+      resolveSidebarScopedProjectKeys({
+        scopedProjectRefs: [{ environmentId: environmentA, projectId: projectA.id }],
+        environmentNarrowed: true,
+        visibleProjects: [],
+      }),
+    ).toEqual(new Set([`${environmentA}:project-a`]));
+  });
+
+  it("clears a vanished project scope only once the environment filter is settled and online", () => {
+    const base = { allProjectSnapshotsReady: true, allProjectConfigsReady: true };
+    expect(
+      canClearMissingSidebarProjectScope({
+        ...base,
+        environmentSelection: { status: "all", environmentIds: [environmentA] },
+      }),
+    ).toBe(true);
+    expect(
+      canClearMissingSidebarProjectScope({
+        ...base,
+        environmentSelection: { status: "active", environmentId: environmentA, online: true },
+      }),
+    ).toBe(true);
+    for (const environmentSelection of [
+      { status: "pending", environmentId: environmentA },
+      { status: "pending", environmentId: null },
+      { status: "active", environmentId: environmentB, online: false },
+      { status: "missing", environmentId: environmentB },
+    ] as const) {
+      expect(canClearMissingSidebarProjectScope({ ...base, environmentSelection })).toBe(false);
+    }
+    const all = { status: "all", environmentIds: [environmentA] } as const;
+    expect(
+      canClearMissingSidebarProjectScope({
+        ...base,
+        allProjectSnapshotsReady: false,
+        environmentSelection: all,
+      }),
+    ).toBe(false);
+    expect(
+      canClearMissingSidebarProjectScope({
+        ...base,
+        allProjectConfigsReady: false,
+        environmentSelection: all,
+      }),
+    ).toBe(false);
   });
 });

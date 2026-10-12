@@ -1,5 +1,8 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
+import { seedSettingsMachine } from "../components/settings/settingsScopeNavigation";
+import { useUiStateStore } from "../uiStateStore";
+
 export const Route = createFileRoute("/projects/$projectKey")({
   beforeLoad: async ({ context, params }) => {
     if (
@@ -10,7 +13,14 @@ export const Route = createFileRoute("/projects/$projectKey")({
     }
     throw redirect({
       to: "/settings/projects",
-      search: { project: params.projectKey, machine: undefined },
+      // Opens on the environment the views are narrowed to, like any Settings entry.
+      search: {
+        project: params.projectKey,
+        machine: seedSettingsMachine(
+          { project: params.projectKey },
+          useUiStateStore.getState().environmentSelection,
+        )?.machine,
+      },
       replace: true,
     });
   },

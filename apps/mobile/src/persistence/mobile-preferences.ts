@@ -61,6 +61,8 @@ export interface Preferences {
   readonly threadListSettledShelfExpanded?: boolean;
   readonly threadListSnoozedShelfExpanded?: boolean;
   readonly threadListWorkingShelfExpanded?: boolean;
+  /** Environment the home list is narrowed to; absent or null means all. */
+  readonly homeEnvironmentId?: string | null;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -127,6 +129,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
     threadListWorkingShelfExpanded?: boolean;
+    homeEnvironmentId?: string | null;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -240,6 +243,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.threadListWorkingShelfExpanded === "boolean") {
     preferences.threadListWorkingShelfExpanded = parsed.threadListWorkingShelfExpanded;
+  }
+  if (typeof parsed.homeEnvironmentId === "string" && parsed.homeEnvironmentId.length > 0) {
+    preferences.homeEnvironmentId = parsed.homeEnvironmentId;
   }
   return preferences;
 }

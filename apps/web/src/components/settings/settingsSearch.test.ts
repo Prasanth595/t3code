@@ -332,6 +332,10 @@ describe("searchSettings", () => {
       id: "composer-context",
       to: "/settings/appearance",
     });
+    expect(searchSettings("show machine on projects")[0]).toMatchObject({
+      id: "project-machine-label",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",

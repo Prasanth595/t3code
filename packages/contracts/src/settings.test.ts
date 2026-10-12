@@ -615,6 +615,26 @@ describe("ClientSettings environment identification", () => {
   });
 });
 
+describe("ClientSettings project machine label", () => {
+  it("defaults to the machine name and accepts each mode", () => {
+    expect(decodeClientSettings({}).projectMachineLabelMode).toBe("name");
+
+    for (const mode of ["name", "icon", "icon-name", "off"] as const) {
+      expect(decodeClientSettings({ projectMachineLabelMode: mode }).projectMachineLabelMode).toBe(
+        mode,
+      );
+      expect(
+        decodeClientSettingsPatch({ projectMachineLabelMode: mode }).projectMachineLabelMode,
+      ).toBe(mode);
+    }
+  });
+
+  it("rejects unsupported modes", () => {
+    expect(() => decodeClientSettings({ projectMachineLabelMode: "path" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ projectMachineLabelMode: "path" })).toThrow();
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);

@@ -1,5 +1,5 @@
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
@@ -20,8 +20,10 @@ import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScope
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
+  seedSettingsMachine,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
+import { useUiStateStore } from "../uiStateStore";
 import {
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
@@ -151,6 +153,21 @@ function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
+  // Seed once on entry; later "All environments" choices stay explicit.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current) return;
+    seededRef.current = true;
+    const seeded = seedSettingsMachine(rawSearch, useUiStateStore.getState().environmentSelection);
+    if (seeded === null) return;
+    void navigate({
+      to: pathname,
+      search: () => seeded,
+      hash: true,
+      replace: true,
+      resetScroll: false,
+    });
+  }, [navigate, pathname, rawSearch]);
   return (
     <SettingsScopeProvider
       search={rawSearch}

@@ -9,7 +9,11 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import { resolveSettingsScope } from "./settingsScope";
-import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
+import {
+  retainSettingsScope,
+  seedSettingsMachine,
+  validateSettingsRouteSearch,
+} from "./settingsScopeNavigation";
 
 import { validateScheduledTasksSearch } from "./scheduledTasksSettings.logic";
 
@@ -293,5 +297,27 @@ describe("scheduled task scope navigation", () => {
     await router.navigate({ to: "/settings/projects", search: checkoutSearch });
     await router.navigate({ to: "/settings/scheduled-tasks" });
     expect(router.state.matches.at(-1)?.search).toEqual(checkoutSearch);
+  });
+});
+
+describe("seedSettingsMachine", () => {
+  const environmentId = EnvironmentId.make("fedora");
+  const one = { kind: "one", environmentId } as const;
+
+  it("starts on the selected environment, keeping the project", () => {
+    expect(seedSettingsMachine({}, one)).toEqual({ machine: environmentId });
+    expect(seedSettingsMachine({ project: "repository:t3code" }, one)).toEqual({
+      project: "repository:t3code",
+      machine: environmentId,
+    });
+  });
+
+  it("leaves links that name their own target alone", () => {
+    expect(seedSettingsMachine({ machine: "other" }, one)).toBeNull();
+    expect(seedSettingsMachine({ project: "p", checkout: "other:/repo" }, one)).toBeNull();
+  });
+
+  it("does nothing while every environment is shown", () => {
+    expect(seedSettingsMachine({}, { kind: "all" })).toBeNull();
   });
 });

@@ -94,6 +94,8 @@ interface HomeScreenProps {
   >;
   readonly searchQuery: string;
   readonly selectedEnvironmentId: EnvironmentId | null;
+  /** The filtered environment was removed or switched off; the list stays empty. */
+  readonly environmentMissing: boolean;
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
@@ -1003,6 +1005,14 @@ export function HomeScreen(props: HomeScreenProps) {
       <EmptyState
         title="No results"
         detail={`No threads matching "${props.searchQuery}".`}
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
+    ) : props.environmentMissing ? (
+      <EmptyState
+        title="Environment unavailable"
+        detail="The environment this list is filtered to was removed or switched off."
+        actionLabel="Show all environments"
+        onAction={() => props.onEnvironmentChange(null)}
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
     ) : v2ScopedProjectGroup !== null ? (

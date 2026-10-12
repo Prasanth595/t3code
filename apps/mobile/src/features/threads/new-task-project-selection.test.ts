@@ -8,6 +8,7 @@ import {
   getProjectScopeSelectionTarget,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironmentId,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -179,5 +180,27 @@ describe("filterProjectScopes", () => {
     expect(matches[0]).toBe(code);
     expect(getProjectScopeSelectionTarget(matches[0]!, EnvironmentId.make("mac"))).toBe(mac);
     expect(code.projects).toEqual([mac, server]);
+  });
+});
+
+describe("resolveNewTaskEnvironmentId", () => {
+  const onA = makeProject("a", "env-a");
+  const onB = makeProject("b", "env-b");
+  const envA = EnvironmentId.make("env-a");
+  const envB = EnvironmentId.make("env-b");
+  const envGone = EnvironmentId.make("env-gone");
+
+  it("starts on the environment Home is filtered to", () => {
+    expect(resolveNewTaskEnvironmentId([onA, onB], null, envB)).toBe(envB);
+  });
+
+  it("lets an explicit pick in the flow win", () => {
+    expect(resolveNewTaskEnvironmentId([onA, onB], envA, envB)).toBe(envA);
+  });
+
+  it("falls back to the first project when Home shows all or its environment has no projects", () => {
+    expect(resolveNewTaskEnvironmentId([onA, onB], null, null)).toBe(envA);
+    expect(resolveNewTaskEnvironmentId([onA, onB], null, envGone)).toBe(envA);
+    expect(resolveNewTaskEnvironmentId([], null, envB)).toBeNull();
   });
 });

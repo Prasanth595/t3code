@@ -126,6 +126,11 @@ import { useNewProject } from "../hooks/useNewProject";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import {
+  useEnvironmentSelection,
+  useSelectedEnvironmentProjects,
+} from "../state/environmentSelection";
+import { ProjectMachineLabel, useProjectMachineLabels } from "./ProjectMachineLabel";
 import { useThreadSearch } from "../state/queries";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
@@ -642,6 +647,11 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  // Project lists and the new-thread picker follow the environment filter;
+  // lookups by id (thread rows, add-project dedupe) still see every project.
+  const selectedProjects = useSelectedEnvironmentProjects();
+  const { resolved: environmentSelection } = useEnvironmentSelection();
+  const projectMachineLabels = useProjectMachineLabels();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -828,7 +838,7 @@ function OpenCommandPaletteDialog(props: {
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
-        items: projects,
+        items: selectedProjects,
         preferredIds: projectOrder,
         getId: getProjectOrderKey,
         getPreferenceIds: (project) => [
@@ -836,12 +846,13 @@ function OpenCommandPaletteDialog(props: {
           legacyProjectCwdPreferenceKey(project.workspaceRoot),
         ],
       }),
-    [projectOrder, projects],
+    [projectOrder, selectedProjects],
   );
   const unsortedProjectGroups = useMemo(
     () =>
       buildSidebarProjectSnapshots({
-        projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
+        projects:
+          clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : selectedProjects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
@@ -852,7 +863,7 @@ function OpenCommandPaletteDialog(props: {
       orderedProjects,
       primaryEnvironmentId,
       projectGroupingSettings,
-      projects,
+      selectedProjects,
     ],
   );
   const projectGroups = useMemo(
@@ -929,8 +940,16 @@ function OpenCommandPaletteDialog(props: {
 
     return options;
   }, [environments]);
+  // Adding a project starts on the filtered environment when it can take one.
   const defaultAddProjectEnvironmentId =
-    addProjectEnvironmentOptions.find((option) => option.isConnected)?.environmentId ?? null;
+    (environmentSelection.status === "active"
+      ? addProjectEnvironmentOptions.find(
+          (option) =>
+            option.isConnected && option.environmentId === environmentSelection.environmentId,
+        )?.environmentId
+      : undefined) ??
+    addProjectEnvironmentOptions.find((option) => option.isConnected)?.environmentId ??
+    null;
   const wslAddProjectEnvironmentOption = useMemo(
     () =>
       addProjectEnvironmentOptions.find((option) => {
@@ -1187,6 +1206,19 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
+  const renderProjectMachineLabel = useCallback(
+    (project: CommandPaletteProject) => (
+      <ProjectMachineLabel
+        environmentIds={(
+          projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`)?.memberProjects ?? [
+            project,
+          ]
+        ).map((member) => member.environmentId)}
+        labels={projectMachineLabels}
+      />
+    ),
+    [projectGroupByTargetKey, projectMachineLabels],
+  );
   const projectSearchItems = useMemo(
     () =>
       buildProjectActionItems({
@@ -1221,6 +1253,7 @@ function OpenCommandPaletteDialog(props: {
             />
           );
         },
+        renderTitleSuffix: renderProjectMachineLabel,
         icon: projectFaviconIcon,
         runProject: openProjectFromSearch,
       }),
@@ -1229,6 +1262,7 @@ function OpenCommandPaletteDialog(props: {
       pickerProjects,
       projectEnvironmentLocationById,
       projectGroupByTargetKey,
+      renderProjectMachineLabel,
     ],
   );
 
@@ -1272,6 +1306,7 @@ function OpenCommandPaletteDialog(props: {
             </span>
           );
         },
+        renderTitleSuffix: renderProjectMachineLabel,
         icon: projectFaviconIcon,
         runProject: async (project) => {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
@@ -1316,6 +1351,7 @@ function OpenCommandPaletteDialog(props: {
     pickerProjects,
     projectEnvironmentLocationById,
     projectGroupByTargetKey,
+    renderProjectMachineLabel,
     scratchTargetEnvironmentId,
     scratchWorkspaceRootFor,
     startScratchThread,

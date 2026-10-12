@@ -1,6 +1,6 @@
 import type { DraftId } from "~/composerDraftStore";
 import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDraftStore";
-import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
+import type { ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { FolderPlusIcon } from "lucide-react";
@@ -21,11 +21,11 @@ import {
 import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
-  projectGroupsSpanEnvironments,
 } from "~/sidebarProjectGrouping";
 import { useProjects, useThreadShells } from "~/state/entities";
+import { useSelectedEnvironmentProjects } from "~/state/environmentSelection";
 import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
-import { ProjectEnvironmentBadge } from "../ProjectEnvironmentBadge";
+import { ProjectMachineLabel, useProjectMachineLabels } from "../ProjectMachineLabel";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { sortLogicalProjectsForSidebar } from "../Sidebar.logic";
 import {
@@ -62,7 +62,11 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  // The draft's own project may sit outside the environment filter; the
+  // picker only offers the filtered projects.
   const projects = useProjects();
+  const selectedProjects = useSelectedEnvironmentProjects();
+  const projectMachineLabels = useProjectMachineLabels();
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -90,7 +94,7 @@ export function DraftHeroHeadline({
     () =>
       sortLogicalProjectsForSidebar(
         buildSidebarProjectSnapshots({
-          projects,
+          projects: selectedProjects,
           settings: projectGroupingSettings,
           primaryEnvironmentId,
           resolveEnvironmentLabel: (environmentId) =>
@@ -104,29 +108,9 @@ export function DraftHeroHeadline({
       primaryEnvironmentId,
       projectGroupingSettings,
       projectSortOrder,
-      projects,
+      selectedProjects,
       threads,
     ],
-  );
-  // Same-named projects on two machines are only told apart by where they
-  // live, so rows on another machine carry its icon once the catalog spans
-  // more than one environment; a single-machine catalog stays as it was.
-  const showProjectEnvironments = useMemo(
-    () => projectGroupsSpanEnvironments(projectGroups),
-    [projectGroups],
-  );
-  const environmentMachineById = useMemo(
-    () =>
-      new Map(
-        environments.map(
-          (environment) =>
-            [
-              environment.environmentId,
-              resolveEnvironmentMachineKind(environment.serverConfig),
-            ] as const,
-        ),
-      ),
-    [environments],
   );
   const projectPickerEntries = useMemo(
     () =>
@@ -337,16 +321,17 @@ export function DraftHeroHeadline({
                 <Tooltip>
                   <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
                     {item.label}
+                    {entry ? (
+                      <ProjectMachineLabel
+                        environmentIds={entry.group.memberProjects.map(
+                          (member) => member.environmentId,
+                        )}
+                        labels={projectMachineLabels}
+                      />
+                    ) : null}
                   </TooltipTrigger>
                   <TooltipPopup side="top">{item.label}</TooltipPopup>
                 </Tooltip>
-                {entry && showProjectEnvironments ? (
-                  <ProjectEnvironmentBadge
-                    group={entry.group}
-                    primaryEnvironmentId={primaryEnvironmentId}
-                    machineByEnvironmentId={environmentMachineById}
-                  />
-                ) : null}
               </ComboboxItem>
             );
           }}

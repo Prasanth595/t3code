@@ -10,7 +10,7 @@ import { filterFilesystemBrowseEntries } from "@t3tools/client-runtime/state/fil
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { type ReactNode } from "react";
+import { createElement, Fragment, type ReactNode } from "react";
 import { getThreadSortTimestamp, sortThreads } from "../lib/threadSort";
 import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
@@ -274,6 +274,8 @@ export function buildProjectActionItems(input: {
   runProject: (project: CommandPaletteProject) => Promise<void>;
   searchTerms?: (project: CommandPaletteProject) => ReadonlyArray<string>;
   renderDescription?: (project: CommandPaletteProject) => ReactNode;
+  /** Rendered after the name inside the title, such as the machine label. */
+  renderTitleSuffix?: (project: CommandPaletteProject) => ReactNode;
   shortcutCommand?: KeybindingCommand;
 }): CommandPaletteActionItem[] {
   return input.projects.map((project) => ({
@@ -285,7 +287,9 @@ export function buildProjectActionItems(input: {
       project.workspaceRoot,
       ...(input.searchTerms?.(project) ?? []),
     ],
-    title: project.displayName,
+    title: input.renderTitleSuffix
+      ? createElement(Fragment, null, project.displayName, input.renderTitleSuffix(project))
+      : project.displayName,
     description: input.renderDescription?.(project) ?? project.workspaceRoot,
     icon: input.icon(project),
     ...(input.shortcutCommand !== undefined ? { shortcutCommand: input.shortcutCommand } : {}),

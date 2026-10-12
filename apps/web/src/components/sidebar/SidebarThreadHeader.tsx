@@ -1,5 +1,6 @@
 /**
- * The sidebar header: one row holding search, project scope and new thread.
+ * The sidebar header: one row holding search, the environment and project
+ * scopes, and new thread.
  *
  * Search owns the row's text and spans it. Project scope collapses to an icon
  * that sits with new-project and new-thread as a segmented group at the end.
@@ -29,7 +30,12 @@ export interface SidebarThreadHeaderProps {
   searchFieldRef?: RefObject<HTMLDivElement | null>;
   /** Without projects there is nothing to scope, so those controls stay out. */
   hasProjects: boolean;
-  /** The project scope combobox, rendered as the first icon of the group. */
+  /**
+   * The environment filter, ahead of the project scope. It stays visible
+   * without projects: a filter that empties the list must remain reachable.
+   */
+  environmentScope?: ReactNode;
+  /** The project scope combobox, rendered as the first project icon of the group. */
   projectScope: ReactNode;
   onNewProject: () => void;
   /** Receives the click so Shift+click can skip the project picker. */
@@ -52,6 +58,7 @@ export interface SidebarThreadHeaderProps {
 export function SidebarThreadHeader({
   searchFieldRef,
   hasProjects,
+  environmentScope,
   projectScope,
   onNewProject,
   onNewThread,
@@ -124,6 +131,7 @@ export function SidebarThreadHeader({
           hover states, and a background well reads far louder on themed
           palettes than on the base light and dark ones. */}
       <div className="flex shrink-0 items-center">
+        {environmentScope}
         {hasProjects ? (
           <>
             {projectScope}

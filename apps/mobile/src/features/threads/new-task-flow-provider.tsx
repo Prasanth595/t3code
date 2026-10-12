@@ -119,7 +119,11 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironmentId,
+} from "./new-task-project-selection";
+import { useHomeListOptions } from "../home/home-list-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
@@ -285,11 +289,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [selectedEnvironmentIdOverride, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
-      ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+  // Home's environment filter is only the default; the flow's own picker still
+  // reaches every environment.
+  const homeEnvironmentSelection = useHomeListOptions().options.environmentSelection;
+  const selectedEnvironmentId = resolveNewTaskEnvironmentId(
+    projects,
+    selectedEnvironmentIdOverride,
+    homeEnvironmentSelection.status === "active" ? homeEnvironmentSelection.environmentId : null,
+  );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   // The new-task draft the composer is bound to. Null until a project is
   // chosen; each New Task entry mints its own, so a project can hold several.

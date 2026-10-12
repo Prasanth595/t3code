@@ -26,7 +26,7 @@ import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visibility";
 import { useHomeThreadSelection } from "./home-thread-navigation";
-import { buildHomeProjectScopes } from "./homeThreadList";
+import { buildHomeProjectScopes, homeProjectScopeLabel } from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
@@ -116,15 +116,11 @@ export function HomeRouteScreen() {
       Order.mapInput(Order.String, (environment: { readonly label: string }) => environment.label),
     );
   }, [savedConnectionsById, workspaceEnvironments]);
-  const availableEnvironmentIds = useMemo(
-    () => new Set(environments.map((environment) => environment.environmentId)),
-    [environments],
-  );
   const {
     options: listOptions,
     setSelectedEnvironmentId,
     setSelectedProjectKey,
-  } = useHomeListOptions(availableEnvironmentIds);
+  } = useHomeListOptions();
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const projectScopeKey = listOptions.selectedProjectKey;
   const selectedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {
@@ -144,9 +140,9 @@ export function HomeRouteScreen() {
         projectGroupingMode: listOptions.projectGroupingMode,
       }).map((scope) => ({
         key: scope.key,
-        label: scope.title,
+        label: homeProjectScopeLabel(scope, environments),
       })),
-    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+    [environments, listOptions.projectGroupingMode, projects, selectedEnvironmentId],
   );
   useEffect(() => {
     if (
@@ -311,6 +307,7 @@ export function HomeRouteScreen() {
           savedConnectionsById={savedConnectionsById}
           searchQuery={searchQuery}
           selectedEnvironmentId={selectedEnvironmentId}
+          environmentMissing={listOptions.environmentSelection.status === "missing"}
           selectedProjectKey={selectedProjectKey}
           threads={threads}
         />

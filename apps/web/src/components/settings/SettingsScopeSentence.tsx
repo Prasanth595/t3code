@@ -7,6 +7,7 @@ import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { ProjectMachineLabel, useProjectMachineLabels } from "../ProjectMachineLabel";
 import { InlineButton } from "../ui/button";
 import {
   Menu,
@@ -85,11 +86,13 @@ function ScopeMenu({
   ariaLabel,
   icon,
   label,
+  labelSuffix,
   children,
 }: {
   ariaLabel: string;
   icon: ReactNode;
   label: string;
+  labelSuffix?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -100,7 +103,10 @@ function ScopeMenu({
         className="min-w-0 max-w-72"
       >
         {icon}
-        <span className="min-w-0 truncate">{label}</span>
+        <span className="min-w-0 truncate">
+          {label}
+          {labelSuffix}
+        </span>
         <ChevronDownIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       </MenuTrigger>
       <MenuPopup align="start">{children}</MenuPopup>
@@ -193,11 +199,20 @@ function EnvironmentScopeMenu({
 function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsScopeMenuProps) {
   const selected = groups.find((group) => group.projectKey === value.project);
   const entries = projectScopeMenuEntries(groups, environments, value.machine);
+  const machineLabels = useProjectMachineLabels();
+  const selectedEnvironmentIds = entries
+    .find((entry) => entry.group === selected)
+    ?.environments.map((environment) => environment.environmentId);
   return (
     <ScopeMenu
       ariaLabel="Project scope"
       icon={selected ? <ProjectFavicon project={selected} className="size-3.5 shrink-0" /> : null}
       label={selected?.displayName ?? (value.project ? "Unavailable project" : "All projects")}
+      labelSuffix={
+        selectedEnvironmentIds ? (
+          <ProjectMachineLabel environmentIds={selectedEnvironmentIds} labels={machineLabels} />
+        ) : null
+      }
     >
       <MenuRadioGroup
         value={projectAxisValue(value)}
@@ -218,16 +233,10 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
               <ProjectFavicon project={group} className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">
                 {group.displayName}
-                {groupEnvironments.length > 0 ? (
-                  <span className="text-muted-foreground">
-                    {" • "}
-                    {groupEnvironments
-                      .map((environment) =>
-                        settingsScopeEnvironmentLabel(environment, environments),
-                      )
-                      .join(", ")}
-                  </span>
-                ) : null}
+                <ProjectMachineLabel
+                  environmentIds={groupEnvironments.map((environment) => environment.environmentId)}
+                  labels={machineLabels}
+                />
               </span>
               <MenuRadioItemIndicator />
             </span>

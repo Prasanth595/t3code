@@ -1,5 +1,14 @@
-import type { EnvironmentId, SidebarProjectGroupingMode } from "@t3tools/contracts";
-import { DEFAULT_SIDEBAR_PROJECT_SORT_ORDER } from "@t3tools/contracts";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import {
+  narrowedEnvironmentId,
+  type ResolvedEnvironmentSelection,
+} from "@t3tools/client-runtime/state/environment-selection";
+import {
+  DEFAULT_SIDEBAR_PROJECT_SORT_ORDER,
+  type EnvironmentId,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
+import { AsyncResult } from "effect/reactivity";
 import {
   createContext,
   createElement,
@@ -12,21 +21,28 @@ import {
   type SetStateAction,
 } from "react";
 
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
+import { resolveHomeEnvironmentSelection } from "./home-environment-selection";
 import type { HomeProjectSortOrder } from "./homeThreadList";
 
 export interface HomeListOptions {
-  readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
   readonly projectSortOrder: HomeProjectSortOrder;
 }
 
 export interface ResolvedHomeListOptions extends HomeListOptions {
+  /**
+   * The environment the list is narrowed to, or null for all. A missing
+   * environment stays narrowed (to nothing) rather than widening to all.
+   */
+  readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly environmentSelection: ResolvedEnvironmentSelection;
   readonly projectGroupingMode: SidebarProjectGroupingMode;
 }
 
 function defaultHomeListOptions(): HomeListOptions {
   return {
-    selectedEnvironmentId: null,
     selectedProjectKey: null,
     projectSortOrder:
       DEFAULT_SIDEBAR_PROJECT_SORT_ORDER === "manual"
@@ -58,28 +74,40 @@ export function HomeListOptionsProvider({
   return createElement(HomeListOptionsContext, { value }, children);
 }
 
-export function useHomeListOptions(availableEnvironmentIds: ReadonlySet<EnvironmentId>) {
+export function useHomeListOptions() {
   const shared = useContext(HomeListOptionsContext);
   const [localOptions, setLocalOptions] = useState<HomeListOptions>(defaultHomeListOptions);
   const options = shared?.options ?? localOptions;
   const setOptions = shared?.setOptions ?? setLocalOptions;
-  const selectedEnvironmentId =
-    options.selectedEnvironmentId !== null &&
-    availableEnvironmentIds.has(options.selectedEnvironmentId)
-      ? options.selectedEnvironmentId
-      : null;
-  const availableOptions =
-    selectedEnvironmentId === options.selectedEnvironmentId
-      ? options
-      : { ...options, selectedEnvironmentId };
+  // The environment filter is a device preference, so it survives restarts.
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const preferencesLoaded = AsyncResult.isSuccess(preferencesResult);
+  const storedEnvironmentId = preferencesLoaded ? preferencesResult.value.homeEnvironmentId : null;
+  const environments = useWorkspaceEnvironments();
+  const connectionsReady = useConnectionsReady();
+  const environmentSelection = useMemo(
+    () =>
+      resolveHomeEnvironmentSelection(
+        storedEnvironmentId,
+        environments,
+        connectionsReady && preferencesLoaded,
+      ),
+    [connectionsReady, environments, preferencesLoaded, storedEnvironmentId],
+  );
   const resolvedOptions: ResolvedHomeListOptions = {
-    ...availableOptions,
+    ...options,
+    selectedEnvironmentId: narrowedEnvironmentId(environmentSelection),
+    environmentSelection,
     projectGroupingMode: shared?.projectGroupingMode ?? "repository",
   };
 
-  const setSelectedEnvironmentId = useCallback((value: EnvironmentId | null) => {
-    setOptions((current) => ({ ...current, selectedEnvironmentId: value }));
-  }, []);
+  const setSelectedEnvironmentId = useCallback(
+    (value: EnvironmentId | null) => {
+      savePreferences({ homeEnvironmentId: value });
+    },
+    [savePreferences],
+  );
   const setSelectedProjectKey = useCallback(
     (value: string | null) => {
       setOptions((current) => ({ ...current, selectedProjectKey: value }));

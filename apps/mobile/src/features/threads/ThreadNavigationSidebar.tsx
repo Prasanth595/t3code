@@ -41,7 +41,7 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
-import { buildHomeProjectScopes } from "../home/homeThreadList";
+import { buildHomeProjectScopes, homeProjectScopeLabel } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -172,12 +172,7 @@ function ThreadNavigationSidebarPane(
         .sort((left, right) => left.label.localeCompare(right.label)),
     [savedConnectionsById],
   );
-  const availableEnvironmentIds = useMemo(
-    () => new Set(environments.map((environment) => environment.environmentId)),
-    [environments],
-  );
-  const { options, setSelectedEnvironmentId, setSelectedProjectKey } =
-    useHomeListOptions(availableEnvironmentIds);
+  const { options, setSelectedEnvironmentId, setSelectedProjectKey } = useHomeListOptions();
   const searchEnvironmentIds = useMemo(
     () =>
       options.selectedEnvironmentId === null
@@ -230,9 +225,9 @@ function ThreadNavigationSidebarPane(
     () =>
       projectScopes.map((scope) => ({
         key: scope.key,
-        label: scope.title,
+        label: homeProjectScopeLabel(scope, environments),
       })),
-    [projectScopes],
+    [environments, projectScopes],
   );
   const projectTitleByProjectKey = useMemo(
     () =>
@@ -900,9 +895,11 @@ function ThreadNavigationSidebarPane(
             ? threadSearch.isPending
               ? "Searching thread messages…"
               : "No matching threads"
-            : selectedProjectScope !== null
-              ? `No threads in ${selectedProjectScope.title}`
-              : "No threads yet"}
+            : options.environmentSelection.status === "missing"
+              ? "The filtered environment is unavailable. Choose All environments in the filter."
+              : selectedProjectScope !== null
+                ? `No threads in ${selectedProjectScope.title}`
+                : "No threads yet"}
     </Text>
   );
 

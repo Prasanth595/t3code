@@ -1,3 +1,4 @@
+import type { EnvironmentSelection } from "@t3tools/client-runtime/state/environment-selection";
 import type { SearchMiddleware } from "@tanstack/react-router";
 
 import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
@@ -30,3 +31,18 @@ export const retainSettingsScope: SearchMiddleware<SettingsScopeSearch> = ({ sea
   );
   return { ...previousScope, ...result };
 };
+
+/**
+ * Entering Settings starts on the environment the views are narrowed to. A link
+ * that already names a machine or checkout keeps its own target, and choosing
+ * "All environments" inside Settings is not overridden afterwards.
+ */
+export function seedSettingsMachine(
+  search: SettingsScopeSearch,
+  selection: EnvironmentSelection,
+): SettingsScopeSearch | null {
+  if (selection.kind === "all" || search.machine !== undefined || search.checkout !== undefined) {
+    return null;
+  }
+  return { ...search, machine: selection.environmentId };
+}
