@@ -9,6 +9,7 @@ import type {
 import { isOrchestrationV2WorkActive } from "@t3tools/contracts";
 
 import { threadPullRequestKeyOf } from "./threadPullRequests.ts";
+import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
 const BACKGROUND_TURN_ITEM_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "command_execution",
@@ -51,14 +52,6 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
-// Tools of T3's own MCP server, which every adapter registers as "t3-code".
-// Adapters spell the tool differently (`mcp__t3-code__t3_thread_wait`,
-// `t3-code.t3_thread_wait`) or report it bare. A same-named tool from another
-// server never matches.
-const T3_MCP_TOOL_PREFIX = "(?:mcp__t3-code__|t3-code[._:/])?";
-const THREAD_WAIT_TOOL_NAME = new RegExp(`^${T3_MCP_TOOL_PREFIX}t3_thread_wait$`);
-const THREAD_DELEGATION_TOOL_NAME = new RegExp(`^${T3_MCP_TOOL_PREFIX}delegate_task$`);
-
 /**
  * Whether a running turn item is a T3 tool call that blocks until another
  * thread finishes: t3_thread_wait, or delegate_task with mode "wait".
@@ -70,9 +63,11 @@ export function isThreadWaitToolItem(
   },
 ): boolean {
   if (item.type !== "dynamic_tool" || !isOrchestrationV2WorkActive(item.status)) return false;
-  const toolName = item.toolName?.trim() ?? "";
-  if (THREAD_WAIT_TOOL_NAME.test(toolName)) return true;
-  if (!THREAD_DELEGATION_TOOL_NAME.test(toolName)) return false;
+  // The shared resolver accepts every provider's spelling of a T3 tool and
+  // rejects same-named tools from other MCP servers.
+  const toolId = resolveT3McpToolId(item.toolName);
+  if (toolId === "t3_thread_wait") return true;
+  if (toolId !== "delegate_task") return false;
   const input = item.input;
   return (
     input !== null &&
