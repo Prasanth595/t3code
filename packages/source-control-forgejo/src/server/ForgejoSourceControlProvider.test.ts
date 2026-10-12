@@ -62,8 +62,16 @@ it.effect("refreshes Forgejo viewer permissions immediately after credentials ch
     assert.strictEqual(bob.requestReviewers, false);
     assert.strictEqual(requests.length, 9);
     assert.deepStrictEqual(renewals, ["alice", "bob"]);
+    const freshDetail = yield* provider.getChangeRequest(input).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
     yield* Deferred.succeed(release, undefined);
+    assert.deepStrictEqual((yield* Fiber.join(freshDetail)).viewerPermissions?.verdicts, [
+      "comment",
+      "approve",
+      "request-changes",
+    ]);
     assert.deepStrictEqual((yield* Fiber.join(detail)).viewerPermissions?.verdicts, ["comment"]);
+    assert.strictEqual(requests.length, 14);
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -147,10 +155,7 @@ it.effect("reselects the current tea login for writes while an older read is pen
     yield* Deferred.await(started);
     account = "carol";
     holdLogin = Effect.void;
-    assert.strictEqual(
-      (yield* cli.api({ ...input, freshCredentials: true })).stdout,
-      '{"login":"carol"}',
-    );
+    assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"carol"}');
     const write = yield* cli
       .api({ ...input, method: "PATCH", body: { state: "closed" } })
       .pipe(Effect.forkChild);
@@ -203,7 +208,7 @@ it.effect("reselects the current tea login for writes while an older read is pen
   );
 });
 
-it.effect("shares pending Forgejo pull reads and refreshes after writes and failures", () =>
+it.effect("keeps Forgejo pull reads fresh during pending reads, writes and failures", () =>
   Effect.gen(function* () {
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
@@ -274,11 +279,11 @@ it.effect("shares pending Forgejo pull reads and refreshes after writes and fail
     ).pipe(Effect.forkChild);
     yield* Deferred.await(started);
     yield* Effect.yieldNow;
-    assert.strictEqual(pullReads, 1);
+    assert.strictEqual(pullReads, 3);
     yield* provider.runAction({ ...input, action: "close" });
     const updated = yield* checks(input);
     assert.strictEqual(updated.state, "closed");
-    assert.strictEqual(pullReads, 2);
+    assert.strictEqual(pullReads, 4);
     assert.include(paths, "repos/acme/web/statuses/after?sort=recentupdate&limit=50&page=1");
     yield* Deferred.succeed(release, undefined);
     const original = yield* Fiber.join(reads);
@@ -286,10 +291,10 @@ it.effect("shares pending Forgejo pull reads and refreshes after writes and fail
     reject = true;
     const failed = yield* summary(input).pipe(Effect.result);
     assert.strictEqual(failed._tag, "Failure");
-    assert.strictEqual(pullReads, 3);
+    assert.strictEqual(pullReads, 5);
     reject = false;
     assert.strictEqual((yield* summary(input)).state, "closed");
-    assert.strictEqual(pullReads, 4);
+    assert.strictEqual(pullReads, 6);
   }),
 );
 

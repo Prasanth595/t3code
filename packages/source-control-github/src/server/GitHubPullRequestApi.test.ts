@@ -552,6 +552,84 @@ it.effect(
     }),
 );
 
+it.effect("separates overlapping unpinned permission reads after a saved account switch", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    let activeToken = "restricted-credential";
+    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
+    const credentials = Layer.succeed(
+      GitHubCredentials.GitHubCredentials,
+      GitHubCredentials.GitHubCredentials.of({
+        get: (host) =>
+          Effect.sync(() => ({
+            host,
+            token: Redacted.make(activeToken),
+            source: "settings" as const,
+            fingerprint: `${host}:${activeToken.length}${activeToken.at(-1)}`,
+          })),
+        invalidate: () => Effect.void,
+      }),
+    );
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.gen(function* () {
+          const authorization = request.headers["authorization"];
+          requests.push({ url: request.url, authorization });
+          yield* Deferred.succeed(started, undefined);
+          yield* Deferred.await(release);
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              encodeJson(
+                coreResponse({
+                  viewerCanUpdateBranch: authorization === "Bearer broad-credential",
+                }),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubApi.layer.pipe(
+          Layer.provide(Layer.mergeAll(credentials, http)),
+          Layer.provide(GitHubQuota.layer),
+          Layer.provide(SourceControlRateLimit.layer),
+          Layer.merge(TestSourceControlHost.layer()),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+    const input = { cwd: "/repo", host: "github.com", repository: "acme/web", number: 7 };
+    // The single-environment permission path is interactive but does not pin an account.
+    const read = cli
+      .getPullRequestDetail(input)
+      .pipe(Effect.provideService(SourceControlRateLimit.Interactive, true));
+    const older = yield* read.pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    activeToken = "broad-credential";
+    const fresh = yield* Effect.all([read, read], { concurrency: "unbounded" }).pipe(Effect.forkChild);
+    // Let both readers reach the pending request before answering either account.
+    yield* Effect.yieldNow;
+    yield* Deferred.succeed(release, undefined);
+
+    expect((yield* Fiber.join(older)).comparison?.viewerCanUpdate).toBe(false);
+    expect((yield* Fiber.join(fresh)).map((detail) => detail.comparison?.viewerCanUpdate)).toEqual([
+      true,
+      true,
+    ]);
+    // Two accounts need two reads; the new account's panel readers still share one.
+    expect(requests.map((request) => request.authorization)).toEqual([
+      "Bearer restricted-credential",
+      "Bearer broad-credential",
+    ]);
+    expect(requests.every((request) => request.url.endsWith("/graphql"))).toBe(true);
+  }),
+);
+
 layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("holds background previews once an answer reports the reserve, until it resets", () =>
     Effect.gen(function* () {

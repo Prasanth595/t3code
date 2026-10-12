@@ -349,13 +349,15 @@ export const make = Effect.gen(function* () {
 
   /**
    * What one push changed, against the merge base. Never changes once the push lands, so the
-   * detail's file count, every slice of the diff and the viewed marks share one read of it.
+   * detail's file count, every slice of the diff and the viewed marks share one complete read.
+   * Incomplete reads are retried rather than keeping missing files for the life of the push.
    */
   const iterationChanges = yield* Cache.makeWith(
     (key: string) => cli.listIterationChanges(fromIterationKey(key)),
     {
       capacity: ITERATION_CHANGES_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? Duration.infinity : Duration.zero),
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit) && !exit.value.truncated ? Duration.infinity : Duration.zero,
     },
   );
 

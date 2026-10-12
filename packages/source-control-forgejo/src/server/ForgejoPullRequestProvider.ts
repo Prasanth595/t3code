@@ -1,5 +1,4 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import * as Cache from "effect/Cache";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
@@ -149,51 +148,20 @@ export const make = Effect.gen(function* () {
     }
     return { items, truncated: true };
   });
-  // Share pending reads only: credentials and repository permissions can change between requests.
-  const cacheKey = (...parts: ReadonlyArray<string | number | undefined>) =>
-    parts.map((part) => encodeURIComponent(String(part ?? ""))).join("\n");
-  const pulls = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", repository = "", host = "", number = ""] = key
-        .split("\n")
-        .map(decodeURIComponent);
-      const ref = { cwd, repository, host, number: Number(number) };
-      return read({ ...ref, path: pullPath(ref) }, ForgejoPullRequest);
-    },
-    { capacity: 64, timeToLive: () => 0 },
-  );
+  // These reads select the current account independently of older pending requests.
   const getPull = (input: ProviderRepositoryRef & { readonly number: number }) =>
-    Cache.get(pulls, cacheKey(input.cwd, input.repository, input.host, input.number));
-  const write = (input: ForgejoCli.ForgejoApiInput) =>
-    request(input).pipe(
-      Effect.onExit(() => Cache.invalidateAll(pulls)),
-      Effect.asVoid,
+    read(
+      { cwd: input.cwd, repository: input.repository, host: input.host, path: pullPath(input) },
+      ForgejoPullRequest,
     );
-  const repos = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", repository = "", host = ""] = key.split("\n").map(decodeURIComponent);
-      const ref = { cwd, repository, host };
-      return read({ ...ref, path: repoPath(ref) }, ForgejoRepository);
-    },
-    { capacity: 32, timeToLive: () => 0 },
-  );
-  const viewers = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", repository, host] = key.split("\n").map(decodeURIComponent);
-      return read(
-        { cwd, ...(repository ? { repository } : {}), ...(host ? { host } : {}), path: "user" },
-        ForgejoUser,
-      ).pipe(Effect.map((user) => user.login));
-    },
-    { capacity: 32, timeToLive: () => 0 },
-  );
+  const write = (input: ForgejoCli.ForgejoApiInput) => request(input).pipe(Effect.asVoid);
   const getRepo = (input: ProviderRepositoryRef) =>
-    Cache.get(repos, cacheKey(input.cwd, input.repository, input.host));
+    read({ ...input, path: repoPath(input) }, ForgejoRepository);
   const getViewer = (input: {
     readonly cwd: string;
     readonly repository?: string;
     readonly host?: string;
-  }) => Cache.get(viewers, cacheKey(input.cwd, input.repository, input.host));
+  }) => read({ ...input, path: "user" }, ForgejoUser).pipe(Effect.map((user) => user.login));
   const permissions = (
     repo: typeof ForgejoRepository.Type,
     pr: typeof ForgejoPullRequest.Type,
@@ -224,14 +192,8 @@ export const make = Effect.gen(function* () {
   const getPermissions = Effect.fn("ForgejoPullRequestProvider.getPermissions")(function* (
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
-    // A write must not join a detail read started before the account or access changed.
-    const fresh = { ...input, freshCredentials: true };
     const [repo, pr, viewer] = yield* Effect.all(
-      [
-        read({ ...fresh, path: repoPath(input) }, ForgejoRepository),
-        read({ ...fresh, path: pullPath(input) }, ForgejoPullRequest),
-        read({ ...fresh, path: "user" }, ForgejoUser).pipe(Effect.map((user) => user.login)),
-      ],
+      [getRepo(input), getPull(input), getViewer(input)],
       { concurrency: 3 },
     );
     return permissions(repo, pr, viewer);
@@ -515,16 +477,7 @@ export const make = Effect.gen(function* () {
         body: { body: input.body },
       }),
     submitReview: Effect.fn("ForgejoPullRequestProvider.submitReview")(function* (input) {
-      const pr = yield* read(
-        {
-          cwd: input.cwd,
-          repository: input.repository,
-          host: input.host,
-          path: pullPath(input),
-          freshCredentials: true,
-        },
-        ForgejoPullRequest,
-      );
+      const pr = yield* getPull(input);
       yield* write({
         ...input,
         path: `${pullPath(input)}/reviews`,

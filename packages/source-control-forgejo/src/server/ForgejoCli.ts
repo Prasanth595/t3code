@@ -1,4 +1,3 @@
-import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -110,7 +109,7 @@ export interface ForgejoRepositoryInput {
   readonly host?: string;
 }
 
-/** What resolving a target reads from a `ForgejoRepositoryInput`, flat so it can key a cache. */
+/** What resolving a target reads from a `ForgejoRepositoryInput`. */
 interface ForgejoTargetInput {
   readonly cwd: string;
   readonly reference?: string | undefined;
@@ -132,7 +131,6 @@ export interface ForgejoApiInput extends ForgejoRepositoryInput {
   readonly path: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body?: unknown;
-  readonly freshCredentials?: boolean;
 }
 
 export class ForgejoCli extends Context.Service<
@@ -657,52 +655,26 @@ export const make = Effect.gen(function* () {
       });
     return { command, login: login.name, repository, baseUrl: login.url.replace(/\/+$/, "") };
   });
-  // Share pending read resolution. Writes and permission checks reselect the login so they
-  // cannot join a target captured before an account change.
-  const targets = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", reference, repository, host, remoteUrl, baseUrl, requestedHost, scope] = key
-        .split("\n")
-        .map(decodeURIComponent)
-        .map((value) => value || undefined);
-      return resolveTarget(
-        { cwd, reference, repository, host, remoteUrl, providerBaseUrl: baseUrl, requestedHost },
-        scope === "host",
-      );
-    },
-    { capacity: 64, timeToLive: () => 0 },
-  );
-  const targetKey = (input: ForgejoRepositoryInput, hostOnly = false) =>
-    [
-      input.cwd,
-      input.reference,
-      input.repository,
-      input.host,
-      input.context?.remoteUrl,
-      input.context?.provider.baseUrl,
-      input.context?.requestedHost,
-      hostOnly ? "host" : "",
-    ]
-      .map((part) => encodeURIComponent(part ?? ""))
-      .join("\n");
-  const resolveRepository = (input: ForgejoRepositoryInput) => Cache.get(targets, targetKey(input));
+  // Select credentials for every request; a pending selection can belong to another account.
+  const resolveRepository = (input: ForgejoRepositoryInput) =>
+    resolveTarget({
+      ...input,
+      remoteUrl: input.context?.remoteUrl,
+      providerBaseUrl: input.context?.provider.baseUrl,
+      requestedHost: input.context?.requestedHost,
+    });
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
     const hostOnly =
       input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET");
-    const repository = yield* input.freshCredentials || (input.method && input.method !== "GET")
-      ? resolveTarget(
-          {
-            cwd: input.cwd,
-            reference: input.reference,
-            repository: input.repository,
-            host: input.host,
-            remoteUrl: input.context?.remoteUrl,
-            providerBaseUrl: input.context?.provider.baseUrl,
-            requestedHost: input.context?.requestedHost,
-          },
-          hostOnly,
-        )
-      : Cache.get(targets, targetKey(input, hostOnly));
+    const repository = yield* resolveTarget(
+      {
+        ...input,
+        remoteUrl: input.context?.remoteUrl,
+        providerBaseUrl: input.context?.provider.baseUrl,
+        requestedHost: input.context?.requestedHost,
+      },
+      hostOnly,
+    );
     const stdin =
       input.body === undefined
         ? undefined

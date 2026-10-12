@@ -1753,17 +1753,24 @@ export const make = Effect.gen(function* () {
   // each starts from the same detail query, and for a fork's pull request the same workflow runs.
   // Reads in flight together under the same credential and quota share one request. Nothing is
   // kept once it lands, so a read that starts later asks GitHub again.
-  const inFlightKey = (...parts: ReadonlyArray<string | number>) =>
+  const inFlightKey = (cwd: string, host: string, ...parts: ReadonlyArray<string | number>) =>
     Effect.gen(function* () {
-      const pinned = yield* GitHubApi.PinnedGitHubCredential;
-      return [
+      // Resolve locally even for unpinned clients, then keep the read on that credential.
+      const { token, fingerprint } = yield* api.credential(host);
+      const key = [
+        cwd,
+        host,
         ...parts,
         yield* SourceControlRateLimit.Interactive,
         yield* SourceControlRateLimit.CredentialScope,
-        pinned?.credentialFingerprint ?? "",
+        fingerprint,
       ]
         .map((part) => encodeURIComponent(String(part)))
         .join("\n");
+      return {
+        key,
+        credential: { host: host.trim().toLowerCase(), token, credentialFingerprint: fingerprint },
+      };
     });
   const detailsInFlight = yield* Cache.makeWith(
     (key: string) => {
@@ -2184,7 +2191,11 @@ export const make = Effect.gen(function* () {
 
     getPullRequestDetail: (input) =>
       inFlightKey(input.cwd, input.host, input.repository, input.number).pipe(
-        Effect.flatMap((key) => Cache.get(detailsInFlight, key)),
+        Effect.flatMap(({ key, credential }) =>
+          Cache.get(detailsInFlight, key).pipe(
+            Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
+          ),
+        ),
       ),
     getPullRequestPreview: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
@@ -2202,7 +2213,7 @@ export const make = Effect.gen(function* () {
         // Runs the checks revalidator just confirmed are this caller's alone to filter.
         if ((yield* KnownWorkflowRuns) !== null)
           return yield* listWorkflowRunsRequiringApproval(input);
-        const key = yield* inFlightKey(
+        const { key, credential } = yield* inFlightKey(
           input.cwd,
           input.host,
           input.repository,
@@ -2211,7 +2222,9 @@ export const make = Effect.gen(function* () {
           input.headBranch,
           input.headRepositoryOwner,
         );
-        return yield* Cache.get(workflowRunsInFlight, key);
+        return yield* Cache.get(workflowRunsInFlight, key).pipe(
+          Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
+        );
       }),
 
     getPullRequestStack: (input) => {

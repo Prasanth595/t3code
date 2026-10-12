@@ -1153,7 +1153,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("stops following pages when one of them does not move the cursor on", () =>
+  it.effect("retries truncated changes without a push and retains complete results", () =>
     Effect.gen(function* () {
       mockedExecute
         .mockReturnValueOnce(
@@ -1206,17 +1206,35 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
               }),
             ),
           ),
-        );
+        )
+        .mockReturnValueOnce(Effect.succeed(output(json(oneIteration))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              json({
+                changeEntries: [
+                  { changeType: "edit", item: { path: "/a.ts", objectId: "8f80" } },
+                  { changeType: "edit", item: { path: "/b.ts", objectId: "0ca4" } },
+                  { changeType: "add", item: { path: "/unlisted.ts", objectId: "cafe" } },
+                ],
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(Effect.succeed(output(json(oneIteration))));
       const provider = yield* AzureDevOpsPullRequestProvider.make;
-      assert.isDefined(provider.getFileRevisions);
+      const read = provider.getFileRevisions;
+      assert.isDefined(read);
 
-      const answer = yield* provider.getFileRevisions({
-        cwd: "/w",
-        repository: "web",
-        host: "dev.azure.com",
-        number: 42,
-        paths: ["a.ts", "b.ts", "unlisted.ts"],
-      });
+      const ask = () =>
+        read({
+          cwd: "/w",
+          repository: "web",
+          host: "dev.azure.com",
+          number: 42,
+          paths: ["a.ts", "b.ts", "unlisted.ts"],
+        });
+      const answer = yield* ask();
 
       // Four reads and no more: a page pointing at where it already is would be read forever.
       assert.strictEqual(mockedExecute.mock.calls.length, 4);
@@ -1226,6 +1244,22 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
         ["a.ts", "8f80"],
         ["b.ts", "0ca4"],
       ]);
+
+      const recovered = yield* ask();
+      assert.strictEqual(mockedExecute.mock.calls.length, 6);
+      expect(argsOfCall(4)).toContain("pullRequestIterations");
+      expect(argsOfCall(5)).toContain("pullRequestIterationChanges");
+      expect(argsOfCall(5)).toContain("iterationId=1");
+      expect([...recovered.revisions]).toEqual([
+        ["a.ts", "8f80"],
+        ["b.ts", "0ca4"],
+        ["unlisted.ts", "cafe"],
+      ]);
+
+      const cached = yield* ask();
+      assert.strictEqual(mockedExecute.mock.calls.length, 7);
+      expect(argsOfCall(6)).toContain("pullRequestIterations");
+      expect([...cached.revisions]).toEqual([...recovered.revisions]);
     }),
   );
 
