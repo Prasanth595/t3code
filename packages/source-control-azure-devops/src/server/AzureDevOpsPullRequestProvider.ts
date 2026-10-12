@@ -257,31 +257,15 @@ export const make = Effect.gen(function* () {
     return held;
   };
 
-  /**
-   * `az repos pr show`, shared by the reads of one pull request that overlap: a review opening asks
-   * for its detail, conversation and diff at once, and each of them can start here. Nothing is kept
-   * once it answers, so a read that starts afterwards asks Azure again.
-   */
-  const pullRequestReads = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", number = ""] = key.split("\n").map(decodeURIComponent);
-      return cli
-        .getPullRequest({ cwd, number: Number(number) })
-        .pipe(
-          Effect.tap((pullRequest) =>
-            Effect.sync(() => rememberLocation(cwd, pullRequest, { evict: true })),
-          ),
-        );
-    },
-    { capacity: LOCATION_CACHE_CAPACITY, timeToLive: () => Duration.zero },
-  );
-
+  // Each read uses the current CLI sign-in, including reads overlapping an account switch.
   const readPullRequest = (input: { readonly cwd: string; readonly number: number }) =>
-    Cache.get(pullRequestReads, cacheKey(input.cwd, input.number));
-
-  /** Run after a write, so a read asked for once it lands cannot join one that started before. */
-  const forgetRead = (input: { readonly cwd: string; readonly number: number }) =>
-    Cache.invalidate(pullRequestReads, cacheKey(input.cwd, input.number));
+    cli
+      .getPullRequest(input)
+      .pipe(
+        Effect.tap((pullRequest) =>
+          Effect.sync(() => rememberLocation(input.cwd, pullRequest, { evict: true })),
+        ),
+      );
 
   const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
     const held = knownLocation(input);
@@ -319,35 +303,6 @@ export const make = Effect.gen(function* () {
     ].join("\n");
 
   /**
-   * The pushes a pull request has had, shared by overlapping reads the way a pull request read is.
-   * Never kept: the newest push is what the list is read for, and a push adds one.
-   */
-  const iterationReads = yield* Cache.makeWith(
-    (key: string) => cli.listIterations(fromIterationKey(key)),
-    { capacity: LOCATION_CACHE_CAPACITY, timeToLive: () => Duration.zero },
-  );
-
-  /**
-   * One push by its id, which is all a diff cursor names. A push never changes once it lands, so
-   * the latest one is kept from every listing and a slice carrying on from it lists nothing.
-   */
-  const iterationsById = yield* Cache.makeWith(
-    (key: string) => {
-      const scope = fromIterationKey(key);
-      return Cache.get(iterationReads, iterationKey(scope)).pipe(
-        Effect.map((iterations) =>
-          iterations.find((candidate) => candidate.id === scope.iterationId),
-        ),
-      );
-    },
-    {
-      capacity: LOCATION_CACHE_CAPACITY,
-      timeToLive: (exit) =>
-        Exit.isSuccess(exit) && exit.value !== undefined ? Duration.infinity : Duration.zero,
-    },
-  );
-
-  /**
    * What one push changed, against the merge base. Never changes once the push lands, so the
    * detail's file count, every slice of the diff and the viewed marks share one complete read.
    * Incomplete reads are retried rather than keeping missing files for the life of the push.
@@ -361,16 +316,6 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  const listIterations = (scope: IterationScope) =>
-    Cache.get(iterationReads, iterationKey(scope)).pipe(
-      Effect.tap((iterations) => {
-        const latest = iterations.at(-1);
-        return latest === undefined
-          ? Effect.void
-          : Cache.set(iterationsById, iterationKey(scope, latest.id), latest);
-      }),
-    );
-
   /**
    * Everything a diff read needs before it can ask for a file: where the repository lives, and
    * which pushes the pull request has had. A client names neither, and the iterations are read
@@ -380,7 +325,7 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const location = yield* locationOf(input);
       if (location === null) return null;
-      const iterations = yield* listIterations({
+      const iterations = yield* cli.listIterations({
         cwd: input.cwd,
         location,
         number: input.number,
@@ -534,7 +479,7 @@ export const make = Effect.gen(function* () {
         // riding on them, so a failure leaves it unknown rather than losing the whole detail.
         const countFiles = (location: AzureDevOpsRepositoryLocation) => {
           const scope = { cwd: input.cwd, location, number: input.number };
-          return listIterations(scope).pipe(
+          return cli.listIterations(scope).pipe(
             Effect.flatMap((iterations) => listLatestChanges({ ...scope, iterations })),
             Effect.map((listed) => listed.changes.length),
             Effect.orElseSucceed(() => 0),
@@ -611,12 +556,14 @@ export const make = Effect.gen(function* () {
         if (location === null) return EMPTY_DIFF_SLICE;
         const scope = { cwd: input.cwd, location, number: input.number };
         const cursor = parseAzureDevOpsDiffCursor(input.cursor);
+        // Even a fully cached continuation must check the current sign-in can read this review.
+        const iterations = yield* cli.listIterations(scope);
         // Reading on stays with the push the first slice was taken against. A push landing
         // mid-read would otherwise renumber the files and hand the reader one twice, or none.
         const iteration =
           cursor === null
-            ? (yield* listIterations(scope)).at(-1)
-            : yield* Cache.get(iterationsById, iterationKey(scope, cursor.iterationId));
+            ? iterations.at(-1)
+            : iterations.find((candidate) => candidate.id === cursor.iterationId);
         if (iteration === undefined) return EMPTY_DIFF_SLICE;
         const listed = yield* Cache.get(iterationChanges, changesKey(scope, iteration));
         const changes = listed.changes;
@@ -772,7 +719,7 @@ export const make = Effect.gen(function* () {
           action: input.action,
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
         })
-        .pipe(Effect.ensuring(forgetRead(input)), Effect.mapError(fail("runAction"))),
+        .pipe(Effect.mapError(fail("runAction"))),
 
     updateChangeRequest: (input) =>
       cli
@@ -782,7 +729,7 @@ export const make = Effect.gen(function* () {
           title: input.title,
           body: input.body,
         })
-        .pipe(Effect.ensuring(forgetRead(input)), Effect.mapError(fail("updateChangeRequest"))),
+        .pipe(Effect.mapError(fail("updateChangeRequest"))),
 
     // Never called: `capabilities.reviewers.listCandidates` is false, and the service refuses the
     // list without it.
@@ -806,7 +753,7 @@ export const make = Effect.gen(function* () {
           reviewers: input.reviewers.map((reviewer) => reviewer.id),
           requested: input.requested,
         })
-        .pipe(Effect.ensuring(forgetRead(input)), Effect.mapError(fail("setReviewerRequest"))),
+        .pipe(Effect.mapError(fail("setReviewerRequest"))),
 
     // Never called: `capabilities.comment` is false, and the service refuses a comment without it.
     comment: () => unsupported("comment"),

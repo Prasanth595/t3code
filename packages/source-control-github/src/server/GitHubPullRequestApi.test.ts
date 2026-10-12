@@ -557,7 +557,8 @@ it.effect("separates overlapping unpinned permission reads after a saved account
     const started = yield* Deferred.make<void>();
     const release = yield* Deferred.make<void>();
     let activeToken = "restricted-credential";
-    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> = [];
+    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
+      [];
     const credentials = Layer.succeed(
       GitHubCredentials.GitHubCredentials,
       GitHubCredentials.GitHubCredentials.of({
@@ -611,7 +612,9 @@ it.effect("separates overlapping unpinned permission reads after a saved account
     const older = yield* read.pipe(Effect.forkChild);
     yield* Deferred.await(started);
     activeToken = "broad-credential";
-    const fresh = yield* Effect.all([read, read], { concurrency: "unbounded" }).pipe(Effect.forkChild);
+    const fresh = yield* Effect.all([read, read], { concurrency: "unbounded" }).pipe(
+      Effect.forkChild,
+    );
     // Let both readers reach the pending request before answering either account.
     yield* Effect.yieldNow;
     yield* Deferred.succeed(release, undefined);
