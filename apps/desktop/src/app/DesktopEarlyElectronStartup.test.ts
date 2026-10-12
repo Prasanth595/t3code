@@ -5,6 +5,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   resolveEarlyLinuxElectronOptions,
   resolveEarlyLinuxPasswordStorePreference,
+  resolveLinuxDisableFeaturesSwitch,
 } from "./DesktopEarlyElectronStartup.ts";
 
 describe("DesktopEarlyElectronStartup", () => {
@@ -119,5 +120,66 @@ describe("DesktopEarlyElectronStartup", () => {
     });
 
     assert.equal(preference, "gnome-libsecret");
+  });
+
+  describe("resolveLinuxDisableFeaturesSwitch", () => {
+    const hyprland = { XDG_CURRENT_DESKTOP: "Hyprland", XDG_SESSION_TYPE: "wayland" };
+    const wayland = { ozonePlatform: "wayland", enableFeatures: null, disableFeatures: null };
+
+    it.each([
+      { label: "XDG_CURRENT_DESKTOP", env: hyprland },
+      { label: "case-insensitive desktop tokens", env: { XDG_CURRENT_DESKTOP: "foo:HYPRLAND" } },
+      {
+        label: "XDG_SESSION_DESKTOP when XDG_CURRENT_DESKTOP is unset",
+        env: { XDG_SESSION_DESKTOP: "hyprland" },
+      },
+    ])("disables the color manager on resolved Wayland Hyprland via $label", ({ env }) => {
+      assert.equal(
+        resolveLinuxDisableFeaturesSwitch({ env, ...wayland }),
+        "WaylandWpColorManagerV1",
+      );
+    });
+
+    it("keeps existing disabled features", () => {
+      assert.equal(
+        resolveLinuxDisableFeaturesSwitch({
+          env: hyprland,
+          ...wayland,
+          disableFeatures: "Vulkan,WaylandWpColorManagerV1Extra",
+        }),
+        "Vulkan,WaylandWpColorManagerV1Extra,WaylandWpColorManagerV1",
+      );
+    });
+
+    it.each([
+      {
+        label: "a stale Hyprland signature in KDE",
+        env: { XDG_CURRENT_DESKTOP: "KDE", HYPRLAND_INSTANCE_SIGNATURE: "abc_123" },
+      },
+      {
+        label: "resolved X11 in a Wayland session",
+        env: { ...hyprland, WAYLAND_DISPLAY: "wayland-1" },
+        ozonePlatform: "x11",
+      },
+      { label: "a missing platform", env: hyprland, ozonePlatform: null },
+      { label: "an unrelated platform", env: hyprland, ozonePlatform: "headless" },
+      {
+        label: "already disabled features",
+        env: hyprland,
+        disableFeatures: "Vulkan, WaylandWpColorManagerV1",
+      },
+      {
+        label: "an explicitly enabled feature",
+        env: hyprland,
+        enableFeatures: "Vulkan,WaylandWpColorManagerV1",
+      },
+      {
+        label: "a feature enabled with trial parameters",
+        env: hyprland,
+        enableFeatures: "*WaylandWpColorManagerV1<Study.Group:mode/strict",
+      },
+    ])("leaves the command line alone for $label", ({ env, ...switches }) => {
+      assert.isNull(resolveLinuxDisableFeaturesSwitch({ env, ...wayland, ...switches }));
+    });
   });
 });

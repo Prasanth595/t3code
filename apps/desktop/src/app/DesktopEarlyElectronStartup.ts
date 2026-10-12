@@ -81,6 +81,42 @@ export function resolveEarlyLinuxPasswordStorePreference(
   }
 }
 
+const WAYLAND_COLOR_MANAGER_FEATURE = "WaylandWpColorManagerV1";
+
+// Chromium feature entries look like `*Name<Trial.Group:param/value`.
+const featureListNames = (value: string | null): ReadonlyArray<string> =>
+  (value ?? "").split(",").flatMap((entry) => entry.trim().match(/^\*?([^<:]+)/)?.[1] ?? []);
+
+// A stale HYPRLAND_INSTANCE_SIGNATURE is often inherited into other desktops, so only
+// trust the session's desktop names.
+const isHyprlandSession = (env: NodeJS.ProcessEnv): boolean =>
+  (trimNonEmpty(env.XDG_CURRENT_DESKTOP) ?? trimNonEmpty(env.XDG_SESSION_DESKTOP) ?? "")
+    .split(":")
+    .some((name) => name.trim().toLowerCase() === "hyprland");
+
+/**
+ * Returns the merged `--disable-features` value to apply before Electron is ready,
+ * or null to leave the command line alone. `ozonePlatform` is the resolved
+ * `--ozone-platform` value; Electron fills it in before app code runs.
+ *
+ * Affected Hyprland versions reject the custom primaries Chromium sends through
+ * wp-color-manager-v1 and kill the native Wayland connection right after the first
+ * window opens.
+ */
+export function resolveLinuxDisableFeaturesSwitch(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly ozonePlatform: string | null;
+  readonly enableFeatures: string | null;
+  readonly disableFeatures: string | null;
+}): string | null {
+  if (input.ozonePlatform !== "wayland" || !isHyprlandSession(input.env)) return null;
+  if (featureListNames(input.enableFeatures).includes(WAYLAND_COLOR_MANAGER_FEATURE)) return null;
+  if (featureListNames(input.disableFeatures).includes(WAYLAND_COLOR_MANAGER_FEATURE)) return null;
+  return input.disableFeatures === null
+    ? WAYLAND_COLOR_MANAGER_FEATURE
+    : `${input.disableFeatures},${WAYLAND_COLOR_MANAGER_FEATURE}`;
+}
+
 export function resolveEarlyLinuxElectronOptions(
   input: EarlyLinuxElectronOptionsInput,
 ): EarlyLinuxElectronOptions {
