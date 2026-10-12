@@ -23,11 +23,18 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
-const MODEL = { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor" };
+// The first model is the default. Ids must match the worker launcher's allowlist
+// (nofun-skills scripts/muse-worker.sh); Wonder runs on the same subscriptions.
+const MODELS = [
+  { value: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor" },
+  { value: "muse-wonder-1.0-contributor", name: "Muse Wonder Contributor" },
+  { value: "muse-wonder-full-1.0-contributor", name: "Muse Wonder Full Contributor" },
+];
 const PROFILES = [
   { value: "muse-review", name: "Review (read-only)", description: "No writes, no shell." },
   { value: "muse-focused", name: "Focused (writes in place)", description: "Edits the workspace." },
   { value: "muse-build", name: "Build (new worktree)", description: "Starts a fresh worktree." },
+  { value: "muse-judge", name: "Judge (read-only, max)", description: "Max effort, no writes, no shell." },
 ];
 const RECAP_LIMIT = 20_000;
 
@@ -69,7 +76,7 @@ const fail = (id, code, message) => send({ id, error: { code, message } });
 const update = (sessionId, body) =>
   send({ method: "session/update", params: { sessionId, update: body } });
 
-/** sessionId → { cwd, profile, history: [{prompt, answer}], run } */
+/** sessionId → { cwd, model, profile, history: [{prompt, answer}], run } */
 const sessions = new Map();
 
 const configOptions = (session) => [
@@ -78,8 +85,8 @@ const configOptions = (session) => [
     name: "Model",
     category: "model",
     type: "select",
-    currentValue: MODEL.id,
-    options: [{ value: MODEL.id, name: MODEL.name }],
+    currentValue: session.model,
+    options: MODELS,
   },
   {
     id: "profile",
@@ -145,6 +152,8 @@ function runPrompt(id, params) {
       taskId,
       "--profile",
       session.profile,
+      "--model",
+      session.model,
     ],
     // Its own process group: the launcher pipes `muse exec` through tee, and
     // cancel must stop all of them, not orphan the model run.
@@ -254,6 +263,7 @@ function handle(message) {
       const sessionId = randomUUID();
       const session = {
         cwd: params.cwd ?? process.cwd(),
+        model: MODELS[0].value,
         profile: "muse-review",
         history: [],
         run: null,
@@ -269,12 +279,23 @@ function handle(message) {
           return fail(id, -32602, `Unknown Muse profile: ${params.value}`);
         }
         session.profile = params.value;
-      } else if (params.configId === "model" && params.value !== MODEL.id) {
-        return fail(id, -32602, `Unknown model: ${params.value}`);
+      } else if (params.configId === "model") {
+        if (!MODELS.some((model) => model.value === params.value)) {
+          return fail(id, -32602, `Unknown model: ${params.value}`);
+        }
+        session.model = params.value;
       }
       return reply(id, { configOptions: configOptions(session) });
     }
-    case "session/set_model":
+    case "session/set_model": {
+      const session = sessions.get(params.sessionId);
+      if (!session) return fail(id, -32602, "Unknown session.");
+      if (!MODELS.some((model) => model.value === params.modelId)) {
+        return fail(id, -32602, `Unknown model: ${params.modelId}`);
+      }
+      session.model = params.modelId;
+      return reply(id, {});
+    }
     case "session/set_mode":
       return reply(id, {});
     case "session/prompt":
