@@ -110,6 +110,7 @@ it.layer(NodeServices.layer)("OpenCode2TextGeneration.explainProviderFailure", (
       assert.deepEqual(explained, {
         summary: "OpenCode is not installed.",
         likelyFix: "Install OpenCode.",
+        matchingIssueNumber: null,
       });
       const directory = fake.calls.created[0]?.directory ?? "";
       assert.include(directory, "t3code-text-generation-");

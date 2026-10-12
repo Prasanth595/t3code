@@ -363,6 +363,7 @@ it.layer(NodeServices.layer)("Muse text generation", (it) => {
       expect(yield* service.explainProviderFailure(explainInput)).toEqual({
         summary: "Muse is not installed.",
         likelyFix: "Install Muse.",
+        matchingIssueNumber: null,
       });
       // The fixture's mock takes no parameters, so its recorded calls are untyped.
       const hostCalls = test.createHost.mock.calls as unknown as ReadonlyArray<
