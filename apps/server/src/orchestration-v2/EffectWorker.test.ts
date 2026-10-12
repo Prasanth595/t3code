@@ -1,6 +1,9 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
+  type DeviceCloseInput,
+  DeviceOperationError,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -30,7 +33,12 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
+import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
+import * as PreviewManager from "../preview/Manager.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
 const oldSessionId = ProviderSessionId.make("provider-session:effect-worker-restart:old");
@@ -83,6 +91,8 @@ function layerExecutorFor(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  /** ResourceCleanupService is a Context.Reference, so its layer's output type is `never`. */
+  readonly resourceCleanup?: Layer.Layer<never>;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -153,6 +163,7 @@ function layerExecutorFor(input: {
       Layer.mergeAll(
         layerDependencies,
         Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        input.resourceCleanup ?? Layer.empty,
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),
@@ -866,4 +877,70 @@ it.effect("a native subagent stop does not settle its owner's background work", 
     }).pipe(Effect.provide(layer));
     assert.deepEqual(yield* Ref.get(events), ["stop-child"]);
   }),
+);
+
+it.effect.each([
+  { outcome: "closes every device the deleted thread opened", release: Effect.void, fails: false },
+  {
+    outcome: "fails with the device release error",
+    fails: true,
+    release: Effect.fail(
+      new DeviceOperationError({
+        operation: "release of agent-device session t3-abc",
+        reason: "command_failed",
+        cause: "Busy",
+      }),
+    ),
+  },
+])("a device.cleanup effect $outcome", ({ release, fails }) =>
+  Effect.gen(function* () {
+    const closed = yield* Ref.make<ReadonlyArray<DeviceCloseInput>>([]);
+    const layer = layerExecutorFor({
+      events: yield* Ref.make<ReadonlyArray<string>>([]),
+      resourceCleanup: ResourceCleanupService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(DeviceService.DeviceService)({
+              close: (input) =>
+                Ref.update(closed, (inputs) => [...inputs, input]).pipe(Effect.andThen(release)),
+            }),
+            Layer.mock(TerminalManager.TerminalManager)({}),
+            Layer.mock(PreviewManager.PreviewManager)({}),
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-effect-worker-device-cleanup-" }),
+          ),
+        ),
+        Layer.provide(NodeServices.layer),
+        Layer.orDie,
+      ),
+    });
+    const now = DateTime.formatIso(yield* DateTime.now);
+    const exit = yield* EffectWorker.OrchestrationEffectExecutorV2.pipe(
+      Effect.flatMap((executor) =>
+        executor.execute({
+          id: "effect:delete:device.cleanup",
+          commandId: CommandId.make("command:delete"),
+          threadId,
+          request: { type: "device.cleanup" },
+          status: "running",
+          attemptCount: 1,
+          availableAt: now,
+          leaseOwner: "test-worker",
+          leaseExpiresAt: now,
+          createdAt: now,
+          updatedAt: now,
+          completedAt: null,
+          lastError: null,
+        }),
+      ),
+      Effect.provide(layer),
+      Effect.exit,
+    );
+    assert.deepEqual(yield* Ref.get(closed), [{ threadId }]);
+    assert.equal(Exit.isFailure(exit), fails);
+    if (Exit.isFailure(exit)) {
+      const pretty = Cause.pretty(exit.cause);
+      assert.include(pretty, "ResourceCleanupError");
+      assert.include(pretty, "t3-abc");
+    }
+  }).pipe(Effect.scoped),
 );

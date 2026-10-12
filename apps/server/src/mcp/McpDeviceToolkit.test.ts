@@ -205,3 +205,59 @@ it.effect("rejects unavailable agent access before booting or opening a device",
     ),
   );
 });
+
+it.effect("names the agent session after the serial a booted AVD receives", () => {
+  const avd = { ...device, id: "Pixel_API_35", platform: "android" as const, booted: false };
+  const layerBooting = Layer.mock(DeviceService.DeviceService)({
+    list: Effect.succeed({ ...state, devices: [avd] }),
+    state: Effect.succeed({ ...state, devices: [{ ...avd, id: "emulator-5554", booted: true }] }),
+    agentTarget: (input) =>
+      Effect.succeed(["--config", "/host.json", "--session", `session-${input.deviceId}`]),
+    open: (input) =>
+      Effect.succeed({
+        threadId: input.threadId,
+        hostId: "local",
+        deviceId: DeviceId.make("emulator-5554"),
+        platform: input.platform,
+        openedAt: "2026-09-08T00:00:00.000Z",
+      }),
+    agentCli: Effect.succeed("/cli"),
+  });
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const result = yield* server
+      .callTool({ name: "device_open", arguments: { platform: "android" } })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation(["device"])),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      agentDevice: {
+        targetArgs: [
+          "--platform",
+          "android",
+          "--serial",
+          "emulator-5554",
+          "--config",
+          "/host.json",
+          "--session",
+          "session-emulator-5554",
+        ],
+      },
+    });
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      McpHttpServer.layerDeviceToolkit.pipe(
+        Layer.provideMerge(McpServer.McpServer.layer),
+        Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(layerBooting),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-device-toolkit-test-" }),
+        ),
+        Layer.provide(NodeServices.layer),
+      ),
+    ),
+  );
+});

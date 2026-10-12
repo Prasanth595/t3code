@@ -437,6 +437,7 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
     ),
     current: Effect.sync(() => ready),
+    currentAgent: Effect.sync(() => ready?.agentDevice ?? null),
     ensureReady,
     ensureAgentReady: (onPhase) =>
       ensureReady(onPhase).pipe(

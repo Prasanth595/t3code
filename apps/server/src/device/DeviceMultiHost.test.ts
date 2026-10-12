@@ -42,6 +42,7 @@ it.effect("keeps hosts independent when serials collide and another host fails",
             : Effect.succeed(ready),
         ensureAgentReady: () => Effect.succeed(ready),
         current: Effect.succeed(ready),
+        currentAgent: Effect.succeed(null),
         stopAgent: Effect.void,
         stop: Effect.void,
       };

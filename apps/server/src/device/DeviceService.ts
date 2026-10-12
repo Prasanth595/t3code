@@ -74,6 +74,7 @@ export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
+const AGENT_SESSION_RELEASE_TIMEOUT = Duration.seconds(15);
 
 const HubDevice = Schema.Struct({
   id: Schema.String,
@@ -94,6 +95,16 @@ const HubActionResult = Schema.Struct({
   serial: Schema.optional(Schema.String),
   error: Schema.optional(Schema.String),
 });
+/** JSON-RPC reply from the agent-device daemon's `/rpc` endpoint. */
+const AgentDeviceRpcReply = Schema.Union([
+  Schema.Struct({ result: Schema.Struct({ ok: Schema.Boolean }) }),
+  Schema.Struct({
+    error: Schema.Struct({
+      message: Schema.String,
+      data: Schema.optional(Schema.Struct({ code: Schema.optional(Schema.String) })),
+    }),
+  }),
+]);
 
 export interface DeviceScreenshot {
   readonly device: DeviceSummary;
@@ -736,12 +747,72 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return session;
   });
 
+  /**
+   * Ends the agent-device session `device_open` handed to the thread, releasing
+   * its host-wide device claim. The daemon owning it never exits while T3 runs,
+   * so nothing else will. Powering off stays with the hub. A host without a
+   * running daemon holds no sessions, and an unused session is already gone.
+   */
+  const releaseAgentSession = Effect.fn("DeviceService.releaseAgentSession")(function* (
+    session: DeviceSession,
+  ) {
+    const agent = yield* hosts.get(session.hostId)?.currentAgent ?? Effect.succeed(null);
+    if (!agent) return;
+    const name = yield* agentDeviceSession(session.threadId, session.hostId, session.deviceId).pipe(
+      Effect.provideService(Crypto.Crypto, crypto),
+    );
+    const failed = (reason: "request_failed" | "command_failed", cause: unknown) =>
+      new DeviceOperationError({
+        operation: `release of agent-device session ${name} (thread ${session.threadId}, device ${session.deviceId} on host ${session.hostId})`,
+        reason,
+        cause,
+      });
+    yield* HttpClientRequest.post(`${agent.baseUrl}/rpc`).pipe(
+      HttpClientRequest.bearerToken(agent.token),
+      HttpClientRequest.bodyJson({
+        jsonrpc: "2.0",
+        id: name,
+        method: "agent_device.command",
+        params: { session: name, command: "close", positionals: [], flags: {} },
+      }),
+      Effect.flatMap((request) => httpClient.execute(request)),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentDeviceRpcReply)),
+      Effect.scoped,
+      Effect.timeout(AGENT_SESSION_RELEASE_TIMEOUT),
+      Effect.mapError((cause) => failed("request_failed", cause)),
+      Effect.flatMap((reply) =>
+        ("result" in reply ? reply.result.ok : reply.error.data?.code === "SESSION_NOT_FOUND")
+          ? Effect.void
+          : Effect.fail(failed("command_failed", reply)),
+      ),
+      Effect.tapError((error) =>
+        Effect.logWarning("Could not release agent-device session", {
+          threadId: session.threadId,
+          hostId: session.hostId,
+          deviceId: session.deviceId,
+          session: name,
+          cause: error.cause,
+        }),
+      ),
+    );
+  });
+
   const shutdownDevice = Effect.fn("DeviceService.shutdownDevice")(function* (
     hostId: DeviceHostId,
     deviceId: DeviceId,
     platform: DevicePlatform,
   ) {
     const ready = yield* readiness(hostId);
+    // Powering off drops every thread's session on the device, so their claims
+    // go first; an agent session on a powered-off device holds its claim forever.
+    const { state: before } = yield* SynchronizedRef.get(stateRef);
+    yield* Effect.forEach(
+      before.sessions.filter(
+        (session) => session.hostId === ready.hostId && session.deviceId === deviceId,
+      ),
+      releaseAgentSession,
+      { discard: true },
+    );
     const postShutdown = (path: string, body: Record<string, string>) =>
       HttpClientRequest.post(`${ready.hub.origin}${path}`).pipe(
         HttpClientRequest.bodyJson(body),
@@ -809,18 +880,22 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           (input.hostId === undefined || session.hostId === input.hostId) &&
           (input.deviceId === undefined || session.deviceId === input.deviceId),
       );
-      if (closing.length === 0) return;
-      yield* publish((current) => ({
-        ...current,
-        sessions: current.sessions.filter((session) => !closing.includes(session)),
-      }));
-      if (input.shutdown) {
-        yield* Effect.forEach(
-          closing,
-          (session) => shutdownDevice(session.hostId, session.deviceId, session.platform),
-          { discard: true },
-        );
-      }
+      // A session leaves the list only once released, so a failed close can be retried.
+      yield* Effect.forEach(
+        closing,
+        (session) =>
+          Effect.gen(function* () {
+            yield* releaseAgentSession(session);
+            yield* publish((current) => ({
+              ...current,
+              sessions: current.sessions.filter((existing) => existing !== session),
+            }));
+            if (input.shutdown) {
+              yield* shutdownDevice(session.hostId, session.deviceId, session.platform);
+            }
+          }),
+        { discard: true },
+      );
     },
   );
 

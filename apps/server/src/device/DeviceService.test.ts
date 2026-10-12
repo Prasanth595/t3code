@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ServerSettings from "../serverSettings.ts";
+import { agentDeviceSession } from "./AgentDeviceTarget.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
@@ -75,6 +76,10 @@ const fixture = Effect.fn("fixture")(function* (
   const agentStarts: string[] = [];
   const agentStops: string[] = [];
   const requests: string[] = [];
+  const agentRequests: unknown[] = [];
+  let agentReply = () => Response.json({ jsonrpc: "2.0", id: 1, result: { ok: true, data: {} } });
+  const agentDevice = { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" };
+  let agentRunning = false;
   let booted = false;
   let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
@@ -117,17 +122,18 @@ const fixture = Effect.fn("fixture")(function* (
         if (runtimeFailure) return yield* runtimeFailure;
         agentStarts.push("start");
         yield* onPhase("starting");
-        return {
-          ...ready,
-          agentDevice: { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" },
-        };
+        agentRunning = true;
+        return { ...ready, agentDevice };
       }),
     current: Effect.succeed(null),
+    currentAgent: Effect.sync(() => (agentRunning ? agentDevice : null)),
     stopAgent: Effect.sync(() => {
       agentStops.push("stop");
+      agentRunning = false;
     }),
     stop: Effect.sync(() => {
       starts.push("stop");
+      agentRunning = false;
     }),
   };
   const service = yield* DeviceService.makeWithHosts(
@@ -164,6 +170,11 @@ const fixture = Effect.fn("fixture")(function* (
       HttpClient.make((request) =>
         Effect.gen(function* () {
           requests.push(request.url);
+          if (request.url === `${agentDevice.baseUrl}/rpc`) {
+            if (request.body._tag !== "Uint8Array") throw new Error("Missing agent RPC body");
+            agentRequests.push(decodeJson(new TextDecoder().decode(request.body.body)));
+            return HttpClientResponse.fromWeb(request, agentReply());
+          }
           if (request.url.includes("/api/screenshot")) {
             return HttpClientResponse.fromWeb(
               request,
@@ -213,7 +224,18 @@ const fixture = Effect.fn("fixture")(function* (
       ),
     ),
   );
-  return { service, starts, agentStarts, agentStops, requests, settings };
+  return {
+    service,
+    starts,
+    agentStarts,
+    agentStops,
+    requests,
+    agentRequests,
+    setAgentReply: (reply: () => Response) => {
+      agentReply = reply;
+    },
+    settings,
+  };
 });
 
 describe("device setup consent", () => {
@@ -443,6 +465,7 @@ it.effect.each(["shutdown", "close"] as const)(
         ensureReady: () => Effect.succeed(ready),
         ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
         current: Effect.succeed(ready),
+        currentAgent: Effect.succeed(null),
         stopAgent: Effect.void,
         stop: Effect.void,
       };
@@ -532,6 +555,7 @@ it.effect.each([
         ensureReady: () => Effect.succeed(ready),
         ensureAgentReady: () => Effect.die("Agent access is not used in this test"),
         current: Effect.succeed(ready),
+        currentAgent: Effect.succeed(null),
         stopAgent: Effect.void,
         stop: Effect.void,
       };
@@ -739,3 +763,167 @@ it.effect("failed manual installation leaves lifecycle state unchanged and can b
     expect(agentStarts).toEqual([]);
   }).pipe(Effect.scoped),
 );
+
+describe("agent-device session release", () => {
+  const threadId = ThreadId.make("thread-release");
+  const otherThreadId = ThreadId.make("thread-other");
+  const released = () =>
+    Response.json({ jsonrpc: "2.0", id: 1, result: { ok: true, data: { message: "Closed" } } });
+  const withAgent = Effect.fn("withAgent")(function* () {
+    const harness = yield* fixture();
+    yield* Ref.update(harness.settings, (current) => ({
+      ...current,
+      enableDeviceSupport: true,
+      enableAgentDeviceAccess: true,
+    }));
+    yield* harness.service.agentReadinessIfSupported();
+    return harness;
+  });
+  // The AVD boots on the first open; later opens find it by its emulator serial.
+  const openPixel = (
+    service: DeviceService.DeviceService["Service"],
+    thread = threadId,
+    deviceId = "Pixel_API_35",
+  ) => service.open({ threadId: thread, deviceId, platform: "android" });
+  const poweredOff = [{ id: "Pixel_API_35", booted: false }];
+  const closeRequest = (thread: ThreadId) =>
+    agentDeviceSession(thread, LOCAL_DEVICE_HOST_ID, "emulator-5554").pipe(
+      Effect.provide(NodeCrypto.layer),
+      Effect.map((session) => ({
+        jsonrpc: "2.0",
+        id: session,
+        method: "agent_device.command",
+        params: { session, command: "close", positionals: [], flags: {} },
+      })),
+    );
+
+  it.effect("close without shutdown releases the agent session and leaves the device on", () =>
+    Effect.gen(function* () {
+      const { service, requests, agentRequests } = yield* withAgent();
+      const session = yield* openPixel(service);
+      yield* service.close({ threadId, deviceId: session.deviceId });
+      expect(agentRequests).toEqual([yield* closeRequest(threadId)]);
+      expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
+      const state = yield* service.state;
+      expect(state.sessions).toEqual([]);
+      expect(state.devices.find((device) => device.id === session.deviceId)?.booted).toBe(true);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("close with shutdown releases the agent session before the hub powers off", () =>
+    Effect.gen(function* () {
+      const { service, requests, agentRequests } = yield* withAgent();
+      const session = yield* openPixel(service);
+      yield* service.close({ threadId, deviceId: session.deviceId, shutdown: true });
+      expect(agentRequests).toEqual([yield* closeRequest(threadId)]);
+      const release = requests.indexOf("http://agent.test/rpc");
+      expect(release).toBeGreaterThanOrEqual(0);
+      expect(requests.findIndex((url) => url.endsWith("/shutdown"))).toBeGreaterThan(release);
+      const state = yield* service.state;
+      expect(state.sessions).toEqual([]);
+      expect(state.devices.map(({ id, booted }) => ({ id, booted }))).toEqual(poweredOff);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      failure: "the daemon rejects the close",
+      reply: () =>
+        Response.json(
+          { jsonrpc: "2.0", id: 1, error: { message: "Busy", data: { code: "COMMAND_FAILED" } } },
+          { status: 500 },
+        ),
+      reason: "command_failed",
+    },
+    {
+      failure: "the daemon answers with something unreadable",
+      reply: () => new Response("<html>proxy error</html>", { status: 502 }),
+      reason: "request_failed",
+    },
+  ] as const)("a failed release fails the close when $failure", ({ reply, reason }) =>
+    Effect.gen(function* () {
+      const { service, requests, setAgentReply } = yield* withAgent();
+      const session = yield* openPixel(service);
+      const name = (yield* closeRequest(threadId)).params.session;
+      setAgentReply(reply);
+      const error = yield* service
+        .close({ threadId, deviceId: session.deviceId, shutdown: true })
+        .pipe(Effect.flip);
+      expect(error).toMatchObject({ _tag: "DeviceOperationError", reason });
+      for (const detail of [name, threadId, session.deviceId]) {
+        expect(error.message).toContain(detail);
+      }
+      expect(requests.some((url) => url.endsWith("/shutdown"))).toBe(false);
+      expect((yield* service.state).sessions).toEqual([session]);
+
+      setAgentReply(released);
+      yield* service.close({ threadId, deviceId: session.deviceId, shutdown: true });
+      const state = yield* service.state;
+      expect(state.sessions).toEqual([]);
+      expect(state.devices.map(({ id, booted }) => ({ id, booted }))).toEqual(poweredOff);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("a session the agent never used counts as released", () =>
+    Effect.gen(function* () {
+      const { service, agentRequests, setAgentReply } = yield* withAgent();
+      const session = yield* openPixel(service);
+      setAgentReply(() =>
+        Response.json(
+          {
+            jsonrpc: "2.0",
+            id: 1,
+            error: {
+              code: -32000,
+              message: "No active session",
+              data: { code: "SESSION_NOT_FOUND" },
+            },
+          },
+          { status: 404 },
+        ),
+      );
+      yield* service.close({ threadId, deviceId: session.deviceId });
+      expect(agentRequests).toHaveLength(1);
+      expect((yield* service.state).sessions).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("without a running agent daemon there is no session to release", () =>
+    Effect.gen(function* () {
+      const { service, agentRequests, settings } = yield* fixture();
+      yield* Ref.update(settings, (current) => ({ ...current, enableDeviceSupport: true }));
+      const session = yield* openPixel(service);
+      yield* service.close({ threadId, deviceId: session.deviceId });
+      expect(agentRequests).toEqual([]);
+      expect((yield* service.state).sessions).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("closing a whole thread releases only that thread's sessions", () =>
+    Effect.gen(function* () {
+      const { service, agentRequests } = yield* withAgent();
+      yield* openPixel(service);
+      const other = yield* openPixel(service, otherThreadId, "emulator-5554");
+      yield* service.close({ threadId });
+      expect(agentRequests).toEqual([yield* closeRequest(threadId)]);
+      expect((yield* service.state).sessions).toEqual([other]);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("powering a device off releases every thread's session on it first", () =>
+    Effect.gen(function* () {
+      const { service, requests, agentRequests } = yield* withAgent();
+      const session = yield* openPixel(service);
+      yield* openPixel(service, otherThreadId, "emulator-5554");
+      yield* service.shutdown({ deviceId: session.deviceId, platform: "android" });
+      expect(agentRequests).toEqual([
+        yield* closeRequest(threadId),
+        yield* closeRequest(otherThreadId),
+      ]);
+      expect(requests.findIndex((url) => url.endsWith("/shutdown"))).toBeGreaterThan(
+        requests.lastIndexOf("http://agent.test/rpc"),
+      );
+      expect((yield* service.state).sessions).toEqual([]);
+    }).pipe(Effect.scoped),
+  );
+});

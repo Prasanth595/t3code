@@ -75,6 +75,10 @@ taps build a small test runner on first use, which takes a couple of minutes
 once per server. Restart an existing agent session after granting access so it
 receives the device CLI environment.
 
+While an agent has a device open, agents in other threads see it as in use. The
+agent releases it when it closes the device, or when you archive or delete its
+thread. Settling a thread keeps its devices open.
+
 To keep agents away from simulators, turn off **Agent device access** in
 **Settings → Integrations → Devices**. This hides the device tools from agents
 started from then on; your own Device panel is unaffected.

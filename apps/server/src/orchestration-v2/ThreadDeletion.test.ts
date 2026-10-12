@@ -292,6 +292,7 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
         },
         { type: "terminal.cleanup" },
         { type: "preview.cleanup" },
+        { type: "device.cleanup" },
         { type: "attachment.cleanup", attachmentIds: ["shared_file"] },
       ],
     );

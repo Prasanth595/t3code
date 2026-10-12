@@ -101,6 +101,10 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("preview.cleanup"),
   }),
+  /** Releases a deleted or archived thread's devices, ending their agent-device sessions. */
+  Schema.Struct({
+    type: Schema.Literal("device.cleanup"),
+  }),
   Schema.Struct({
     type: Schema.Literal("attachment.cleanup"),
     attachmentIds: Schema.Array(Schema.String),
@@ -127,6 +131,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "checkpoint.capture",
   "terminal.cleanup",
   "preview.cleanup",
+  "device.cleanup",
   "attachment.cleanup",
   "thread-title.generate",
   "delegated-tasks.stop",

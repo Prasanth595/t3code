@@ -754,6 +754,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.map((running) => (running ? toReady(running) : null)),
   );
 
+  const currentAgent: DeviceHost.DeviceHost["Service"]["currentAgent"] = Ref.get(runningRef).pipe(
+    Effect.map((running) => running?.agentDevice ?? null),
+  );
+
   const stopAgent: DeviceHost.DeviceHost["Service"]["stopAgent"] = startLock.withPermits(1)(
     Effect.gen(function* () {
       yield* stopAgentDeviceDaemon(agentToolRef);
@@ -782,6 +786,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     ensureReady,
     ensureAgentReady,
     current,
+    currentAgent,
     stopAgent,
     stop,
   };

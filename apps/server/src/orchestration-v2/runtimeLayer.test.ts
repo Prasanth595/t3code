@@ -1897,6 +1897,15 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make("runtime-layer-lifecycle-archive"),
         threadId,
       });
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      assert.deepEqual(
+        yield* Effect.forEach(["terminal.cleanup", "device.cleanup"], (cleanup) =>
+          outbox
+            .get(`effect:runtime-layer-lifecycle-archive:${cleanup}`)
+            .pipe(Effect.map((effect) => Option.getOrUndefined(effect)?.request)),
+        ),
+        [{ type: "terminal.cleanup" }, { type: "device.cleanup" }],
+      );
       const archivedShell = yield* orchestrator.getShellSnapshot();
       assert.notInclude(
         archivedShell.threads.map((thread) => thread.id),
