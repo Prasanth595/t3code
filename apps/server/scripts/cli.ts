@@ -175,8 +175,9 @@ const buildExeCmd = Command.make(
  * Publishes the tarballs scripts/build-npm-platform-packages.ts produced:
  * every `@t3code/t3-<platform>.tgz` first, `t3.tgz` (the launcher) last, so
  * the launcher is never installable before the executables it depends on.
- * Before the launcher, it waits up to 10 minutes for npm to serve each
- * platform version, since an upload can 404 for minutes after it succeeds.
+ * Before the launcher, it waits up to `READY_DEADLINE` (publishOrder.ts) for
+ * npm to serve each platform version, since an upload can 404 for minutes
+ * after it succeeds.
  * Tarballs rather than directories because `npm publish <dir>` strips the
  * `node_modules/` the executable loads its native addons from.
  */

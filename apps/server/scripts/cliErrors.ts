@@ -78,11 +78,12 @@ export class ServerCliNpmPackagesNotInstallableError extends Schema.TaggedError<
   {
     pending: Schema.Array(Schema.String),
     launcherTarball: Schema.String,
+    deadline: Schema.String,
   },
 ) {
   override get message(): string {
     const launcher = this.launcherTarball.split(/[\\/]/).at(-1);
-    return `npm did not serve these platform packages within 10 minutes: ${this.pending.join("; ")}. ${launcher} was not published. The platform versions are already live and cannot be republished, so once each listed tarball downloads, publish ${launcher} by hand with the same --access and --tag.`;
+    return `npm did not serve these platform packages within ${this.deadline}: ${this.pending.join("; ")}. ${launcher} was not published. The platform versions are already published and npm will not accept them again, so re-running this job fails. To finish the release, see "CLI publish timeout" in docs/operations/release.md.`;
   }
 }
 

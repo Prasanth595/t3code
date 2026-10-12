@@ -181,10 +181,13 @@ it.effect("holds the launcher until npm serves a package that failed its first c
   }),
 );
 
-it.effect("skips the launcher when npm does not serve a package within 10 minutes", () =>
+it.effect("skips the launcher when npm does not serve every package within 25 minutes", () =>
   Effect.gen(function* () {
     const { events, publish } = yield* fakePublish();
-    const { checkInstallable, firstRound } = yield* fakeCheck(events, { "b.tgz": Infinity });
+    const { checkInstallable, firstRound } = yield* fakeCheck(events, {
+      "a.tgz": Infinity,
+      "c.tgz": Infinity,
+    });
 
     const fiber = yield* Effect.forkChild(
       publishPlatformsThenLauncher({
@@ -198,15 +201,20 @@ it.effect("skips the launcher when npm does not serve a package within 10 minute
     // A publish that skips the wait ends instead, and fails below rather than hanging.
     yield* Effect.raceFirst(firstRound.await, Fiber.await(fiber));
 
-    yield* TestClock.adjust("599 seconds");
+    yield* TestClock.adjust("1499 seconds");
     assert.isUndefined(fiber.pollUnsafe());
 
     yield* TestClock.adjust("1 second");
     const error = yield* Effect.flip(Fiber.join(fiber));
     assert(typeof error !== "string");
     assert.strictEqual(error._tag, "ServerCliNpmPackagesNotInstallableError");
-    assert.deepStrictEqual(error.pending, ["b@1.2.3: tarball HTTP 404"]);
-    assert.strictEqual(error.launcherTarball, launcherTarball);
+    // Each package's last answer, not its first metadata 404.
+    assert.deepStrictEqual(error.pending, [
+      "a@1.2.3: tarball HTTP 404",
+      "c@1.2.3: tarball HTTP 404",
+    ]);
+    assert.include(error.message, "within 25 minutes");
+    assert.include(error.message, `${launcherTarball} was not published`);
     assert.notInclude(events, `start ${launcherTarball}`);
   }),
 );

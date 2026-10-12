@@ -13,7 +13,7 @@ import {
   ServerCliPlatformManifestInvalidError,
 } from "./cliErrors.ts";
 
-const READY_DEADLINE = "10 minutes";
+const READY_DEADLINE = "25 minutes";
 
 // Checks a package again after 5s, 10s, 20s, then every 30s.
 const recheckSchedule = Schedule.exponential("5 seconds").pipe(
@@ -33,7 +33,7 @@ const recheckSchedule = Schedule.exponential("5 seconds").pipe(
  * npm installs the launcher without an optional dependency it cannot fetch.
  * So unless this is a dry run, the launcher also waits until `checkInstallable`
  * passes for every platform tarball, and is skipped if that takes longer than
- * 10 minutes.
+ * `READY_DEADLINE`.
  */
 export const publishPlatformsThenLauncher = <E, R, R2>(input: {
   readonly platformTarballs: ReadonlyArray<string>;
@@ -84,6 +84,7 @@ export const publishPlatformsThenLauncher = <E, R, R2>(input: {
             new ServerCliNpmPackagesNotInstallableError({
               pending: [...pending.values()].sort(),
               launcherTarball: input.launcherTarball,
+              deadline: READY_DEADLINE,
             }),
         ),
       );
