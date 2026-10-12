@@ -125,6 +125,8 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 - The release version, commit sha, author, run and each job link to GitHub. A `#123` in a fork commit subject links to the fork pull request. In an upstream commit subject, it links to the upstream pull request.
 - A fork commit is a commit that `pingdotgg/t3code` main does not contain. Merge commits do not show.
 - The Upstream tab lists the upstream main commits that fork main does not have yet, in the same rows. Its "Start Fork Sync" button starts `.github/workflows/fork-sync.yml` and shows the run and each job. The tab reads the run again every 5 seconds while the run is queued or running.
+- The "Ask agent" menu opens a thread in the fork project of the same machine, like "Ask a question" on a pull request. The composer gets a changelog chip and a prompt to read and send. The Releases tab offers "Ask a question", "Summarize the changelog" and, when a newer release exists, "What changed since my version". The Upstream tab offers "Ask a question" and, when upstream commits wait, "Summarize upstream changes" and "Check the impact on the fork".
+- The fork project is the first project whose repository is `Yarden-zamir/t3code`, either as the only remote or as `origin` beside an `upstream` remote. Without one, the menu shows an error.
 - The server reads GitHub with the GitHub credential of its machine, the same one that pull requests use (settings, `GH_TOKEN` or `gh auth login`). Without a credential, the changelog shows the GitHub error.
 - Starting Fork Sync needs the `source-control:write` scope on the connection.
 
