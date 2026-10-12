@@ -52,4 +52,28 @@ describe("tool output images", () => {
     expect(turnItemOutputImages({ ...screenshot, output })).toEqual([]);
     expect(turnItemOutputText({ ...screenshot, output })).toBe("[image]");
   });
+
+  it("omits Claude Read's image placeholder when the file has a preview", () => {
+    const output = {
+      type: "image",
+      file: { filePath: "/tmp/blk.png", type: "image/png", sizeBytes: 1024 },
+    };
+    const item = { ...screenshot, toolName: "Read", viewedImagePath: "/tmp/blk.png", output };
+
+    expect(turnItemOutputImages(item)).toEqual([]);
+    expect(turnItemOutputText(item)).toBeNull();
+    expect(turnItemOutputText({ ...item, viewedImagePath: undefined })).toBe("[image]");
+  });
+
+  it("keeps accompanying text and literal image markers when the file has a preview", () => {
+    const output = {
+      content: [
+        { type: "text", text: "Read /tmp/blk.png. Literal marker: [image]" },
+        { type: "image", file: { type: "image/png", sizeBytes: 1024 } },
+      ],
+    };
+    expect(turnItemOutputText({ ...screenshot, viewedImagePath: "/tmp/blk.png", output })).toBe(
+      "Read /tmp/blk.png. Literal marker: [image]",
+    );
+  });
 });

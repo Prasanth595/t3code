@@ -13,19 +13,21 @@ function isSummarizedValue(value: unknown): boolean {
   return isRecord(value) && value.truncated === true && typeof value.summary === "string";
 }
 
-function textFromBlocks(value: unknown, depth: number): string | null {
+function textFromBlocks(value: unknown, depth: number, hasImagePreview: boolean): string | null {
   if (depth > MAX_TEXT_BLOCK_DEPTH) return null;
   if (typeof value === "string") return value;
   if (Array.isArray(value)) {
-    const parts = value.map((block) => textFromBlocks(block, depth + 1));
+    const parts = value.map((block) => textFromBlocks(block, depth + 1, hasImagePreview));
     return parts.every((part) => part !== null)
       ? parts.filter((part) => part !== "").join("\n")
       : null;
   }
   if (!isRecord(value)) return null;
   if (value.type === "text" && typeof value.text === "string") return value.text;
-  // Images clients can show render on their own (see turnItemOutputImages).
-  if (value.type === "image") return readToolOutputImage(value) ? "" : "[image]";
+  // Images render from an output asset or the item's viewedImagePath.
+  if (value.type === "image") {
+    return hasImagePreview || readToolOutputImage(value) ? "" : "[image]";
+  }
   if (value.type === "resource_link" && typeof value.uri === "string") return value.uri;
   if (value.type === "resource" && isRecord(value.resource)) {
     const resource = value.resource;
@@ -36,9 +38,11 @@ function textFromBlocks(value: unknown, depth: number): string | null {
   // MCP results and provider tool results wrap their text in `content`.
   // `structuredContent` usually repeats it as data, so it only shows when the
   // text is empty.
-  if (keys.length === 1 && keys[0] === "content") return textFromBlocks(value.content, depth + 1);
+  if (keys.length === 1 && keys[0] === "content") {
+    return textFromBlocks(value.content, depth + 1, hasImagePreview);
+  }
   if (keys.length === 2 && keys.includes("content") && keys.includes("structuredContent")) {
-    const text = textFromBlocks(value.content, depth + 1);
+    const text = textFromBlocks(value.content, depth + 1, hasImagePreview);
     return text?.trim() ? text : null;
   }
   return null;
@@ -65,9 +69,9 @@ function prettyJsonText(text: string): string {
 }
 
 /** Formats a tool input or output for display: text blocks as text, the rest as JSON. */
-function formatToolValue(value: unknown): string | null {
+function formatToolValue(value: unknown, hasImagePreview = false): string | null {
   if (value === undefined || value === null) return null;
-  const text = textFromBlocks(value, 0);
+  const text = textFromBlocks(value, 0, hasImagePreview);
   if (text !== null) return text.trim() ? prettyJsonText(text) : null;
   let json: string | undefined;
   try {
@@ -171,7 +175,9 @@ export function turnItemOutputText(item: OrchestrationV2TurnItem): string | null
     case "command_execution":
       return item.output?.trim() ? commandOutputText(item.output) || null : null;
     case "dynamic_tool":
-      return item.outputOmitted === true ? null : formatToolValue(item.output);
+      return item.outputOmitted === true
+        ? null
+        : formatToolValue(item.output, item.viewedImagePath !== undefined);
     case "file_search":
       return item.results?.length
         ? item.results
