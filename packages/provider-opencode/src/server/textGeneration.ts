@@ -238,7 +238,22 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
               ...promptContext,
               cause,
             }),
-        });
+        }).pipe(
+          // Request cancellation alone does not stop generation on the OpenCode server.
+          // This session-specific cleanup follows the approach in #10606 (yashranaway).
+          Effect.onInterrupt(() =>
+            OpenCodeRuntime.runOpenCodeSdk("session.abort", (signal) =>
+              client.session.abort({ sessionID: session.data.id }, { signal }),
+            ).pipe(
+              Effect.interruptible,
+              Effect.timeout("10 seconds"),
+              Effect.catch(() =>
+                Effect.logWarning("Failed to stop cancelled OpenCode text generation.", promptContext),
+              ),
+              Effect.asVoid,
+            ),
+          ),
+        );
         const promptFailure = getOpenCodePromptFailure(result.data?.info?.error);
         if (promptFailure) {
           return yield* new OpenCodeTextGenerationPromptResponseError({
