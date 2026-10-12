@@ -136,8 +136,10 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 
 The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
 
-- When main has a new commit, the script builds it while the old server keeps running. It builds each commit once.
-- It switches only when no agent turn runs. A server restart cancels running turns. T3 resumes them only when "Recover interrupted agents" or "Continue threads after restarts" is on. While agents run, the next run tries again.
+- When the new commits change only paths that do not reach the server build, the script moves the running checkout to the new commit without a build or a restart. These paths are `docs`, `*.md`, `.github`, `apps/desktop`, `apps/mobile`, `apps/marketing` and test files.
+- Otherwise it waits until main has not moved for 10 minutes, so a burst of merges gets one build. Then it builds main while the old server keeps running. It builds each commit once.
+- It switches only when no agent turn runs. A server restart cancels running turns. T3 resumes them only when "Recover interrupted agents" or "Continue threads after restarts" is on. While agents run, it checks again after 5 minutes, because each check starts one node process per project.
+- `t3-deploy.service` runs at a low CPU, IO and process priority. Above 6 GB of memory, the kernel slows the build instead of taking memory from the other apps on the VPS.
 - `/opt/t3code` is a link to `/opt/t3code-a` or `/opt/t3code-b`. The script builds in the other folder, moves the link and restarts `t3-server`.
 - If the new server does not answer, the script moves the link back.
 
@@ -148,6 +150,8 @@ systemctl stop t3-server && mv /opt/t3code /opt/t3code-a && ln -s /opt/t3code-a 
 git -C /opt/t3code-a worktree add --detach /opt/t3code-b HEAD
 cp /opt/t3code/scripts/fork-vps/t3-deploy.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now t3-deploy.timer
 ```
+
+A change to `t3-deploy.service` or `t3-deploy.timer` reaches the VPS only when you run the `cp` and `systemctl daemon-reload` again.
 
 To read the result, run `journalctl -u t3-deploy.service -n 50`.
 
