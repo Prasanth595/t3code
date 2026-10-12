@@ -1226,17 +1226,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // `git config` reads GIT_CONFIG as its only file, but `git fetch` ignores it.
     if (process.env.GIT_CONFIG !== undefined) return false;
     if (!(yield* sshAcceptsSigningLog)) return false;
+    // A project can sit below the repository root, which holds .gitmodules.
+    const repositoryPaths = yield* resolveRepositoryPaths(cwd).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    if (!repositoryPaths?.worktreeRoot) return false;
     // A deinitialized submodule leaves no config key, but Git still fetches it.
     const hasGitmodules = yield* fileSystem
-      .exists(path.join(cwd, ".gitmodules"))
+      .exists(path.join(repositoryPaths.worktreeRoot, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => true));
     if (hasGitmodules) return false;
     // Exit 1 means none of these keys is set in any config scope. Initializing
-    // a submodule writes submodule.<name>.url, so any submodule key counts.
+    // a submodule writes submodule.<name>.url. Host-wide keys such as
+    // submodule.recurse say nothing about this repository, so they do not count.
     return yield* executeGit(
       "GitVcsDriver.fetchRemote.sshConfig",
       cwd,
-      ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant|submodule\\..+)$"],
+      [
+        "config",
+        "--get-regexp",
+        "^(core\\.sshcommand|ssh\\.variant|submodule\\..+\\.(url|active))$",
+      ],
       { allowNonZeroExit: true },
     ).pipe(Effect.match({ onFailure: () => false, onSuccess: (result) => result.exitCode === 1 }));
   });
