@@ -39,6 +39,7 @@ export const make = Effect.gen(function* () {
       net.hasListenerOnHost(SSH_PORT, "127.0.0.1"),
       net.hasListenerOnHost(SSH_PORT, "::1"),
       (ipv4, ipv6) => ipv4 || ipv6,
+      { concurrent: true },
     );
     if (!sshdListening) {
       return [];

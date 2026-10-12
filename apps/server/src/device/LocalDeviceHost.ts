@@ -132,7 +132,7 @@ const androidSdk = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
   const explicit = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
-  const candidates = explicit
+  const initialCandidates = explicit
     ? [explicit]
     : [
         path.join(home, "Library", "Android", "sdk"),
@@ -143,24 +143,18 @@ const androidSdk = Effect.gen(function* () {
           "Sdk",
         ),
       ];
-  if (!explicit) {
-    for (const directory of (environment.PATH ?? "").split(platform === "win32" ? ";" : ":")) {
-      if (!directory) continue;
-      const resolved = yield* fs
-        .realPath(path.join(directory, platform === "win32" ? "adb.exe" : "adb"))
-        .pipe(Effect.option);
-      if (resolved._tag === "Some") candidates.push(path.dirname(path.dirname(resolved.value)));
-    }
-  }
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
-  for (const root of candidates) {
-    const adb = yield* exists(
-      path.join(root, "platform-tools", platform === "win32" ? "adb.exe" : "adb"),
-    );
-    const emulator = yield* exists(
-      path.join(root, "emulator", platform === "win32" ? "emulator.exe" : "emulator"),
-    );
-    if (explicit || adb || emulator) {
+  const inspectCandidate = (root: string) =>
+    Effect.gen(function* () {
+      const adb = yield* exists(
+        path.join(root, "platform-tools", platform === "win32" ? "adb.exe" : "adb"),
+      );
+      const emulator = yield* exists(
+        path.join(root, "emulator", platform === "win32" ? "emulator.exe" : "emulator"),
+      );
+      if (!explicit && !adb && !emulator) {
+        return null;
+      }
       const avdmanager = yield* exists(
         path.join(
           root,
@@ -176,6 +170,29 @@ const androidSdk = Effect.gen(function* () {
           path.join(root, "tools", "bin", platform === "win32" ? "avdmanager.bat" : "avdmanager"),
         ));
       return { root, adb, emulator, avdmanager, legacyAvdmanager };
+    });
+
+  for (const root of initialCandidates) {
+    const found = yield* inspectCandidate(root);
+    if (found) return found;
+  }
+
+  if (!explicit) {
+    const pathValue = environment.PATH ?? environment.Path ?? "";
+    const seenDirectories = new Set<string>();
+    const adbBinary = platform === "win32" ? "adb.exe" : "adb";
+    for (const rawDirectory of pathValue.split(platform === "win32" ? ";" : ":")) {
+      const directory = rawDirectory.trim();
+      if (!directory) continue;
+      const dirKey = platform === "win32" ? directory.toLowerCase() : directory;
+      if (seenDirectories.has(dirKey)) continue;
+      seenDirectories.add(dirKey);
+      const adbCandidate = path.join(directory, adbBinary);
+      if (!(yield* exists(adbCandidate))) continue;
+      const resolved = yield* fs.realPath(adbCandidate).pipe(Effect.option);
+      const root = path.dirname(path.dirname(Option.getOrElse(resolved, () => adbCandidate)));
+      const found = yield* inspectCandidate(root);
+      if (found) return found;
     }
   }
   return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
@@ -317,17 +334,29 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     if (previous._tag === "None") return;
     const alive = yield* isProcessAlive(previous.value.pid);
     if (alive) {
-      const commandLine = yield* runner
-        .run({
-          command: "ps",
-          args: ["-o", "command=", "-p", String(previous.value.pid)],
-          timeout: Duration.seconds(5),
-          timeoutBehavior: "timedOutResult",
-        })
-        .pipe(
-          Effect.map((result) => result.stdout),
-          Effect.orElseSucceed(() => ""),
-        );
+      const commandLine = yield* (
+        hostPlatform === "win32"
+          ? runner.run({
+              command: "powershell.exe",
+              args: [
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                `(Get-CimInstance Win32_Process -Filter 'ProcessId = ${String(previous.value.pid)}' -ErrorAction SilentlyContinue).CommandLine`,
+              ],
+              timeout: Duration.seconds(5),
+              timeoutBehavior: "timedOutResult",
+            })
+          : runner.run({
+              command: "ps",
+              args: ["-o", "command=", "-p", String(previous.value.pid)],
+              timeout: Duration.seconds(5),
+              timeoutBehavior: "timedOutResult",
+            })
+      ).pipe(
+        Effect.map((result) => result.stdout),
+        Effect.orElseSucceed(() => ""),
+      );
       if (commandLine.includes(previous.value.entryPath)) {
         yield* Effect.logWarning("Stopping a device hub left behind by a previous server", {
           pid: previous.value.pid,
