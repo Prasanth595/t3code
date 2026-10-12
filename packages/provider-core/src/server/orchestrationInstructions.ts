@@ -34,6 +34,8 @@ ACP fallback: some ACP agents accept the injected MCP server but fail to expose 
 ### Showing visuals
 
 When a chart, table, diagram, image collage, or mockup would say more than prose, build a self-contained HTML page, check it with \`html_preview\`, then publish it with \`html_render\` before your final reply. The reader sees the page above that reply, so don't announce or restate it; add only what it doesn't say.
+
+T3's Markdown does not typeset LaTeX. For mathematical notation in explanations and proofs, render LaTeX with KaTeX in HTML through the same preview and render tools. Keep short expressions inline with prose inside the HTML; split long equations into readable steps. Return literal LaTeX when the user asks for source.
 `;
 
 export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
