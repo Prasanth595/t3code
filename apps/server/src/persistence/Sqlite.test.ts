@@ -84,10 +84,12 @@ it.effect("shrinks the WAL file back to the size limit after a large write", () 
   );
 });
 
-it.effect("applies busy_timeout in the shared persistence setup", () =>
+it.effect("applies busy_timeout and synchronous = NORMAL in the shared persistence setup", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const rows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
-    assert.equal(rows[0]?.timeout, 5000);
+    const timeoutRows = yield* sql<{ readonly timeout: number }>`PRAGMA busy_timeout`;
+    const syncRows = yield* sql<{ readonly synchronous: number }>`PRAGMA synchronous`;
+    assert.equal(timeoutRows[0]?.timeout, 5000);
+    assert.equal(syncRows[0]?.synchronous, 1);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
