@@ -216,9 +216,9 @@ import {
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
   timelineTurnFoldRunIdsByEntryId,
-  threadReadLabelPrefix,
-  threadReadTargetId,
-  threadReadTargetTitle,
+  threadTargetId,
+  threadTargetLabelPrefix,
+  threadTargetTitle,
   toolGroupAction,
   workEntryDisplayLabel,
   workEntryReadOutput,
@@ -3998,27 +3998,27 @@ function LiveActivityContent({
   );
 }
 
-/** The thread a `t3_thread_read` call targets, titled from live shell state so renames show. */
-function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
-  const rawThreadId = threadReadTargetId(entry);
+/** The thread a single-thread tool call targets, titled from live shell state so renames show. */
+function useThreadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
+  const rawThreadId = threadTargetId(entry);
   const threadId = rawThreadId === null ? null : ThreadId.make(rawThreadId);
   const shell = useThreadShell(threadId ? scopeThreadRef(environmentId, threadId) : null);
-  const title = threadReadTargetTitle(shell);
+  const title = threadTargetTitle(shell);
   return threadId && title ? { threadId, title } : null;
 }
 
-function threadReadLabel(label: string, target: ReturnType<typeof useThreadReadTarget>) {
-  const prefix = target && threadReadLabelPrefix(label);
+function threadTargetLabel(label: string, target: ReturnType<typeof useThreadTarget>) {
+  const prefix = target && threadTargetLabelPrefix(label);
   return prefix ? { ...target, prefix, text: `${prefix} “${target.title}”` } : null;
 }
 
 /** Only settled rows link the title; the live row is itself a button. */
-function ThreadReadLabel({
+function ThreadTargetLabel({
   label,
   environmentId,
   linked,
 }: {
-  label: NonNullable<ReturnType<typeof threadReadLabel>>;
+  label: NonNullable<ReturnType<typeof threadTargetLabel>>;
   environmentId: EnvironmentId;
   linked: boolean;
 }) {
@@ -4045,12 +4045,12 @@ function ThreadReadLabel({
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
   const ctx = use(TimelineRowCtx);
-  const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
+  const threadTarget = useThreadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const questionHeading = row.entry.questionAnswer
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
   const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
-  const threadLabel = threadReadLabel(label, threadTarget);
+  const threadLabel = threadTargetLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
   // The expanded group already lists the thought, so the preview steps aside.
@@ -4116,7 +4116,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
               {row.entry.detail ?? label}
             </ReactMarkdown>
           ) : threadLabel ? (
-            <ThreadReadLabel
+            <ThreadTargetLabel
               label={threadLabel}
               environmentId={ctx.activeThreadEnvironmentId}
               linked={false}
@@ -5481,7 +5481,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
-  const threadTarget = useThreadReadTarget(workEntry, ctx.activeThreadEnvironmentId);
+  const threadTarget = useThreadTarget(workEntry, ctx.activeThreadEnvironmentId);
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -5677,7 +5677,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       : workLogEntryIsToolLike(workEntry)
         ? "text-secondary-label"
         : "text-foreground/80";
-  const threadLabel = isReasoning ? null : threadReadLabel(previewText, threadTarget);
+  const threadLabel = isReasoning ? null : threadTargetLabel(previewText, threadTarget);
   const accessiblePreview = [threadLabel?.text ?? previewText, answerPreview]
     .filter(Boolean)
     .join(": ");
@@ -5738,7 +5738,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   {workEntry.detail ?? previewText}
                 </ReactMarkdown>
               ) : threadLabel ? (
-                <ThreadReadLabel
+                <ThreadTargetLabel
                   label={threadLabel}
                   environmentId={ctx.activeThreadEnvironmentId}
                   linked

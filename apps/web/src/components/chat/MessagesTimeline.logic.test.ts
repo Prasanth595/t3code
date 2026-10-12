@@ -36,9 +36,9 @@ import {
   resolveAssistantMessageCopyState,
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
-  threadReadLabelPrefix,
-  threadReadTargetId,
-  threadReadTargetTitle,
+  threadTargetId,
+  threadTargetLabelPrefix,
+  threadTargetTitle,
   type MessagesTimelineRow,
   resolveTimelineToolPresentation,
   workEntryDisplayLabel,
@@ -99,14 +99,14 @@ describe("expanded tool group scrolling", () => {
 describe("work entry labels", () => {
   it("uses live titles only for active thread shells", () => {
     const shell = { title: " Review auth flow ", archivedAt: null, deletedAt: null };
-    expect(threadReadTargetTitle(shell)).toBe("Review auth flow");
-    expect(threadReadTargetTitle({ ...shell, title: "Harden session refresh" })).toBe(
+    expect(threadTargetTitle(shell)).toBe("Review auth flow");
+    expect(threadTargetTitle({ ...shell, title: "Harden session refresh" })).toBe(
       "Harden session refresh",
     );
-    expect(threadReadTargetTitle({ ...shell, archivedAt: "2026-10-07T12:00:00Z" })).toBeNull();
-    expect(threadReadTargetTitle({ ...shell, deletedAt: "2026-10-07T12:00:00Z" })).toBeNull();
-    expect(threadReadTargetTitle({ ...shell, title: "  " })).toBeNull();
-    expect(threadReadTargetTitle(null)).toBeNull();
+    expect(threadTargetTitle({ ...shell, archivedAt: "2026-10-07T12:00:00Z" })).toBeNull();
+    expect(threadTargetTitle({ ...shell, deletedAt: "2026-10-07T12:00:00Z" })).toBeNull();
+    expect(threadTargetTitle({ ...shell, title: "  " })).toBeNull();
+    expect(threadTargetTitle(null)).toBeNull();
   });
 
   const entry = {
@@ -185,18 +185,44 @@ describe("work entry labels", () => {
         input: { threadId: " thread-child ", view: "activity" },
       } as never,
     };
-    expect(threadReadTargetId(threadRead)).toBe("thread-child");
-    expect(threadReadLabelPrefix(liveWorkEntryLabel(threadRead, undefined, active))).toBe(prefix);
-    expect(threadReadLabelPrefix(workEntryDisplayLabel(threadRead, undefined))).toBe(prefix);
+    expect(threadTargetId(threadRead)).toBe("thread-child");
+    expect(threadTargetLabelPrefix(liveWorkEntryLabel(threadRead, undefined, active))).toBe(prefix);
+    expect(threadTargetLabelPrefix(workEntryDisplayLabel(threadRead, undefined))).toBe(prefix);
   });
 
-  it("finds no target for other tools or thread reads without one", () => {
+  it.each([
+    ["t3_thread_wait", "inProgress", true, "Waiting for thread"],
+    ["t3_thread_wait", "completed", false, "Waited for thread"],
+    ["t3_thread_send", "completed", false, "Sent to thread"],
+    ["t3_thread_interrupt", "completed", false, "Requested an interrupt of thread"],
+  ] as const)(
+    "names the %s target in the %s label",
+    (toolName, toolLifecycleStatus, active, prefix) => {
+      const threadTool = {
+        ...entry,
+        itemType: "dynamic_tool" as const,
+        toolLifecycleStatus,
+        structuredPayload: {
+          type: "dynamic_tool",
+          toolName: `t3-code.${toolName}`,
+          input: { threadId: "thread-child" },
+        } as never,
+      };
+      expect(threadTargetId(threadTool)).toBe("thread-child");
+      expect(threadTargetLabelPrefix(liveWorkEntryLabel(threadTool, undefined, active))).toBe(
+        prefix,
+      );
+      expect(threadTargetLabelPrefix(workEntryDisplayLabel(threadTool, undefined))).toBe(prefix);
+    },
+  );
+
+  it("finds no target for other tools or thread tools without one", () => {
     const payload = (toolName: string, input: unknown) => ({
       structuredPayload: { type: "dynamic_tool", toolName, input } as never,
     });
-    expect(threadReadTargetId(payload("t3-code.t3_thread_wait", { threadId: "t" }))).toBeNull();
-    expect(threadReadTargetId(payload("t3-code.t3_thread_read", { threadId: "  " }))).toBeNull();
-    expect(threadReadTargetId(payload("t3-code.t3_thread_read", null))).toBeNull();
+    expect(threadTargetId(payload("t3-code.t3_thread_list", { threadId: "t" }))).toBeNull();
+    expect(threadTargetId(payload("t3-code.t3_thread_read", { threadId: "  " }))).toBeNull();
+    expect(threadTargetId(payload("t3-code.t3_thread_read", null))).toBeNull();
   });
 
   it("uses the active summary state for legacy tools without a lifecycle status", () => {

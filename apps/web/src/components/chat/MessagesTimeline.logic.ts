@@ -59,6 +59,7 @@ import {
   resolveT3McpToolDefinition,
   resolveT3McpToolPresentation,
   type T3McpToolPresentation,
+  type T3McpToolSummaryAction,
 } from "@t3tools/shared/t3McpToolPresentation";
 import { compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import { htmlRenderReferencesEqual, type HtmlRenderReference } from "@t3tools/shared/htmlRender";
@@ -179,20 +180,29 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
 
-/** The trimmed thread id a `t3_thread_read` call targets, or null for any other entry. */
-export function threadReadTargetId(entry: Pick<WorkLogEntry, "structuredPayload">) {
+// Thread tools whose `threadId` input names the one thread the call acts on.
+const THREAD_TARGET_ACTIONS = new Set<T3McpToolSummaryAction>([
+  "thread-read",
+  "thread-wait",
+  "thread-send",
+  "thread-interrupt",
+]);
+
+/** The trimmed thread id a single-thread tool call targets, or null for any other entry. */
+export function threadTargetId(entry: Pick<WorkLogEntry, "structuredPayload">) {
   const item = entry.structuredPayload;
   if (item?.type !== "dynamic_tool") return null;
-  if (resolveT3McpToolDefinition(item.toolName)?.summaryAction !== "thread-read") return null;
+  const action = resolveT3McpToolDefinition(item.toolName)?.summaryAction;
+  if (!action || !THREAD_TARGET_ACTIONS.has(action)) return null;
   const input = item.input;
   const threadId =
     input !== null && typeof input === "object" && "threadId" in input ? input.threadId : null;
   return typeof threadId === "string" && threadId.trim().length > 0 ? threadId.trim() : null;
 }
 
-const THREAD_READ_OBJECT = " a T3 thread";
+const THREAD_TARGET_OBJECT = " a T3 thread";
 
-export function threadReadTargetTitle(
+export function threadTargetTitle(
   shell: Pick<ThreadShell, "title" | "archivedAt" | "deletedAt"> | null,
 ) {
   if (!shell || shell.archivedAt !== null || shell.deletedAt !== null) return null;
@@ -200,12 +210,12 @@ export function threadReadTargetTitle(
 }
 
 /**
- * Names the read thread in place of the generic object ("Read a T3 thread" becomes
- * `Read thread “Title”`), keeping the label's tense. Null keeps the generic label.
+ * Names the target thread in place of the generic object ("Waiting for a T3 thread" becomes
+ * `Waiting for thread “Title”`), keeping the label's tense. Null keeps the generic label.
  */
-export function threadReadLabelPrefix(label: string) {
-  return label.endsWith(THREAD_READ_OBJECT)
-    ? `${label.slice(0, -THREAD_READ_OBJECT.length)} thread`
+export function threadTargetLabelPrefix(label: string) {
+  return label.endsWith(THREAD_TARGET_OBJECT)
+    ? `${label.slice(0, -THREAD_TARGET_OBJECT.length)} thread`
     : null;
 }
 
