@@ -6,11 +6,10 @@
 // every committed thread/project activity notifies the publisher. No new
 // scheduler, timer or polling loop is added: delivery is purely event-driven.
 //
-// Inert unless configured: baseUrl/token come only from
-// NOFUN_STUDIO_BRIDGE_URL / NOFUN_STUDIO_BRIDGE_TOKEN, read once at startup.
-// When either is missing the layer logs once at debug level and subscribes to
-// nothing. Credentials never come from keychain/files; the token is never
-// logged.
+// Configuration is read once at startup. Environment values win; an unset URL
+// uses the studio bridge, and an unset token uses the macOS Keychain item
+// nofun-studio-bridge. Without a token the layer subscribes to nothing.
+// Credentials and Keychain command output are never logged.
 //
 // The reads adapter maps shell fields only (thread/run ids, title, state,
 // revision, last event time) plus project settings (workspace root,
@@ -24,6 +23,9 @@
 // that supersedes the previous one.
 
 import type { OrchestrationProjectShell, OrchestrationV2ThreadShell } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Startup Keychain lookup explicitly requires execFile with a bounded timeout and no shell.
+import * as NodeChildProcess from "node:child_process";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -39,6 +41,8 @@ import { StudioActivityPublisher, type ActivityThreadRead } from "./StudioActivi
 import {
   makeStudioActivitySink,
   readStudioActivityBridgeConfig,
+  STUDIO_ACTIVITY_BRIDGE_TOKEN_ENV,
+  STUDIO_ACTIVITY_BRIDGE_URL_ENV,
   type StudioActivityFetch,
 } from "./StudioActivitySink.ts";
 
@@ -101,8 +105,8 @@ export interface StudioActivityBridgeOptions {
 
 /**
  * Event-driven bridge layer. Requires the shared projection/project/event
- * stores from the surrounding runtime; provides nothing. Unconfigured (env
- * vars missing): logs once at debug and subscribes to nothing.
+ * stores from the surrounding runtime; provides nothing. Without credentials,
+ * logs at debug and subscribes to nothing.
  */
 export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}) =>
   Layer.effectDiscard(
@@ -114,10 +118,42 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
         yield* Effect.logDebug("studio activity bridge disabled for this persona");
         return;
       }
-      const config = readStudioActivityBridgeConfig(env);
+      let token = env[STUDIO_ACTIVITY_BRIDGE_TOKEN_ENV];
+      if (token === undefined && (yield* HostProcessPlatform) === "darwin") {
+        token = yield* Effect.promise(async () => {
+          try {
+            return await new Promise<string | undefined>((resolve) => {
+              NodeChildProcess.execFile(
+                "/usr/bin/security",
+                [
+                  "find-generic-password",
+                  "-a",
+                  env.USER ?? process.env.USER ?? "",
+                  "-s",
+                  "nofun-studio-bridge",
+                  "-w",
+                ],
+                { encoding: "utf8", timeout: 2_000 },
+                (error, stdout) => resolve(error ? undefined : stdout.trim() || undefined),
+              );
+            });
+          } catch {
+            // Even synchronous spawn errors may carry command output. Discard them.
+            return undefined;
+          }
+        });
+        if (token === undefined) {
+          yield* Effect.logDebug("keychain item nofun-studio-bridge unavailable");
+        }
+      }
+      const config = readStudioActivityBridgeConfig({
+        [STUDIO_ACTIVITY_BRIDGE_URL_ENV]:
+          env[STUDIO_ACTIVITY_BRIDGE_URL_ENV] ?? "https://grok-bot-mcp-bridge.vercel.app",
+        [STUDIO_ACTIVITY_BRIDGE_TOKEN_ENV]: token,
+      });
       if (!config) {
         yield* Effect.logDebug(
-          "studio activity bridge disabled; set NOFUN_STUDIO_BRIDGE_URL and NOFUN_STUDIO_BRIDGE_TOKEN to enable",
+          "studio activity bridge disabled; set NOFUN_STUDIO_BRIDGE_TOKEN or the macOS Keychain item nofun-studio-bridge to enable; NOFUN_STUDIO_BRIDGE_URL overrides the default URL",
         );
         return;
       }

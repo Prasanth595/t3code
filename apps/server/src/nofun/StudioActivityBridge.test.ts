@@ -8,7 +8,10 @@
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { expect } from "vite-plus/test";
+import { beforeEach, expect, vi } from "vite-plus/test";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Mock the required execFile boundary so tests never read real Keychain credentials.
+import * as NodeChildProcess from "node:child_process";
 import {
   CommandId,
   type ModelSelection,
@@ -20,6 +23,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -46,6 +51,26 @@ import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecuto
 import * as RuntimeLayer from "../orchestration-v2/runtimeLayer.ts";
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as StudioActivityBridge from "./StudioActivityBridge.ts";
+
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  execFile: vi.fn(),
+}));
+
+const execFile = vi.mocked(NodeChildProcess.execFile);
+const unsafeKeychainError = "keychain-test-secret in stderr and error";
+const mockKeychainResult = (error: Error | null, stdout: string) => {
+  execFile.mockImplementation((...args) => {
+    const callback = args.at(-1) as (error: Error | null, stdout: string, stderr: string) => void;
+    callback(error, stdout, unsafeKeychainError);
+    return {} as NodeChildProcess.ChildProcess;
+  });
+};
+
+beforeEach(() => {
+  execFile.mockReset();
+  mockKeychainResult(new Error(unsafeKeychainError), "");
+});
 
 const layerPlatformTest = Layer.merge(
   NodeServices.layer,
@@ -128,7 +153,10 @@ interface PostedCall {
 
 // Match server.ts: the bridge explicitly receives the same layer references
 // used by the orchestration runtime; merging siblings does not provide them.
-const layerBridgeTest = (options: StudioActivityBridge.StudioActivityBridgeOptions) =>
+const layerBridgeTest = (
+  options: StudioActivityBridge.StudioActivityBridgeOptions,
+  platform: NodeJS.Platform = "darwin",
+) =>
   Layer.mergeAll(
     RuntimeLayer.layer,
     RuntimeLayer.layerEventSink,
@@ -177,6 +205,7 @@ const layerBridgeTest = (options: StudioActivityBridge.StudioActivityBridgeOptio
       }),
     ),
     Layer.provide(layerPlatformTest),
+    Layer.provide(Layer.succeed(HostProcessPlatform, platform)),
   );
 
 const createThread = Effect.gen(function* () {
@@ -223,6 +252,7 @@ const createThread = Effect.gen(function* () {
 
 it.effect.each([
   { name: "No Fun", env: {}, included: true },
+  { name: "default URL", env: { NOFUN_STUDIO_BRIDGE_URL: undefined }, included: true },
   {
     name: "outside persona roots",
     env: { T3CODE_PERSONA: "nofun", T3CODE_PERSONA_ROOTS: "/allowed" },
@@ -266,7 +296,13 @@ it.effect.each([
     // The layer has closed: no publisher fibers can emit a later duplicate.
     assert.lengthOf(calls, 1);
     const call = calls[0]!;
-    assert.equal(call.url, "http://bridge.test/api/studio/producers");
+    assert.equal(
+      call.url,
+      scenario.name === "default URL"
+        ? "https://grok-bot-mcp-bridge.vercel.app/api/studio/producers"
+        : "http://bridge.test/api/studio/producers",
+    );
+    assert.equal(execFile.mock.calls.length, 0);
     assert.equal(call.authorization, "Bearer test-token");
     const body = yield* decodePostedBody(call.bodyText);
     expect(body.partition_id).toBe("t3.activity");
@@ -357,7 +393,11 @@ it.effect("pending HTTP delivery does not block commands and coalesces activity"
 it.effect.each([
   { name: "empty env", env: {} },
   { name: "URL only", env: { NOFUN_STUDIO_BRIDGE_URL: "http://bridge.test" } },
-  { name: "token only", env: { NOFUN_STUDIO_BRIDGE_TOKEN: "test-token" } },
+  { name: "explicit empty token", env: { NOFUN_STUDIO_BRIDGE_TOKEN: "" } },
+  {
+    name: "CATCHES persona, no token",
+    env: { T3CODE_PERSONA: "catches" },
+  },
   {
     name: "CATCHES persona, fully configured",
     env: {
@@ -381,5 +421,104 @@ it.effect.each([
       ),
     );
     assert.equal(calls, 0);
+    if (env.T3CODE_PERSONA === "catches" || env.NOFUN_STUDIO_BRIDGE_TOKEN !== undefined) {
+      assert.equal(execFile.mock.calls.length, 0);
+    }
+  }),
+);
+
+it.effect("missing env token uses the trimmed macOS Keychain token with the default URL", () =>
+  Effect.gen(function* () {
+    mockKeychainResult(null, "  keychain-test-token\n");
+    const posted = Promise.withResolvers<PostedCall>();
+    yield* Effect.gen(function* () {
+      yield* createThread;
+      const call = yield* Effect.promise(() => posted.promise);
+      assert.equal(call.url, "https://grok-bot-mcp-bridge.vercel.app/api/studio/producers");
+      assert.equal(call.authorization, "Bearer keychain-test-token");
+      assert.notInclude(call.bodyText, "keychain-test-token");
+    }).pipe(
+      Effect.provide(
+        layerBridgeTest({
+          env: { USER: "bridge-user; shell syntax is literal" },
+          fetchFn: async (url, init) => {
+            posted.resolve({
+              url,
+              authorization: new Headers(init.headers).get("Authorization"),
+              bodyText: String(init.body),
+            });
+            return new Response("{}", { status: 200 });
+          },
+        }),
+      ),
+    );
+    expect(execFile).toHaveBeenCalledExactlyOnceWith(
+      "/usr/bin/security",
+      [
+        "find-generic-password",
+        "-a",
+        "bridge-user; shell syntax is literal",
+        "-s",
+        "nofun-studio-bridge",
+        "-w",
+      ],
+      { encoding: "utf8", timeout: 2_000 },
+      expect.any(Function),
+    );
+  }),
+);
+
+it.effect.each([
+  { name: "lookup error", error: new Error(unsafeKeychainError), stdout: "keychain-test-secret" },
+  { name: "empty item", error: null, stdout: "  \n" },
+])("Keychain failure disables publishing with a value-free message ($name)", ({ error, stdout }) =>
+  Effect.gen(function* () {
+    mockKeychainResult(error, stdout);
+    const messages: string[] = [];
+    const logger = Logger.make(({ message }) => {
+      messages.push(String(message));
+    });
+    let calls = 0;
+    yield* createThread.pipe(
+      Effect.provide(
+        layerBridgeTest({
+          env: { USER: "bridge-user" },
+          fetchFn: async () => {
+            calls += 1;
+            return new Response("{}");
+          },
+        }).pipe(Layer.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+      ),
+      Effect.provideService(References.MinimumLogLevel, "Debug"),
+    );
+    assert.equal(calls, 0);
+    assert.isTrue(
+      messages.some((message) => message.includes("keychain item nofun-studio-bridge unavailable")),
+    );
+    assert.notInclude(messages.join("\n"), "keychain-test-secret");
+    assert.notInclude(messages.join("\n"), "stderr");
+    assert.equal(execFile.mock.calls.length, 1);
+  }),
+);
+
+it.effect("non-macOS startup never reads the Keychain", () =>
+  Effect.gen(function* () {
+    let calls = 0;
+    yield* createThread.pipe(
+      Effect.provide(
+        layerBridgeTest(
+          {
+            env: {},
+            fetchFn: async () => {
+              calls += 1;
+              return new Response("{}");
+            },
+          },
+          "linux",
+        ),
+      ),
+    );
+    assert.equal(calls, 0);
+    assert.equal(execFile.mock.calls.length, 0);
   }),
 );
