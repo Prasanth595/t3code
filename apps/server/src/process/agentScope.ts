@@ -6,6 +6,7 @@ import {
   AgentScope,
   agentScopeCommand,
   type AgentScopeShape,
+  type AgentServerLink,
   type AgentSystemdScope,
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -208,6 +209,23 @@ export const make = Effect.gen(function* () {
     }),
   );
 
+  // Runs once, on the first agent launch. Without util-linux setpriv (BusyBox's
+  // has no --pdeathsig), agents launch as before and outlive a crashed server.
+  const serverLink = yield* Effect.cached(
+    Effect.gen(function* () {
+      const setpriv = yield* resolve("setpriv", hostEnvironment);
+      const probe =
+        setpriv === null
+          ? undefined
+          : yield* run(setpriv, ["--pdeathsig", "TERM", "--", "/bin/sh", "-c", "exit 0"]);
+      if (setpriv === null || probe?._tag !== "Some" || probe.value.code !== 0) {
+        yield* Effect.logWarning("Agents will outlive a crashed server: setpriv is unavailable");
+        return undefined;
+      }
+      return { setpriv, serverPid: process.pid } satisfies AgentServerLink;
+    }),
+  );
+
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 
   const readScope = (systemctl: string, unit: string) =>
@@ -321,8 +339,9 @@ export const make = Effect.gen(function* () {
     }) {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       if (resolved === null) return { command, args };
+      const server = survivesRestart === true ? undefined : yield* serverLink;
       const scope = yield* systemd;
-      if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      if (scope === undefined) return agentScopeCommand({ command: resolved, args, server });
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
       const systemdScope: AgentSystemdScope = {
@@ -334,7 +353,7 @@ export const make = Effect.gen(function* () {
         // the unit even when it fails.
         options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
-      return agentScopeCommand({ command: resolved, args, scope: systemdScope });
+      return agentScopeCommand({ command: resolved, args, scope: systemdScope, server });
     }),
     oomKilled,
     clear,
