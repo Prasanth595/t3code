@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   makeAcpClientTerminals,
@@ -129,7 +130,12 @@ describe("AcpClientTerminals", () => {
           terminalId: created.terminalId,
         });
         expect(exit.exitCode === 0 ? null : exit.exitCode).not.toBe(0);
-        expect(exit.signal).toBe("SIGTERM");
+        // Windows has no signals: a killed process only reports an exit code.
+        if (yield* HostProcess.isWindows) {
+          expect(exit.signal).toBeNull();
+        } else {
+          expect(exit.signal).toBe("SIGTERM");
+        }
 
         yield* terminals.release({ sessionId: "session", terminalId: created.terminalId });
         const rejected = yield* Effect.flip(
@@ -189,7 +195,10 @@ describe("AcpClientTerminals", () => {
       const request = { sessionId: "session", ...terminal };
       yield* terminals.kill(request).pipe(Effect.timeout("1500 millis"));
       const exit = yield* terminals.waitForExit(request).pipe(Effect.timeout("1500 millis"));
-      expect(exit).toEqual({ exitCode: null, signal: "SIGKILL" });
+      // Windows has no signals: the command is terminated without a signal name.
+      if (!(yield* HostProcess.isWindows)) {
+        expect(exit).toEqual({ exitCode: null, signal: "SIGKILL" });
+      }
       expect(yield* child.isRunning).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
