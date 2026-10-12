@@ -12,6 +12,9 @@ export function assetImageSource(
   uri: string,
 ): ImageSource {
   return resource._tag === "attachment"
-    ? { uri, cacheKey: `t3-attachment:${environmentId}:${resource.attachmentId}` }
+    ? {
+        uri,
+        cacheKey: `t3-attachment:${JSON.stringify([environmentId, resource.attachmentId])}`,
+      }
     : { uri };
 }

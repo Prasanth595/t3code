@@ -30,6 +30,22 @@ describe("assetImageSource", () => {
     ).not.toBe(first.cacheKey);
   });
 
+  it("keeps ids that contain colons from sharing a key", () => {
+    const uri = "https://host/api/assets/token/p.jpg";
+    const left = assetImageSource(
+      EnvironmentId.make("a"),
+      { _tag: "attachment", attachmentId: "b:c" },
+      uri,
+    );
+    const right = assetImageSource(
+      EnvironmentId.make("a:b"),
+      { _tag: "attachment", attachmentId: "c" },
+      uri,
+    );
+
+    expect(left.cacheKey).not.toBe(right.cacheKey);
+  });
+
   it("keeps workspace files keyed by URL because they can change on disk", () => {
     const source = assetImageSource(
       environmentId,
