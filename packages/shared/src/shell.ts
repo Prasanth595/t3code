@@ -737,11 +737,13 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   }
 
   const hostEnvironment = yield* HostProcess.Environment;
+  // extendEnv mirrors the spawner's plain spread so resolution sees the PATH the
+  // child process actually inherits.
   const env =
     options.env === undefined
       ? hostEnvironment
       : options.extendEnv
-        ? mergeWindowsEnv(hostEnvironment, options.env)
+        ? { ...hostEnvironment, ...options.env }
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
   // The scan is synchronous and runs before every child process, so it shares

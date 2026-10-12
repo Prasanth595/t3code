@@ -734,26 +734,32 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
     }),
   );
 
-  it.effect("collapses PATH spellings to the preferred patch value when extending host env", () =>
+  it.effect("resolves with the same PATH spellings the spawned child inherits", () =>
     Effect.gen(function* () {
       let resolvedEnvironment: NodeJS.ProcessEnv | undefined;
       yield* resolveSpawnCommand("codex", [], {
-        env: { PATH: "C:\\explicit", Path: "C:\\other" },
+        env: { Path: "C:\\custom" },
         extendEnv: true,
       }).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(CommandResolutionCache, new Map()),
         Effect.provideService(HostProcess.Environment, {
-          Path: "C:\\host",
+          PATH: "C:\\host",
           PATHEXT: ".EXE",
         }),
         Effect.provideService(SpawnExecutableResolution, (_command, _platform, env) => {
           resolvedEnvironment = env;
-          return "C:\\explicit\\codex.exe";
+          return "C:\\host\\codex.exe";
         }),
       );
 
-      expect(resolvedEnvironment).toEqual({ PATH: "C:\\explicit", PATHEXT: ".EXE" });
+      // The child process spawner merges with a plain spread, so resolution must
+      // not collapse PATH spellings the child will still see.
+      expect(resolvedEnvironment).toEqual({
+        PATH: "C:\\host",
+        PATHEXT: ".EXE",
+        Path: "C:\\custom",
+      });
     }),
   );
 
