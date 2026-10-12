@@ -3622,6 +3622,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         const claudeTaskOutcome = (status: "completed" | "failed" | "stopped") =>
           status === "completed" ? "completed" : status === "stopped" ? "cancelled" : "failed";
+        // Fork: names the task so clients can show its tool call and output file.
+        const claudeNotificationTask = (
+          message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
+        ) => ({
+          taskId: message.task_id,
+          ...(message.tool_use_id ? { toolUseId: message.tool_use_id } : {}),
+          ...(message.output_file?.trim() ? { outputFile: message.output_file } : {}),
+        });
         // Reads the roster, so call it before the notification clears the task from it.
         const opaqueTaskWakeReport = Effect.fnUntraced(function* (
           nativeThreadId: string,
@@ -3640,16 +3648,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
           const outcome = claudeTaskOutcome(message.status);
           const label = task?.description;
+          const named: Pick<BackgroundWorkReport, "label" | "outcome" | "task"> = {
+            label,
+            outcome,
+            task: claudeNotificationTask(message),
+          };
           switch (task?.kind) {
             case "subagent":
-              return { kind: "subagent", label, outcome, childThreadId: task.childThreadId };
+              return { kind: "subagent", ...named, childThreadId: task.childThreadId };
             case "monitor":
             case "background_task":
-              return { kind: task.kind, label, outcome };
+              return { kind: task.kind, ...named };
             case "command":
             case undefined:
               // Only local_bash is opaque background work today.
-              return { kind: "command", label, outcome };
+              return { kind: "command", ...named };
           }
         });
         const requestedContinuations = yield* Ref.make(new Set<string>());
@@ -6272,6 +6285,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : undefined),
               outcome: claudeTaskOutcome(message.status),
               childThreadId: registered?.childThreadId,
+              task: claudeNotificationTask(message),
             });
           }
           yield* Ref.update(wakeBuffers, (current) => {

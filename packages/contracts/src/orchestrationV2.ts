@@ -1190,6 +1190,16 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
 );
 export type OrchestrationV2NotificationSource = typeof OrchestrationV2NotificationSource.Type;
 
+/** One provider task a notification reports, as far as the provider names it. */
+export const OrchestrationV2NotificationTask = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  /** The provider tool call that started the task. */
+  toolUseId: Schema.optional(TrimmedNonEmptyString),
+  /** The file the provider wrote the task's output to. */
+  outputFile: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2NotificationTask = typeof OrchestrationV2NotificationTask.Type;
+
 // A notification records an observed event, not whether its payload has reached the agent.
 // Provider delivery, wake policy, and agent-facing instructions belong to the backend.
 export const OrchestrationV2Notification = Schema.Struct({
@@ -1198,6 +1208,8 @@ export const OrchestrationV2Notification = Schema.Struct({
   outcome: Schema.Literals(["completed", "failed", "cancelled", "updated", "unknown"]),
   summary: TrimmedNonEmptyString,
   detail: Schema.optional(Schema.String),
+  /** Fork: the tasks behind the notification, for the background work details popover. */
+  tasks: Schema.optional(Schema.Array(OrchestrationV2NotificationTask)),
 });
 export type OrchestrationV2Notification = typeof OrchestrationV2Notification.Type;
 

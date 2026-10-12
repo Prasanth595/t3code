@@ -2,6 +2,7 @@ import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2Notification,
   OrchestrationV2NotificationSource,
+  OrchestrationV2NotificationTask,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
   ThreadId,
@@ -13,6 +14,8 @@ type NotificationOutcome = OrchestrationV2Notification["outcome"];
 export type BackgroundWork = {
   /** Subagent title, command, or monitor description. */
   readonly label?: string | undefined;
+  /** The provider task, when the provider names it. */
+  readonly task?: OrchestrationV2NotificationTask | undefined;
 } & (
   | { readonly kind: "subagent"; readonly childThreadId?: ThreadId | undefined }
   | { readonly kind: "command"; readonly exitCode?: number | undefined }
@@ -142,10 +145,12 @@ export function backgroundWorkNotification(
   const [first, ...rest] = reports;
   if (first === undefined) return null;
   const outcome = combinedOutcome(reports.map((report) => report.outcome));
+  const tasks = reports.flatMap((report) => report.task ?? []);
   return {
     source: reportsSource([first, ...rest]),
     outcome,
     summary: reportsSummary([first, ...rest], outcome),
+    ...(tasks.length === 0 ? {} : { tasks }),
   };
 }
 
