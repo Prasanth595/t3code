@@ -723,6 +723,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     }
     if (hostPlatform === "win32") {
       if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
+        // Idle scans skip the pruning in withWindowsProcessNames, and Windows may reuse a PID.
+        yield* Ref.set(windowsProcessNamesRef, new Map());
         return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
       }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");

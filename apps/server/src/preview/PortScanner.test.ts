@@ -872,6 +872,20 @@ effectIt.effect(
       ]);
       yield* scanner.scan();
       expect(tasklistCalls).toBe(2);
+
+      // An idle scan drops cached names, since Windows may hand the PID to another process.
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      expect(yield* scanner.scan()).toEqual([]);
+      yield* scanner.registerTerminalProcesses({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+        processIds: [1234],
+      });
+      yield* scanner.scan();
+      expect(tasklistCalls).toBe(3);
     }).pipe(Effect.provide(layer));
   },
 );
