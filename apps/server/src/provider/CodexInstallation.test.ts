@@ -450,9 +450,7 @@ const makeWindowsTar = (fs: FileSystem.FileSystem, commands: Array<string>) =>
       const names = Object.keys(windowsPackage);
       if (args[0] === "-tzf") return processHandle(`${names.join("\r\n")}\r\n`);
       if (args[0] === "-tvzf")
-        return processHandle(
-          `${names.map((name) => `-rwxr-xr-x 0 0 ${name}`).join("\r\n")}\r\n`,
-        );
+        return processHandle(`${names.map((name) => `-rwxr-xr-x 0 0 ${name}`).join("\r\n")}\r\n`);
       const runtime = args[3] ?? "";
       for (const [name, contents] of Object.entries(windowsPackage)) {
         yield* fs.makeDirectory(`${runtime}/${name.split("/").slice(0, -1).join("/")}`, {
