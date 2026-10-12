@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
+  AuthSessionId,
+  EnvironmentId,
   WS_METHODS,
   WsSubscribeServerConfigRpc,
   type ServerConfig,
@@ -14,6 +16,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
@@ -23,6 +26,78 @@ import { Headers } from "effect/http";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import { ChildProcessSpawner } from "effect/process";
 
+import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
+import * as ServerBrowser from "./preview/ServerBrowser.ts";
+import * as AcpRegistryRuntimeCoordinator from "@t3tools/provider-acp-registry/server/AcpRegistryRuntimeCoordinator";
+import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
+import * as AntigravityInstallation from "./provider/AntigravityInstallation.ts";
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import * as CodexInstallation from "./provider/CodexInstallation.ts";
+import * as DeviceService from "./device/DeviceService.ts";
+import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
+import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
+import * as EnvironmentTheme from "./environmentTheme.ts";
+import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as HostResources from "./resourceTelemetry/HostResources.ts";
+import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+import * as ModelManifest from "./provider/ModelManifest.ts";
+import * as OrchestrationEventStore from "./persistence/OrchestrationEventStore.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as PortScanner from "./preview/PortScanner.ts";
+import * as PreviewManager from "./preview/Manager.ts";
+import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as ProjectService from "./project/ProjectService.ts";
+import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
+import * as ProviderAuthService from "./provider/ProviderAuthService.ts";
+import * as ProviderInstanceRegistry from "./provider/ProviderInstanceRegistry.ts";
+import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
+import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
+import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+import * as RelayClient from "@t3tools/shared/relayClient";
+import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
+import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
+import * as ReviewService from "./review/ReviewService.ts";
+import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as SecretRequests from "./secrets/SecretRequests.ts";
+import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as ServerSelfUpdate from "./cloud/selfUpdate.ts";
+import * as SessionStore from "./auth/SessionStore.ts";
+import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as StorageCleanup from "./storageCleanup.ts";
+import * as TerminalManager from "./terminal/Manager.ts";
+import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
+import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
+import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
+import * as UsageService from "./usage/UsageService.ts";
+import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
+import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
+
+import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
+import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
+import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "./config.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -33,7 +108,7 @@ import {
   hasCompatibleOrchestrationProtocol,
   resolveAvailableEditorsForConfig,
   shouldUseBoundedThreadSnapshot,
-  subscribeServerConfig,
+  layerWsRpc,
   WS_RPC_SERVER_OPTIONS,
   withLateEditorConfig,
 } from "./ws.ts";
@@ -247,17 +322,84 @@ it.effect("recovers a reveal kind whose real probe outlasts the config timeout",
   }).pipe(Effect.scoped),
 );
 
+// Build the production RPC layer; unrelated capabilities fail if this test calls them.
+const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(ServerSecretStore.ServerSecretStore)({}),
+  Layer.mock(WorkspacePaths.WorkspacePaths)({}),
+  Layer.mock(TraceDiagnostics.TraceDiagnostics)({}),
+  Layer.mock(ProjectFaviconResolver.ProjectFaviconResolver)({}),
+  Layer.mock(ProjectEnrichmentService.ProjectEnrichmentService)({}),
+  Layer.mock(AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator)({}),
+  Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({}),
+  Layer.mock(AgentSessionImporter.AgentSessionImporter)({}),
+  Layer.mock(AgentSessionScanner.AgentSessionScanner)({}),
+  Layer.mock(AnalyticsService.AnalyticsService)({}),
+  Layer.mock(AntigravityInstallation.AntigravityInstallation)({ managedDirectory: "/unused" }),
+  Layer.mock(BackgroundPolicy.BackgroundPolicy)({}),
+  Layer.mock(CheckpointDiffQuery.CheckpointDiffQuery)({}),
+  Layer.mock(CodexInstallation.CodexInstallation)({ managedDirectory: "/unused" }),
+  Layer.mock(DeviceService.DeviceService)({}),
+  Layer.mock(EnvironmentTheme.EnvironmentThemeService)({}),
+  Layer.mock(GitWorkflowService.GitWorkflowService)({}),
+  Layer.mock(HostResources.HostResources)({}),
+  Layer.mock(McpAppRequests.McpAppRequests)({}),
+  Layer.mock(ModelManifest.ModelManifest)({}),
+  Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
+  Layer.mock(Orchestrator.OrchestratorV2)({}),
+  Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
+  Layer.mock(PairingGrantStore.PairingGrantStore)({}),
+  Layer.mock(PortScanner.PortDiscovery)({}),
+  Layer.mock(PreviewManager.PreviewManager)({}),
+  Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({}),
+  Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({}),
+  Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+  Layer.mock(ProjectService.ProjectService)({}),
+  Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+  Layer.mock(ProjectStore.ProjectStoreV2)({}),
+  Layer.mock(ProviderAuthService.ProviderAuthService)({}),
+  Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({}),
+  Layer.mock(ProviderLatestVersions.ProviderLatestVersions)({}),
+  Layer.mock(ProviderMaintenanceRunner.ProviderMaintenanceRunner)({}),
+  Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+  Layer.mock(PullRequestReviewGuideService.PullRequestReviewGuideService)({}),
+  Layer.mock(PullRequestService.PullRequestService)({}),
+  Layer.mock(PullRequestSyncReactor.PullRequestSyncReactor)({}),
+  Layer.mock(RelayClient.RelayClient)({}),
+  Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+  Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
+  Layer.mock(ReviewService.ReviewService)({}),
+  Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  Layer.mock(SecretRequests.SecretRequests)({}),
+  Layer.mock(ServerLifecycleEvents.ServerLifecycleEvents)({}),
+  Layer.mock(ServerRuntimeStartup.ServerRuntimeStartup)({}),
+  Layer.mock(ServerSelfUpdate.ServerSelfUpdate)({}),
+  Layer.mock(SessionStore.SessionStore)({ cookieName: "config-test", legacyCookieName: undefined }),
+  Layer.mock(SourceControlDiscovery.SourceControlDiscovery)({}),
+  Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
+  Layer.mock(StorageCleanup.StorageCleanup)({}),
+  Layer.mock(TerminalManager.TerminalManager)({}),
+  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+  Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+  Layer.mock(ThreadSearch.ThreadSearch)({}),
+  Layer.mock(UsageService.UsageService)({}),
+  Layer.mock(VcsProvisioningService.VcsProvisioningService)({}),
+  Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({}),
+  Layer.mock(WorkspaceEntries.WorkspaceEntries)({}),
+  Layer.mock(WorkspaceFileSystem.WorkspaceFileSystem)({}),
+  Layer.mock(WorktreeSetupTracker.WorktreeSetupTracker)({}),
+);
+
 const layerConfigSources = Layer.mergeAll(
   Keybindings.layer,
   ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer)),
 ).pipe(
-  Layer.provide(Layer.fresh(SqlitePersistence.layerMemory)),
-  Layer.provide(
+  Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+  Layer.provideMerge(
     Layer.fresh(
       ServerConfigModule.layerTest(process.cwd(), { prefix: "t3-config-subscription-test-" }),
     ),
   ),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(NodeServices.layer),
 );
 
 it.effect.each([
@@ -285,17 +427,61 @@ it.effect.each([
       const lateEditors = yield* Deferred.make<readonly ["vscode"]>();
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
       const group = RpcGroup.make(WsSubscribeServerConfigRpc);
-      const loadConfig = Effect.gen(function* () {
-        const shortcuts = yield* keybindings.loadConfigState;
-        const currentSettings = yield* settings.getSettings;
-        yield* Deferred.succeed(discoveryStarted, undefined);
-        yield* Deferred.await(finishDiscovery);
-        return snapshotConfig({
-          keybindings: shortcuts.keybindings,
-          issues: shortcuts.issues,
-          settings: ServerSettings.redactServerSettingsForClient(currentSettings),
-        });
-      });
+      let discoveryCalls = 0;
+      const configRpcServices = Layer.mergeAll(
+        layerUnusedConfigRpcServices,
+        Layer.mock(ExternalLauncher.ExternalLauncher)({
+          resolveAvailableEditors: () =>
+            ++discoveryCalls === 1
+              ? Deferred.succeed(discoveryStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(finishDiscovery)),
+                  Effect.as([]),
+                )
+              : Deferred.await(lateEditors),
+          resolveFileManagerRevealKind: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+          streamChanges: Stream.never,
+        }),
+        Layer.mock(UsageLimitSources.UsageLimitSources)({ streamChanges: Stream.make([]) }),
+        Layer.mock(RemoteOpenTargets.RemoteOpenTargets)({
+          resolveTargets: () => Effect.succeed([]),
+        }),
+        Layer.mock(DirectEndpoints.DirectEndpoints)({ resolve: () => Effect.succeed([]) }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+          scratchRoot: Effect.succeed(Option.none()),
+          namedProjectsRoot: process.cwd(),
+        }),
+        Layer.mock(ServerEnvironment.ServerEnvironment)({
+          getDescriptor: Effect.succeed({
+            environmentId: EnvironmentId.make("config-test"),
+            label: "Config test",
+            platform: { os: "linux", arch: "x64" },
+            serverVersion: "0.0.0",
+            capabilities: { repositoryIdentity: false },
+          }),
+        }),
+        Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+          getDescriptor: () =>
+            Effect.succeed({
+              policy: "loopback-browser",
+              bootstrapMethods: [],
+              sessionMethods: ["browser-session-cookie"],
+              sessionCookieName: "config-test-session",
+            }),
+        }),
+        Layer.succeed(Keybindings.Keybindings, {
+          ...keybindings,
+          streamChanges: Stream.unwrap(keybindingsChanges),
+          subscribeChanges: keybindingsChanges,
+        }),
+        Layer.succeed(ServerSettings.ServerSettingsService, {
+          ...settings,
+          streamChanges: Stream.unwrap(settingsChanges),
+          subscribeChanges: settingsChanges,
+        }),
+      );
       const server = yield* RpcServer.makeNoSerialization(group, {
         ...WS_RPC_SERVER_OPTIONS,
         onFromServer: (response) =>
@@ -306,23 +492,18 @@ it.effect.each([
             : Effect.void,
       }).pipe(
         Effect.provide(
-          group.toLayerHandler(WS_METHODS.subscribeServerConfig, () =>
-            subscribeServerConfig(loadConfig, () => Stream.empty, {
-              resolveAvailableEditors: () => Deferred.await(lateEditors),
-              resolveFileManagerRevealKind: () => Effect.succeed(undefined),
-            }).pipe(
-              Stream.provideService(Keybindings.Keybindings, {
-                ...keybindings,
-                streamChanges: Stream.unwrap(keybindingsChanges),
-                subscribeChanges: keybindingsChanges,
-              }),
-              Stream.provideService(ServerSettings.ServerSettingsService, {
-                ...settings,
-                streamChanges: Stream.unwrap(settingsChanges),
-                subscribeChanges: settingsChanges,
-              }),
-            ),
-          ),
+          layerWsRpc(
+            {
+              sessionId: AuthSessionId.make("config-test"),
+              subject: "config-test",
+              method: "browser-session-cookie",
+              scopes: [],
+            },
+            {},
+            {},
+            yield* PreviewAutomationBroker.PreviewAutomationBroker,
+            yield* ServerBrowser.ServerBrowser,
+          ).pipe(Layer.provide(configRpcServices)),
         ),
       );
       const requestId = RpcMessage.RequestId("config");
@@ -400,5 +581,14 @@ it.effect.each([
           assert.deepEqual(late.config.keybindings, latest.payload.keybindings);
       }
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
-    }).pipe(Effect.provide(Layer.fresh(layerConfigSources)), Effect.scoped),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.fresh(layerConfigSources),
+          Layer.mock(PreviewAutomationBroker.PreviewAutomationBroker)({}),
+          Layer.mock(ServerBrowser.ServerBrowser)({}),
+        ),
+      ),
+      Effect.scoped,
+    ),
 );
