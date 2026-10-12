@@ -57,6 +57,17 @@ describe("environmentDisplayLabel", () => {
     ]);
   });
 
+  it("ignores a suffix this device does not know yet", () => {
+    const environments = [
+      environment("primary", { platformOs: "windows", displayUrl: null }),
+      environment("remote", { platformOs: "windows", displayUrl: "http://10.0.0.5:3773" }),
+    ];
+    expect(labels(environments, "primary")).toEqual([
+      "SwerveStation · this device",
+      "SwerveStation · 10.0.0.5:3773",
+    ]);
+  });
+
   it("tells colliding environments apart by OS", () => {
     const environments = [
       environment("a", { platformOs: "windows" }),

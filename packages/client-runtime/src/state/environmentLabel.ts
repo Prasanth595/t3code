@@ -63,11 +63,14 @@ export function environmentDisplayLabel(
     return `${environment.label} · this device`;
   }
   // The client's own environment reads "this device", but it still takes part:
-  // a suffix it shares, such as the same OS, tells nothing apart.
+  // a suffix it shares, such as the same OS, tells nothing apart. A value it
+  // does not know yet cannot collide, so it does not rule the suffix out.
   const group = [environment, ...colliding];
   for (const rule of SUFFIX_RULES) {
-    const suffixes = group.map(rule);
-    if (suffixes.every((suffix) => suffix !== null) && new Set(suffixes).size === group.length) {
+    const suffixes = group
+      .filter((entry) => entry.environmentId !== primaryEnvironmentId || rule(entry) !== null)
+      .map(rule);
+    if (suffixes.every((suffix) => suffix !== null) && new Set(suffixes).size === suffixes.length) {
       return `${environment.label} · ${suffixes[0]}`;
     }
   }
