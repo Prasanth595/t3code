@@ -86,6 +86,9 @@ const RATES_TTL_MS = 24 * 60 * 60 * 1000;
 /** An explicit refresh ignores the TTL, but not a table fetched this recently. */
 const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 
+/** Failed attempts also coalesce queued readers and explicit refreshes. */
+const RATES_RETRY_FLOOR_MS = 60 * 1000;
+
 /**
  * Files are filtered by mtime before opening. The slack covers a session whose
  * last write lands just before local midnight on the window's first day.
@@ -249,9 +252,9 @@ export const make = Effect.gen(function* () {
     );
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
+  let ratesLastFailedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
-  // One fetch at a time. A burst of refreshes from several clients waits on
-  // the first fetch and then sees a table young enough to skip its own.
+  // One fetch at a time. Queued callers reuse its table or failure retry floor.
   const ratesLock = yield* Semaphore.make(1);
 
   const pricing = (): UsagePricing => ({
@@ -289,21 +292,22 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_RETRY_FLOOR_MS) return;
+
     const fetched = yield* httpClient.get(LITELLM_RATES_URL).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.json),
       Effect.timeout(10_000),
       Effect.catchCause(() => Effect.succeed(null)),
     );
-    if (fetched === null) {
-      // The refresh failed; whatever we are serving is now past its TTL and
-      // must not keep claiming to be fresh.
+    const parsed = fetched === null ? null : parseRateTable(fetched);
+    if (parsed === null || parsed.size === 0) {
+      ratesLastFailedAtMs = yield* Clock.currentTimeMillis;
       if (rates.size > 0) ratesStatus = "cached";
       return;
     }
 
-    const parsed = parseRateTable(fetched);
-    if (parsed.size === 0) return;
+    ratesLastFailedAtMs = null;
 
     rates = parsed;
     ratesFetchedAtMs = now;
