@@ -40,6 +40,7 @@ import {
 } from "../ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { InlineButton } from "../ui/button";
+import { DraftProjectName } from "./DraftProjectName";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 
 // Picker value for the "Add project" row; real entries are keyed by logical
@@ -308,9 +309,9 @@ export function DraftHeroHeadline({
             />
           }
         >
-          <span className="min-w-0 truncate">
-            {isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
-          </span>
+          <DraftProjectName
+            value={isScratchDraft ? "No project" : (activeProjectDisplayName ?? "Choose a project")}
+          />
         </TooltipTrigger>
         {activeProjectDisplayName && !isScratchDraft ? (
           <TooltipPopup side="top">{activeProjectDisplayName}</TooltipPopup>
@@ -335,8 +336,8 @@ export function DraftHeroHeadline({
                   <ProjectFavicon project={entry.group} className="size-4 shrink-0" />
                 ) : null}
                 <Tooltip>
-                  <TooltipTrigger render={<span className="min-w-0 flex-1 truncate text-sm" />}>
-                    {item.label}
+                  <TooltipTrigger render={<span className="min-w-0 flex-1 text-sm" />}>
+                    <DraftProjectName value={item.label} />
                   </TooltipTrigger>
                   <TooltipPopup side="top">{item.label}</TooltipPopup>
                 </Tooltip>
