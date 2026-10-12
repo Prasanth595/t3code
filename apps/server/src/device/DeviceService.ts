@@ -1089,7 +1089,9 @@ export const make = Effect.gen(function* () {
             configured.delete(id);
             removed.push({ id, scope: previous.scope });
           }
-          yield* service.refreshHosts;
+          if (removed.length > 0) {
+            yield* service.refreshHosts;
+          }
           return removed;
         }),
       );
@@ -1105,6 +1107,7 @@ export const make = Effect.gen(function* () {
       );
       yield* service.withLifecycleLock(
         Effect.gen(function* () {
+          let added = false;
           for (const host of next) {
             if (configured.has(host.id)) continue;
             const hostScope = yield* Scope.fork(scope);
@@ -1129,8 +1132,11 @@ export const make = Effect.gen(function* () {
             ).pipe(Effect.provideService(Scope.Scope, hostScope), Effect.provide(hostContext));
             hosts.set(host.id, instance);
             configured.set(host.id, { config: host, scope: hostScope });
+            added = true;
           }
-          yield* service.refreshHosts;
+          if (added) {
+            yield* service.refreshHosts;
+          }
         }),
       );
     });
