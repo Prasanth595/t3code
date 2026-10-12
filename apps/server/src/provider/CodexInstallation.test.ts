@@ -61,17 +61,20 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   let runtimeRenameFailures = input.runtimeRenameFailures ?? 0;
   const lockingFs: FileSystem.FileSystem = {
     ...fs,
+    // Suspended so each retry of the same effect is a fresh attempt, like the real rename.
     rename: (from, to) =>
-      /[/\\]runtime$/u.test(from) && runtimeRenameFailures-- > 0
-        ? Effect.fail(
-            PlatformError.systemError({
-              _tag: "PermissionDenied",
-              module: "FileSystem",
-              method: "rename",
-              pathOrDescriptor: from,
-            }),
-          )
-        : fs.rename(from, to),
+      Effect.suspend(() =>
+        /[/\\]runtime$/u.test(from) && runtimeRenameFailures-- > 0
+          ? Effect.fail(
+              PlatformError.systemError({
+                _tag: "PermissionDenied",
+                module: "FileSystem",
+                method: "rename",
+                pathOrDescriptor: from,
+              }),
+            )
+          : fs.rename(from, to),
+      ),
   };
   const spawner = input.spawner ?? (yield* ChildProcessSpawner.ChildProcessSpawner);
   const installation = yield* CodexInstallation.makeCodexInstallation({
@@ -473,7 +476,7 @@ it.live("installs on Windows via System32 tar with CRLF output and a locked runt
       runtimeRenameFailures: 3,
     });
     yield* h.installation.start;
-    expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
+    expect(yield* terminalState(h.installation)).toMatchObject({ phase: "succeeded" });
     expect(commands).toEqual([
       "C:\\Windows\\System32\\tar.exe",
       "C:\\Windows\\System32\\tar.exe",
