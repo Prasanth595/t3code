@@ -3699,6 +3699,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       let detailReads = 0;
       mockedExecute.mockImplementation((call) =>
         Effect.gen(function* () {
+          expect(call.host).toBe("github.detail-after-write.test");
           if (call.kind === "graphql" && call.query.trimStart().startsWith("mutation")) {
             return output("{}");
           }
@@ -3715,7 +3716,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const input = {
-        cwd: "/w",
+        cwd: "/w\n%repo",
         repository: "acme/web",
         host: "github.detail-after-write.test",
         number: 7,

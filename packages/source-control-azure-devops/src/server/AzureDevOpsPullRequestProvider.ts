@@ -162,11 +162,14 @@ export const make = Effect.gen(function* () {
   // Made once with the provider, which the registry builds once, so this is the whole build's
   // allowance rather than one request's.
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
+  const cacheKey = (...parts: ReadonlyArray<string | number>) =>
+    parts.map((part) => encodeURIComponent(String(part))).join("\n");
   // Diff slices and context expansion read the same immutable blobs. Bound both count and size.
   const itemContents = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", project = "", repository = "", commit = "", ...pathParts] = key.split("\n");
-      const path = pathParts.join("\n");
+      const [cwd = "", project = "", repository = "", commit = "", path = ""] = key
+        .split("\n")
+        .map(decodeURIComponent);
       return diffSpawns.withPermits(1)(
         cli.readItemContent({ cwd, location: { project, repository }, commit, path }),
       );
@@ -182,8 +185,12 @@ export const make = Effect.gen(function* () {
   const readItemContent = (input: Parameters<typeof cli.readItemContent>[0]) =>
     Cache.get(
       itemContents,
-      [input.cwd, input.location.project, input.location.repository, input.commit, input.path].join(
-        "\n",
+      cacheKey(
+        input.cwd,
+        input.location.project,
+        input.location.repository,
+        input.commit,
+        input.path,
       ),
     );
 
@@ -257,7 +264,7 @@ export const make = Effect.gen(function* () {
    */
   const pullRequestReads = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", number = ""] = key.split("\n");
+      const [cwd = "", number = ""] = key.split("\n").map(decodeURIComponent);
       return cli
         .getPullRequest({ cwd, number: Number(number) })
         .pipe(
@@ -270,11 +277,11 @@ export const make = Effect.gen(function* () {
   );
 
   const readPullRequest = (input: { readonly cwd: string; readonly number: number }) =>
-    Cache.get(pullRequestReads, `${input.cwd}\n${input.number}`);
+    Cache.get(pullRequestReads, cacheKey(input.cwd, input.number));
 
   /** Run after a write, so a read asked for once it lands cannot join one that started before. */
   const forgetRead = (input: { readonly cwd: string; readonly number: number }) =>
-    Cache.invalidate(pullRequestReads, `${input.cwd}\n${input.number}`);
+    Cache.invalidate(pullRequestReads, cacheKey(input.cwd, input.number));
 
   const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
     const held = knownLocation(input);
@@ -284,17 +291,18 @@ export const make = Effect.gen(function* () {
   };
 
   const iterationKey = (scope: IterationScope, iterationId?: number) =>
-    [
+    cacheKey(
       scope.cwd,
       scope.location.project,
       scope.location.repository,
       scope.number,
       ...(iterationId === undefined ? [] : [iterationId]),
-    ].join("\n");
+    );
 
   const fromIterationKey = (key: string) => {
-    const [cwd = "", project = "", repository = "", number = "", iterationId = ""] =
-      key.split("\n");
+    const [cwd = "", project = "", repository = "", number = "", iterationId = ""] = key
+      .split("\n")
+      .map(decodeURIComponent);
     return {
       cwd,
       location: { project, repository },
@@ -304,7 +312,11 @@ export const make = Effect.gen(function* () {
   };
 
   const changesKey = (scope: IterationScope, iteration: AzureDevOpsIteration) =>
-    [iterationKey(scope, iteration.id), iteration.headCommit, iteration.mergeBaseCommit].join("\n");
+    [
+      iterationKey(scope, iteration.id),
+      encodeURIComponent(iteration.headCommit),
+      encodeURIComponent(iteration.mergeBaseCommit),
+    ].join("\n");
 
   /**
    * The pushes a pull request has had, shared by overlapping reads the way a pull request read is.

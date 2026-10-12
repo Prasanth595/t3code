@@ -248,11 +248,15 @@ export const make = Effect.gen(function* () {
   const pullPath = (operation: string, input: PullRef) =>
     repositoryPath(operation, input).pipe(Effect.map((base) => `${base}/pulls/${input.number}`));
 
-  const pullKey = (input: PullRef) => `${input.host}\n${input.repository}\n${input.number}`;
+  let readGeneration = 0;
+  const pullKey = (input: PullRef) =>
+    [input.host, input.repository, input.number, readGeneration]
+      .map((value) => encodeURIComponent(String(value ?? "")))
+      .join("\n");
   // A failed read is not held, so the next caller asks GitCafe again.
   const pulls = yield* Cache.makeWith(
     (key: string) => {
-      const [host = "", repository = "", number = ""] = key.split("\n");
+      const [host = "", repository = "", number = ""] = key.split("\n").map(decodeURIComponent);
       return read(
         "readPull",
         { host },
@@ -280,7 +284,13 @@ export const make = Effect.gen(function* () {
     );
 
   /** Drops a pull's shared read once a write on it settles, whatever the outcome. */
-  const forgetPull = (input: PullRef) => Cache.invalidate(pulls, pullKey(input));
+  // A late pending read may repopulate an invalidated entry, so abandon its generation too.
+  const forgetPull = (input: PullRef) =>
+    Effect.suspend(() => {
+      const key = pullKey(input);
+      readGeneration++;
+      return Cache.invalidate(pulls, key);
+    });
 
   /** Every page of a cursor list, up to `MAX_PAGES`; `next` stays set when more remained. */
   const readPages = <S extends Schema.Codec<Paged<unknown>, unknown, never, never>>(
@@ -493,11 +503,12 @@ export const make = Effect.gen(function* () {
   /**
    * Line totals held by the revision they count, which never changes, so reopening an unchanged
    * pull request skips the `/changes` pages and hunk reads. Only a complete count of the head
-   * the pull reported is held.
+   * and base the pull reported is held.
    */
   const lineStats = yield* Cache.makeWith(
     (key: string) => {
-      const [host = "", repository = "", number = "", version = "", headOid = ""] = key.split("\n");
+      const [host = "", repository = "", number = "", version = "", headOid = "", baseOid = ""] =
+        key.split("\n").map(decodeURIComponent);
       return readLineStats(
         { host, repository, number: Number(number) },
         Number(version),
@@ -505,7 +516,11 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.map(({ revision, complete, ...stats }) => ({
           stats,
-          held: complete && revision?.version === Number(version) && revision.headOid === headOid,
+          held:
+            complete &&
+            revision?.version === Number(version) &&
+            revision.headOid === headOid &&
+            revision.baseOid === baseOid,
         })),
       );
     },
@@ -567,7 +582,7 @@ export const make = Effect.gen(function* () {
   /** The viewer's actor on a repository; a viewer GitCafe knows no actor for is asked again. */
   const viewerActors = yield* Cache.makeWith(
     (key: string) => {
-      const [host = "", repository = "", viewer = ""] = key.split("\n");
+      const [host = "", repository = "", viewer = ""] = key.split("\n").map(decodeURIComponent);
       return read(
         "listChangeRequests",
         { host },
@@ -608,7 +623,9 @@ export const make = Effect.gen(function* () {
           // or a rate limit still fails, since the service acts on those for the whole host.
           const actor = yield* Cache.get(
             viewerActors,
-            `${input.host}\n${input.repository}\n${input.viewer.toLowerCase()}`,
+            [input.host, input.repository, input.viewer.toLowerCase()]
+              .map((value) => encodeURIComponent(String(value ?? "")))
+              .join("\n"),
           ).pipe(
             Effect.map(Option.some),
             Effect.catchTags({
@@ -700,7 +717,9 @@ export const make = Effect.gen(function* () {
                   pull.version,
                   pull.headOid,
                   pull.observedBaseOid ?? "",
-                ].join("\n"),
+                ]
+                  .map((value) => encodeURIComponent(String(value ?? "")))
+                  .join("\n"),
               ).pipe(
                 Effect.map(({ stats }) => stats),
                 Effect.orElseSucceed(() => null),

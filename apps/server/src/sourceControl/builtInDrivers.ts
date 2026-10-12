@@ -28,7 +28,7 @@ import type { SourceControlDriver } from "@t3tools/source-control-core/server/dr
 import * as Undici from "@effect/platform-node/Undici";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { FetchHttpClient } from "effect/http";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 

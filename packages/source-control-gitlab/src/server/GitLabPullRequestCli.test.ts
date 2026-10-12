@@ -1,10 +1,14 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabPullRequestCli from "./GitLabPullRequestCli.ts";
+import * as GitLabPullRequestProvider from "./GitLabPullRequestProvider.ts";
 
 const mockedExecute = vi.fn<GitLabCli.GitLabCli["Service"]["execute"]>();
 
@@ -1532,5 +1536,230 @@ layer("GitLabPullRequestCli.layer", (it) => {
       // The diff refs, then two batches: a hundred paths and the fifty left over.
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
+  );
+
+  it.effect(
+    "shares concurrent merge request reads for one second without rereading project settings",
+    () =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let detailReads = 0;
+        let settingsReads = 0;
+        mockedExecute.mockImplementation((request) =>
+          Effect.gen(function* () {
+            if (request.args[1]?.includes("?license=false")) {
+              settingsReads++;
+              return output('{"merge_method":"merge"}');
+            }
+            detailReads++;
+            yield* Deferred.succeed(started, undefined);
+            yield* Deferred.await(release);
+            return output(mergeRequestJson({ title: `Read ${detailReads}` }));
+          }),
+        );
+        const provider = yield* GitLabPullRequestProvider.make;
+        assert.isDefined(provider.getChangeRequestChecks);
+        assert.isDefined(provider.getChangeRequestPreview);
+        assert.isDefined(provider.getChangeRequestSummary);
+        const input = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+        const reads = yield* Effect.all(
+          [
+            provider.getChangeRequest(input),
+            provider.getChangeRequestChecks(input),
+            provider.getChangeRequestPreview(input),
+            provider.getChangeRequestSummary(input),
+          ],
+          { concurrency: 4 },
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* Deferred.succeed(release, undefined);
+        const [detail, checks, preview, summary] = yield* Fiber.join(reads);
+
+        expect([detail.title, preview.title, summary.title]).toEqual([
+          "Read 1",
+          "Read 1",
+          "Read 1",
+        ]);
+        expect(checks.state).toBe("open");
+        expect(detailReads).toBe(1);
+        expect(settingsReads).toBe(1);
+        yield* TestClock.adjust("900 millis");
+        expect((yield* provider.getChangeRequestSummary(input)).title).toBe("Read 1");
+        yield* TestClock.adjust("200 millis");
+        expect((yield* provider.getChangeRequest(input)).title).toBe("Read 2");
+        expect(detailReads).toBe(2);
+        expect(settingsReads).toBe(1);
+      }),
+  );
+
+  it.effect("rereads permissions before each write and shares that fresh answer with checks", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ user: { can_merge: true } }))),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ user: { can_merge: false } }))),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(output(mergeRequestJson({ user: { can_merge: true } }))),
+        );
+      const provider = yield* GitLabPullRequestProvider.make;
+      assert.isDefined(provider.getChangeRequestChecks);
+      const input = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+
+      yield* provider.getChangeRequestChecks(input);
+      expect((yield* provider.getViewerPermissions(input)).actions).not.toContain("merge");
+      expect((yield* provider.getViewerPermissions(input)).actions).toContain("merge");
+      expect((yield* provider.getChangeRequestChecks(input)).state).toBe("open");
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
+  it.effect(
+    "reuses the permission read for reviewer candidates and preserves existing reviewers in a write",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute
+          .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({ reviewers: [reviewer] }))))
+          .mockReturnValueOnce(
+            Effect.succeed(
+              output(JSON.stringify([author, reviewer, { id: 9, username: "hubot" }])),
+            ),
+          )
+          .mockReturnValueOnce(Effect.succeed(output("{}")))
+          .mockReturnValueOnce(
+            Effect.succeed(output(mergeRequestJson({ title: "After review request" }))),
+          );
+        const provider = yield* GitLabPullRequestProvider.make;
+        assert.isDefined(provider.getChangeRequestSummary);
+        const input = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+
+        yield* provider.getViewerPermissions(input);
+        const candidates = yield* provider.listReviewerCandidates(input);
+        expect(
+          candidates.candidates.map(({ login, isRequested }) => ({ login, isRequested })),
+        ).toEqual([
+          { login: "octocat", isRequested: true },
+          { login: "hubot", isRequested: false },
+        ]);
+        yield* provider.setReviewerRequest({
+          ...input,
+          reviewers: [{ id: "9", kind: "user" }],
+          requested: true,
+        });
+
+        expect(JSON.parse(callAt(2).stdin ?? "")).toEqual({ reviewer_ids: [5, 9] });
+        expect((yield* provider.getChangeRequestSummary(input)).title).toBe("After review request");
+        expect(mockedExecute).toHaveBeenCalledTimes(4);
+      }),
+  );
+
+  it.effect.each([false, true])(
+    "starts a fresh read after a write while an old read is pending (failed: %s)",
+    (failedWrite) =>
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        let detailReads = 0;
+        mockedExecute.mockImplementation((request) => {
+          if (request.args.includes("PUT")) {
+            return failedWrite
+              ? Effect.fail(
+                  new GitLabCli.GitLabCliAuthenticationError({
+                    command: "glab",
+                    operation: "execute",
+                    cwd: request.cwd,
+                    cause: new Error("write refused"),
+                  }),
+                )
+              : Effect.succeed(output("{}"));
+          }
+          return Effect.gen(function* () {
+            const older = ++detailReads === 1;
+            if (older) {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+            }
+            return output(
+              mergeRequestJson({ title: older ? "Before mutation" : "After mutation" }),
+            );
+          });
+        });
+        const provider = yield* GitLabPullRequestProvider.make;
+        assert.isDefined(provider.getChangeRequestSummary);
+        assert.isDefined(provider.updateChangeRequest);
+        const input = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+        const older = yield* provider.getChangeRequestSummary(input).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        const write = provider.updateChangeRequest({ ...input, title: "After mutation" });
+        if (failedWrite) {
+          expect((yield* Effect.flip(write)).reason).toBe("unauthenticated");
+        } else {
+          yield* write;
+        }
+
+        expect((yield* provider.getChangeRequestSummary(input)).title).toBe("After mutation");
+        yield* Deferred.succeed(release, undefined);
+        expect((yield* Fiber.join(older)).title).toBe("Before mutation");
+        expect((yield* provider.getChangeRequestSummary(input)).title).toBe("After mutation");
+        expect(detailReads).toBe(2);
+      }),
+  );
+
+  it.effect("retries failed merge request and project settings reads immediately", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("invalid json")))
+        .mockReturnValueOnce(Effect.succeed(output(mergeRequestJson({}))))
+        .mockReturnValueOnce(Effect.succeed(output("invalid json")))
+        .mockReturnValueOnce(Effect.succeed(output('{"merge_method":"merge"}')));
+      const provider = yield* GitLabPullRequestProvider.make;
+      assert.isDefined(provider.getChangeRequestSummary);
+      const input = { cwd: "/w", repository: "acme/web", host: "gitlab.com", number: 7 };
+
+      expect((yield* Effect.flip(provider.getChangeRequestSummary(input))).reason).toBe("failed");
+      expect((yield* provider.getChangeRequestSummary(input)).title).toBe("Merge request 7");
+      expect((yield* Effect.flip(provider.getChangeRequest(input))).reason).toBe("failed");
+      expect((yield* provider.getChangeRequest(input)).mergeCapabilities).toMatchObject({
+        merge: true,
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(4);
+    }),
+  );
+
+  it.effect(
+    "preserves newlines and percent signs in cwd for merge request and project settings reads",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockImplementation((request) =>
+          Effect.succeed(
+            output(
+              request.args[1]?.includes("?license=false")
+                ? '{"merge_method":"merge"}'
+                : mergeRequestJson({}),
+            ),
+          ),
+        );
+        const provider = yield* GitLabPullRequestProvider.make;
+        const input = {
+          cwd: "/w/line\n100% project",
+          repository: "group/subgroup/web",
+          host: "gitlab.com",
+          number: 7,
+        };
+
+        expect((yield* provider.getChangeRequest(input)).number).toBe(7);
+        expect(mockedExecute).toHaveBeenCalledTimes(2);
+        expect(mockedExecute.mock.calls.map(([request]) => request.cwd)).toEqual([
+          input.cwd,
+          input.cwd,
+        ]);
+        expect(mockedExecute.mock.calls.map(([request]) => request.args[1])).toEqual([
+          "projects/group%2Fsubgroup%2Fweb/merge_requests/7?include_diverged_commits_count=true",
+          "projects/group%2Fsubgroup%2Fweb?license=false",
+        ]);
+      }),
   );
 });

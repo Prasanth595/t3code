@@ -19,7 +19,10 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
@@ -334,6 +337,95 @@ describe("GitCafePullRequestProvider", () => {
       const provider = yield* GitCafePullRequestProvider.make;
       const permissions = yield* provider.getViewerPermissions(target);
       assert.strictEqual(permissions.editChangeRequest, false);
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect("refreshes permissions while a pull read with old credentials is pending", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      let token = "old-token";
+      const authorizations: Array<string | undefined> = [];
+      const client = HttpClient.make((request) => {
+        const authorization = request.headers.authorization;
+        authorizations.push(authorization);
+        const old = authorization === "Bearer old-token";
+        return (
+          old
+            ? Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)))
+            : Effect.void
+        ).pipe(
+          Effect.as(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(
+                encodeJson({
+                  ...pull,
+                  title: old ? "Old credentials" : "New credentials",
+                  capabilities: { ...pull.capabilities, edit: !old },
+                }),
+              ),
+            ),
+          ),
+        );
+      });
+      const provider = yield* GitCafePullRequestProvider.make.pipe(
+        Effect.provide(
+          GitCafeApi.layer.pipe(
+            Layer.provide(Layer.succeed(HttpClient.HttpClient, client)),
+            Layer.provide(
+              Layer.succeed(GitCafeCredentials.GitCafeCredentials, {
+                get: (host) =>
+                  Effect.sync(() => ({
+                    host,
+                    token: Redacted.make(token),
+                    source: "settings" as const,
+                  })),
+                invalidate: () => Effect.void,
+                cliEnv: () => Effect.succeed({}),
+              }),
+            ),
+          ),
+        ),
+      );
+      const pending = yield* provider.getChangeRequestPreview!(target).pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+      token = "new-token";
+      assert.strictEqual((yield* provider.getViewerPermissions(target)).editChangeRequest, true);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(pending);
+      // The late old response must not replace the fresh pull used for permissions.
+      assert.strictEqual(
+        (yield* provider.getChangeRequestSummary!(target)).title,
+        "New credentials",
+      );
+      assert.deepStrictEqual(authorizations, ["Bearer old-token", "Bearer new-token"]);
+    }),
+  );
+
+  it.effect.each([true, false])("invalidates a pull after a write succeeds: %s", (succeeds) => {
+    let reads = 0;
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": () => ({
+        ...pull,
+        title: reads++ === 0 ? "Before" : "After",
+      }),
+      ...(succeeds ? { "POST /repos/owner/repo/pulls/7/close": {} } : {}),
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      assert.strictEqual((yield* provider.getChangeRequestPreview!(target)).title, "Before");
+      const result = yield* provider.runAction({ ...target, action: "close" }).pipe(Effect.result);
+      assert.strictEqual(result._tag, succeeds ? "Success" : "Failure");
+      assert.strictEqual((yield* provider.getChangeRequestPreview!(target)).title, "After");
+      assert.deepStrictEqual(
+        server.sent.map((request) => `${request.method} ${request.path}`),
+        [
+          "GET /repos/owner/repo/pulls/7",
+          "POST /repos/owner/repo/pulls/7/close",
+          "GET /repos/owner/repo/pulls/7",
+        ],
+      );
     }).pipe(Effect.provide(server.layer));
   });
 
@@ -691,6 +783,110 @@ describe("GitCafePullRequestProvider", () => {
       );
     }).pipe(Effect.provide(server.layer));
   });
+
+  it.effect.each(["changes", "diff-files"] as const)(
+    "retries line stats after a failed %s read and retains the complete retry",
+    (failedRead) => {
+      const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };
+      let recovered = false;
+      const server = fakeGitCafe({
+        "GET /repos/owner/repo/pulls/7": pull,
+        "GET /repos/owner/repo/pulls/7/status": {
+          merge: { conflicts: "unknown", fastForward: true, strategies: ["merge"] },
+          checks: { pending: 0, failing: 0, total: 0 },
+        },
+        [`GET /repos/owner/repo/commits/${headOid}/checks`]: { items: [], next: null },
+        "GET /repos/owner/repo/pulls/7/changes": () =>
+          !recovered && failedRead === "changes"
+            ? {}
+            : { ...snapshot, items: [{ path: "file.ts" }], next: null },
+        "POST /repos/owner/repo/pulls/7/diff-files": () =>
+          !recovered && failedRead === "diff-files"
+            ? {}
+            : { ...snapshot, items: [{ path: "file.ts", additions: 5, deletions: 2 }] },
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        assert.deepInclude(yield* provider.getChangeRequest(target), {
+          additions: 0,
+          changedFiles: failedRead === "changes" ? 0 : 1,
+        });
+        recovered = true;
+        for (let read = 0; read < 2; read++) {
+          assert.deepInclude(yield* provider.getChangeRequest(target), {
+            additions: 5,
+            deletions: 2,
+            changedFiles: 1,
+          });
+        }
+        assert.strictEqual(
+          server.sent.filter((request) => request.path.endsWith("/changes")).length,
+          2,
+        );
+        assert.strictEqual(
+          server.sent.filter((request) => request.path.endsWith("/diff-files")).length,
+          failedRead === "changes" ? 1 : 2,
+        );
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
+
+  it.effect("retries line stats when a changes page leaves an unread cursor", () => {
+    const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };
+    let reads = 0;
+    const server = fakeGitCafe({
+      "GET /repos/owner/repo/pulls/7": pull,
+      "GET /repos/owner/repo/pulls/7/status": {
+        merge: { conflicts: "unknown", fastForward: true, strategies: ["merge"] },
+        checks: { pending: 0, failing: 0, total: 0 },
+      },
+      [`GET /repos/owner/repo/commits/${headOid}/checks`]: { items: [], next: null },
+      "GET /repos/owner/repo/pulls/7/changes": () =>
+        reads++ === 0
+          ? { ...snapshot, items: [], next: "unread" }
+          : { ...snapshot, items: [{ path: "file.ts", additions: 5, deletions: 2 }], next: null },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitCafePullRequestProvider.make;
+      assert.deepInclude(yield* provider.getChangeRequest(target), {
+        additions: 0,
+        changedFiles: 0,
+      });
+      assert.deepInclude(yield* provider.getChangeRequest(target), {
+        additions: 5,
+        changedFiles: 1,
+      });
+      assert.strictEqual(reads, 2);
+    }).pipe(Effect.provide(server.layer));
+  });
+
+  it.effect.each([baseOid, null])(
+    "does not retain line stats for a comparison base different from %s",
+    (observedBaseOid) => {
+      let reads = 0;
+      const server = fakeGitCafe({
+        "GET /repos/owner/repo/pulls/7": { ...pull, observedBaseOid },
+        "GET /repos/owner/repo/pulls/7/status": {
+          merge: { conflicts: "unknown", fastForward: true, strategies: ["merge"] },
+          checks: { pending: 0, failing: 0, total: 0 },
+        },
+        [`GET /repos/owner/repo/commits/${headOid}/checks`]: { items: [], next: null },
+        "GET /repos/owner/repo/pulls/7/changes": () => ({
+          version: 4,
+          headOid,
+          comparisonBaseOid: "another-base",
+          items: [{ path: "file.ts", additions: ++reads, deletions: 0 }],
+          next: null,
+        }),
+      });
+      return Effect.gen(function* () {
+        const provider = yield* GitCafePullRequestProvider.make;
+        assert.strictEqual((yield* provider.getChangeRequest(target)).additions, 1);
+        assert.strictEqual((yield* provider.getChangeRequest(target)).additions, 2);
+        assert.strictEqual(reads, 2);
+      }).pipe(Effect.provide(server.layer));
+    },
+  );
 
   it.effect("fences a native merge on the target branch's current commit", () => {
     const branchOid = "fedcba9876543210fedcba9876543210fedcba98";

@@ -106,29 +106,42 @@ const mergeRequestKey = (input: {
   readonly cwd: string;
   readonly repository: string;
   readonly number: number;
-}) => `${input.cwd}\n${input.repository}\n${input.number}`;
+}) =>
+  [input.cwd, input.repository, input.number]
+    .map((value) => encodeURIComponent(String(value ?? "")))
+    .join("\n");
 
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+  let readGeneration = 0;
+  const readKey = (input: Parameters<typeof mergeRequestKey>[0]) =>
+    `${mergeRequestKey(input)}\n${readGeneration}`;
 
   // The detail, its checks and the viewer's permissions are all `merge_requests/:iid`, and a page
   // opening asks for them at once. One read answers the ones that land within a second of it; a
   // failure is not held, and every write below forgets the merge request it wrote to.
   const mergeRequests = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = "", number = ""] = key.split("\n");
+      const [cwd = "", repository = "", number = ""] = key.split("\n").map(decodeURIComponent);
       return cli.getMergeRequestDetail({ cwd, repository, number: Number(number) });
     },
     { capacity: 64, timeToLive: (exit) => (Exit.isSuccess(exit) ? "1 second" : 0) },
   );
   const mergeRequest = (input: Parameters<typeof mergeRequestKey>[0]) =>
-    Cache.get(mergeRequests, mergeRequestKey(input));
+    Effect.suspend(() => Cache.get(mergeRequests, readKey(input)));
+  // An invalidated pending lookup can finish later and repopulate its old cache entry.
+  const forgetMergeRequest = (input: Parameters<typeof mergeRequestKey>[0]) =>
+    Effect.suspend(() => {
+      const key = readKey(input);
+      readGeneration++;
+      return Cache.invalidate(mergeRequests, key);
+    });
 
   // How a project lets its merge requests land is a setting, which moves far more slowly than
   // the detail every refresh was reading it alongside.
   const mergeSettings = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = ""] = key.split("\n");
+      const [cwd = "", repository = ""] = key.split("\n").map(decodeURIComponent);
       return cli.getProjectMergeCapabilities({ cwd, repository });
     },
     { capacity: 32, timeToLive: (exit) => (Exit.isSuccess(exit) ? "5 minutes" : 0) },
@@ -139,7 +152,7 @@ export const make = Effect.gen(function* () {
   const writing =
     (input: Parameters<typeof mergeRequestKey>[0]) =>
     <A, E>(write: Effect.Effect<A, E>) =>
-      write.pipe(Effect.ensuring(Cache.invalidate(mergeRequests, mergeRequestKey(input))));
+      write.pipe(Effect.ensuring(forgetMergeRequest(input)));
 
   const fail = (operation: string) => (error: GitLabPullRequestCli.GitLabPullRequestCliError) =>
     new PullRequestProviderError({
@@ -190,7 +203,15 @@ export const make = Effect.gen(function* () {
 
     getChangeRequest: (input) =>
       Effect.all(
-        [mergeRequest(input), Cache.get(mergeSettings, `${input.cwd}\n${input.repository}`)],
+        [
+          mergeRequest(input),
+          Cache.get(
+            mergeSettings,
+            [input.cwd, input.repository]
+              .map((value) => encodeURIComponent(String(value ?? "")))
+              .join("\n"),
+          ),
+        ],
         { concurrency: 2 },
       ).pipe(
         Effect.mapError(fail("getChangeRequest")),
@@ -260,9 +281,8 @@ export const make = Effect.gen(function* () {
     // there is no cheaper thing to ask GitLab. The server asks this before every write, so it
     // starts a fresh read; the write after it can then reuse what it read.
     getViewerPermissions: (input) => {
-      const key = mergeRequestKey(input);
-      return Cache.invalidate(mergeRequests, key).pipe(
-        Effect.andThen(Cache.get(mergeRequests, key)),
+      return forgetMergeRequest(input).pipe(
+        Effect.andThen(Effect.suspend(() => mergeRequest(input))),
         Effect.mapError(fail("getViewerPermissions")),
         Effect.map(gitLabViewerPermissions),
       );
@@ -287,7 +307,7 @@ export const make = Effect.gen(function* () {
     // The merge request the permission check just read, where it is held, rather than a second
     // read of it; where it is not, the CLI reads it alongside the project's users.
     listReviewerCandidates: (input) =>
-      Cache.getSuccess(mergeRequests, mergeRequestKey(input)).pipe(
+      Effect.suspend(() => Cache.getSuccess(mergeRequests, readKey(input))).pipe(
         Effect.flatMap((held) =>
           cli.listReviewerCandidates({
             cwd: input.cwd,

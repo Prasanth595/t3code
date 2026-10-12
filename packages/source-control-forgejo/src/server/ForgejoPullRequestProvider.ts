@@ -150,16 +150,20 @@ export const make = Effect.gen(function* () {
     return { items, truncated: true };
   });
   // Share pending reads only: credentials and repository permissions can change between requests.
+  const cacheKey = (...parts: ReadonlyArray<string | number | undefined>) =>
+    parts.map((part) => encodeURIComponent(String(part ?? ""))).join("\n");
   const pulls = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = "", host = "", number = ""] = key.split("\n");
+      const [cwd = "", repository = "", host = "", number = ""] = key
+        .split("\n")
+        .map(decodeURIComponent);
       const ref = { cwd, repository, host, number: Number(number) };
       return read({ ...ref, path: pullPath(ref) }, ForgejoPullRequest);
     },
     { capacity: 64, timeToLive: () => 0 },
   );
   const getPull = (input: ProviderRepositoryRef & { readonly number: number }) =>
-    Cache.get(pulls, [input.cwd, input.repository, input.host, input.number].join("\n"));
+    Cache.get(pulls, cacheKey(input.cwd, input.repository, input.host, input.number));
   const write = (input: ForgejoCli.ForgejoApiInput) =>
     request(input).pipe(
       Effect.onExit(() => Cache.invalidateAll(pulls)),
@@ -167,7 +171,7 @@ export const make = Effect.gen(function* () {
     );
   const repos = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = "", host = ""] = key.split("\n");
+      const [cwd = "", repository = "", host = ""] = key.split("\n").map(decodeURIComponent);
       const ref = { cwd, repository, host };
       return read({ ...ref, path: repoPath(ref) }, ForgejoRepository);
     },
@@ -175,7 +179,7 @@ export const make = Effect.gen(function* () {
   );
   const viewers = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository, host] = key.split("\n");
+      const [cwd = "", repository, host] = key.split("\n").map(decodeURIComponent);
       return read(
         { cwd, ...(repository ? { repository } : {}), ...(host ? { host } : {}), path: "user" },
         ForgejoUser,
@@ -184,12 +188,12 @@ export const make = Effect.gen(function* () {
     { capacity: 32, timeToLive: () => 0 },
   );
   const getRepo = (input: ProviderRepositoryRef) =>
-    Cache.get(repos, [input.cwd, input.repository, input.host].join("\n"));
+    Cache.get(repos, cacheKey(input.cwd, input.repository, input.host));
   const getViewer = (input: {
     readonly cwd: string;
     readonly repository?: string;
     readonly host?: string;
-  }) => Cache.get(viewers, [input.cwd, input.repository, input.host].join("\n"));
+  }) => Cache.get(viewers, cacheKey(input.cwd, input.repository, input.host));
   const permissions = (
     repo: typeof ForgejoRepository.Type,
     pr: typeof ForgejoPullRequest.Type,
@@ -220,8 +224,14 @@ export const make = Effect.gen(function* () {
   const getPermissions = Effect.fn("ForgejoPullRequestProvider.getPermissions")(function* (
     input: ProviderRepositoryRef & { readonly number: number },
   ) {
+    // A write must not join a detail read started before the account or access changed.
+    const fresh = { ...input, freshCredentials: true };
     const [repo, pr, viewer] = yield* Effect.all(
-      [getRepo(input), getPull(input), getViewer(input)],
+      [
+        read({ ...fresh, path: repoPath(input) }, ForgejoRepository),
+        read({ ...fresh, path: pullPath(input) }, ForgejoPullRequest),
+        read({ ...fresh, path: "user" }, ForgejoUser).pipe(Effect.map((user) => user.login)),
+      ],
       { concurrency: 3 },
     );
     return permissions(repo, pr, viewer);

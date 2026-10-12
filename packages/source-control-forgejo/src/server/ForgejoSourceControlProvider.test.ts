@@ -37,6 +37,7 @@ it.effect("refreshes Forgejo viewer permissions immediately after credentials ch
   let account = "alice";
   const requests: string[] = [];
   const renewals: string[] = [];
+  let holdViewer: Effect.Effect<void> = Effect.void;
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
@@ -47,14 +48,22 @@ it.effect("refreshes Forgejo viewer permissions immediately after credentials ch
     assert.deepStrictEqual(alice.verdicts, ["comment"]);
     assert.include(alice.actions, "merge");
     assert.strictEqual(alice.labels, true);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    holdViewer = Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)));
+    const detail = yield* provider.getChangeRequest(input).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
     account = "bob";
+    holdViewer = Effect.void;
     const bob = yield* provider.getViewerPermissions(input);
     assert.deepStrictEqual(bob.verdicts, ["comment", "approve", "request-changes"]);
     assert.deepStrictEqual(bob.actions, []);
     assert.strictEqual(bob.labels, false);
     assert.strictEqual(bob.requestReviewers, false);
-    assert.strictEqual(requests.length, 6);
+    assert.strictEqual(requests.length, 9);
     assert.deepStrictEqual(renewals, ["alice", "bob"]);
+    yield* Deferred.succeed(release, undefined);
+    assert.deepStrictEqual((yield* Fiber.join(detail)).viewerPermissions?.verdicts, ["comment"]);
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -90,9 +99,11 @@ it.effect("refreshes Forgejo viewer permissions immediately after credentials ch
                 merged_at: null,
                 labels: [],
               }
-            : { full_name: "acme/web", permissions: { push: account === "alice", admin: false } };
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(request, new Response(encodeJson(response))),
+            : request.url.includes("/statuses/")
+              ? []
+              : { full_name: "acme/web", permissions: { push: account === "alice", admin: false } };
+        return (request.url.endsWith("/user") ? holdViewer : Effect.void).pipe(
+          Effect.as(HttpClientResponse.fromWeb(request, new Response(encodeJson(response)))),
         );
       }),
     ),
@@ -118,13 +129,31 @@ it.effect("refreshes Forgejo viewer permissions immediately after credentials ch
 it.effect("reselects the current tea login between API requests", () => {
   let account = "alice";
   const selected: string[] = [];
+  let holdLogin: Effect.Effect<void> = Effect.void;
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
-    const input = { cwd: "/repo", repository: "https://forgejo.test/acme/web", path: "user" };
+    const input = {
+      cwd: "/repo\n%work",
+      repository: "https://forgejo.test/acme/web",
+      path: "user",
+    };
     assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"alice"}');
     account = "bob";
     assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"bob"}');
-    assert.deepStrictEqual(selected, ["alice", "bob"]);
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    holdLogin = Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)));
+    const pending = yield* cli.api(input).pipe(Effect.forkChild);
+    yield* Deferred.await(started);
+    account = "carol";
+    holdLogin = Effect.void;
+    assert.strictEqual(
+      (yield* cli.api({ ...input, freshCredentials: true })).stdout,
+      '{"login":"carol"}',
+    );
+    yield* Deferred.succeed(release, undefined);
+    assert.strictEqual((yield* Fiber.join(pending)).stdout, '{"login":"bob"}');
+    assert.deepStrictEqual(selected, ["alice", "bob", "carol", "bob"]);
   }).pipe(
     Effect.provideService(
       FileSystem.FileSystem,
@@ -139,19 +168,28 @@ it.effect("reselects the current tea login between API requests", () => {
         process: {
           run: (input) => {
             assert.strictEqual(input.command, "tea");
+            assert.strictEqual(input.cwd, "/repo\n%work");
             if (input.args[0] === "login")
-              return Effect.succeed(
-                processOutput(
-                  encodeJson([
-                    { name: account, url: "https://forgejo.test", user: account, default: "true" },
-                  ]),
+              return holdLogin.pipe(
+                Effect.as(
+                  processOutput(
+                    encodeJson([
+                      {
+                        name: account,
+                        url: "https://forgejo.test",
+                        user: account,
+                        default: "true",
+                      },
+                    ]),
+                  ),
                 ),
               );
             assert.strictEqual(input.args[0], "api");
-            assert.strictEqual(input.args[input.args.indexOf("--login") + 1], account);
-            selected.push(account);
+            const login = input.args[input.args.indexOf("--login") + 1] ?? "";
+            assert.notStrictEqual(login, "");
+            selected.push(login);
             return Effect.succeed(
-              processOutput(encodeJson({ login: account }), { stderr: "HTTP/1.1 200 OK\n" }),
+              processOutput(encodeJson({ login }), { stderr: "HTTP/1.1 200 OK\n" }),
             );
           },
         },
@@ -173,6 +211,7 @@ it.effect("shares pending Forgejo pull reads and refreshes after writes and fail
         Layer.mock(ForgejoCli.ForgejoCli)({
           api: (input) =>
             Effect.gen(function* () {
+              assert.strictEqual(input.cwd, "/repo\n%work");
               paths.push(input.path);
               if (input.method === "PATCH") {
                 state = "closed";
@@ -223,14 +262,9 @@ it.effect("shares pending Forgejo pull reads and refreshes after writes and fail
     const summary = provider.getChangeRequestSummary;
     const checks = provider.getChangeRequestChecks;
     if (!summary || !checks) return yield* Effect.die("narrow reads missing");
-    const input = { cwd: "/repo", repository: "acme/web", host: "forgejo.test", number: 42 };
+    const input = { cwd: "/repo\n%work", repository: "acme/web", host: "forgejo.test", number: 42 };
     const reads = yield* Effect.all(
-      [
-        summary(input),
-        checks(input),
-        provider.getViewerPermissions(input),
-        provider.getChangeRequest(input),
-      ],
+      [summary(input), checks(input), provider.getChangeRequest(input)],
       { concurrency: "unbounded" },
     ).pipe(Effect.forkChild);
     yield* Deferred.await(started);

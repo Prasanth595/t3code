@@ -1761,11 +1761,15 @@ export const make = Effect.gen(function* () {
         yield* SourceControlRateLimit.Interactive,
         yield* SourceControlRateLimit.CredentialScope,
         pinned?.credentialFingerprint ?? "",
-      ].join("\n");
+      ]
+        .map((part) => encodeURIComponent(String(part)))
+        .join("\n");
     });
   const detailsInFlight = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", host = "", repository = "", number = ""] = key.split("\n");
+      const [cwd = "", host = "", repository = "", number = ""] = key
+        .split("\n")
+        .map(decodeURIComponent);
       return getPullRequestDetail({ cwd, host, repository, number: Number(number) });
     },
     { capacity: 64, timeToLive: () => 0 },
@@ -1780,7 +1784,7 @@ export const make = Effect.gen(function* () {
         headSha = "",
         headBranch = "",
         headRepositoryOwner = "",
-      ] = key.split("\n");
+      ] = key.split("\n").map(decodeURIComponent);
       return listWorkflowRunsRequiringApproval({
         cwd,
         host,

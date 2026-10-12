@@ -132,6 +132,7 @@ export interface ForgejoApiInput extends ForgejoRepositoryInput {
   readonly path: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body?: unknown;
+  readonly freshCredentials?: boolean;
 }
 
 export class ForgejoCli extends Context.Service<
@@ -662,6 +663,7 @@ export const make = Effect.gen(function* () {
     (key: string) => {
       const [cwd = "", reference, repository, host, remoteUrl, baseUrl, requestedHost, scope] = key
         .split("\n")
+        .map(decodeURIComponent)
         .map((value) => value || undefined);
       return resolveTarget(
         { cwd, reference, repository, host, remoteUrl, providerBaseUrl: baseUrl, requestedHost },
@@ -680,16 +682,27 @@ export const make = Effect.gen(function* () {
       input.context?.provider.baseUrl,
       input.context?.requestedHost,
       hostOnly ? "host" : "",
-    ].join("\n");
+    ]
+      .map((part) => encodeURIComponent(part ?? ""))
+      .join("\n");
   const resolveRepository = (input: ForgejoRepositoryInput) => Cache.get(targets, targetKey(input));
   const api = Effect.fn("ForgejoCli.api")(function* (input: ForgejoApiInput) {
-    const repository = yield* Cache.get(
-      targets,
-      targetKey(
-        input,
-        input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET"),
-      ),
-    );
+    const hostOnly =
+      input.path.replace(/^\/+/, "") === "user" && (!input.method || input.method === "GET");
+    const repository = yield* input.freshCredentials
+      ? resolveTarget(
+          {
+            cwd: input.cwd,
+            reference: input.reference,
+            repository: input.repository,
+            host: input.host,
+            remoteUrl: input.context?.remoteUrl,
+            providerBaseUrl: input.context?.provider.baseUrl,
+            requestedHost: input.context?.requestedHost,
+          },
+          hostOnly,
+        )
+      : Cache.get(targets, targetKey(input, hostOnly));
     const stdin =
       input.body === undefined
         ? undefined
