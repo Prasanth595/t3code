@@ -80,6 +80,8 @@ interface AnnotatableCodeViewProps {
     fileVersion: number;
     collapsed: boolean;
   }>;
+  /** Files still in the diff whose patches have not loaded. */
+  pendingFilePaths: ReadonlyArray<string>;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -106,6 +108,7 @@ interface DiffSelectionContext {
 export function AnnotatableCodeView({
   codeViewKey,
   files,
+  pendingFilePaths,
   sectionId,
   sectionTitle,
   composerDraftTarget,
@@ -130,11 +133,21 @@ export function AnnotatableCodeView({
   } | null>(null);
   const [draft, setDraft] = useState<{
     fileKey: string;
+    filePath: string;
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
 
   const filesByKey = useMemo(() => new Map(files.map((file) => [file.fileKey, file])), [files]);
+  if (
+    draft !== null &&
+    !filesByKey.has(draft.fileKey) &&
+    !pendingFilePaths.includes(draft.filePath)
+  ) {
+    setDraft(null);
+    setDraftText("");
+    setSelectedLines(null);
+  }
   const items = useMemo<CodeViewDiffItem<DiffCommentAnnotationGroup>[]>(
     () =>
       files.map(({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
@@ -223,11 +236,12 @@ export function AnnotatableCodeView({
       // Read from the item, not the file list, so this callback keeps its identity as
       // patches arrive; the viewer re-applies its options whenever it changes.
       const id = nextFileCommentId();
+      const filePath = resolveFileDiffPath(item.fileDiff);
       const comment = buildDiffReviewComment({
         id,
         sectionId,
         sectionTitle,
-        filePath: resolveFileDiffPath(item.fileDiff),
+        filePath,
         fileDiff: item.fileDiff,
         range,
         text: "",
@@ -236,6 +250,7 @@ export function AnnotatableCodeView({
       setDraftText("");
       setDraft({
         fileKey: item.id,
+        filePath,
         annotation: {
           side: annotationSide(range),
           lineNumber: range.end,
