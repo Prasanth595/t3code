@@ -341,7 +341,7 @@ const ARM64_ARCH_FILE_PATTERN = /(?:^|[-_.])(arm64|aarch64)(?:[-_.]|$)/i;
  * `electron-updater`'s `findFile` fallback (`filteredFiles.shift()`) from
  * pushing an x64 build onto an arm64 install (or vice versa).
  */
-export function filterUpdateInfoFilesForHostArch(
+function filterUpdateInfoFilesForHostArch(
   raw: unknown,
   hostArch: DesktopRuntimeInfo["hostArch"],
 ): boolean {
