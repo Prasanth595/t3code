@@ -12,6 +12,7 @@ import { codexAuthDeliveryUrl, readCodexAuthHandoff } from "@t3tools/shared/code
 import { receiveCodexAuthCallback, CodexAuthCallbackError } from "./CodexAuthCallback.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import { providerAuthReturnUrl } from "@t3tools/shared/providerAuthReturnUrl";
+import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { clerkFrontendApiHostnameFromPublishableKey } from "@t3tools/shared/relayAuth";
 import * as ElectronApp from "../electron/ElectronApp.ts";
@@ -126,26 +127,33 @@ export const make = Effect.gen(function* () {
       }).pipe(Effect.orDie),
   );
 
-  // macOS can deliver the page that launched the app while runtime acquisition
-  // or shell probing is still in progress. Register before either can yield.
-  const pendingWebLinks: string[] = [];
-  let receiveWebLink = (url: string) => {
-    pendingWebLinks.push(url);
+  // macOS can deliver the link or file that launched the app while runtime
+  // acquisition or shell probing is still in progress. Register before either can yield.
+  const pendingLinks: string[] = [];
+  let receiveLink = (url: string) => {
+    pendingLinks.push(url);
   };
-  let openProviderAuth = (_url: string) => false;
+  const providerAuthDestination = (value: string | undefined) => {
+    const destination = providerAuthReturnUrl(value);
+    const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
+    return destination?.startsWith(`${expectedOrigin}/`) ? destination : undefined;
+  };
   if (bridge.isPrimaryInstance) {
     yield* electronApp.on("open-url", (event: { preventDefault: () => void }, url: string) => {
-      if (openProviderAuth(url)) {
-        event.preventDefault();
-      } else if (DesktopWebLinks.isWebLink(url)) {
-        event.preventDefault();
-        receiveWebLink(url);
-      }
+      if (
+        !readCodexAuthHandoff(url, environment.isDevelopment) &&
+        !providerAuthDestination(url) &&
+        !DesktopWebLinks.isWebLink(url) &&
+        promptLinkAppPath(url) === null
+      )
+        return;
+      event.preventDefault();
+      receiveLink(url);
     });
     yield* electronApp.on("open-file", (event: { preventDefault: () => void }, path: string) => {
       if (!DesktopWebLinks.isWebPageFile(path)) return;
       event.preventDefault();
-      receiveWebLink(NodeURL.pathToFileURL(path).href);
+      receiveLink(NodeURL.pathToFileURL(path).href);
     });
   }
 
@@ -194,9 +202,8 @@ export const make = Effect.gen(function* () {
         return true;
       };
       const resumeProviderAuth = (value: string | undefined) => {
-        const destination = providerAuthReturnUrl(value);
-        const expectedOrigin = `${ElectronProtocol.getDesktopScheme(environment.isDevelopment)}://app`;
-        if (!destination?.startsWith(`${expectedOrigin}/`)) return false;
+        const destination = providerAuthDestination(value);
+        if (!destination) return false;
         void runPromise(
           Effect.gen(function* () {
             const mainWindow = yield* electronWindow.currentMainOrFirst;
@@ -211,17 +218,29 @@ export const make = Effect.gen(function* () {
         );
         return true;
       };
+      // Prompt links and thread links (`t3code://new?…`, `t3code://threads/…`) reach the
+      // renderer through the same queue as web links; it routes them in the app.
+      const openAppLink = (value: string | undefined) => {
+        if (!value || promptLinkAppPath(value) === null) return false;
+        void runPromise(webLinks.receive(value));
+        return true;
+      };
       const args = yield* HostProcess.Arguments;
-      args.some((value) => startProviderAuthHandoff(value));
+      args.some((value) => startProviderAuthHandoff(value) || openAppLink(value));
       yield* Effect.sync(() => {
-        openProviderAuth = (url) => startProviderAuthHandoff(url) || resumeProviderAuth(url);
-        receiveWebLink = (url) => {
+        receiveLink = (url) => {
+          if (startProviderAuthHandoff(url) || resumeProviderAuth(url)) return;
           void runPromise(webLinks.receive(url));
         };
-        for (const url of pendingWebLinks.splice(0)) receiveWebLink(url);
+        for (const url of pendingLinks.splice(0)) receiveLink(url);
       });
       yield* electronApp.on("second-instance", (_event: unknown, argv: readonly string[]) => {
-        if (argv?.some((value) => startProviderAuthHandoff(value) || resumeProviderAuth(value)))
+        if (
+          argv?.some(
+            (value) =>
+              startProviderAuthHandoff(value) || resumeProviderAuth(value) || openAppLink(value),
+          )
+        )
           return;
         void runPromise(
           Effect.gen(function* () {

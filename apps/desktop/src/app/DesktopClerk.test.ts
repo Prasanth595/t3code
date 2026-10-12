@@ -327,7 +327,7 @@ it.effect(
   },
 );
 
-it.effect.each(["startup", "open-url"] as const)(
+it.effect.each(["startup", "open-url", "cold-open-url"] as const)(
   "receives hosted web sign-in through the desktop %s handler",
   (entry) =>
     Effect.gen(function* () {
@@ -386,6 +386,11 @@ it.effect.each(["startup", "open-url"] as const)(
       } as unknown as ElectronApp.ElectronApp["Service"];
       yield* Effect.gen(function* () {
         const clerk = yield* DesktopClerk.DesktopClerk;
+        if (entry === "cold-open-url") {
+          const event = { preventDefault: vi.fn() };
+          listeners.get("open-url")!(event, link);
+          assert.strictEqual(event.preventDefault.mock.calls.length, 1);
+        }
         yield* clerk.configure;
         if (entry === "open-url") {
           const event = { preventDefault: vi.fn() };
@@ -410,7 +415,7 @@ it.effect.each(["startup", "open-url"] as const)(
     }).pipe(Effect.scoped),
 );
 
-it.effect("hands a web link to the renderer and leaves other links alone", () =>
+it.effect("hands web and app links to the renderer and leaves other links alone", () =>
   Effect.gen(function* () {
     storageMock.mockReturnValue(storageAdapter);
     createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
@@ -434,10 +439,19 @@ it.effect("hands a web link to the renderer and leaves other links alone", () =>
       // macOS hands the default browser every web link.
       assert.strictEqual(open("https://example.com/page"), 1);
       assert.strictEqual(open("http://localhost:3000/"), 1);
+      // Prompt and thread links ride the same queue; the renderer routes them in the app.
+      assert.strictEqual(open("t3code://new?prompt=hi"), 1);
+      assert.strictEqual(open("t3code://threads/env-1/thread-1"), 1);
       // Anything else is not a web page; Electron keeps its own handling.
       assert.strictEqual(open("mailto:hello@example.com"), 0);
+      assert.strictEqual(open("t3code://somewhere-else"), 0);
       yield* Effect.yieldNow;
-      assert.deepStrictEqual(received, ["https://example.com/page", "http://localhost:3000/"]);
+      assert.deepStrictEqual(received, [
+        "https://example.com/page",
+        "http://localhost:3000/",
+        "t3code://new?prompt=hi",
+        "t3code://threads/env-1/thread-1",
+      ]);
     }).pipe(
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
       Effect.provideService(HostProcess.Arguments, ["t3"]),
@@ -464,6 +478,13 @@ it.effect.each([
     value: "https://example.com/report",
     expected: "https://example.com/report",
   },
+  ...[
+    "t3code://new?prompt=Fix+it&repo=pingdotgg/t3code&provider=codex&model=gpt-5",
+    "t3code-dev://new?pr=pingdotgg/t3code/42&prompt=Review+it",
+    "t3code://threads/env-1/thread-1?prompt=Continue",
+    "https://app.t3.codes/new?prompt=Fix+it",
+    "https://app.t3.codes/env-1/thread-1?prompt=Continue",
+  ].map((value) => ({ kind: "open-url", timing: "cold", value, expected: value })),
   {
     kind: "open-file",
     timing: "cold",
@@ -531,7 +552,12 @@ it.effect.each([
         yield* clerk.configure;
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(probeStarted);
-      if (timing === "cold") appEvents.emit(kind, event, value);
+      const nextLink = "https://example.com/next";
+      if (timing === "cold") {
+        appEvents.emit(kind, event, value);
+        appEvents.emit("open-url", event, nextLink);
+      }
+      const expectedLinks = timing === "cold" ? [expected, nextLink] : [expected];
       assert.deepEqual(received, []);
       yield* Deferred.succeed(finishProbe, undefined);
       yield* Fiber.join(startup);
@@ -541,16 +567,16 @@ it.effect.each([
         appEvents.emit(kind, event, value);
         yield* Deferred.await(delivered);
       }
-      assert.deepEqual(received, [expected]);
-      assert.equal(event.preventDefault.mock.calls.length, 1);
+      assert.deepEqual(received, expectedLinks);
+      assert.equal(event.preventDefault.mock.calls.length, expectedLinks.length);
       yield* webLinks.setRendererReady(true);
-      assert.deepEqual(received, [expected]);
+      assert.deepEqual(received, expectedLinks);
       // Unrelated events must neither be claimed nor replay a queued page.
       const unrelated = { preventDefault: vi.fn() };
       appEvents.emit("open-url", unrelated, "mailto:hello@example.com");
       appEvents.emit("open-file", unrelated, "/tmp/report.txt");
       assert.equal(unrelated.preventDefault.mock.calls.length, 0);
-      assert.deepEqual(received, [expected]);
+      assert.deepEqual(received, expectedLinks);
     }).pipe(
       Effect.scoped,
       Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
