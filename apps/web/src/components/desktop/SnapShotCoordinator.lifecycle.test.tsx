@@ -74,6 +74,19 @@ function setRoute(routeThreadRef: ScopedThreadRef | null, updatedAt: number) {
   };
 }
 
+const pendingCapture: DesktopPendingSnapShot = {
+  id: "c0ffee-02",
+  name: "window.png",
+  mimeType: "image/png",
+  sizeBytes: 3,
+  source: {
+    kind: "snap-shot",
+    capturedAt: "2026-09-01T00:00:00.000Z",
+    appName: "Editor",
+    windowTitle: "main.ts",
+  },
+};
+
 let root: ReturnType<typeof createRoot>;
 
 async function mount(routeThreadRef: ScopedThreadRef | null) {
@@ -113,20 +126,7 @@ it("does not list pending captures when streaming updates the active thread", as
 });
 
 it("retries persisted captures once a destination bootstraps", async () => {
-  bridge.listPendingSnapShots.mockResolvedValue([
-    {
-      id: "c0ffee-02",
-      name: "window.png",
-      mimeType: "image/png",
-      sizeBytes: 3,
-      source: {
-        kind: "snap-shot",
-        capturedAt: "2026-09-01T00:00:00.000Z",
-        appName: "Editor",
-        windowTitle: "main.ts",
-      },
-    },
-  ]);
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
   await mount(null);
   expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(1);
   expect(bridge.readSnapShot).not.toHaveBeenCalled();
@@ -153,4 +153,28 @@ it("targets the thread the user navigated to for the next capture", async () => 
   });
 
   expect(getPendingSnapShotAnimations()).toEqual([{ id: "c0ffee-01", target: threadB }]);
+});
+
+it("delivers a capture pinned to the drain's route when the user navigates mid-drain", async () => {
+  await mount(threadA);
+  let finishListing: ((captures: DesktopPendingSnapShot[]) => void) | undefined;
+  bridge.listPendingSnapShots
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishListing = resolve;
+        }),
+    )
+    .mockResolvedValue([pendingCapture]);
+
+  // Thread A has no loaded shell, so it is only a valid destination while it is the route.
+  await act(async () => {
+    bridge.emit({ type: "requested", id: pendingCapture.id });
+    bridge.emit({ type: "ready", id: pendingCapture.id });
+  });
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => finishListing?.([pendingCapture]));
+
+  expect(bridge.readSnapShot).toHaveBeenCalledWith(pendingCapture.id);
 });

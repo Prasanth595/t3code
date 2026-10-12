@@ -302,6 +302,9 @@ export function SnapShotCoordinator() {
       return drainingRef.current;
     }
 
+    // Validate against the route this drain started on: a pinned capture on a routed thread whose
+    // shell has not loaded yet must not be dropped because the user navigated mid-drain.
+    const { routeThreadRef: drainRouteThreadRef } = latestContextRef.current;
     const operation = (async () => {
       do {
         rerunRequestedRef.current = false;
@@ -314,7 +317,7 @@ export function SnapShotCoordinator() {
             resolveCaptureTarget,
           );
           const target = capturedTarget
-            ? resolveExistingSnapShotTarget(capturedTarget, latestContextRef.current.routeThreadRef)
+            ? resolveExistingSnapShotTarget(capturedTarget, drainRouteThreadRef)
             : null;
           if (!target) {
             await dismissSnapShotAnimation(item.id);
