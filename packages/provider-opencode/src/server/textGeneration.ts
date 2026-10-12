@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
@@ -245,7 +246,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
             OpenCodeRuntime.runOpenCodeSdk("session.abort", (signal) =>
               client.session.abort({ sessionID: session.data.id }, { signal }),
             ).pipe(
-              Effect.interruptible,
+              // The onInterrupt finalizer is masked. Run the bounded abort
+              // in a fresh, interruptible child; wait for it before returning.
               Effect.timeout("10 seconds"),
               Effect.catch(() =>
                 Effect.logWarning(
@@ -254,6 +256,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
                 ),
               ),
               Effect.asVoid,
+              Effect.forkChild({ startImmediately: true, uninterruptible: false }),
+              Effect.flatMap(Fiber.join),
             ),
           ),
         );
