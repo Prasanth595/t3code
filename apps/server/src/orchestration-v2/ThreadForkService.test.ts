@@ -58,6 +58,7 @@ function makeSourceThread(): OrchestrationV2AppThread {
     lastVisitedAt: null,
     snoozedUntil,
     snoozedAt,
+    mutedAt: snoozedAt,
     deletedAt: null,
   };
 }
@@ -139,7 +140,7 @@ it("treats usage-limited and other provider-finished runs as forkable", () => {
   assert.isFalse(ThreadForkService.isForkableSourceRunStatus("rolled_back"));
 });
 
-it.effect("keeps a fork awake when its source thread is snoozed", () =>
+it.effect("keeps a fork awake and unmuted when its source thread is snoozed and muted", () =>
   Effect.gen(function* () {
     const sourceThread = makeSourceThread();
     const sourceRun = makeSourceRun("completed");
@@ -147,6 +148,7 @@ it.effect("keeps a fork awake when its source thread is snoozed", () =>
 
     assert.isNull(result.targetThread.snoozedUntil);
     assert.isNull(result.targetThread.snoozedAt);
+    assert.isNull(result.targetThread.mutedAt);
     assert.equal(result.targetThread.projectId, sourceThread.projectId);
     assert.equal(result.targetThread.providerInstanceId, sourceThread.providerInstanceId);
     assert.deepEqual(result.targetThread.modelSelection, sourceThread.modelSelection);

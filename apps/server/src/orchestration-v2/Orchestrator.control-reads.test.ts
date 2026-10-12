@@ -302,17 +302,18 @@ it.effect("mutes and unmutes a thread without marking it active", () =>
     const created = yield* projections.getThreadShell(threadId);
     assert.ok(created);
     let mutedAt: DateTime.Utc | null = null;
-    for (const [index, muted] of [true, true, false].entries()) {
-      yield* orchestrator.dispatch({
+    for (const [index, muted] of [true, true, false, false].entries()) {
+      const result = yield* orchestrator.dispatch({
         type: "thread.mute.set",
         commandId: CommandId.make(`mute-${index}`),
         threadId,
         muted,
       });
+      // Repeating the current state emits nothing and keeps the timestamp.
+      assert.equal(result.storedEvents.length, index === 0 || index === 2 ? 1 : 0);
       const shell = yield* projections.getThreadShell(threadId);
       assert.ok(shell);
       assert.equal(shell.mutedAt != null, muted);
-      // Muting again keeps the original timestamp.
       if (index === 0) mutedAt = shell.mutedAt ?? null;
       if (index === 1) assert.deepEqual(shell.mutedAt, mutedAt);
       assert.deepEqual(shell.updatedAt, created.updatedAt);

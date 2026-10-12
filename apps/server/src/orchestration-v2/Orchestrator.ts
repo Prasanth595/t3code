@@ -2456,6 +2456,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Thread ${command.threadId} is deleted.`,
       });
     }
+    // A repeated unmute must not move the relay's alert cutoff past work that
+    // already finished, so a mute that changes nothing emits nothing.
+    if (command.type === "thread.mute.set" && command.muted === (thread.mutedAt != null)) {
+      return;
+    }
     if (
       command.type === "thread.pull-request.watch" &&
       command.watching &&
@@ -2899,7 +2904,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         case "thread.mute.set":
           return {
             ...thread,
-            mutedAt: command.muted ? (thread.mutedAt ?? now) : null,
+            mutedAt: command.muted ? now : null,
           };
         case "thread.pin": {
           // Pinning is a promotion: it clears the parked states rather than
@@ -10974,13 +10979,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
-        // A settle that finds the provider already ended everything, or a
-        // stop that finds nothing running, has nothing to record. That is
-        // its expected outcome, not a failure.
+        // A settle that finds the provider already ended everything, a stop
+        // that finds nothing running, or a mute that matches the current
+        // state has nothing to record. That is its expected outcome, not a
+        // failure.
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
-        command.type === "subagent.stop"
+        command.type === "subagent.stop" ||
+        command.type === "thread.mute.set"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({
