@@ -457,7 +457,9 @@ describe("PullRequestSyncReactor", () => {
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
           summary: (input) =>
-            Effect.succeed(makeSummary(input, { title: "Ship it", isDraft: true })),
+            Effect.succeed(
+              makeSummary(input, { title: "Ship it", isDraft: true, observedAt: 123 }),
+            ),
         });
 
         yield* Effect.gen(function* () {
@@ -487,6 +489,7 @@ describe("PullRequestSyncReactor", () => {
                   baseBranch: "main",
                   isDraft: true,
                   updatedAt: "2026-08-27T00:00:00.000Z",
+                  observedAt: 123,
                   syncedAt: NOW,
                   closedAt: null,
                   mergedAt: null,
@@ -566,12 +569,17 @@ describe("PullRequestSyncReactor", () => {
         yield* TestClock.setTime(Date.parse(NOW));
         const fixture = yield* makeHarness({
           snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(42)] })]),
+          summary: (input) =>
+            Clock.currentTimeMillis.pipe(
+              Effect.map((observedAt) => makeSummary(input, { observedAt })),
+            ),
         });
 
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
           const firstSweep = yield* Ref.get(fixture.syncCommands);
           assert.strictEqual(firstSweep.length, 1);
+          assert.strictEqual(firstSweep[0]?.snapshot.observedAt, Date.parse(NOW));
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
 
           yield* sweepAgain(fixture, reactor);

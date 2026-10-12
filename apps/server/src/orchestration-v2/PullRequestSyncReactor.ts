@@ -57,6 +57,7 @@ function snapshotFieldsOf(summary: PullRequestSummary): SnapshotFields {
     baseBranch: summary.baseBranch,
     isDraft: summary.isDraft ?? false,
     updatedAt: summary.updatedAt,
+    ...(summary.observedAt === undefined ? {} : { observedAt: summary.observedAt }),
     closedAt: summary.closedAt ?? null,
     mergedAt: summary.mergedAt ?? null,
     ...(summary.author === undefined ? {} : { author: summary.author }),

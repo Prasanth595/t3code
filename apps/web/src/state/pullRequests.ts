@@ -204,7 +204,13 @@ const linkedPullRequestSummaryAtom = Atom.family((key: string) =>
       `${environmentId}:${threadPullRequestKeyOf({ ...reference, host })}`,
     );
     return link === undefined ? null : threadPullRequestLinkToSummary(link, reference);
-  }).pipe(Atom.setIdleTTL(5 * 60_000)),
+  }).pipe(
+    // Shell updates also resend unchanged links; keep their subscribers quiet.
+    Atom.withEquality((previous, next) =>
+      previous === next || JSON.stringify(previous) === JSON.stringify(next),
+    ),
+    Atom.setIdleTTL(5 * 60_000),
+  ),
 );
 
 export function useSharedPullRequestSummary(
