@@ -120,6 +120,8 @@ function sectionMatcher(pattern: string) {
         needsTokenMatcher = true;
         return protect({ kind: "range", min, max, padding });
       }
+      // Minimatch's matchBase discards ancestor segments, but ** can consume them.
+      if (token === "**") needsTokenMatcher = true;
       if (token.includes("/")) directoryRelative = true;
       return token;
     },
