@@ -1462,6 +1462,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (call.child !== undefined) return;
       const info = announced.get(childId);
       announced.delete(childId);
+      call.agent ??= info?.agent;
       const now = yield* DateTime.now;
       const nodeId = idAllocator.derive.nodeFromProviderItem({
         driver,

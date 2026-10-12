@@ -2977,6 +2977,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.map((response) =>
                   response.thread.id === input.nativeThreadId ? response : null,
                 ),
+                Effect.timeout("5 seconds"),
                 Effect.catch(() => Effect.succeed(null)),
                 Effect.tap((response) => {
                   const agentType = response?.thread.agentRole?.trim();
@@ -3006,7 +3007,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                               threadId: input.nativeThreadId,
                               excludeTurns: true,
                             })
-                            .pipe(Effect.flatMap(decodeCodexChildModel))
+                            .pipe(
+                              Effect.flatMap(decodeCodexChildModel),
+                              Effect.timeout("5 seconds"),
+                            )
                         : Effect.succeed(read)
                       ).pipe(
                         Effect.flatMap((response) =>
@@ -3022,7 +3026,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                         ),
                       ),
                 ),
-                Effect.timeout("5 seconds"),
                 Effect.catch(() => Effect.void),
                 Effect.forkIn(scope),
               );
