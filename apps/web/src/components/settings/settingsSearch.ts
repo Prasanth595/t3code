@@ -239,6 +239,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
+    id: "header-backdrop-image",
+    title: "Header Backdrop Image",
+    to: "/settings/appearance",
+    searchTerms: ["backdrop sidebar header image banner background upload file picker"],
+  },
+  {
+    id: "show-header-title",
+    title: "Show Header Title",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar brand header title wordmark text logo toggle"],
+  },
+  {
     id: "diff-color-scheme",
     title: "Diff colors",
     to: "/settings/appearance",

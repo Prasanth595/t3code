@@ -1375,7 +1375,7 @@ export function AppearanceSettingsPanel() {
         ) : null}
 
         <SettingsRow
-          title="Header Backdrop Image"
+          {...searchableSetting("header-backdrop-image")}
           description="Custom background image URL or file for the sidebar header."
           resetAction={
             settings.customBackdropImageUrl ? (
@@ -1415,7 +1415,7 @@ export function AppearanceSettingsPanel() {
         />
 
         <SettingsRow
-          title="Show Header Title"
+          {...searchableSetting("show-header-title")}
           description="Display 'T3 Code' brand title text over the header backdrop."
           resetAction={
             settings.showSidebarHeaderTitle !== true ? (

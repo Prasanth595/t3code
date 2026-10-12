@@ -25,7 +25,11 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
-import { useEnvironmentIdentificationMode, useLegacySidebarEnabled } from "../hooks/useSettings";
+import {
+  useClientSettings,
+  useEnvironmentIdentificationMode,
+  useLegacySidebarEnabled,
+} from "../hooks/useSettings";
 import {
   PanelAnimationSuppressionProvider,
   usePanelAnimationSettings,
@@ -89,6 +93,8 @@ function SidebarControl() {
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
   );
+  const customBackdropImageUrl = useClientSettings((s) => s.customBackdropImageUrl);
+  const hasBackdrop = stageBackdropVariant !== null || Boolean(customBackdropImageUrl);
   const shortcutLabel = shortcutLabelForCommand(keybindings, "sidebar.toggle", {
     context: { usagePageOpen },
   });
@@ -148,10 +154,10 @@ function SidebarControl() {
             <SidebarTrigger
               // Over the stage artwork the trigger is a control on imagery, like the media
               // viewer's arrows; that variant positions itself, so the layout is reset here.
-              variant={isSidebarVisible && stageBackdropVariant ? "media-navigation" : "ghost"}
+              variant={isSidebarVisible && hasBackdrop ? "media-navigation" : "ghost"}
               className={cn(
                 "pointer-events-auto",
-                isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
+                isSidebarVisible && hasBackdrop && "relative top-auto translate-y-0",
               )}
               aria-label="Toggle main sidebar"
             />
