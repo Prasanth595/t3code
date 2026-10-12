@@ -24,8 +24,8 @@ const platformPackages = ["c", "a", "b"].map((name) => ({ name, version: "1.2.3"
 
 // A fake publish that records when each upload starts and ends. Platform
 // uploads only end once every platform upload has started, so they have to
-// run at the same time. `failing` fails as soon as it starts.
-const fakePublish = Effect.fn("fakePublish")(function* (failing?: string) {
+// run at the same time. Each `failing` upload fails instead of ending.
+const fakePublish = Effect.fn("fakePublish")(function* (...failing: ReadonlyArray<string>) {
   const events: Array<string> = [];
   const allStarted = yield* Latch.make();
   let started = 0;
@@ -35,8 +35,11 @@ const fakePublish = Effect.fn("fakePublish")(function* (failing?: string) {
       if (tarball === launcherTarball) return;
       started += 1;
       if (started === platformTarballs.length) yield* allStarted.open;
-      if (tarball === failing) return yield* Effect.fail(`${tarball} failed`);
       yield* allStarted.await;
+      if (failing.includes(tarball)) {
+        events.push(`fail ${tarball}`);
+        return yield* Effect.fail(`${tarball} failed`);
+      }
       events.push(`end ${tarball}`);
     });
   return { events, publish };
@@ -50,7 +53,8 @@ const checkEvents = (events: ReadonlyArray<string>) =>
 // A fake readiness check that records each call in `events`. A package fails
 // its first `failures[name]` checks, the first with a metadata reason and the
 // rest with a tarball one. `firstRound` opens once every platform package has
-// been checked, so a test can move the clock only after the wait started.
+// been checked, and no first check answers before then, so the checks have to
+// run at the same time. A test moves the clock only after the wait started.
 const fakeCheck = Effect.fn("fakeCheck")(function* (
   events: Array<string>,
   failures: Readonly<Record<string, number>> = {},
@@ -63,6 +67,7 @@ const fakeCheck = Effect.fn("fakeCheck")(function* (
         yield* firstRound.open;
       }
       const checks = checksOf(events, pkg.name);
+      if (checks === 1) yield* firstRound.await;
       if (checks > (failures[pkg.name] ?? 0)) return;
       return yield* new ServerCliNpmPackageNotReadyError({
         packageSpec: `${pkg.name}@${pkg.version}`,
@@ -94,9 +99,9 @@ it.effect("publishes the platform packages at once and the launcher last", () =>
   }),
 );
 
-it.effect("finishes the other uploads and skips the launcher when one fails", () =>
+it.effect("finishes the other uploads and returns the first failure in platform order", () =>
   Effect.gen(function* () {
-    const { events, publish } = yield* fakePublish("b.tgz");
+    const { events, publish } = yield* fakePublish("b.tgz", "c.tgz");
     const { checkInstallable } = yield* fakeCheck(events);
 
     const exit = yield* Effect.exit(
@@ -110,15 +115,17 @@ it.effect("finishes the other uploads and skips the launcher when one fails", ()
       }),
     );
 
+    // c.tgz fails first: it starts last and runs on while the others resume.
+    assert.isBelow(events.indexOf("fail c.tgz"), events.indexOf("fail b.tgz"));
     assert.deepStrictEqual(exit, Exit.fail("b.tgz failed"));
-    assert.includeMembers(events, ["end a.tgz", "end c.tgz"]);
+    assert.include(events, "end a.tgz");
     assert.notInclude(events, `start ${launcherTarball}`);
     assert.deepStrictEqual(checkEvents(events), []);
   }),
 );
 
 it.effect(
-  "checks every platform package once after the uploads end, then publishes the launcher",
+  "checks every platform package at once after the uploads end, then publishes the launcher",
   () =>
     Effect.gen(function* () {
       const { events, publish } = yield* fakePublish();
@@ -270,23 +277,27 @@ const fakeRegistry = (
   return { requests, signals, layer };
 };
 
-// A fake npm registry that sends no response. Each request opens `requested`,
-// then runs `answer`, which fails or never ends.
-const fakeUnansweredRegistry = Effect.fn("fakeUnansweredRegistry")(function* (
+// A fake npm registry that records each request and answers it with `answer`,
+// which can fail, never end, or send a body that never ends. An answer opens
+// `stalled` once the step it stalls has started.
+const fakeStallingRegistry = Effect.fn("fakeStallingRegistry")(function* (
   answer: (
     request: HttpClientRequest.HttpClientRequest,
-  ) => Effect.Effect<never, HttpClientError.HttpClientError>,
+    stalled: Latch.Latch,
+  ) => Effect.Effect<Response, HttpClientError.HttpClientError>,
 ) {
   const requests: Array<string> = [];
-  const requested = yield* Latch.make();
+  const stalled = yield* Latch.make();
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request, url) => {
       requests.push(`${request.method} ${url.href}`);
-      return Effect.andThen(requested.open, answer(request));
+      return Effect.map(answer(request, stalled), (web) =>
+        HttpClientResponse.fromWeb(request, web),
+      );
     }),
   );
-  return { requests, requested, layer };
+  return { requests, stalled, layer };
 });
 
 it.effect.each([
@@ -374,7 +385,7 @@ it.effect("rejects a version whose tarball npm does not serve yet", () =>
 it.effect("rejects a version when its metadata request cannot reach npm", () =>
   Effect.gen(function* () {
     const transportErrors: Array<HttpClientError.HttpClientError> = [];
-    const fake = yield* fakeUnansweredRegistry((request) => {
+    const fake = yield* fakeStallingRegistry((request) => {
       const transportError = new HttpClientError.HttpClientError({
         reason: new HttpClientError.TransportError({ request, description: "connection reset" }),
       });
@@ -397,14 +408,35 @@ it.effect("rejects a version when its metadata request cannot reach npm", () =>
   }),
 );
 
-it.effect("rejects a version when npm does not answer within 10 seconds", () =>
+it.effect.each([
+  {
+    step: "metadata response",
+    reason: "metadata timed out",
+    answer: (_: HttpClientRequest.HttpClientRequest, stalled: Latch.Latch) =>
+      Effect.andThen(stalled.open, Effect.never),
+  },
+  {
+    step: "metadata body",
+    reason: "metadata timed out",
+    answer: (_: HttpClientRequest.HttpClientRequest, stalled: Latch.Latch) =>
+      Effect.as(stalled.open, new Response(new ReadableStream(), { status: 200 })),
+  },
+  {
+    step: "tarball HEAD",
+    reason: "tarball timed out",
+    answer: (request: HttpClientRequest.HttpClientRequest, stalled: Latch.Latch) =>
+      request.method === "GET"
+        ? Effect.succeed(Response.json({ dist: { tarball: tarballUrl } }))
+        : Effect.andThen(stalled.open, Effect.never),
+  },
+])("rejects a version when the $step takes over 10 seconds", (stall) =>
   Effect.gen(function* () {
-    const fake = yield* fakeUnansweredRegistry(() => Effect.never);
+    const fake = yield* fakeStallingRegistry(stall.answer);
 
     const fiber = yield* Effect.forkChild(
       checkNpmVersionInstallable(registry, platformPackage).pipe(Effect.provide(fake.layer)),
     );
-    yield* fake.requested.await;
+    yield* fake.stalled.await;
 
     yield* TestClock.adjust("9 seconds");
     assert.isUndefined(fiber.pollUnsafe());
@@ -412,7 +444,7 @@ it.effect("rejects a version when npm does not answer within 10 seconds", () =>
     yield* TestClock.adjust("1 second");
     const error = yield* Effect.flip(Fiber.join(fiber));
     assert.strictEqual(error._tag, "ServerCliNpmPackageNotReadyError");
-    assert.include(error.reason, "timed out");
+    assert.strictEqual(error.reason, stall.reason);
     assert.isUndefined(error.cause);
   }),
 );
