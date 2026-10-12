@@ -419,6 +419,8 @@ export const ClientSettingsSchema = Schema.Struct({
   terminalAppShortcutsFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: background work status icons open a details popover; their descriptions render markdown links. */
   backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
+  forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1145,6 +1147,23 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   /**
+   * Fork: after a restart or crash, send each thread that the restart cut off a
+   * recovery message. Unlike `continueThreadsAfterServerUpdate`, this also wakes
+   * a thread whose finished turn left background work (native subagents,
+   * monitors, background shells) that the restart killed.
+   */
+  recoverInterruptedTurns: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: the message `recoverInterruptedTurns` sends to a top-level thread. */
+  recoverInterruptedTurnsMessage: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("Recover and continue")),
+  ),
+  /** Fork: the message `recoverInterruptedTurns` sends to a delegated child thread. */
+  recoverInterruptedTurnsSubagentMessage: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed("Recover and continue. Your parent thread was also restarted."),
+    ),
+  ),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -1554,6 +1573,9 @@ export const ServerSettingsPatch = Schema.Struct({
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
+  recoverInterruptedTurns: Schema.optionalKey(Schema.Boolean),
+  recoverInterruptedTurnsMessage: Schema.optionalKey(TrimmedNonEmptyString),
+  recoverInterruptedTurnsSubagentMessage: Schema.optionalKey(TrimmedNonEmptyString),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
@@ -1734,6 +1756,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmTerminalClose: Schema.optionalKey(Schema.Boolean),
   terminalAppShortcutsFirst: Schema.optionalKey(Schema.Boolean),
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
+  forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),

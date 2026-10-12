@@ -1,9 +1,10 @@
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { ClientSettings, DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
+import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -35,11 +36,15 @@ import {
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
+import { ForkChangelogDialog } from "../forkChangelog/ForkChangelogDialog";
+import { Button } from "../ui/button";
 
 type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
 >[1];
 type SidebarUpdatePopoverHandle = ReturnType<typeof PopoverCreateHandle>;
+
+const selectForkChangelogEnabled = (settings: ClientSettings) => settings.forkChangelogEnabled;
 
 export function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
@@ -127,6 +132,9 @@ function SidebarUpdateControl() {
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  // Fork: with the changelog on, the popover opens even when no update is available.
+  const forkChangelogEnabled = useClientSettings(selectForkChangelogEnabled);
+  const [isForkChangelogOpen, setIsForkChangelogOpen] = useState(false);
 
   useEffect(() => {
     if (prefersReducedMotion) {
@@ -166,10 +174,9 @@ function SidebarUpdateControl() {
       ? isDesktopUpdateButtonDisabled(state)
       : !canCheckForUpdate(state);
   const isInteractionDisabled = disabled || isActionPending;
-  const showReleaseNotesPopover = shouldUseSidebarUpdateReleaseNotesPopover(
-    showUpdateDetails,
-    state,
-  );
+  const showReleaseNotesPopover =
+    shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state) ||
+    (forkChangelogEnabled && state !== null);
 
   useEffect(() => {
     if (!showReleaseNotesPopover) {
@@ -428,9 +435,26 @@ function SidebarUpdateControl() {
               state={state}
               tooltip={tooltip}
             />
+            {forkChangelogEnabled ? (
+              <div className="mt-2 px-1">
+                <Button
+                  size="xs"
+                  variant="outline"
+                  onClick={() => {
+                    releaseNotesPopoverHandle.close();
+                    setIsForkChangelogOpen(true);
+                  }}
+                >
+                  Open changelog
+                </Button>
+              </div>
+            ) : null}
           </PopoverPopup>
         ) : null}
       </Popover>
+      {forkChangelogEnabled ? (
+        <ForkChangelogDialog open={isForkChangelogOpen} onOpenChange={setIsForkChangelogOpen} />
+      ) : null}
     </SidebarMenuItem>
   );
 }

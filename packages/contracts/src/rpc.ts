@@ -67,6 +67,14 @@ import {
 } from "./acpRegistry.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
+  ForkChangelogError,
+  ForkReleaseChanges,
+  ForkReleaseChangesInput,
+  ForkReleaseList,
+  ForkSyncStatus,
+  ForkUpstreamPending,
+} from "./forkChangelog.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -584,7 +592,41 @@ export const WS_METHODS = {
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
+
+  // Fork changelog (fork feature)
+  forkChangelogListReleases: "forkChangelog.listReleases",
+  forkChangelogReleaseChanges: "forkChangelog.releaseChanges",
+  forkChangelogUpstreamPending: "forkChangelog.upstreamPending",
+  forkChangelogSyncStatus: "forkChangelog.syncStatus",
+  forkChangelogStartSync: "forkChangelog.startSync",
 } as const;
+
+const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
+const WsForkChangelogListReleasesRpc = Rpc.make(WS_METHODS.forkChangelogListReleases, {
+  payload: Schema.Struct({}),
+  success: ForkReleaseList,
+  error: forkChangelogError,
+});
+const WsForkChangelogReleaseChangesRpc = Rpc.make(WS_METHODS.forkChangelogReleaseChanges, {
+  payload: ForkReleaseChangesInput,
+  success: ForkReleaseChanges,
+  error: forkChangelogError,
+});
+const WsForkChangelogUpstreamPendingRpc = Rpc.make(WS_METHODS.forkChangelogUpstreamPending, {
+  payload: Schema.Struct({}),
+  success: ForkUpstreamPending,
+  error: forkChangelogError,
+});
+const WsForkChangelogSyncStatusRpc = Rpc.make(WS_METHODS.forkChangelogSyncStatus, {
+  payload: Schema.Struct({}),
+  success: ForkSyncStatus,
+  error: forkChangelogError,
+});
+const WsForkChangelogStartSyncRpc = Rpc.make(WS_METHODS.forkChangelogStartSync, {
+  payload: Schema.Struct({}),
+  success: ForkSyncStatus,
+  error: forkChangelogError,
+});
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -2069,4 +2111,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
+  WsForkChangelogListReleasesRpc,
+  WsForkChangelogReleaseChangesRpc,
+  WsForkChangelogUpstreamPendingRpc,
+  WsForkChangelogSyncStatusRpc,
+  WsForkChangelogStartSyncRpc,
 ).middleware(RpcScopeAuthorization);

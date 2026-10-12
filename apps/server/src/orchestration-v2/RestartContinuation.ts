@@ -12,6 +12,7 @@ import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
+import { recoverInterruptedThread } from "./RecoverInterruptedTurns.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
   isRestartNoteSource,
@@ -92,6 +93,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
+    // Fork: the recovery message and its rules replace this continuation.
+    if (enabled.recoverInterruptedTurns) return yield* recoverInterruptedThread(input, enabled);
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const messageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
     const projection = yield* threads.getThreadRecords(

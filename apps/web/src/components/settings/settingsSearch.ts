@@ -473,6 +473,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "recover-interrupted-turns",
+    title: "Recover interrupted agents",
+    to: "/settings/general",
+    searchTerms: [
+      "recover continue resume restart crash update quit interrupted agent subagent message background",
+    ],
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
@@ -587,6 +595,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Version",
     to: "/settings/general",
     searchTerms: ["about check for updates download install upgrade release"],
+  },
+  {
+    id: "fork-changelog",
+    title: "Fork changelog",
+    to: "/settings/general",
+    searchTerms: ["changelog release notes versions upstream fork sync workflow"],
   },
   {
     id: "update-track",

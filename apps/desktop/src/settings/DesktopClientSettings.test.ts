@@ -36,6 +36,7 @@ const clientSettings: ClientSettings = {
   confirmTerminalClose: true,
   terminalAppShortcutsFirst: false,
   backgroundWorkDetails: false,
+  forkChangelogEnabled: false,
   contextWindowMeterEnabled: false,
   composerCollapseOnScroll: true,
   dismissedProviderUpdateNotificationKeys: [],

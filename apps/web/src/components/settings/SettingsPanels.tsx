@@ -61,6 +61,7 @@ import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
+import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -93,6 +94,7 @@ import {
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { RecoverInterruptedTurnsSettings } from "./RecoverInterruptedTurnsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -654,6 +656,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
         : []),
+      ...(settings.recoverInterruptedTurns !== DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurns
+        ? ["Recover interrupted agents"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -691,6 +696,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.backgroundWorkDetails !== DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails
         ? ["Background work details"]
         : []),
+      ...(settings.forkChangelogEnabled !== DEFAULT_UNIFIED_SETTINGS.forkChangelogEnabled
+        ? ["Fork changelog"]
+        : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
       ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
@@ -720,6 +728,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmTerminalClose,
       settings.terminalAppShortcutsFirst,
       settings.backgroundWorkDetails,
+      settings.forkChangelogEnabled,
       settings.composerCollapseOnScroll,
       settings.composerRichTextEnabled,
       settings.sendShortcut,
@@ -749,6 +758,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
+      settings.recoverInterruptedTurns,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
       settings.autoResumeLimitedThreads,
@@ -863,6 +873,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      recoverInterruptedTurns: DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurns,
+      recoverInterruptedTurnsMessage: DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurnsMessage,
+      recoverInterruptedTurnsSubagentMessage:
+        DEFAULT_UNIFIED_SETTINGS.recoverInterruptedTurnsSubagentMessage,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -878,6 +892,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmTerminalClose: DEFAULT_UNIFIED_SETTINGS.confirmTerminalClose,
       terminalAppShortcutsFirst: DEFAULT_UNIFIED_SETTINGS.terminalAppShortcutsFirst,
       backgroundWorkDetails: DEFAULT_UNIFIED_SETTINGS.backgroundWorkDetails,
+      forkChangelogEnabled: DEFAULT_UNIFIED_SETTINGS.forkChangelogEnabled,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
       textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
@@ -3002,6 +3017,8 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <RecoverInterruptedTurnsSettings />
+
         <SettingsRow
           serverScoped
           settingKeys={["backgroundActivity"]}
@@ -3544,6 +3561,7 @@ export function GeneralSettingsPanel() {
             {IS_NIGHTLY_BUILD ? <NightlyMobileBetaRow /> : null}
           </>
         )}
+        <ForkChangelogSettingsRow />
         <SettingsRow
           {...searchableSetting("privacy-policy")}
           description="How we handle your data, including the anonymous usage data T3 Code collects."

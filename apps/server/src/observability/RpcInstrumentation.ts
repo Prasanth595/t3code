@@ -208,6 +208,11 @@ const RPC_AGGREGATES = {
   [WS_METHODS.subscribeServerLifecycle]: "server",
   [WS_METHODS.subscribeAuthAccess]: "auth",
   [WS_METHODS.subscribeBackgroundPolicy]: "server",
+  [WS_METHODS.forkChangelogListReleases]: "forkChangelog",
+  [WS_METHODS.forkChangelogReleaseChanges]: "forkChangelog",
+  [WS_METHODS.forkChangelogUpstreamPending]: "forkChangelog",
+  [WS_METHODS.forkChangelogSyncStatus]: "forkChangelog",
+  [WS_METHODS.forkChangelogStartSync]: "forkChangelog",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";
