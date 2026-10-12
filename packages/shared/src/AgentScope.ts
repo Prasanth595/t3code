@@ -97,11 +97,6 @@ export interface AgentSystemdScope {
  * spawned PID, stdio, and signals all belong to the agent itself.
  * `systemd-run --scope` registers its own PID as the scope and then runs the
  * command, so the agent and all of its children start inside the scope.
- *
- * With `setpriv`, the agent also gets SIGTERM when the server dies. A scope
- * takes the agent out of the server's cgroup, so when the server is killed
- * (the service launcher's SIGKILL after its grace period, a crash) nothing
- * else stops the agent, and it keeps working and billing with nobody reading it.
  */
 export function agentScopeCommand(input: {
   readonly command: string;

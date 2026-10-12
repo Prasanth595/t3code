@@ -177,8 +177,6 @@ export const make = Effect.gen(function* () {
   // at a time, so only its latest scope can explain a failure.
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
 
-  // util-linux's setpriv sets the agent's parent-death signal, so an agent
-  // never outlives the server that reads it.
   const setpriv = yield* Effect.cached(
     resolve("setpriv", hostEnvironment).pipe(
       Effect.map((resolved) => (resolved._tag === "Some" ? resolved.value : undefined)),

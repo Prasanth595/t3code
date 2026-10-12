@@ -35,7 +35,6 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
     "stops the agent when the process that spawned it is killed",
     async () => {
       const launch = agentScopeCommand({ command: "sleep", args: ["300"], setpriv });
-      // Stands in for the server: starts the agent, prints its PID, then waits.
       const server = NodeChildProcess.spawn(
         "/bin/sh",
         ["-c", '"$@" & echo $!; exec sleep 300', "server", launch.command, ...launch.args],
@@ -52,16 +51,21 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
           return false;
         }
       };
-      // setpriv has set the signal once the agent has exec'd into its command.
-      await vi.waitFor(() =>
-        expect(NodeFS.readFileSync(`/proc/${agentPid}/cmdline`, "utf8")).toBe(
-          "sleep\u0000300\u0000",
-        ),
-      );
+      try {
+        await vi.waitFor(() =>
+          expect(NodeFS.readFileSync(`/proc/${agentPid}/cmdline`, "utf8")).toBe(
+            "sleep\u0000300\u0000",
+          ),
+        );
 
-      server.kill("SIGKILL");
+        server.kill("SIGKILL");
 
-      await vi.waitFor(() => expect(isAlive()).toBe(false), { timeout: 5_000 });
+        await vi.waitFor(() => expect(isAlive()).toBe(false), { timeout: 5_000 });
+      } finally {
+        server.kill("SIGKILL");
+        server.stdout.destroy();
+        if (isAlive()) process.kill(agentPid, "SIGKILL");
+      }
     },
   );
 });
