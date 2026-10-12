@@ -41,6 +41,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
     async contextFor(profileId: string, isolationKey?: string) {
       contextRequests.push({ profileId, isolated: isolationKey !== undefined });
       if (contextFailure) throw contextFailure;
+      contextStarted?.resolve();
       await contextGate?.promise;
       const context = makeContext(this.onClose);
       contexts.push(context);
@@ -50,7 +51,7 @@ vi.mock("./ServerBrowserContexts.ts", () => ({
       return makeContext().page as unknown as Page;
     }
     async connectDesktopPage(endpoint: string) {
-      const context = makeContext();
+      const context = existingDesktopContext ?? makeContext();
       desktopConnections.push({ endpoint, context });
       return { browser: { close: async () => {} }, page: context.page as unknown as Page };
     }
@@ -153,6 +154,8 @@ const contexts: ReturnType<typeof makeContext>[] = [];
 /** The profile and isolation each headless tab asked its context for. */
 const contextRequests: Array<{ profileId: string; isolated: boolean }> = [];
 let contextGate: PromiseWithResolvers<void> | null = null;
+let contextStarted: PromiseWithResolvers<void> | null = null;
+let existingDesktopContext: ReturnType<typeof makeContext> | null = null;
 type ClipboardBinding = (source: { page: unknown }, text: unknown) => void;
 let clipboardBinding: ClipboardBinding | null = null;
 let contextFailure: Error | null = null;
@@ -271,6 +274,8 @@ beforeEach(() => {
   contexts.length = 0;
   contextRequests.length = 0;
   contextGate = null;
+  contextStarted = null;
+  existingDesktopContext = null;
   contextFailure = null;
   desktopTabs.clear();
   desktopRendersNext = false;
@@ -1625,3 +1630,81 @@ it.live("an agent tab that went headless moves onto the desktop page that mounts
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.live("a desktop attachment during headless creation adopts the existing desktop page", () => {
+  const started = Promise.withResolvers<void>();
+  const launch = Promise.withResolvers<void>();
+  const attachment = Promise.withResolvers<{ threadId: string; tabId: string }>();
+  const delivered = Promise.withResolvers<void>();
+  const handled = Promise.withResolvers<void>();
+  let attached = false;
+  const desktopChannel = Layer.succeed(DesktopChannel.DesktopBrowserChannel, {
+    available: true,
+    awaitAttached: () => Effect.sync(() => attached),
+    isAttached: () => Effect.sync(() => attached),
+    detached: Stream.never,
+    attached: Stream.fromEffect(Effect.promise(() => attachment.promise)).pipe(
+      Stream.tap(() => Effect.sync(() => delivered.resolve())),
+      // The next pull happens only after ServerBrowser finishes handling the attachment.
+      Stream.concat(Stream.fromEffect(Effect.sync(() => handled.resolve())).pipe(Stream.drain)),
+    ),
+    endpoint: () => Effect.succeed("ws://desktop/pending-tab"),
+    pointer: () => Effect.void,
+  });
+  const pendingLayer = ServerBrowser.layer.pipe(
+    Layer.provideMerge(Layer.merge(dependencies, desktopChannel)),
+  );
+  return Effect.scoped(
+    Effect.gen(function* () {
+      yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      const broker = yield* Broker.PreviewAutomationBroker;
+      contextStarted = started;
+      contextGate = launch;
+      const desktop = makeContext();
+      existingDesktopContext = desktop;
+      yield* Effect.promise(() => desktop.page.goto("http://localhost:5173/account"));
+      desktop.page.title.mockResolvedValue("Existing desktop page");
+      desktop.page.goto.mockClear();
+      // Let the service subscribe to manager events before opening the tab.
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({
+        threadId: scope.thread.threadId,
+        runtime: "server",
+        profileId: "default",
+        automationOwner: "pending-tab-agent",
+        url: "http://localhost:5173/login",
+      });
+      // Headless was chosen, but its context has not finished launching.
+      yield* Effect.promise(() => started.promise);
+      expect(contextRequests).toEqual([{ profileId: "default", isolated: false }]);
+      expect(contexts).toHaveLength(0);
+      attached = true;
+      attachment.resolve({ threadId: scope.thread.threadId, tabId: opened.tabId });
+      yield* Effect.promise(() => delivered.promise);
+      // Let the attachment handler reach the pending creation before releasing it.
+      yield* Effect.yieldNow;
+      launch.resolve();
+      yield* Effect.promise(() => handled.promise);
+
+      // The agent reads the same tab, now backed by the user's existing page.
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId: PreviewTabId.make(opened.tabId),
+        operation: "status",
+        input: {},
+      });
+      expect(status).toMatchObject({
+        tabId: opened.tabId,
+        url: "http://localhost:5173/account",
+        title: "Existing desktop page",
+      });
+      expect(status.tabs?.map((tab) => tab.tabId)).toEqual([opened.tabId]);
+      expect(contexts).toHaveLength(1);
+      expect(contexts[0]!.page.isClosed()).toBe(true);
+      expect(desktop.page.isClosed()).toBe(false);
+      expect(desktop.page.goto).not.toHaveBeenCalled();
+      expect(desktopConnections).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(pendingLayer));
+});
