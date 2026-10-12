@@ -27,7 +27,17 @@ export interface RepositoryIdentityResolverOptions {
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
+  /** Fork setting `preferOriginRemote`, read on each resolve. Off when omitted. */
+  readonly preferOriginRemote?: Effect.Effect<boolean>;
 }
+
+/** Which remote names a checkout's repository first. `origin` first only with `preferOriginRemote`. */
+type RemoteOrder = "upstream-first" | "origin-first";
+
+const PREFERRED_REMOTE_NAMES = {
+  "upstream-first": ["upstream", "origin"],
+  "origin-first": ["origin", "upstream"],
+} as const satisfies Record<RemoteOrder, ReadonlyArray<string>>;
 
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
@@ -57,8 +67,9 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
 
 function pickPrimaryRemote(
   remotes: ReadonlyMap<string, string>,
+  order: RemoteOrder,
 ): { readonly remoteName: string; readonly remoteUrl: string } | null {
-  for (const preferredRemoteName of ["upstream", "origin"] as const) {
+  for (const preferredRemoteName of PREFERRED_REMOTE_NAMES[order]) {
     const remoteUrl = remotes.get(preferredRemoteName);
     if (remoteUrl) {
       return { remoteName: preferredRemoteName, remoteUrl };
@@ -141,6 +152,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: string,
+  order: RemoteOrder,
 ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
@@ -155,7 +167,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   }
 
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
-  const remote = pickPrimaryRemote(remotes);
+  const remote = pickPrimaryRemote(remotes, order);
   return remote
     ? buildRepositoryIdentity({ ...remote, originUrl: remotes.get("origin"), rootPath: cacheKey })
     : null;
@@ -186,17 +198,24 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
-  const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
-    (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
-        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
-        Effect.filterOrElse(
-          (identity): identity is null => identity === null,
-          (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
+  const preferOriginRemote = options.preferOriginRemote ?? Effect.succeed(false);
+  // One cache per remote order, so turning the setting on or off never reads a stale identity.
+  const makeIdentityCache = (order: RemoteOrder) =>
+    Cache.makeWith<string, RepositoryIdentity | null>(
+      (cacheKey) =>
+        resolveRepositoryIdentityFromCacheKey(cacheKey, order).pipe(
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+          Effect.filterOrElse(
+            (identity): identity is null => identity === null,
+            (identity) => refine(identity).pipe(Effect.orElseSucceed(() => identity)),
+          ),
         ),
-      ),
-    { capacity: cacheCapacity, timeToLive },
-  );
+      { capacity: cacheCapacity, timeToLive },
+    );
+  const repositoryIdentityCaches = {
+    "upstream-first": yield* makeIdentityCache("upstream-first"),
+    "origin-first": yield* makeIdentityCache("origin-first"),
+  } satisfies Record<RemoteOrder, unknown>;
 
   // Untraced because almost every call is a cache hit. The lookups that spawn
   // git keep their own spans.
@@ -205,6 +224,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
       const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
       if (cacheKey === null) return null;
+      const repositoryIdentityCache =
+        repositoryIdentityCaches[(yield* preferOriginRemote) ? "origin-first" : "upstream-first"];
       if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
       return yield* Cache.get(repositoryIdentityCache, cacheKey);
     },

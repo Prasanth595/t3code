@@ -170,6 +170,14 @@ Every agent runs as a child process of the T3 server. An update, a crash or a qu
 - The thread shows the message as a "T3 Code restarted" notice. The agent receives the message text.
 - The code is in `apps/server/src/orchestration-v2/RecoverInterruptedTurns.ts`.
 
+## Pull requests from origin
+
+The server setting `preferOriginRemote` makes a fork checkout count as its fork. It is off by default. Turn it on in Settings > Source control > Fork checkouts.
+
+- Upstream T3 names a checkout by its `upstream` remote first, then `origin`. A fork checkout then lists, reads and watches the pull requests of the upstream repository, and never the ones of the fork.
+- With the setting on, `origin` comes first. The pull request list, pull request details, watches and links use the fork. The sidebar groups the checkout under the fork in both cases.
+- Pull request creation and the pull request of the current branch come from the GitHub provider. It follows gh's default repository, then `upstream`. Run `gh repo set-default <owner>/<fork>` in each fork checkout, so that these use the fork too. The setting does not change them. Revisit if a fork checkout without a gh default creates a pull request on upstream.
+
 ## Pull request watch remark filter
 
 The server setting `pullRequestWatchRemarkFilter` selects which comments and reviews wake an agent that watches a pull request. It is off by default. Turn it on in Settings > Source control > Pull request watch.

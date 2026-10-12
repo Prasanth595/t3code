@@ -923,6 +923,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
   },
   {
+    id: "prefer-origin-remote",
+    title: "Pull requests from origin",
+    to: "/settings/source-control",
+    searchTerms: ["fork origin upstream remote repository pull request pr list"],
+    environmentOnly: true,
+  },
+  {
     id: "pull-request-watch-roles",
     title: "Roles that wake agents",
     to: "/settings/source-control",
