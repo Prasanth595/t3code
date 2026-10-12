@@ -51,6 +51,34 @@ void TERMINAL_RUN_STATUSES;
 
 export type PendingBackgroundWorkTask = OrchestrationV2PendingBackgroundTask;
 
+const THREAD_WAIT_TOOL_NAME = /(?:^|[^a-z0-9])t3_thread_wait$/i;
+const THREAD_DELEGATION_TOOL_NAME = /(?:^|[^a-z0-9])delegate_task$/i;
+
+/**
+ * Whether a running turn item is a T3 tool call that blocks until another
+ * thread finishes: t3_thread_wait, or delegate_task with mode "wait". Providers
+ * prefix MCP tool names differently (`mcp__t3-code__t3_thread_wait`,
+ * `t3-code.t3_thread_wait`), so the name is matched by its suffix.
+ */
+export function isThreadWaitToolItem(
+  item: Pick<OrchestrationV2TurnItem, "type" | "status"> & {
+    readonly toolName?: string | null;
+    readonly input?: unknown;
+  },
+): boolean {
+  if (item.type !== "dynamic_tool" || !isOrchestrationV2WorkActive(item.status)) return false;
+  const toolName = item.toolName?.trim() ?? "";
+  if (THREAD_WAIT_TOOL_NAME.test(toolName)) return true;
+  if (!THREAD_DELEGATION_TOOL_NAME.test(toolName)) return false;
+  const input = item.input;
+  return (
+    input !== null &&
+    typeof input === "object" &&
+    !Array.isArray(input) &&
+    Reflect.get(input, "mode") === "wait"
+  );
+}
+
 /**
  * Whether a turn-item update can end background work that a settled run is
  * still waiting on: an item of a background type that is no longer active.
