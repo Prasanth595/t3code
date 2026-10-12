@@ -77,6 +77,8 @@ const PROC_FD_WALK_LIMIT = 50_000;
 /** Scans that retry the fd walk for a listening socket whose owner was not found. */
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+/** `netstat -ano` lists every connection, not just listeners; ~80 bytes per row, sized for ~200k rows. */
+const WINDOWS_NETSTAT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 const WEB_PROBE_CONCURRENCY = 16;
@@ -678,7 +680,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           command: "netstat.exe",
           args: ["-ano", "-p", protocol],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
-          maxOutputBytes: 1024 * 1024,
+          maxOutputBytes: WINDOWS_NETSTAT_MAX_OUTPUT_BYTES,
         });
       const listeners = yield* Effect.all([runNetstat("tcp"), runNetstat("tcpv6")], {
         concurrency: 2,
