@@ -166,18 +166,19 @@ async function databaseFilesToBackUp(dbPath: string) {
 // Instant where the platform clones files (Linux on btrfs or XFS). Elsewhere the
 // copy is streamed so it can count progress and a stop can abort it between chunks.
 async function copyDatabaseFile(
-  source: string,
+  file: { readonly source: string; readonly bytes: number },
   destination: string,
   options: { readonly signal: AbortSignal; readonly onCopied: (bytes: number) => void },
 ): Promise<void> {
   try {
-    await NodeFSP.copyFile(source, destination, NodeFS.constants.COPYFILE_FICLONE_FORCE);
+    await NodeFSP.copyFile(file.source, destination, NodeFS.constants.COPYFILE_FICLONE_FORCE);
+    options.onCopied(file.bytes);
     return;
   } catch {
     await NodeFSP.rm(destination, { force: true });
   }
   await NodeStreamPromises.pipeline(
-    NodeFS.createReadStream(source, { highWaterMark: BACKUP_CHUNK_BYTES }),
+    NodeFS.createReadStream(file.source, { highWaterMark: BACKUP_CHUNK_BYTES }),
     async function* (chunks: AsyncIterable<Buffer>) {
       for await (const chunk of chunks) {
         options.onCopied(chunk.length);
@@ -218,7 +219,7 @@ async function backupDatabaseOnce(
       for (const file of files) {
         options.signal.throwIfAborted();
         const destination = databaseBackupFile(stagingDir, file.suffix);
-        await copyDatabaseFile(file.source, destination, {
+        await copyDatabaseFile(file, destination, {
           signal: options.signal,
           onCopied: progress.onCopied,
         });
