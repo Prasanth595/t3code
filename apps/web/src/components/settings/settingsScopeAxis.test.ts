@@ -75,12 +75,19 @@ describe("settings scope axes", () => {
   });
 
   it("drops a checkout narrowing from older links when either axis changes", () => {
-    const checkout = { project: "app", checkout: "app@first", machine: "first" };
+    const checkout = {
+      project: "app",
+      checkout: "app@first",
+      machine: "first",
+    };
     expect(selectEnvironmentAxis(checkout, "second")).toEqual({
       project: "app",
       machine: "second",
     });
-    expect(selectProjectAxis(checkout, "app")).toEqual({ project: "app", machine: "first" });
+    expect(selectProjectAxis(checkout, "app")).toEqual({
+      project: "app",
+      machine: "first",
+    });
   });
 });
 
@@ -93,8 +100,16 @@ describe("environmentAxisValue", () => {
 });
 
 describe("settings scope project menu", () => {
-  const fedora = { environmentId: EnvironmentId.make("fedora"), label: "fedora", displayUrl: null };
-  const laptop = { environmentId: EnvironmentId.make("laptop"), label: "laptop", displayUrl: null };
+  const fedora = {
+    environmentId: EnvironmentId.make("fedora"),
+    label: "fedora",
+    displayUrl: null,
+  };
+  const laptop = {
+    environmentId: EnvironmentId.make("laptop"),
+    label: "laptop",
+    displayUrl: null,
+  };
   const environments = [fedora, laptop];
 
   function member(id: string, environmentId: EnvironmentId, workspaceRoot: string) {
@@ -146,54 +161,41 @@ describe("settings scope project menu", () => {
     entries.map((entry) => ({
       project: entry.group.projectKey,
       environments: entry.environments.map((environment) => environment.label),
-      detail: entry.detail,
     }));
 
-  it("lists only projects with a checkout on the selected environment", () => {
+  it("lists only projects with a checkout on the selected environment, named by it", () => {
     expect(summarize(projectScopeMenuEntries(groups, environments, fedora.environmentId))).toEqual([
-      { project: "api", environments: [], detail: null },
-      { project: "shared", environments: [], detail: null },
+      { project: "api", environments: ["fedora"] },
+      { project: "shared", environments: ["fedora"] },
     ]);
   });
 
   it("names each project's environments when every environment is in scope", () => {
     expect(summarize(projectScopeMenuEntries(groups, environments, undefined))).toEqual([
-      { project: "api", environments: ["fedora"], detail: null },
-      { project: "shared", environments: ["fedora", "laptop"], detail: null },
-      { project: "notes", environments: ["laptop"], detail: null },
+      { project: "api", environments: ["fedora"] },
+      { project: "shared", environments: ["fedora", "laptop"] },
+      { project: "notes", environments: ["laptop"] },
     ]);
   });
 
   it("omits environment names when only one environment exists", () => {
     expect(summarize(projectScopeMenuEntries([api], [fedora], undefined))).toEqual([
-      { project: "api", environments: [], detail: null },
+      { project: "api", environments: [] },
     ]);
   });
 
-  it("tells same-name projects on the same environment apart by folder", () => {
-    const work = group("astrabit-work", "Astrabit", [
-      member("work", fedora.environmentId, "/home/me/work/astrabit"),
+  it("tells same-name projects apart by environment, never by folder", () => {
+    const onFedora = group("astrabit-fedora", "Astrabit", [
+      member("fedora", fedora.environmentId, "/home/me/astrabit"),
     ]);
-    const personal = group("astrabit-personal", "Astrabit", [
-      member("personal", fedora.environmentId, "/home/me/personal/astrabit"),
-    ]);
-    const remote = group("astrabit-laptop", "Astrabit", [
-      member("remote", laptop.environmentId, "C:\\astrabit"),
+    const onLaptop = group("astrabit-laptop", "Astrabit", [
+      member("laptop", laptop.environmentId, "C:\\astrabit"),
     ]);
     expect(
-      summarize(projectScopeMenuEntries([work, personal, remote], environments, undefined)),
+      summarize(projectScopeMenuEntries([onFedora, onLaptop], environments, undefined)),
     ).toEqual([
-      { project: "astrabit-work", environments: ["fedora"], detail: "work/astrabit" },
-      { project: "astrabit-personal", environments: ["fedora"], detail: "personal/astrabit" },
-      { project: "astrabit-laptop", environments: ["laptop"], detail: null },
-    ]);
-    expect(
-      summarize(
-        projectScopeMenuEntries([work, personal, remote], environments, fedora.environmentId),
-      ),
-    ).toEqual([
-      { project: "astrabit-work", environments: [], detail: "work/astrabit" },
-      { project: "astrabit-personal", environments: [], detail: "personal/astrabit" },
+      { project: "astrabit-fedora", environments: ["fedora"] },
+      { project: "astrabit-laptop", environments: ["laptop"] },
     ]);
   });
 });

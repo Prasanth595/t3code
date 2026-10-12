@@ -212,27 +212,23 @@ function ProjectScopeMenu({ value, groups, environments, onChange }: SettingsSco
           </span>
         </MenuRadioItem>
         <MenuSeparator />
-        {entries.map(({ group, environments: groupEnvironments, detail }) => (
+        {entries.map(({ group, environments: groupEnvironments }) => (
           <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>
             <span className="flex min-w-0 items-center gap-2">
               <ProjectFavicon project={group} className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">
                 {group.displayName}
-                {detail ? <span className="text-muted-foreground"> · {detail}</span> : null}
+                {groupEnvironments.length > 0 ? (
+                  <span className="text-muted-foreground">
+                    {" • "}
+                    {groupEnvironments
+                      .map((environment) =>
+                        settingsScopeEnvironmentLabel(environment, environments),
+                      )
+                      .join(", ")}
+                  </span>
+                ) : null}
               </span>
-              {groupEnvironments.map((environment) => (
-                <span
-                  key={environment.environmentId}
-                  className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground"
-                >
-                  <EnvironmentMachineIcon
-                    aria-hidden
-                    kind={resolveEnvironmentMachineKind(environment.serverConfig)}
-                    className="size-3"
-                  />
-                  {settingsScopeEnvironmentLabel(environment, environments)}
-                </span>
-              ))}
               <MenuRadioItemIndicator />
             </span>
           </MenuRadioItem>

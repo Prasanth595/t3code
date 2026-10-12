@@ -57,23 +57,14 @@ export function selectProjectAxis(search: SettingsScopeSearch, value: string): S
 
 export interface ProjectScopeMenuEntry<E extends ScopeEnvironment> {
   readonly group: SidebarProjectSnapshot;
-  /** Where the project's checkouts live; empty when the environment axis already says it. */
+  /** Where the shown checkouts live; empty when only one environment exists. */
   readonly environments: readonly E[];
-  /** A folder hint, only for same-name projects the environments cannot tell apart. */
-  readonly detail: string | null;
-}
-
-function folderTail(workspaceRoot: string): string {
-  return workspaceRoot
-    .split(/[\\/]+/)
-    .filter(Boolean)
-    .slice(-2)
-    .join("/");
 }
 
 /**
  * The project picker's rows. A chosen environment lists only projects with a
- * checkout there; otherwise each row names the environments its checkouts are on.
+ * checkout there. Each row names its environments, so same-name projects read
+ * as "Astrabit • Fedora" and "Astrabit • SwerveStation".
  */
 export function projectScopeMenuEntries<E extends ScopeEnvironment>(
   groups: readonly SidebarProjectSnapshot[],
@@ -86,32 +77,20 @@ export function projectScopeMenuEntries<E extends ScopeEnvironment>(
       : groups.filter((group) =>
           group.memberProjects.some((member) => member.environmentId === machine),
         );
-  const rows = visible.map((group) => {
-    const memberEnvironmentIds = new Set(group.memberProjects.map((m) => m.environmentId));
-    const groupEnvironments =
-      machine === undefined && environments.length > 1
-        ? environments.filter((environment) => memberEnvironmentIds.has(environment.environmentId))
-        : [];
-    const shownMember =
-      group.memberProjects.find((member) => member.environmentId === machine) ??
-      group.memberProjects[0];
+  return visible.map((group) => {
+    const shownIds = new Set(
+      group.memberProjects
+        .map((member) => member.environmentId)
+        .filter((environmentId) => machine === undefined || environmentId === machine),
+    );
     return {
       group,
-      environments: groupEnvironments,
-      // Rows look alike when their name and shown environments match.
-      sameNameKey: `${group.displayName}\u0000${groupEnvironments.map((e) => e.environmentId).join(",")}`,
-      workspaceRoot: shownMember?.workspaceRoot ?? group.workspaceRoot,
+      environments:
+        environments.length > 1
+          ? environments.filter((environment) => shownIds.has(environment.environmentId))
+          : [],
     };
   });
-  const sameNameCounts = new Map<string, number>();
-  for (const row of rows) {
-    sameNameCounts.set(row.sameNameKey, (sameNameCounts.get(row.sameNameKey) ?? 0) + 1);
-  }
-  return rows.map((row) => ({
-    group: row.group,
-    environments: row.environments,
-    detail: (sameNameCounts.get(row.sameNameKey) ?? 0) > 1 ? folderTail(row.workspaceRoot) : null,
-  }));
 }
 
 /** Provider configuration always belongs to one environment, including project scopes. */
