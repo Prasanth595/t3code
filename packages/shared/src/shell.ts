@@ -741,7 +741,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     options.env === undefined
       ? hostEnvironment
       : options.extendEnv
-        ? { ...hostEnvironment, ...options.env }
+        ? mergeWindowsEnv(hostEnvironment, options.env)
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
   // The scan is synchronous and runs before every child process, so it shares
@@ -828,6 +828,13 @@ function mergeWindowsEnv(
   const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
   for (const [key, value] of Object.entries(patch)) {
     if (value !== undefined) {
+      if (key.toUpperCase() === "PATH") {
+        for (const existingKey of Object.keys(nextEnv)) {
+          if (existingKey !== key && existingKey.toUpperCase() === "PATH") {
+            delete nextEnv[existingKey];
+          }
+        }
+      }
       nextEnv[key] = value;
     }
   }
