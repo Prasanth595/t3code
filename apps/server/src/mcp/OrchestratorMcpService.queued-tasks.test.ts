@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -147,6 +148,7 @@ function fixture(
                 : Effect.succeed({} as never);
             }),
         }),
+        ServerSettings.layerTest({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
