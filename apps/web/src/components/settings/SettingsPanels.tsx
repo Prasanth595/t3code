@@ -65,6 +65,7 @@ import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  isLiveServerUpdate,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
@@ -417,7 +418,11 @@ function AboutVersionSection() {
       ? !canCheckForUpdate(updateState)
       : isDesktopUpdateButtonDisabled(updateState);
 
-  const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
+  const isServerOnlyUpdate = action === "install" && isLiveServerUpdate(updateState);
+  const actionLabel: Record<string, string> = {
+    download: "Download",
+    install: isServerOnlyUpdate ? "Restart Server" : "Install",
+  };
   const statusLabel: Record<string, string> = {
     checking: "Checking…",
     downloading: "Downloading…",
@@ -425,8 +430,9 @@ function AboutVersionSection() {
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
-  const description =
-    action === "download" || action === "install"
+  const description = isServerOnlyUpdate
+    ? "Server update ready. The server restarts and the app keeps running."
+    : action === "download" || action === "install"
       ? "Update available."
       : "Current version of the application.";
 

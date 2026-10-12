@@ -9,7 +9,11 @@
  * restarts the server and reloads the windows. The app itself does not restart.
  * A full app update is still needed when the shell changes. See docs/fork.md.
  */
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import {
+  type DesktopUpdateState,
+  isLiveServerUpdateVersion,
+  LIVE_SERVER_UPDATE_VERSION_PREFIX,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -27,14 +31,9 @@ export type LiveBuild = typeof LiveBuild.Type;
 
 const decodeLiveBuild = Schema.decodeUnknownEffect(Schema.fromJsonString(LiveBuild));
 
-const LIVE_VERSION_PREFIX = "live ";
-
 /** The update version label of a live build, for example `live 1a2b3c4d5e6f`. */
 export const liveBuildVersion = (build: LiveBuild): string =>
-  `${LIVE_VERSION_PREFIX}${build.sha.slice(0, 12)}`;
-
-const isLiveVersion = (version: string | null): boolean =>
-  version !== null && version.startsWith(LIVE_VERSION_PREFIX);
+  `${LIVE_SERVER_UPDATE_VERSION_PREFIX}${build.sha.slice(0, 12)}`;
 
 /**
  * Shows a ready live build as a downloaded update, or removes a live update that
@@ -48,7 +47,7 @@ export function reduceDesktopUpdateStateOnLiveBuild(
   const fullUpdateActive =
     state.status === "available" ||
     state.status === "downloading" ||
-    (state.downloadedVersion !== null && !isLiveVersion(state.downloadedVersion));
+    (state.downloadedVersion !== null && !isLiveServerUpdateVersion(state.downloadedVersion));
   if (fullUpdateActive) return state;
 
   if (Option.isSome(liveBuild)) {
@@ -67,7 +66,7 @@ export function reduceDesktopUpdateStateOnLiveBuild(
     };
   }
 
-  if (!isLiveVersion(state.downloadedVersion)) return state;
+  if (!isLiveServerUpdateVersion(state.downloadedVersion)) return state;
   return {
     ...state,
     status: "up-to-date",
