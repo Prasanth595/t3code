@@ -2484,6 +2484,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
   const pasteAsTextShortcutUntilRef = useRef(0);
+  const attachmentSelectionRef = useRef<{ start: number; end: number } | undefined>(undefined);
   const pastedTextFileNamesRef = useRef<{ targetKey: string; names: Set<string> }>({
     targetKey: "",
     names: new Set(),
@@ -6039,6 +6040,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return true;
   };
 
+  const captureAttachmentSelection = () => {
+    const selection = composerEditorRef.current?.readSelectionRange();
+    return selection && selection.start !== selection.end ? selection : undefined;
+  };
+
   const removeComposerImage = (imageId: string) => {
     const image = composerImagesRef.current.find((candidate) => candidate.id === imageId);
     const referenced = collectInlineContextIds(promptRef.current).includes(
@@ -6156,9 +6162,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activeThreadId &&
       shouldHandleComposerAttachmentPaste({ files, plainText })
     ) {
+      const selection = captureAttachmentSelection();
       event.preventDefault();
       event.stopPropagation();
-      void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
+      void addComposerAttachments(files, {
+        skipImageInlineChip: bypassAutoAttachment,
+        ...(selection ? { selection } : {}),
+      });
       return;
     }
 
@@ -6413,7 +6423,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       },
       addDroppedFiles: (files: File[]) => {
-        void addComposerAttachments(files).then((inserted) => {
+        const selection = captureAttachmentSelection();
+        void addComposerAttachments(files, {
+          ...(selection ? { selection } : {}),
+        }).then((inserted) => {
           if (!inserted) focusComposer();
         });
       },
@@ -7641,10 +7654,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         onChange={(event) => {
                           const files = Array.from(event.currentTarget.files ?? []);
                           event.currentTarget.value = "";
+                          const selection = attachmentSelectionRef.current;
+                          attachmentSelectionRef.current = undefined;
                           // Inserting a chip refocuses the editor after the draft renders;
                           // focusing synchronously here would report the editor's stale text
                           // over the prompt that was just written.
-                          void addComposerAttachments(files).then((inserted) => {
+                          void addComposerAttachments(files, {
+                            ...(selection ? { selection } : {}),
+                          }).then((inserted) => {
                             if (!inserted) focusComposer();
                           });
                         }}
@@ -7656,8 +7673,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               type="button"
                               variant="ghost"
                               size="icon-sm"
-                              onPointerDown={(event) => event.preventDefault()}
-                              onClick={() => attachmentInputRef.current?.click()}
+                              onPointerDown={(event) => {
+                                event.preventDefault();
+                                attachmentSelectionRef.current = captureAttachmentSelection();
+                              }}
+                              onClick={() => {
+                                attachmentSelectionRef.current ??= captureAttachmentSelection();
+                                attachmentInputRef.current?.click();
+                              }}
                               aria-label="Attach files"
                             />
                           }

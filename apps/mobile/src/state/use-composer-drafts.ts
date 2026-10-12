@@ -1368,12 +1368,12 @@ export function appendComposerDraftAttachments(
     const referencedAttachments = options?.appendReference
       ? attachments.filter(
           (attachment) =>
-            options.appendImageReference !== false || !isComposerImageAttachment(attachment),
+            options?.appendImageReference !== false || !isComposerImageAttachment(attachment),
         )
       : [];
     const retained =
       referencedAttachments.length > 0
-        ? draftWithoutInsertionSelection(draftKey, existing, options.insertion)
+        ? draftWithoutInsertionSelection(draftKey, existing, options?.insertion)
         : existing;
     const remaining = options?.allowOverflow
       ? attachments.length
@@ -1389,18 +1389,19 @@ export function appendComposerDraftAttachments(
       COMPOSER_CONTEXT_MAX_RECORDS - (retained.context?.records.length ?? 0),
     );
     const accepted: DraftComposerAttachment[] = [];
-    rejected = [];
+    const rejectedAttachments: DraftComposerAttachment[] = [];
     for (const attachment of attachments) {
       const needsReference =
         options?.appendReference === true &&
         (options.appendImageReference !== false || !isComposerImageAttachment(attachment));
       if (accepted.length >= remaining || (needsReference && contextRemaining === 0)) {
-        rejected.push(attachment);
+        rejectedAttachments.push(attachment);
         continue;
       }
       accepted.push(attachment);
       if (needsReference) contextRemaining -= 1;
     }
+    rejected = rejectedAttachments;
     if (accepted.length === 0) {
       return current;
     }

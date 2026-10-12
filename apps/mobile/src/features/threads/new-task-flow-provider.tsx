@@ -242,6 +242,7 @@ type NewTaskFlowContextValue = {
   readonly appendAttachments: (
     attachments: ReadonlyArray<DraftComposerAttachment>,
     insertion?: ComposerDraftInsertion,
+    appendImageReference?: boolean,
   ) => number;
   readonly removeAttachment: (imageId: string) => void;
   readonly clearAttachments: () => void;

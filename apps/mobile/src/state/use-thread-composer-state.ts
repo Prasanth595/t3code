@@ -825,6 +825,7 @@ export function useThreadComposerState() {
     });
     const rejectedCount = appendComposerDraftAttachments(threadKey, result.files, {
       appendReference: true,
+      appendImageReference: insertion.start !== insertion.end,
       insertion,
     });
     // The picker error and the live-cap rejection can both happen in one
