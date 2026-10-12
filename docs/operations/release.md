@@ -395,21 +395,23 @@ available.
 ### CLI publish timeout
 
 When `cli.ts publish` gives up waiting, the platform versions are published but `t3` is not.
-`release` needs `publish_cli` and every job after it needs `release`, so they are all skipped.
-Re-running fails, since npm will not accept the platform versions again. Until `t3` is published,
-`npx t3` keeps resolving the previous launcher, which pins its own platform versions.
+`release` needs `publish_cli`, so the GitHub Release and its downstream publishing, deployment and
+finalization jobs are skipped. Re-running fails, since npm will not accept the platform versions
+again. Until `t3` is published, `npx t3` keeps resolving the previous launcher, which pins its own
+platform versions.
 
 To publish `t3` for that version, wait until `npm pack` downloads each package the error lists.
-Then, from a checkout of the release commit, put the archives from the run's `cli-*` artifacts in
-one directory (`gh run download` makes a subdirectory per artifact), run
-`node scripts/build-npm-platform-packages.ts --archives-dir <dir> --version <version>`, and publish
-the launcher with `npm publish npm-packages/t3.tgz --access public --tag <dist-tag>`. That needs an
-npm token with publish rights for `t3`, and the package carries no provenance, because trusted
-publishing works only from `release.yml`.
+Then, from a checkout of the release commit with dependencies installed (`vp i`), put the archives
+from the run's `cli-*` artifacts in one directory (`gh run download` makes a subdirectory per
+artifact), run `node scripts/build-npm-platform-packages.ts --archives-dir <dir> --version <version>`,
+and publish the launcher with `npm publish npm-packages/t3.tgz --access public --tag <dist-tag>`.
+That needs npm credentials with publish rights for `t3` (a token, or an interactive login with a
+one-time password if the package disallows tokens), and the package carries no provenance, because
+trusted publishing works only from `release.yml`.
 
-These steps do not publish the run's GitHub Release or run the jobs after it, and no re-run can, so
-a stable release needs a new patch version or those steps by hand. A failed nightly or preview can
-be left alone, since the next run publishes a fresh version.
+These steps do not publish the run's GitHub Release or run those jobs, and no re-run can, so a
+stable release needs a new patch version, or the GitHub Release and those jobs' work done by hand. A
+failed nightly or preview can be left alone, since the next run publishes a fresh version.
 
 ## Desktop auto-update notes
 
