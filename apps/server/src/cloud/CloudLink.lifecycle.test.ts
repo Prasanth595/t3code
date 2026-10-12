@@ -1,6 +1,3 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto has no generateKeyPairSync.
-import * as NodeCrypto from "node:crypto";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -13,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as TestClock from "effect/testing/TestClock";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
@@ -44,6 +42,7 @@ import {
   RELAY_URL_SECRET,
 } from "./config.ts";
 import * as CloudLink from "./CloudLink.ts";
+import { getOrCreateEnvironmentKeyPairFromSecretStore } from "./environmentKeys.ts";
 import { consumeCloudReplayGuards } from "./CloudLink.ts";
 import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import {
@@ -243,6 +242,9 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly onRequest?: (request: HttpClientRequest.HttpClientRequest) => Effect.Effect<void>;
     readonly respond?: () => Response;
     readonly respondEffect?: Effect.Effect<Response>;
+    readonly withLinkStateLock?: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E, R>;
   }
 
   // Writes the launcher's durable state file into this test's baseDir with
@@ -310,7 +312,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             recoveryRequests: Stream.empty,
             requestRecovery: () => Effect.void,
             tunnelConnected: Stream.empty,
-            withLinkStateLock: (effect) => effect,
+            withLinkStateLock: harness.withLinkStateLock ?? ((effect) => effect),
           }),
         ),
         Effect.provideService(
@@ -458,10 +460,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
   });
 
   describe("applyRelayConfig", () => {
-    const cloudMintPublicKey = NodeCrypto.generateKeyPairSync("ed25519")
-      .publicKey.export({ type: "spki", format: "pem" })
-      .toString();
+    // The relay sends its mint key as an Ed25519 SPKI PEM, like the
+    // environment's own link key.
+    const cloudMintPublicKey = getOrCreateEnvironmentKeyPairFromSecretStore(
+      makeMemorySecretStore().store,
+    ).pipe(Effect.map((keyPair) => keyPair.publicKey));
     const relayConfig = (
+      cloudMintPublicKey: string,
       endpointRuntime: {
         readonly providerKind: "cloudflare_tunnel";
         readonly connectorToken: string;
@@ -488,7 +493,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
       return Effect.gen(function* () {
         const link = yield* CloudLink.CloudLink;
-        yield* link.applyRelayConfig(relayConfig(null));
+        yield* link.applyRelayConfig(relayConfig(yield* cloudMintPublicKey, null));
         expect(desiredMode(values)).toBe("publish_only");
       }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
     });
@@ -504,7 +509,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       return Effect.gen(function* () {
         const link = yield* CloudLink.CloudLink;
         yield* link.applyRelayConfig(
-          relayConfig({
+          relayConfig(yield* cloudMintPublicKey, {
             providerKind: "cloudflare_tunnel",
             connectorToken: "new-token",
             tunnelId: "new-tunnel",
@@ -521,6 +526,72 @@ describe("releaseManagedTunnelOnShutdown", () => {
       );
     });
 
+    it.effect("does not undo an unlink that races a web relink", () =>
+      Effect.gen(function* () {
+        const memory = makeMemorySecretStore(managedLinkSecrets);
+        const desireWriteReached = yield* Deferred.make<void>();
+        const releaseDesireWrite = yield* Deferred.make<void>();
+        const lockContended = yield* Deferred.make<void>();
+        const semaphore = yield* Semaphore.make(1);
+        let lockHeld = false;
+        // Pauses the relink just before it records the desired mode.
+        const store: ServerSecretStore.ServerSecretStore["Service"] = {
+          ...memory.store,
+          set: (name, value) =>
+            name === CLOUD_CLI_DESIRED_LINK_SECRET
+              ? Deferred.succeed(desireWriteReached, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseDesireWrite)),
+                  Effect.andThen(memory.store.set(name, value)),
+                )
+              : memory.store.set(name, value),
+        };
+        // A real lock that reports when a caller has to wait for it.
+        const withLinkStateLock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          Effect.suspend(() =>
+            (lockHeld ? Deferred.succeed(lockContended, undefined) : Effect.void).pipe(
+              Effect.andThen(
+                semaphore.withPermits(1)(
+                  Effect.sync(() => {
+                    lockHeld = true;
+                  }).pipe(
+                    Effect.andThen(effect),
+                    Effect.ensuring(
+                      Effect.sync(() => {
+                        lockHeld = false;
+                      }),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        const mintPublicKey = yield* cloudMintPublicKey;
+
+        yield* Effect.gen(function* () {
+          const link = yield* CloudLink.CloudLink;
+          const relink = yield* Effect.forkChild(
+            link.applyRelayConfig(relayConfig(mintPublicKey, null)),
+          );
+          yield* Deferred.await(desireWriteReached);
+          const unlink = yield* Effect.forkChild(link.unlink());
+          // Either the unlink runs to completion now, or it waits for the
+          // lock the relink still holds.
+          yield* Effect.raceFirst(Fiber.await(unlink), Deferred.await(lockContended));
+          yield* Deferred.succeed(releaseDesireWrite, undefined);
+          yield* Fiber.join(relink);
+          yield* Fiber.join(unlink);
+          expect(desiredMode(memory.values)).toBeNull();
+        }).pipe(
+          provideReleaseHarness({
+            store,
+            applyConfigCalls: [],
+            requests: [],
+            withLinkStateLock,
+          }),
+        );
+      }),
+    );
+
     it.effect("does not record a CLI desire for a web-only link", () => {
       const { store, values } = makeMemorySecretStore();
       const applyConfigCalls: Array<unknown> = [];
@@ -528,7 +599,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
 
       return Effect.gen(function* () {
         const link = yield* CloudLink.CloudLink;
-        yield* link.applyRelayConfig(relayConfig(null));
+        yield* link.applyRelayConfig(relayConfig(yield* cloudMintPublicKey, null));
         expect(desiredMode(values)).toBeNull();
       }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
     });
