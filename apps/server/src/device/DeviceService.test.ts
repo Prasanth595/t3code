@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DeviceHostUnavailableError,
   DeviceId,
   DeviceOperationError,
   LOCAL_DEVICE_HOST_ID,
@@ -8,22 +9,32 @@ import {
   type DeviceServiceState,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NetService from "@t3tools/shared/Net";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import * as ServerConfig from "../config.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { NodeRuntimeUnavailableError } from "@t3tools/shared/nodeRuntime";
 
 import * as DeviceService from "./DeviceService.ts";
+import { DeviceToolchainInstallError } from "./DeviceToolchain.ts";
 
 const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const isHostUnavailable = Schema.is(DeviceHostUnavailableError);
+const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
 
 const baseState: DeviceServiceState = {
   hosts: [],
@@ -69,6 +80,7 @@ const fixture = Effect.fn("fixture")(function* (
   runtimeFailure?: NodeRuntimeUnavailableError | DeviceHost.DeviceHostError,
   inspectError = false,
   installTool?: Parameters<typeof DeviceService.makeWithHosts>[3],
+  agentFailure?: DeviceHost.DeviceHostTimeoutError,
 ) {
   const settings = yield* Ref.make(DEFAULT_SERVER_SETTINGS);
   const starts: string[] = [];
@@ -114,6 +126,7 @@ const fixture = Effect.fn("fixture")(function* (
       }),
     ensureAgentReady: (onPhase) =>
       Effect.gen(function* () {
+        if (agentFailure) return yield* agentFailure;
         if (runtimeFailure) return yield* runtimeFailure;
         agentStarts.push("start");
         yield* onPhase("starting");
@@ -216,6 +229,267 @@ const fixture = Effect.fn("fixture")(function* (
   return { service, starts, agentStarts, agentStops, requests, settings };
 });
 
+const installGuidance =
+  "Device tool installation failed. Check npm's debug log on the environment server. Review filesystem permissions, registry access, and npm policies such as min-release-age or before, then retry.";
+const unsafeDiagnostic = "UNSAFE_NPM_DIAGNOSTIC https://private:credential@registry.test/package";
+
+describe("device installation diagnostics", () => {
+  it.effect.each(["installing device support", "installing agent tools"])(
+    "explains $0 failures through readiness, listing, and retry",
+    (step) =>
+      Effect.gen(function* () {
+        const toolchainFailure = new DeviceToolchainInstallError({
+          tool: step === "installing device support" ? "expo-device-hub" : "agent-device",
+          step: "running npm install",
+          exitCode: 1,
+          cause: { stderr: unsafeDiagnostic },
+        });
+        const failure = new DeviceHost.DeviceHostError({
+          hostId: LOCAL_DEVICE_HOST_ID,
+          step,
+          cause: toolchainFailure,
+        });
+        const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
+        yield* Ref.update(settings, (current) => ({
+          ...current,
+          enableDeviceSupport: true,
+          enableAgentDeviceAccess: true,
+        }));
+        for (const operation of [service.readiness(), service.agentReadinessIfSupported()]) {
+          const error = yield* operation.pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DeviceHostUnavailableError",
+            hostId: LOCAL_DEVICE_HOST_ID,
+            reason: installGuidance,
+          });
+          if (isHostUnavailable(error)) expect(error.cause).toBe(failure);
+          expect(error.message).not.toContain(unsafeDiagnostic);
+          expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+            status: "failed",
+            detail: installGuidance,
+          });
+        }
+        for (const operation of [service.list, service.retryHost(LOCAL_DEVICE_HOST_ID)]) {
+          const state = yield* operation;
+          expect(state.hostStatusDetail).toBe(installGuidance);
+          expect(state.hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+            status: "failed",
+            detail: installGuidance,
+          });
+          expect(state.hostStatusDetail).not.toContain(unsafeDiagnostic);
+        }
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    {
+      step: "probe",
+      reason: "Could not connect to this host over SSH.",
+      detail: "Device host local failed while probe.",
+    },
+    {
+      step: "start",
+      reason: "Device support failed during start.",
+      detail: "Device host local failed while start.",
+    },
+    {
+      step: "agent-start",
+      reason: "Device support failed during agent-start.",
+      detail: "Device host local failed while agent-start.",
+    },
+  ])("preserves the $step explanation", ({ step, reason, detail }) =>
+    Effect.gen(function* () {
+      const failure = new DeviceHost.DeviceHostError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        step,
+        cause: new Error(unsafeDiagnostic),
+      });
+      const { service, settings } = yield* fixture(Effect.void, undefined, false, failure);
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: true,
+        enableAgentDeviceAccess: true,
+      }));
+      for (const operation of [service.readiness(), service.agentReadinessIfSupported()]) {
+        const error = yield* operation.pipe(Effect.flip);
+        expect(error).toMatchObject({ _tag: "DeviceHostUnavailableError", reason });
+        if (isHostUnavailable(error)) expect(error.cause).toBe(failure);
+        expect(error.message).not.toContain(unsafeDiagnostic);
+        expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+          status: "failed",
+          detail,
+        });
+      }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("preserves agent startup timeout guidance and its typed cause", () =>
+    Effect.gen(function* () {
+      const failure = new DeviceHost.DeviceHostTimeoutError({
+        hostId: LOCAL_DEVICE_HOST_ID,
+        timeoutMs: 1234,
+      });
+      const { service, settings } = yield* fixture(
+        Effect.void,
+        undefined,
+        false,
+        undefined,
+        false,
+        undefined,
+        failure,
+      );
+      yield* Ref.update(settings, (current) => ({
+        ...current,
+        enableDeviceSupport: true,
+        enableAgentDeviceAccess: true,
+      }));
+      const error = yield* service.agentReadinessIfSupported().pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceHostUnavailableError",
+        reason: "Agent tools did not start within 1234 ms.",
+      });
+      if (isHostUnavailable(error)) expect(error.cause).toBe(failure);
+      expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toEqual({
+        status: "failed",
+        detail: "Device host local did not start agent tools within 1234 ms.",
+      });
+    }).pipe(Effect.scoped),
+  );
+});
+
+const productionFixture = Effect.fn("productionFixture")(function* (
+  run: ProcessRunner.ProcessRunner["Service"]["run"],
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-diagnostic-" });
+  const host = DeviceHost.DeviceHost.of({
+    id: LOCAL_DEVICE_HOST_ID,
+    summary: Effect.succeed({
+      id: LOCAL_DEVICE_HOST_ID,
+      kind: "local",
+      label: "Test server",
+      platforms: [{ platform: "ios", available: true }],
+      hubInstalled: false,
+      agentDeviceInstalled: false,
+    }),
+    platformAvailability: (platform) => Effect.succeed({ platform, available: true }),
+    ensureReady: () => Effect.die("Unexpected hub startup"),
+    ensureAgentReady: () => Effect.die("Unexpected agent startup"),
+    current: Effect.succeed(null),
+    stop: Effect.die("Unexpected hub stop"),
+    stopAgent: Effect.die("Unexpected agent stop"),
+  });
+  return yield* Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const service = yield* DeviceService.make;
+    return { service, settings };
+  }).pipe(
+    Effect.provide([
+      ServerConfig.layerTest(baseDir, baseDir),
+      ServerSettings.layerTest({ deviceHosts: [] }),
+    ]),
+    Effect.provideService(DeviceHost.DeviceHost, host),
+    Effect.provideService(ProcessRunner.ProcessRunner, { run }),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die("Unexpected HTTP request")),
+    ),
+    Effect.provideService(NetService.NetService, {
+      canListenOnHost: () => Effect.die("Unexpected network access"),
+      isPortAvailableOnLoopback: () => Effect.die("Unexpected network access"),
+      hasListenerOnHost: () => Effect.die("Unexpected network access"),
+      reserveLoopbackPort: () => Effect.die("Unexpected network access"),
+      findAvailablePort: () => Effect.die("Unexpected network access"),
+    }),
+    Effect.provide(NodeCrypto.layer),
+  );
+});
+
+describe("production device installation mappings", () => {
+  it.effect.each([
+    {
+      operation: "hub",
+      stderr: `npm error code ETARGET\nnpm error notarget No matching version found with a date before 10/9/2026.\n${unsafeDiagnostic}`,
+    },
+    { operation: "agent", stderr: `npm error code EACCES\n${unsafeDiagnostic}` },
+    { operation: "agentCli", stderr: `npm error code E401\n${unsafeDiagnostic}` },
+  ] as const)(
+    "explains real toolchain failures for $operation without changing consent or lifecycle state",
+    ({ operation, stderr }) =>
+      Effect.gen(function* () {
+        const result = {
+          code: ChildProcessSpawner.ExitCode(1),
+          stdout: "",
+          stderr,
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+        const invocations: string[] = [];
+        const { service, settings } = yield* productionFixture((input) =>
+          Effect.sync(() => {
+            expect(input.command).toBe("npm");
+            invocations.push(input.command);
+            return result;
+          }),
+        );
+        const beforeState = yield* service.state;
+        const beforeSettings = yield* settings.getSettings;
+        const install =
+          operation === "agentCli"
+            ? service.agentCli.pipe(Effect.asVoid)
+            : service.updateTool(operation).pipe(Effect.asVoid);
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const error = yield* install.pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "DeviceHostUnavailableError",
+            hostId: LOCAL_DEVICE_HOST_ID,
+            reason: installGuidance,
+          });
+          expect(error.message).toBe(`Device host local is unavailable: ${installGuidance}`);
+          expect(error.message).not.toContain(unsafeDiagnostic);
+          if (isHostUnavailable(error)) {
+            expect(error.cause).toBeInstanceOf(DeviceToolchainInstallError);
+            if (isToolchainInstallError(error.cause)) {
+              expect(error.cause.tool).toBe(
+                operation === "hub" ? "expo-device-hub" : "agent-device",
+              );
+              expect(error.cause.step).toBe("running npm install");
+              expect(error.cause.exitCode).toBe(1);
+              expect(error.cause.cause).toBe(result);
+            }
+          }
+          expect(yield* service.state).toEqual(beforeState);
+          expect(yield* settings.getSettings).toEqual(beforeSettings);
+        }
+        expect(invocations).toEqual(["npm", "npm"]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("preserves missing Node guidance for the production agent CLI", () =>
+    Effect.gen(function* () {
+      const { service } = yield* productionFixture(() => Effect.die("Unexpected npm install"));
+      const error = yield* service.agentCli.pipe(Effect.flip);
+      expect(error).toMatchObject({
+        _tag: "DeviceHostUnavailableError",
+        reason:
+          "Device automation requires Node.js. Install Node.js and make sure node is on PATH, then retry.",
+      });
+      if (isHostUnavailable(error)) {
+        expect(error.cause).toBeInstanceOf(NodeRuntimeUnavailableError);
+      }
+    }).pipe(
+      Effect.provideService(HostProcess.IsExecutable, true),
+      Effect.provideService(HostProcess.ExecutablePath, "/missing/t3"),
+      Effect.provideService(HostProcess.Environment, { PATH: "" }),
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+});
+
 describe("device setup consent", () => {
   it.effect(
     "preserves missing-runtime guidance and causes through manual and agent readiness",
@@ -241,14 +515,16 @@ describe("device setup consent", () => {
           const error = yield* readiness.pipe(Effect.flip);
           expect(error).toMatchObject({
             _tag: "DeviceHostUnavailableError",
-            reason: expect.stringContaining("Install Node.js"),
+            reason:
+              "Local device support requires Node.js. Install Node.js and make sure node is on PATH, then retry.",
             cause: runtimeFailure,
           });
           expect(error.message).not.toContain(underlying.message);
         }
         expect((yield* service.state).hostStatuses[LOCAL_DEVICE_HOST_ID]).toMatchObject({
           status: "failed",
-          detail: expect.stringContaining("Install Node.js"),
+          detail:
+            "Local device support requires Node.js. Install Node.js and make sure node is on PATH, then retry.",
         });
         expect(requests).toEqual([]);
       }).pipe(Effect.scoped),

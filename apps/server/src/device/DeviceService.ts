@@ -75,6 +75,27 @@ export const DEVICE_HUB_ROUTE_PREFIX = "/api/device-hub";
 const BOOT_TIMEOUT = Duration.minutes(3);
 const SCREENSHOT_TIMEOUT = Duration.seconds(20);
 
+const DEVICE_INSTALL_GUIDANCE =
+  "Device tool installation failed. Check npm's debug log on the environment server. Review filesystem permissions, registry access, and npm policies such as min-release-age or before, then retry.";
+
+const isToolInstallFailure = (
+  error: Effect.Error<ReturnType<DeviceHost.DeviceHost["Service"]["ensureAgentReady"]>>,
+) =>
+  error._tag === "DeviceHostError" &&
+  (error.step === "installing device support" || error.step === "installing agent tools");
+
+function hostFailureReason(
+  error: Effect.Error<ReturnType<DeviceHost.DeviceHost["Service"]["ensureAgentReady"]>>,
+) {
+  if (error._tag === "NodeRuntimeUnavailableError")
+    return nodeRuntimeUnavailableMessage("Local device support");
+  if (error._tag === "DeviceHostTimeoutError")
+    return `Agent tools did not start within ${error.timeoutMs} ms.`;
+  if (error.step === "probe") return "Could not connect to this host over SSH.";
+  if (isToolInstallFailure(error)) return DEVICE_INSTALL_GUIDANCE;
+  return `Device support failed during ${error.step}.`;
+}
+
 const HubDevice = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
@@ -271,18 +292,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail: isToolInstallFailure(error) ? DEVICE_INSTALL_GUIDANCE : error.message,
+            }),
           ),
           Effect.mapError(
             (error) =>
               new DeviceHostUnavailableError({
                 hostId: host.id,
-                reason:
-                  error._tag === "NodeRuntimeUnavailableError"
-                    ? nodeRuntimeUnavailableMessage("Local device support")
-                    : error.step === "probe"
-                      ? "Could not connect to this host over SSH."
-                      : `Device support failed during ${error.step}.`,
+                reason: hostFailureReason(error),
                 cause: error,
               }),
           ),
@@ -326,20 +345,16 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
         )
         .pipe(
           Effect.tapError((error) =>
-            setHostStatus(host.id, { status: "failed", detail: error.message }),
+            setHostStatus(host.id, {
+              status: "failed",
+              detail: isToolInstallFailure(error) ? DEVICE_INSTALL_GUIDANCE : error.message,
+            }),
           ),
           Effect.mapError(
             (error) =>
               new DeviceHostUnavailableError({
                 hostId: host.id,
-                reason:
-                  error._tag === "NodeRuntimeUnavailableError"
-                    ? nodeRuntimeUnavailableMessage("Local device support")
-                    : error._tag === "DeviceHostTimeoutError"
-                      ? `Agent tools did not start within ${error.timeoutMs} ms.`
-                      : error.step === "probe"
-                        ? "Could not connect to this host over SSH."
-                        : `Device support failed during ${error.step}.`,
+                reason: hostFailureReason(error),
                 cause: error,
               }),
           ),
@@ -1052,9 +1067,9 @@ export const make = Effect.gen(function* () {
         Effect.provideService(ProcessRunner.ProcessRunner, runner),
         Effect.mapError(
           (cause) =>
-            new DeviceOperationError({
-              operation: "update device tool",
-              reason: "command_failed",
+            new DeviceHostUnavailableError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              reason: DEVICE_INSTALL_GUIDANCE,
               cause,
             }),
         ),
@@ -1159,9 +1174,9 @@ export const make = Effect.gen(function* () {
               reason: nodeRuntimeUnavailableMessage("Device automation"),
               cause: error,
             })
-          : new DeviceOperationError({
-              operation: "install agent CLI",
-              reason: "command_failed",
+          : new DeviceHostUnavailableError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              reason: DEVICE_INSTALL_GUIDANCE,
               cause: error,
             }),
       ),
