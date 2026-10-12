@@ -740,7 +740,8 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
   const usageLimits =
-    snapshot.account.account?.type === "apiKey"
+    // Only a ChatGPT login has quotas; a custom model provider runs with no account.
+    !snapshot.account.account || snapshot.account.account.type === "apiKey"
       ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
       : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
         ? makeUnavailableUsageLimits({

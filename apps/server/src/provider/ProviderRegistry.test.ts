@@ -547,6 +547,22 @@ it.layer(
       }),
     );
 
+    it.effect("marks usage unsupported when a custom provider runs without an account", () =>
+      Effect.gen(function* () {
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.succeed(
+            makeCodexProbeSnapshot({
+              account: { account: null, requiresOpenaiAuth: false },
+              rateLimits: { failure: "Codex could not read usage (JSON-RPC -32600)." },
+            }),
+          ),
+        );
+
+        assert.strictEqual(status.status, "ready");
+        assert.deepStrictEqual(status.usageLimits?.unavailable, { reason: "unsupported" });
+      }),
+    );
+
     it.effect("returns an Amazon Bedrock label for codex Bedrock auth", () =>
       Effect.gen(function* () {
         const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
