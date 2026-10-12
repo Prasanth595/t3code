@@ -68,4 +68,72 @@ describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")("agentScopeComm
       }
     },
   );
+
+  const hasUserScopes =
+    setpriv !== undefined &&
+    NodeChildProcess.spawnSync("systemd-run", ["--user", "--scope", "--quiet", "true"]).status ===
+      0;
+
+  it.skipIf(!hasUserScopes)(
+    "stops the agent and its children when the process that spawned it is killed",
+    async () => {
+      const unit = `t3code-test-${process.pid}-${Date.now()}.scope`;
+      const launch = agentScopeCommand({
+        command: "/bin/sh",
+        args: ["-c", "sleep 300 & echo child:$!; exec sleep 300"],
+        setpriv,
+        scope: {
+          systemdRun: "systemd-run",
+          systemctl: "systemctl",
+          slice: "app.slice",
+          unit,
+          runtimeDir: process.env.XDG_RUNTIME_DIR ?? `/run/user/${process.getuid?.()}`,
+          options: ["--collect"],
+        },
+      });
+      const server = NodeChildProcess.spawn(
+        "/bin/sh",
+        ["-c", '"$@" & echo agent:$!; exec sleep 300', "server", launch.command, ...launch.args],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+      const pids = new Map<string, number>();
+      server.stdout.on("data", (chunk: Buffer) => {
+        for (const line of chunk.toString().split("\n")) {
+          const [name, pid] = line.split(":");
+          if (name !== undefined && pid !== undefined) pids.set(name, Number(pid));
+        }
+      });
+      const isAlive = (pid: number | undefined) => {
+        if (pid === undefined) return false;
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      try {
+        await vi.waitFor(() => expect(pids.size).toBe(2));
+        await vi.waitFor(() =>
+          expect(NodeFS.readFileSync(`/proc/${pids.get("agent")}/cmdline`, "utf8")).toBe(
+            "sleep\u0000300\u0000",
+          ),
+        );
+
+        server.kill("SIGKILL");
+
+        await vi.waitFor(() => expect(isAlive(pids.get("agent"))).toBe(false), {
+          timeout: 5_000,
+        });
+        await vi.waitFor(() => expect(isAlive(pids.get("child"))).toBe(false), {
+          timeout: 5_000,
+        });
+      } finally {
+        server.kill("SIGKILL");
+        server.stdout.destroy();
+        NodeChildProcess.spawnSync("systemctl", ["--user", "stop", unit]);
+        for (const pid of pids.values()) if (isAlive(pid)) process.kill(pid, "SIGKILL");
+      }
+    },
+  );
 });

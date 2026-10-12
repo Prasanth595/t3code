@@ -83,8 +83,25 @@ const SCOPED_LAUNCH_SCRIPT = [
   'exec "$@"',
 ].join("\n");
 
+const SCOPE_WATCH_SCRIPT = [
+  "while :; do",
+  "  sleep 3600 &",
+  "  sleeper=$!",
+  `  trap 'kill "$sleeper" 2>/dev/null; kill -0 "$1" 2>/dev/null || exec "$2" --user stop "$3"; exit 0' TERM`,
+  '  wait "$sleeper"',
+  "done",
+].join("\n");
+
+const SCOPE_GUARD_SCRIPT = [
+  "server=$PPID",
+  '"$1" --pdeathsig TERM -- /bin/sh -c "$2" t3-agent-watch "$server" "$3" "$4" >/dev/null 2>&1 </dev/null &',
+  "shift 4",
+  'exec "$@"',
+].join("\n");
+
 export interface AgentSystemdScope {
   readonly systemdRun: string;
+  readonly systemctl: string;
   readonly slice: string;
   readonly unit: string;
   readonly runtimeDir: string;
@@ -128,6 +145,18 @@ export function agentScopeCommand(input: {
       `--unit=${scope.unit}`,
       ...scope.options,
       "--",
+      ...(setpriv === undefined
+        ? []
+        : [
+            "/bin/sh",
+            "-c",
+            SCOPE_GUARD_SCRIPT,
+            "t3-agent-guard",
+            setpriv,
+            SCOPE_WATCH_SCRIPT,
+            scope.systemctl,
+            scope.unit,
+          ]),
       command,
       ...args,
     ],

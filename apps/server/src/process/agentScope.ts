@@ -310,6 +310,7 @@ export const make = Effect.gen(function* () {
       if (threadId !== undefined) yield* track(scope.systemctl, threadId, unit);
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
+        systemctl: scope.systemctl,
         runtimeDir: scope.runtimeDir,
         slice: AGENT_SLICE,
         unit,
