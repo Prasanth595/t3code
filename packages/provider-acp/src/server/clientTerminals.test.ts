@@ -126,7 +126,12 @@ describe("AcpClientTerminals", () => {
           terminalId: created.terminalId,
         });
         expect(exit.exitCode === 0 ? null : exit.exitCode).not.toBe(0);
-        expect(exit.signal).toBe("SIGTERM");
+        // Windows has no signals: a killed process only reports an exit code.
+        if (process.platform === "win32") {
+          expect(exit.signal).toBeNull();
+        } else {
+          expect(exit.signal).toBe("SIGTERM");
+        }
 
         yield* terminals.release({ sessionId: "session", terminalId: created.terminalId });
         const rejected = yield* Effect.flip(
