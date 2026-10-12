@@ -28,6 +28,8 @@ const runtimeMock = {
     sessionCreateSignals: [] as Array<AbortSignal | undefined>,
     promptSignals: [] as Array<AbortSignal | undefined>,
     sessionAbortIds: [] as string[],
+    sessionAbortSignals: [] as Array<AbortSignal | undefined>,
+    abortStall: false,
     abortFailure: undefined as Error | undefined,
     connectionError: undefined as Error | undefined,
     sessionCreateError: undefined as unknown,
@@ -47,6 +49,8 @@ const runtimeMock = {
     this.state.sessionCreateSignals.length = 0;
     this.state.promptSignals.length = 0;
     this.state.sessionAbortIds.length = 0;
+    this.state.sessionAbortSignals.length = 0;
+    this.state.abortStall = false;
     this.state.abortFailure = undefined;
     this.state.connectionError = undefined;
     this.state.sessionCreateError = undefined;
@@ -112,8 +116,13 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntime["Service"] = {
           }
           return runtimeMock.state.sessionResult ?? { data: { id: `${baseUrl}/session` } };
         },
-        abort: async (input: { readonly sessionID: string }) => {
+        abort: async (
+          input: { readonly sessionID: string },
+          options?: { readonly signal?: AbortSignal },
+        ) => {
           runtimeMock.state.sessionAbortIds.push(input.sessionID);
+          runtimeMock.state.sessionAbortSignals.push(options?.signal);
+          if (runtimeMock.state.abortStall) return new Promise<never>(() => {});
           if (runtimeMock.state.abortFailure) throw runtimeMock.state.abortFailure;
           return { data: true };
         },
@@ -600,6 +609,38 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
         expect(error.detail).toContain("timed out");
         expect(runtimeMock.state.promptSignals.at(-1)?.aborted).toBe(true);
         expect(runtimeMock.state.sessionAbortIds).toEqual(["http://127.0.0.1:4301/session"]);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("bounds a stalled server-side abort without masking the prompt timeout", () =>
+    withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.abortStall = true;
+        runtimeMock.state.promptResult = new Promise(() => {}) as unknown as NonNullable<
+          typeof runtimeMock.state.promptResult
+        >;
+
+        const child = yield* textGeneration
+          .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
+          .pipe(Effect.forkChild);
+        while (runtimeMock.state.promptUrls.length === 0) {
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust(Duration.seconds(181));
+        // An already-interrupted prompt must still enter session-abort cleanup.
+        while (runtimeMock.state.sessionAbortIds.length === 0) {
+          yield* Effect.yieldNow;
+        }
+        expect(runtimeMock.state.sessionAbortIds).toEqual(["http://127.0.0.1:9999/session"]);
+        expect(runtimeMock.state.sessionAbortSignals.at(-1)?.aborted).toBe(false);
+        yield* TestClock.adjust(Duration.seconds(10));
+
+        const error = yield* Fiber.join(child).pipe(Effect.flip);
+        expect(error).toBeInstanceOf(TextGenerationError);
+        expect(error.detail).toContain("timed out");
+        expect(runtimeMock.state.sessionAbortSignals.at(-1)?.aborted).toBe(true);
+        expect(runtimeMock.state.sessionAbortIds).toHaveLength(1);
       }),
     ).pipe(Effect.provide(TestClock.layer())),
   );
