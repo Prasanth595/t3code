@@ -22,6 +22,7 @@ export function ListToggleRow(
           <Pressable
             accessibilityLabel={`Set ${props.label} on for selected environments`}
             accessibilityRole="button"
+            accessibilityHint={props.description}
             accessibilityState={{ disabled: Boolean(props.disabled) }}
             disabled={props.disabled}
             className="rounded-full bg-subtle px-3 py-2 active:opacity-70"
