@@ -97,7 +97,11 @@ import {
   SidebarEnvironmentMenu,
   SidebarEnvironmentMissingNotice,
 } from "./sidebar/SidebarEnvironmentMenu";
-import { ProjectMachineLabel, useProjectMachineLabels } from "./ProjectMachineLabel";
+import {
+  ProjectMachineLabel,
+  useProjectMachineLabels,
+  type ProjectMachineLabels,
+} from "./ProjectMachineLabel";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
@@ -1182,10 +1186,11 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  /** Read once by the list, not per row. */
+  projectMachineLabels: ProjectMachineLabels;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
-  const projectMachineLabels = useProjectMachineLabels();
   const {
     project,
     isThreadListExpanded,
@@ -1205,6 +1210,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    projectMachineLabels,
   } = props;
   const environmentMachine = project.allRemoteMembersAreWsl
     ? "linux"
@@ -3056,6 +3062,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     projectsLength,
   } = props;
   const environmentMissing = useEnvironmentSelection().resolved.status === "missing";
+  const projectMachineLabels = useProjectMachineLabels();
 
   const handleProjectSortOrderChange = useCallback(
     (sortOrder: SidebarProjectSortOrder) => {
@@ -3196,6 +3203,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         }
                         isManualProjectSorting={isManualProjectSorting}
                         dragHandleProps={dragHandleProps}
+                        projectMachineLabels={projectMachineLabels}
                       />
                     )}
                   </SortableProjectItem>
@@ -3228,6 +3236,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
                 dragHandleProps={null}
+                projectMachineLabels={projectMachineLabels}
               />
             ))}
           </SidebarMenu>
