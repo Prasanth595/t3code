@@ -31,7 +31,9 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
-import { markdownAccessibilityLabel } from "../../lib/markdownAccessibility";
+import { toString } from "mdast-util-to-string";
+import { visit } from "unist-util-visit";
+import { parseMarkdownDocument } from "../../lib/markdownDocument";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -468,11 +470,19 @@ function PendingUserInputOption(props: {
     props.option.description !== props.option.label ? props.option.description : undefined;
   const label = useMemo(
     () =>
-      [
-        markdownAccessibilityLabel(props.option.label),
-        description ? markdownAccessibilityLabel(description) : undefined,
-      ]
-        .filter(Boolean)
+      [props.option.label, ...(description ? [description] : [])]
+        .map((markdown) => {
+          const document = parseMarkdownDocument(markdown);
+          visit(document, "break", (_node, index, parent) => {
+            if (parent && index !== undefined)
+              parent.children[index] = { type: "text", value: " " };
+          });
+          const blocks: string[] = [];
+          visit(document, ["paragraph", "heading", "tableCell", "code"], (node) => {
+            blocks.push(toString(node));
+          });
+          return blocks.join(" ").replace(/\s+/g, " ").trim() || markdown.trim();
+        })
         .join(". "),
     [props.option.label, description],
   );
