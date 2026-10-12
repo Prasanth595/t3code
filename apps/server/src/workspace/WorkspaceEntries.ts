@@ -214,19 +214,32 @@ export const make = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
-      const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
-      for (const dirent of dirents) {
-        if (
-          dirent.isDirectory() &&
+      const candidates = dirents.filter(
+        (dirent) =>
+          (dirent.isDirectory() || dirent.isSymbolicLink()) &&
           dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
-        ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
-        }
-      }
+          (showHidden || !dirent.name.startsWith(".")),
+      );
+      // readdir reports a symlink as a link, not a directory, so follow it to
+      // keep symlinked folders browsable. Broken or file links are skipped.
+      const entries = (yield* Effect.forEach(
+        candidates,
+        (dirent) => {
+          const fullPath = path.join(parentPath, dirent.name);
+          const isDirectory = dirent.isDirectory()
+            ? Effect.succeed(true)
+            : Effect.promise(() =>
+                NodeFSP.stat(fullPath).then(
+                  (stats) => stats.isDirectory(),
+                  () => false,
+                ),
+              );
+          return Effect.map(isDirectory, (directory) =>
+            directory ? [{ name: dirent.name, fullPath }] : [],
+          );
+        },
+        { concurrency: 16 },
+      )).flat();
 
       return {
         parentPath,

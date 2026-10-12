@@ -793,6 +793,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("includes symlinked directories and skips file and broken links", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const target = yield* makeTempDir({ prefix: "t3code-workspace-browse-target-" });
+        yield* writeTextFile(target, "notes.txt", "file target");
+        yield* writeTextFile(cwd, "real/index.ts", "export {};\n");
+        yield* fileSystem.symlink(target, path.join(cwd, "linked"));
+        yield* fileSystem.symlink(path.join(target, "notes.txt"), path.join(cwd, "linked-file"));
+        yield* fileSystem.symlink(path.join(cwd, "missing"), path.join(cwd, "linked-broken"));
+
+        const result = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(cwd),
+        });
+
+        expect(result.entries).toEqual([
+          { name: "linked", fullPath: path.join(cwd, "linked") },
+          { name: "real", fullPath: path.join(cwd, "real") },
+        ]);
+      }),
+    );
+
     it.effect("shows dot directories in directory mode and hidden-prefix mode", () =>
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
