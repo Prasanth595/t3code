@@ -118,6 +118,26 @@ export function shouldRenderPreviewMiniPlayer(
   return source !== null && !surfaceShowsPreviewSource(source, renderedRightPanelSurface);
 }
 
+/**
+ * In the scrolling columns layout the floating player floats over the chat, so
+ * it shows only while the chat column is wholly in view, and hides only while a
+ * column that is wholly in view shows the same source. A selected source column
+ * scrolled out of view does not count: its native view is hidden there too.
+ */
+export function shouldRenderPreviewMiniPlayerInColumns(input: {
+  source: PreviewMiniPlayerSource | null;
+  chatUnclipped: boolean;
+  surfaces: readonly RightPanelSurface[];
+  unclippedSurfaceIds: ReadonlySet<string>;
+}): boolean {
+  const { source } = input;
+  if (source === null || !input.chatUnclipped) return false;
+  return !input.surfaces.some(
+    (surface) =>
+      input.unclippedSurfaceIds.has(surface.id) && surfaceShowsPreviewSource(source, surface),
+  );
+}
+
 export function shouldOpenProactivePullRequest(
   previousTargetKey: string | null | undefined,
   targetKey: string | null,

@@ -52,6 +52,8 @@ export function RightPanelColumns(props: {
   emptyColumn?: ReactNode;
   /** Reports when the chat column scrolls in or out of view, so it can pause offscreen work. */
   onChatViewChange?: (view: ChatColumnView) => void;
+  /** Reports the ids of the surface columns that are wholly in view. */
+  onUnclippedSurfacesChange?: (surfaceIds: readonly string[]) => void;
   /** Changes when something in the chat column, such as its terminal drawer, needs to be seen. */
   chatRevealRequestId?: number;
   children: ReactNode;
@@ -115,6 +117,20 @@ export function RightPanelColumns(props: {
   useEffect(() => {
     onChatViewChange?.({ visible: chatVisible, unclipped: chatUnclipped });
   }, [chatVisible, chatUnclipped, onChatViewChange]);
+
+  // Joined so the effect below only fires when the set of wholly shown columns changes.
+  const unclippedSurfaceIdsKey = enabled
+    ? surfaces
+        .filter((surface) => visibility.get(surface.id) === "full")
+        .map((surface) => surface.id)
+        .join("\n")
+    : "";
+  const onUnclippedSurfacesChange = props.onUnclippedSurfacesChange;
+  useEffect(() => {
+    onUnclippedSurfacesChange?.(
+      unclippedSurfaceIdsKey === "" ? [] : unclippedSurfaceIdsKey.split("\n"),
+    );
+  }, [unclippedSurfaceIdsKey, onUnclippedSurfacesChange]);
 
   const chatRevealRequestId = props.chatRevealRequestId ?? 0;
   useEffect(() => {

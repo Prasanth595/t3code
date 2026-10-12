@@ -538,6 +538,7 @@ import {
   shouldOpenProactiveTurnDiff,
   shouldReleaseTimelineAnchorForToolActivity,
   shouldRenderPreviewMiniPlayer,
+  shouldRenderPreviewMiniPlayerInColumns,
   surfaceShowsPreviewSource,
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -2418,15 +2419,26 @@ export default function ChatView(props: ChatViewProps) {
     visible: true,
     unclipped: true,
   });
-  // The floating player's native view ignores DOM clipping, so it only shows
-  // while the chat column it floats over is wholly in view. While hidden, a
-  // column showing the same source takes the view back.
-  const previewMiniPlayerVisible =
-    shouldRenderPreviewMiniPlayer(
-      activePreviewMiniPlayer?.source ?? null,
-      renderedRightPanelSurface,
-    ) &&
-    (!rightPanelColumnsLayout || chatColumnView.unclipped);
+  const [unclippedColumnSurfaceIds, setUnclippedColumnSurfaceIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const handleUnclippedColumnSurfacesChange = useCallback((surfaceIds: readonly string[]) => {
+    setUnclippedColumnSurfaceIds(new Set(surfaceIds));
+  }, []);
+  // The floating player's native view ignores DOM clipping, so in columns it
+  // only shows while the chat column it floats over is wholly in view, and
+  // gives way only to a column that is actually showing the same source.
+  const previewMiniPlayerVisible = rightPanelColumnsLayout
+    ? shouldRenderPreviewMiniPlayerInColumns({
+        source: activePreviewMiniPlayer?.source ?? null,
+        chatUnclipped: chatColumnView.unclipped,
+        surfaces: rightPanelOpen ? rightPanelState.surfaces : [],
+        unclippedSurfaceIds: unclippedColumnSurfaceIds,
+      })
+    : shouldRenderPreviewMiniPlayer(
+        activePreviewMiniPlayer?.source ?? null,
+        renderedRightPanelSurface,
+      );
   const canMaximizeRightPanel =
     rightPanelOpen && !shouldUsePlanSidebarSheet && !rightPanelColumnsLayout;
   const rightPanelMaximized = canMaximizeRightPanel && rightPanelState.maximized === true;
@@ -11534,6 +11546,7 @@ export default function ChatView(props: ChatViewProps) {
         onActivate={activateRightPanelSurface}
         renderSurface={renderRightPanelColumn}
         onChatViewChange={setChatColumnView}
+        onUnclippedSurfacesChange={handleUnclippedColumnSurfacesChange}
         chatRevealRequestId={chatRevealRequestId}
         emptyColumn={
           rightPanelOpen && activeThreadRef ? (
