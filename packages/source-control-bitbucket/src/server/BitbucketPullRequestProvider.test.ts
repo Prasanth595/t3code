@@ -20,7 +20,7 @@ for (const operation of [
   "listCommits",
 ] as const) {
   it.effect.each(["response", "body read"])(
-    `preserves rate limits from ${operation} on %s errors while recovering other optional-read failures`,
+    `preserves authentication and rate limits from ${operation} on %s errors while recovering other optional-read failures`,
     (variant) =>
       Effect.gen(function* () {
         const pullRequest = Result.getOrThrow(
@@ -33,7 +33,7 @@ for (const operation of [
             "links": { "html": { "href": "https://bitbucket.org/acme/web/pull-requests/1" } }
           }`),
         );
-        for (const status of [429, 403]) {
+        for (const status of [429, 401, 403]) {
           const provider = yield* make.pipe(
             Effect.provide(
               Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({
@@ -76,6 +76,11 @@ for (const operation of [
             expect(result).toMatchObject({
               _tag: "Failure",
               failure: { reason: "rate-limited", retryAt: 120_000 },
+            });
+          } else if (status === 401 && variant === "response") {
+            expect(result).toMatchObject({
+              _tag: "Failure",
+              failure: { reason: "unauthenticated" },
             });
           } else {
             expect(result._tag).toBe("Success");

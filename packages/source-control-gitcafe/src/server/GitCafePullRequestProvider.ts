@@ -650,9 +650,16 @@ export const make = Effect.gen(function* () {
             pull.headOid === null
               ? Effect.succeed({ items: [], next: null })
               : readPages(operation, input, `${path}/commits`, Json.GitCafeCommits),
-            // Reactions decorate the conversation; a failed read leaves them out, not it.
+            // An ordinary reaction failure leaves the conversation intact; account and host
+            // failures still reach the service's error handling and rate-limit backoff.
             readPages(operation, input, `${path}/reactions/`, Json.GitCafeReactions).pipe(
-              Effect.orElseSucceed(() => undefined),
+              Effect.catch((error) =>
+                error.reason === "unauthenticated" ||
+                error.reason === "rate-limited" ||
+                error.reason === "missing-tool"
+                  ? Effect.fail(error)
+                  : Effect.void,
+              ),
             ),
           ],
           { concurrency: 4 },
