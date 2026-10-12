@@ -2671,6 +2671,30 @@ function isClaudeTaskNotificationOriginResult(message: SDKMessage): message is S
   return message.type === "result" && message.origin?.kind === "task-notification";
 }
 
+// The CLI throttles unchanged rate_limit_event frames, but repeats this payload
+// on each blocked assistant message. The SDK does not yet declare the field.
+const isClaudeBlockedAssistantRateLimit = Schema.is(
+  Schema.Struct({
+    api_error_params: Schema.Struct({
+      rate_limit_info: Schema.Struct({
+        status: Schema.Literal("rejected"),
+        rateLimitType: Schema.optionalKey(Schema.String),
+        resetsAt: Schema.optionalKey(Schema.Number),
+        overageStatus: Schema.optionalKey(Schema.String),
+        isUsingOverage: Schema.optionalKey(Schema.Boolean),
+        overageInUse: Schema.optionalKey(Schema.Boolean),
+      }),
+    }),
+  }),
+);
+
+function claudeUsageLimitResetAt(resetsAt: number | undefined): string | null {
+  const resetMs = (resetsAt ?? NaN) * 1000;
+  return Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
+    ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
+    : null;
+}
+
 function providerFailureFromResult(
   message: SDKResultMessage,
   completedAt: DateTime.Utc,
@@ -6619,12 +6643,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const limitType = rateLimitInfo.rateLimitType ?? "unknown";
             if (blocked) {
               context.rejectedRateLimitTypes.add(limitType);
-              const resetMs = (rateLimitInfo.resetsAt ?? NaN) * 1000;
               context.rateLimitResetTimes.set(
                 limitType,
-                Number.isFinite(resetMs) && resetMs > 0 && resetMs < 8.64e15
-                  ? DateTime.formatIso(DateTime.makeUnsafe(resetMs))
-                  : null,
+                claudeUsageLimitResetAt(rateLimitInfo.resetsAt),
               );
             } else if (
               rateLimitInfo.status === "allowed" ||
@@ -6805,6 +6826,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             context.nativeMessageCursor = message.uuid;
             if (message.parent_tool_use_id === null) {
               context.latestAssistantRateLimited = message.error === "rate_limit";
+              if (message.error === "rate_limit" && isClaudeBlockedAssistantRateLimit(message)) {
+                const info = message.api_error_params.rate_limit_info;
+                const overageAllowed =
+                  info.overageStatus === "allowed" ||
+                  info.overageStatus === "allowed_warning" ||
+                  info.isUsingOverage === true ||
+                  info.overageInUse === true;
+                if (!overageAllowed) {
+                  const limitType = info.rateLimitType ?? "unknown";
+                  context.rejectedRateLimitTypes.add(limitType);
+                  context.rateLimitResetTimes.set(
+                    limitType,
+                    context.rateLimitResetTimes.get(limitType) ??
+                      claudeUsageLimitResetAt(info.resetsAt),
+                  );
+                }
+              }
               if (message.error === "authentication_failed") {
                 context.authenticationFailureMessage = claudeSignedOutMessage({
                   configDir: adapterOptions.environment.CLAUDE_CONFIG_DIR,
