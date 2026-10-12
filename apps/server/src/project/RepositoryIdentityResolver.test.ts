@@ -376,6 +376,18 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }),
   );
 
+  it.effect.each([
+    { remote: "git@constructor:repo.git", sshFails: false },
+    { remote: "git@constructor:repo.git", sshFails: true },
+    { remote: "ssh://git@constructor/repo.git", sshFails: false },
+  ])("resolves $remote when sshFails is $sshFails", ({ remote, sshFails }) =>
+    Effect.gen(function* () {
+      const { identity } = yield* resolveRemote(remote, { sshFails });
+      expect(identity?.canonicalKey).toBe("constructor/repo");
+      expect(identity?.locator.remoteUrl).toBe(remote);
+    }),
+  );
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

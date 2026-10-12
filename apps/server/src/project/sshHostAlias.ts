@@ -132,7 +132,8 @@ export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(f
   const hostName = (config.get("hostname") ?? alias).toLowerCase().replace(/\.$/, "");
   const host = LOOPBACK_HOST_PATTERN.test(hostName)
     ? alias
-    : (SSH_ENDPOINT_HOSTS[hostName] ?? hostName);
+    : ((Object.hasOwn(SSH_ENDPOINT_HOSTS, hostName) ? SSH_ENDPOINT_HOSTS[hostName] : undefined) ??
+      hostName);
   const configUser = config.get("user");
   const user = remote.user ?? (isSshName(configUser) ? configUser : undefined);
   const path = homeQualifiedPath(remote.path, user, host);
