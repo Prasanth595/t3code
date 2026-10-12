@@ -28,6 +28,8 @@ import {
   deriveTimelineEntriesFromVisibleTurnItems,
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
+  isRevertFilesDisabled,
+  resolvePendingRevertTarget,
   derivePhase,
   findLatestProposedPlan,
   isLatestRunSettled,
@@ -365,6 +367,20 @@ describe("V2 session presentation", () => {
     // "missing" pins a conversation position with no file snapshot, so the
     // button shows for conversation-only rewind; stale/error stay excluded.
     expect([...targets]).toEqual([[missingMessageId, 1]]);
+  });
+
+  it("disables Revert files too unless the rollback target is ready", () => {
+    const runId = RunId.make("run-revert-target");
+    const summaries = [
+      { runId, checkpointTurnCount: 0, checkpointRef: "c0" as never, status: "ready" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:01.000Z" },
+      { runId, checkpointTurnCount: 1, checkpointRef: "c1" as never, status: "missing" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:02.000Z" },
+      { runId, checkpointTurnCount: 2, checkpointRef: "c2" as never, status: "ready" as const, files: [], assistantMessageId: null, completedAt: "2026-06-20T00:00:03.000Z" },
+    ];
+    expect(resolvePendingRevertTarget(summaries, 1)?.status).toBe("missing");
+    expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 1))).toBe(true);
+    expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 2))).toBe(false);
+    expect(isRevertFilesDisabled(resolvePendingRevertTarget(summaries, 99))).toBe(false);
+    expect(isRevertFilesDisabled(undefined)).toBe(false);
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {

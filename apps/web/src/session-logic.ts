@@ -1069,6 +1069,14 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
+export function resolvePendingRevertTarget(summaries: ReadonlyArray<TurnDiffSummary>, turnCount: number): TurnDiffSummary | undefined {
+  return summaries.findLast((summary) => summary.checkpointTurnCount === turnCount);
+}
+
+export function isRevertFilesDisabled(target: Pick<TurnDiffSummary, "status"> | undefined): boolean {
+  return target !== undefined && target.status !== "ready";
+}
+
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {
   if (runtime === null) return "disconnected";
   if (
