@@ -79,6 +79,11 @@ type CustomThemeLibrarySnapshot =
 let customThemeLibrarySnapshot: CustomThemeLibrarySnapshot | null = null;
 const themePreviewListeners = new Set<() => void>();
 let themePreviewSidebarArtwork: boolean | null = null;
+let themePreviewAppearance: ThemeAppearance | null = null;
+
+export function getThemePreviewAppearance(): ThemeAppearance | null {
+  return themePreviewAppearance;
+}
 
 export function getThemePreviewSidebarArtwork(): boolean | null {
   return themePreviewSidebarArtwork;
@@ -89,9 +94,11 @@ export function subscribeToThemePreview(listener: () => void): () => void {
   return () => themePreviewListeners.delete(listener);
 }
 
-function setThemePreviewSidebarArtwork(next: boolean | null): void {
-  if (themePreviewSidebarArtwork === next) return;
-  themePreviewSidebarArtwork = next;
+function setThemePreview(sidebarArtwork: boolean | null, appearance: ThemeAppearance | null): void {
+  if (themePreviewSidebarArtwork === sidebarArtwork && themePreviewAppearance === appearance)
+    return;
+  themePreviewSidebarArtwork = sidebarArtwork;
+  themePreviewAppearance = appearance;
   for (const listener of themePreviewListeners) listener();
 }
 
@@ -1528,13 +1535,13 @@ export function applyThemeColorPreview(colors: ThemeColors, appearance: ThemeApp
 
   // Drafts become user-controlled themes when saved, so their preview keeps
   // the fixed stage artwork hidden even when it was seeded from a built-in.
-  setThemePreviewSidebarArtwork(false);
   root.dataset.themeId = THEME_PREVIEW_ID;
   root.classList.toggle("dark", appearance === "dark");
   for (const [role, value] of Object.entries(colors) as Array<[ThemeColorRole, string]>) {
     // A half-typed hex keeps the last good value instead of blanking the role.
     if (isThemeColor(value)) root.style.setProperty(APP_THEME_VARIABLES[role], value);
   }
+  setThemePreview(false, appearance);
 }
 
 export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppearance): void {
@@ -1543,7 +1550,7 @@ export function applyThemePalette(theme: ThemePreference, appearance?: ThemeAppe
   const root = document.documentElement;
   if (!root?.style) return;
 
-  setThemePreviewSidebarArtwork(null);
+  setThemePreview(null, null);
   const palette = getThemeDefinition(theme);
 
   if (palette) {

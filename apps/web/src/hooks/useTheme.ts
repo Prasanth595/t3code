@@ -9,10 +9,12 @@ import {
   canonicalThemePreference,
   isKnownThemePreference,
   getThemePreferenceMode,
+  getThemePreviewAppearance,
   parseThemeHalves,
   resolveDesktopTheme,
   resolveThemeAppearance,
   resolveThemeHalf,
+  subscribeToThemePreview,
   THEME_PREVIEW_ID,
   THEME_APPEARANCE_MODE_STORAGE_KEY,
   THEME_FOLLOW_SYSTEM_STORAGE_KEY,
@@ -426,13 +428,9 @@ function getSnapshot(): ThemeSnapshot {
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
 
-  const resolvedTheme = resolveThemeAppearance(
-    theme,
-    systemDark,
-    followSystem,
-    appearanceMode,
-    themeHalves,
-  );
+  const resolvedTheme =
+    getThemePreviewAppearance() ??
+    resolveThemeAppearance(theme, systemDark, followSystem, appearanceMode, themeHalves);
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&
@@ -490,10 +488,13 @@ function subscribe(listener: () => void): () => void {
   // The system-preference and cross-tab listeners are shared by all
   // subscribers; each event applies the theme once and notifies everyone.
   if (!removeWindowListeners) {
+    snapshotStale = true;
+    const unsubscribePreview = subscribeToThemePreview(emitChange);
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
     mq?.addEventListener("change", handleSystemAppearanceChange);
     window.addEventListener("storage", handleStorageChange);
     removeWindowListeners = () => {
+      unsubscribePreview();
       mq?.removeEventListener("change", handleSystemAppearanceChange);
       window.removeEventListener("storage", handleStorageChange);
     };

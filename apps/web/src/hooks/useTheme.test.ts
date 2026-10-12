@@ -26,6 +26,91 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("draft rendering appearance", () => {
+  it.each(["dark", "light"] as const)(
+    "renders the opposite draft and restores the saved %s appearance on cancel",
+    async (savedAppearance) => {
+      const localStorage = createStorage();
+      localStorage.setItem("t3code:theme", savedAppearance);
+      const classes = new Set<string>();
+      vi.stubGlobal("window", {
+        localStorage,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        matchMedia: () => ({
+          matches: false,
+          addEventListener: vi.fn(),
+          removeEventListener: vi.fn(),
+        }),
+      });
+      vi.stubGlobal("document", {
+        documentElement: {
+          dataset: {},
+          style: { setProperty: vi.fn(), removeProperty: vi.fn() },
+          classList: {
+            add: (name: string) => classes.add(name),
+            remove: (name: string) => classes.delete(name),
+            toggle: (name: string, enabled: boolean) => {
+              if (enabled) classes.add(name);
+              else classes.delete(name);
+            },
+          },
+        },
+      });
+      vi.stubGlobal("requestAnimationFrame", (callback: () => void) => callback());
+      let subscribeToTheme: ((listener: () => void) => () => void) | undefined;
+      vi.doMock("react", () => ({
+        useCallback: <A>(callback: A) => callback,
+        useEffect: () => undefined,
+        useSyncExternalStore: (
+          subscribe: (listener: () => void) => () => void,
+          getSnapshot: () => unknown,
+        ) => {
+          subscribeToTheme = subscribe;
+          return getSnapshot();
+        },
+      }));
+      const { useTheme } = await import("./useTheme");
+      const { applyThemeColorPreview, getStandardThemeColors } = await import("../themePalette");
+      const original = useTheme();
+      expect(original.resolvedTheme).toBe(savedAppearance);
+      const listener = vi.fn();
+      const unsubscribe = subscribeToTheme?.(listener);
+      const draftAppearance = savedAppearance === "dark" ? "light" : "dark";
+
+      applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);
+      expect(classes.has("dark")).toBe(draftAppearance === "dark");
+      expect(localStorage.getItem("t3code:theme")).toBe(savedAppearance);
+      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(listener).toHaveBeenCalled();
+      expect(useTheme().theme).toBe(savedAppearance);
+      expect(useTheme().appearanceMode).toBe(savedAppearance);
+
+      listener.mockClear();
+      applyThemeColorPreview(getStandardThemeColors(savedAppearance), savedAppearance);
+      expect(useTheme().resolvedTheme).toBe(savedAppearance);
+      expect(listener).toHaveBeenCalledTimes(1);
+      listener.mockClear();
+      applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);
+      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(listener).toHaveBeenCalledTimes(1);
+      listener.mockClear();
+      applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);
+      expect(listener).not.toHaveBeenCalled();
+
+      original.refreshTheme({ preservePreview: true });
+      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      original.refreshTheme();
+      expect(classes.has("dark")).toBe(savedAppearance === "dark");
+      expect(useTheme().resolvedTheme).toBe(savedAppearance);
+      expect(localStorage.getItem("t3code:theme")).toBe(savedAppearance);
+      expect(localStorage.getItem("t3code:theme-appearance-mode")).toBeNull();
+      expect(listener).toHaveBeenCalled();
+      unsubscribe?.();
+    },
+  );
+});
+
 describe("theme failure handling", () => {
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   getStandardThemeColors,
   setEnvironmentThemes,
+  themeColorToHex,
   type ThemeAppearance,
   type ThemeHalves,
   type ThemePreference,
@@ -97,4 +98,28 @@ describe("useHtmlRenderTheme", () => {
     expect(theme.variables["--accent"]).toBe("#63636380");
     expect(theme.variables["--chart-1"]).toBe("#63636380");
   });
+
+  it.each(["light", "dark"] as const)(
+    "keeps HTML render colors consistent with a %s draft over a single-appearance theme",
+    (draftAppearance) => {
+      const savedAppearance = draftAppearance === "light" ? "dark" : "light";
+      setEnvironmentThemes([
+        {
+          id: "single-appearance",
+          label: "Single appearance",
+          appearance: savedAppearance,
+          colors: getStandardThemeColors(savedAppearance),
+        },
+      ]);
+      selection.theme = "single-appearance";
+      selection.resolvedTheme = draftAppearance;
+
+      const theme = readRenderTheme();
+
+      expect(theme.appearance).toBe(draftAppearance);
+      expect(theme.variables["--background"]).toBe(
+        themeColorToHex(getStandardThemeColors(draftAppearance).canvas),
+      );
+    },
+  );
 });

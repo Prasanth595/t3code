@@ -25,7 +25,7 @@ function resolveActiveThemeColors(
   const definition = getThemeDefinition(resolveThemeHalf(theme, halves, appearance));
   return definition === null
     ? getStandardThemeColors(appearance)
-    : (getThemeColorsForMode(definition, appearance) ?? definition.colors);
+    : (getThemeColorsForMode(definition, appearance) ?? getStandardThemeColors(appearance));
 }
 
 /** The app's active theme and fonts, as handed to agent HTML renders. Stable until one changes. */
