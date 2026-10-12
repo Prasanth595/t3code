@@ -18,7 +18,7 @@ import * as WorkspacePaths from "./WorkspacePaths.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, readdir: vi.fn(actual.readdir) };
+  return { ...actual, readdir: vi.fn(actual.readdir), stat: vi.fn(actual.stat) };
 });
 
 const layerTest = Layer.empty.pipe(
@@ -793,7 +793,7 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
-    it.effect("includes symlinked directories and skips file and broken links", () =>
+    it.effect("includes symlinked directories and skips file, broken, and looping links", () =>
       Effect.gen(function* () {
         const platform = yield* HostProcess.Platform;
         if (platform === "win32") return;
@@ -807,6 +807,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         yield* fileSystem.symlink(target, path.join(cwd, "linked"));
         yield* fileSystem.symlink(path.join(target, "notes.txt"), path.join(cwd, "linked-file"));
         yield* fileSystem.symlink(path.join(cwd, "missing"), path.join(cwd, "linked-broken"));
+        yield* fileSystem.symlink(path.join(cwd, "loop-b"), path.join(cwd, "loop-a"));
+        yield* fileSystem.symlink(path.join(cwd, "loop-a"), path.join(cwd, "loop-b"));
 
         const result = yield* workspaceEntries.browse({
           partialPath: yield* appendSeparator(cwd),
@@ -816,6 +818,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
           { name: "linked", fullPath: path.join(cwd, "linked") },
           { name: "real", fullPath: path.join(cwd, "real") },
         ]);
+      }),
+    );
+
+    it.effect("fails when a symlink target cannot be checked for an unexpected reason", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-eio-" });
+        const target = yield* makeTempDir({ prefix: "t3code-workspace-browse-target-" });
+        yield* fileSystem.symlink(target, path.join(cwd, "linked"));
+
+        const ioError = Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+        vi.mocked(NodeFSP.stat).mockRejectedValueOnce(ioError);
+
+        const error = yield* workspaceEntries
+          .browse({ partialPath: yield* appendSeparator(cwd) })
+          .pipe(Effect.flip);
+        expect(error._tag).toBe("WorkspaceEntriesReadDirectoryError");
       }),
     );
 

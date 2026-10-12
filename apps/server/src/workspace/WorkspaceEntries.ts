@@ -221,17 +221,37 @@ export const make = Effect.gen(function* () {
           (showHidden || !dirent.name.startsWith(".")),
       );
       // readdir reports a symlink as a link, not a directory, so follow it to
-      // keep symlinked folders browsable. Broken or file links are skipped.
+      // keep symlinked folders browsable. Links to files are skipped, as are
+      // links that are broken, loop, or are unreadable (matching how an
+      // unreadable parent lists as empty above); other failures propagate.
       const entries = (yield* Effect.forEach(
         candidates,
         (dirent) => {
           const fullPath = path.join(parentPath, dirent.name);
           const isDirectory = dirent.isDirectory()
             ? Effect.succeed(true)
-            : Effect.promise(() =>
-                NodeFSP.stat(fullPath).then(
-                  (stats) => stats.isDirectory(),
-                  () => false,
+            : Effect.tryPromise({
+                try: () => NodeFSP.stat(fullPath).then((stats) => stats.isDirectory()),
+                catch: (cause) =>
+                  new WorkspaceEntriesReadDirectoryError({
+                    cwd: input.cwd,
+                    partialPath: input.partialPath,
+                    parentPath,
+                    cause,
+                  }),
+              }).pipe(
+                Effect.catchIf(
+                  (error) => {
+                    const code = (error.cause as NodeJS.ErrnoException | undefined)?.code;
+                    return (
+                      code === "ENOENT" ||
+                      code === "ENOTDIR" ||
+                      code === "ELOOP" ||
+                      code === "EACCES" ||
+                      code === "EPERM"
+                    );
+                  },
+                  () => Effect.succeed(false),
                 ),
               );
           return Effect.map(isDirectory, (directory) =>
