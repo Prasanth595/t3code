@@ -195,7 +195,14 @@ export function FirstRunGate({
     return <FirstRunRecovery reason="settings" retrying={hydrationStatus === "retrying"} />;
   }
   // Thread details need not wait for workspace evidence, but cannot bypass a known decision.
-  if (threadRef !== null && hydrated && decision === "pending" && !stalled) return children;
+  if (
+    threadRef !== null &&
+    hydrated &&
+    decision === "pending" &&
+    nextDecision !== "wizard" &&
+    !stalled
+  )
+    return children;
   if (decision !== "app") {
     return stalled ? <FirstRunRecovery reason="connection" /> : null;
   }
