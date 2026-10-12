@@ -6327,9 +6327,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           toastManager.add({
             type: "error",
             title: "Unable to add thread",
-            description: isChoiceOnlyPendingQuestion
-              ? "Thread references cannot be added to a question that only accepts the choices above."
-              : "The composer is busy; try again once it is ready.",
+            description: "The composer is busy; try again once it is ready.",
           });
           return;
         }
@@ -6355,7 +6353,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isComposerApprovalState,
     isComposerCollapsedMobile,
     isConnecting,
-    isChoiceOnlyPendingQuestion,
     questionAttachmentTarget,
     readComposerSnapshot,
   ]);
