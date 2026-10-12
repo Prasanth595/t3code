@@ -25,8 +25,8 @@ function runMacSnapShot(windowId: number, outputPath: string): Promise<void> {
       MAC_SCREEN_CAPTURE_PATH,
       macSnapShotArguments(windowId, outputPath),
       { timeout: MAC_SCREEN_CAPTURE_TIMEOUT_MS },
-      (error) => {
-        if (error) reject(error);
+      (error, _stdout, stderr) => {
+        if (error) reject(Object.assign(error, { stderr }));
         else resolve();
       },
     );

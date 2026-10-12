@@ -211,10 +211,18 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
       Schema.Literals(["preview-config", "apply-config"]),
     ]),
     reason: Schema.Literals(["unsupported-session", "setup-failed", "shortcut-permissions"]),
+    /** What the failed command reported, shown after the summary. */
+    detail: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.action === "test-mac-capture") {
+      if (this.reason === "unsupported-session") return "Test capture requires macOS.";
+      return this.detail
+        ? `Could not capture a test snapshot. ${this.detail}`
+        : "Could not capture a test snapshot.";
+    }
     if (this.action === "preview-config" || this.action === "apply-config") {
       if (this.reason === "unsupported-session")
         return "Config setup requires a Niri or Hyprland session.";
@@ -238,6 +246,33 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
         ? "Could not set up KDE capture."
         : "Could not set up the GNOME extension.";
   }
+}
+
+const MAC_CAPTURE_FAILURE_DETAIL_MAX_LENGTH = 400;
+
+/**
+ * Names the command that failed and what it printed. A child process error's own
+ * message repeats the whole command line, which for the window lookup is a script.
+ */
+export function macCaptureFailureDetail(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const failure = error as Error & {
+    readonly cmd?: unknown;
+    readonly stderr?: unknown;
+    readonly killed?: unknown;
+    readonly code?: unknown;
+  };
+  if (typeof failure.cmd !== "string") return failure.message.trim() || undefined;
+  const command = failure.cmd.split(" ", 1)[0];
+  const output = typeof failure.stderr === "string" ? failure.stderr.trim() : "";
+  const outcome = output
+    ? `failed: ${output.slice(0, MAC_CAPTURE_FAILURE_DETAIL_MAX_LENGTH)}`
+    : failure.killed === true
+      ? "timed out."
+      : typeof failure.code === "number"
+        ? `exited with code ${failure.code}.`
+        : "could not be run.";
+  return `${command} ${outcome}`;
 }
 
 type SnapShotSystemAnimationSettings = Pick<
@@ -1332,23 +1367,34 @@ export const make = Effect.gen(function* () {
       // or running capture feedback. The temporary image is discarded on failure too.
       yield* Effect.scoped(
         Effect.gen(function* () {
-          const directory = yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-snapshot-test-",
-          });
-          yield* Effect.tryPromise(async () => {
-            const active = await activeWindow("darwin");
-            if (!active) throw new Error("No window is available to test capture.");
-            await captureMacWindowSnapshot(
-              active,
-              path.join(directory, "test.png"),
-              snapShotThumbnailSize(active),
+          const directory = yield* fileSystem
+            .makeTempDirectoryScoped({ prefix: "t3-snapshot-test-" })
+            .pipe(
+              Effect.mapError(
+                (cause) => new DesktopSnapShotSetupError({ action, reason: "setup-failed", cause }),
+              ),
             );
+          yield* Effect.tryPromise({
+            try: async () => {
+              const active = await activeWindow("darwin");
+              if (!active) throw new Error("No window is available to test capture.");
+              await captureMacWindowSnapshot(
+                active,
+                path.join(directory, "test.png"),
+                snapShotThumbnailSize(active),
+              );
+            },
+            catch: (cause) => {
+              const detail = macCaptureFailureDetail(cause);
+              return new DesktopSnapShotSetupError({
+                action,
+                reason: "setup-failed",
+                ...(detail === undefined ? {} : { detail }),
+                cause,
+              });
+            },
           });
         }),
-      ).pipe(
-        Effect.mapError(
-          (cause) => new DesktopSnapShotSetupError({ action, reason: "setup-failed", cause }),
-        ),
       );
       return;
     } else if (action === "install-kde-helper" || action === "remove-kde-helper") {
