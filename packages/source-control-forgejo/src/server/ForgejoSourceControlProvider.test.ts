@@ -1359,3 +1359,70 @@ it.effect(
       }
     }),
 );
+
+const mergeProtectionTest = (
+  admin: boolean,
+  blocked: boolean,
+  expected: { readonly bodies: unknown[]; readonly outcome: "merged" | "refused" },
+) => {
+  const bodies: unknown[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const result = yield* provider
+      .runAction({
+        cwd: "/repo",
+        repository: "acme/web",
+        host: "forgejo.test",
+        number: 7,
+        action: "merge",
+        mergeMethod: "squash",
+      })
+      .pipe(Effect.result);
+    assert.strictEqual(result._tag === "Success" ? "merged" : "refused", expected.outcome);
+    assert.deepStrictEqual(bodies, expected.bodies);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          if (input.path === "repos/acme/web") {
+            return Effect.succeed(
+              processOutput(
+                `{"full_name":"acme/web","permissions":{"push":true,"admin":${admin}}}`,
+              ),
+            );
+          }
+          assert.strictEqual(input.path, "repos/acme/web/pulls/7/merge");
+          const body = input.body;
+          bodies.push(body);
+          const forced = typeof body === "object" && body !== null && "force_merge" in body;
+          return blocked && !forced
+            ? Effect.fail(
+                new ForgejoCli.ForgejoCliError({
+                  command: "fj",
+                  cwd: input.cwd,
+                  httpStatus: 405,
+                  detail:
+                    'Forgejo API request failed (HTTP 405): {"message":"Does not have enough approvals"}',
+                }),
+              )
+            : Effect.succeed(processOutput(""));
+        },
+      }),
+    ),
+  );
+};
+
+it.effect("merges without force_merge when nothing blocks the merge", () =>
+  mergeProtectionTest(true, false, { bodies: [{ Do: "squash" }], outcome: "merged" }),
+);
+
+it.effect("retries an approval-blocked merge with force_merge for a repository admin", () =>
+  mergeProtectionTest(true, true, {
+    bodies: [{ Do: "squash" }, { Do: "squash", force_merge: true }],
+    outcome: "merged",
+  }),
+);
+
+it.effect("keeps the original refusal for a blocked merge when the viewer is not an admin", () =>
+  mergeProtectionTest(false, true, { bodies: [{ Do: "squash" }], outcome: "refused" }),
+);

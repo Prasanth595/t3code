@@ -65,6 +65,8 @@ const issuePath = (input: ProviderRepositoryRef & { readonly number: number }) =
 const reviewCommentId = (review: typeof ForgejoReview.Type) =>
   /#issuecomment-([1-9]\d*)$/.exec(review.html_url ?? "")?.[1];
 
+const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
+
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli.ForgejoCli;
   const failure = (operation: string, detail: string, cause?: unknown) =>
@@ -432,13 +434,32 @@ export const make = Effect.gen(function* () {
     ),
     runAction: (input) => {
       switch (input.action) {
-        case "merge":
-          return write({
-            ...input,
-            path: `${pullPath(input)}/merge`,
-            method: "POST",
-            body: { Do: input.mergeMethod ?? "merge" },
-          });
+        case "merge": {
+          const merge = (forceMerge: boolean) =>
+            write({
+              ...input,
+              path: `${pullPath(input)}/merge`,
+              method: "POST",
+              body: {
+                Do: input.mergeMethod ?? "merge",
+                ...(forceMerge ? { force_merge: true } : {}),
+              },
+            });
+          // Branch protection applies to admins too; Forgejo lets them past it only with
+          // `force_merge`, as its web UI does. Ask for that only after a normal merge is refused.
+          return merge(false).pipe(
+            Effect.catchIf(
+              (error) => isForgejoCliError(error.cause) && error.cause.httpStatus === 405,
+              (error) =>
+                getRepo(input).pipe(
+                  Effect.mapError(() => error),
+                  Effect.flatMap((repo) =>
+                    repo.permissions?.admin ? merge(true) : Effect.fail(error),
+                  ),
+                ),
+            ),
+          );
+        }
         case "close":
         case "reopen":
           return write({
