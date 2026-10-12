@@ -24,6 +24,7 @@ import {
   parseAddProjectRemoteSource,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
+  sourceControlRepositoryErrorMessage,
   type AddProjectRemoteSource,
 } from "@t3tools/client-runtime/operations/projects";
 import {
@@ -811,7 +812,7 @@ export function AddProjectRepositoryScreen(props: {
       },
     });
     if (AsyncResult.isFailure(result)) {
-      setError(errorMessage(Cause.squash(result.cause)));
+      setError(sourceControlRepositoryErrorMessage(Cause.squash(result.cause)));
     } else {
       const repository = result.value;
       navigation.dispatch(
