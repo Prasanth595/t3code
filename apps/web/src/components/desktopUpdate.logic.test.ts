@@ -4,6 +4,7 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 import {
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
+  getArm64IntelBuildWarningTitle,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
@@ -236,8 +237,23 @@ describe("desktop update UI helpers", () => {
     };
 
     expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Apple Silicon");
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Intel build");
+    expect(getArm64IntelBuildWarningTitle("MacIntel")).toBe("Intel build on Apple Silicon");
+    expect(getArm64IntelBuildWarningDescription(state, "MacIntel")).toContain("Apple Silicon");
+    expect(getArm64IntelBuildWarningDescription(state, "MacIntel")).toContain("Intel build");
+  });
+
+  it("shows a Windows on ARM warning for emulated x64 builds", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      hostArch: "arm64",
+      appArch: "x64",
+      runningUnderArm64Translation: true,
+    };
+
+    expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
+    expect(getArm64IntelBuildWarningTitle("Win32")).toBe("x64 build on ARM");
+    expect(getArm64IntelBuildWarningDescription(state, "Win32")).toContain("ARM processor");
+    expect(getArm64IntelBuildWarningDescription(state, "Win32")).toContain("native ARM64 build");
   });
 
   it("changes the warning copy when a native build update is ready to download", () => {
@@ -250,7 +266,12 @@ describe("desktop update UI helpers", () => {
       availableVersion: "1.1.0",
     };
 
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Download the available update");
+    expect(getArm64IntelBuildWarningDescription(state, "MacIntel")).toContain(
+      "Download the available update",
+    );
+    expect(getArm64IntelBuildWarningDescription(state, "Win32")).toContain(
+      "Download the available update",
+    );
   });
 
   it("includes the downloaded version in the install confirmation copy", () => {

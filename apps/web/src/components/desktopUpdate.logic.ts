@@ -1,4 +1,5 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import { isMacPlatform } from "@t3tools/shared/keybindings";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -55,19 +56,35 @@ export function isDesktopUpdateButtonDisabled(state: DesktopUpdateState | null):
   return state?.status === "downloading";
 }
 
-export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState): string {
+export function getArm64IntelBuildWarningTitle(
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): string {
+  return isMacPlatform(platform) ? "Intel build on Apple Silicon" : "x64 build on ARM";
+}
+
+export function getArm64IntelBuildWarningDescription(
+  state: DesktopUpdateState,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): string {
   if (!shouldShowArm64IntelBuildWarning(state)) {
     return "This install is using the correct architecture.";
   }
 
+  const isMac = isMacPlatform(platform);
   const action = resolveDesktopUpdateButtonAction(state);
   if (action === "download") {
-    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.";
+    return isMac
+      ? "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build."
+      : "This device has an ARM processor, but T3 Code is running the emulated x64 build. Download the available update to switch to the native ARM64 build.";
   }
   if (action === "install") {
-    return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.";
+    return isMac
+      ? "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build."
+      : "This device has an ARM processor, but T3 Code is running the emulated x64 build. Restart to install the downloaded ARM64 build.";
   }
-  return "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.";
+  return isMac
+    ? "This Mac has Apple Silicon, but T3 Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build."
+    : "This device has an ARM processor, but T3 Code is running the emulated x64 build. The next app update will replace it with the native ARM64 build.";
 }
 
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
