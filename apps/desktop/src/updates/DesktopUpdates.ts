@@ -51,6 +51,7 @@ import {
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
+const QUIT_AND_INSTALL_GRACE = Duration.seconds(30);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -668,6 +669,16 @@ export const make = Effect.gen(function* () {
             isSilent: true,
             isForceRunAfter: true,
           });
+          // quitAndInstall can return without an error and without quitting, for
+          // example when Squirrel.Mac rejects the build. The app then still runs
+          // with every backend stopped, so recover once the grace time passes.
+          const notQuitMessage =
+            "The app did not restart to install the update. The server runs again.";
+          yield* Effect.sleep(QUIT_AND_INSTALL_GRACE).pipe(
+            Effect.andThen(recoverFailedInstall(notQuitMessage)),
+            Effect.andThen(logUpdaterError(notQuitMessage)),
+            Effect.forkDetach,
+          );
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({

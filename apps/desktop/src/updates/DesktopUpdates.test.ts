@@ -659,6 +659,28 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("restarts backends when quitAndInstall returns but the app does not quit", () => {
+    const harness = makeHarness();
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const desktopState = yield* DesktopState.DesktopState;
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        harness.emit("update-downloaded", { version: "1.2.4" });
+        yield* flushCallbacks;
+
+        assert.isTrue((yield* updates.install).accepted);
+        assert.isTrue(yield* Ref.get(desktopState.quitting));
+
+        yield* TestClock.adjust(Duration.seconds(30));
+        assert.isFalse(yield* Ref.get(desktopState.quitting));
+        assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        assert.isNotNull((yield* updates.getState).message);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("holds the install reservation until failed-install recovery finishes", () => {
     const recoveryStarted = Deferred.makeUnsafe<void>();
     const releaseRecovery = Deferred.makeUnsafe<void>();
