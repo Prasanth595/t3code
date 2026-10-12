@@ -113,6 +113,16 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const questions = useMemo(
+    () =>
+      props.pendingUserInput.questions.map((question) => ({
+        question,
+        spokenFallback: toString(parseMarkdownDocument(question.question)).trim()
+          ? undefined
+          : question.question,
+      })),
+    [props.pendingUserInput.questions],
+  );
   const styles = useMarkdownPreviewStyles();
   const theme = useUniwindTheme();
   const questionTextRole = useScaledTextRole("body");
@@ -350,11 +360,16 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             run to continue.
           </Text>
         ) : null}
-        {props.pendingUserInput.questions.map((question) => {
+        {questions.map(({ question, spokenFallback }) => {
           const draft = props.drafts[question.id];
           return (
             <View key={question.id} className="gap-2 pt-1">
-              <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
+              <Text
+                className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted"
+                accessibilityLabel={
+                  spokenFallback ? `${question.header}. ${spokenFallback}` : undefined
+                }
+              >
                 {question.header}
               </Text>
               <SelectableMarkdownText
