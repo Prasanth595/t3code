@@ -19,7 +19,10 @@ const { siblingsByEnvironment, Wrapper, MenuContext, RadioContext } = await vi.h
 });
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => [] }));
-vi.mock("~/state/server", () => ({ primaryServerKeybindingsAtom: {} }));
+vi.mock("~/state/server", () => ({
+  primaryServerKeybindingsAtom: {},
+  serverEnvironment: { configValueAtom: () => null },
+}));
 // This client holds every scope, so files can be read, written and previewed.
 vi.mock("~/state/filesystem", () => ({
   useFilesystemReadAccess: () => ({ canReadFiles: true, isPending: false, error: null }),
