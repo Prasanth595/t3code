@@ -482,7 +482,9 @@ const make = Effect.gen(function* () {
   const environment = yield* ServerEnvironment.ServerEnvironment;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const desktopChannel = yield* DesktopBrowserChannel.DesktopBrowserChannel;
-  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  const services = yield* Effect.context<never>();
+  const runFork = Effect.runForkWith(services);
+  const runPromise = Effect.runPromiseWith(services);
   const launchServices = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner>();
   // The fix every host error names, rendered for how this server was launched.
   const setupCommand = yield* resolveRootCliCommand(PreviewBrowserHost.SETUP_SUBCOMMAND);
@@ -1154,21 +1156,23 @@ const make = Effect.gen(function* () {
     const controller = [...opener.viewers].find(
       (viewer) => viewer.id === opener.control.controller,
     );
-    await openTab({
-      threadId: opener.threadId,
-      ...(/^https?:/i.test(url) ? { url } : {}),
-      runtime: "server",
-      ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
-      // Agent popups stay with the agent and only float when it asks, like its own opens.
-      ...(opener.control.agentId === null
-        ? {}
-        : { automationOwner: opener.control.agentId, reveal: false }),
-      beforePublish: (snapshot) =>
-        adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
-          page: popup,
-          openerTabId: opener.tabId,
-        }),
-    }).then(
+    await runPromise(
+      openTab({
+        threadId: opener.threadId,
+        ...(/^https?:/i.test(url) ? { url } : {}),
+        runtime: "server",
+        ...(opener.profileId === undefined ? {} : { profileId: opener.profileId }),
+        // Agent popups stay with the agent and only float when it asks, like its own opens.
+        ...(opener.control.agentId === null
+          ? {}
+          : { automationOwner: opener.control.agentId, reveal: false }),
+        beforePublish: (snapshot) =>
+          adoptedPages.set(tabKey(snapshot.threadId, snapshot.tabId), {
+            page: popup,
+            openerTabId: opener.tabId,
+          }),
+      }),
+    ).then(
       (tab) => {
         // The opener stays open behind it, so `window.opener` can still report back.
         if (opener.control.agentId === null) controller?.push({ _tag: "popup", tabId: tab.tabId });
@@ -1226,45 +1230,48 @@ const make = Effect.gen(function* () {
       [...openingTabs.values()].filter((owner) => owner === agentSessionId).length >=
       AGENT_TAB_LIMIT;
 
-  const assertTabCapacity = (agentSessionId: string) => {
-    if (atTabLimit(agentSessionId))
-      throw new BrowserControlInterrupted(
-        `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
-        "tabLimit",
-      );
-  };
-
-  const openTab = async (input: Parameters<typeof manager.open>[0]) => {
-    if (input.automationOwner !== undefined) assertTabCapacity(input.automationOwner);
-    const reservation = Symbol();
-    openingTabs.set(reservation, input.automationOwner ?? null);
-    try {
-      const snapshot = await Effect.runPromise(
-        manager.open({
-          ...input,
-          beforePublish: (snapshot) => {
-            openingTabs.delete(reservation);
-            openingTabs.set(
-              tabKey(snapshot.threadId, snapshot.tabId),
-              input.automationOwner ?? null,
-            );
-            input.beforePublish?.(snapshot);
-          },
+  const openTab = Effect.fnUntraced(function* (input: Parameters<typeof manager.open>[0]) {
+    const reservation = yield* Effect.acquireRelease(
+      Effect.gen(function* () {
+        if (input.automationOwner !== undefined && atTabLimit(input.automationOwner))
+          return yield* Effect.fail(
+            new BrowserControlInterrupted(
+              `Too many server browser tabs are open (${AGENT_TAB_LIMIT} per agent session, ${SERVER_TAB_LIMIT} per server). Close one with t3_preview_close or reuse one from preview_status tabs.`,
+              "tabLimit",
+            ),
+          );
+        const reservation = { key: Symbol() as string | symbol };
+        openingTabs.set(reservation.key, input.automationOwner ?? null);
+        return reservation;
+      }),
+      (reservation) =>
+        Effect.sync(() => {
+          openingTabs.delete(reservation.key);
         }),
-      );
-      try {
-        return await ensureTab(snapshot);
-      } catch (cause) {
-        // A failed launch must not leave a session that can relaunch without a slot.
-        await Effect.runPromise(
-          manager.close({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId }),
-        );
-        throw cause;
-      }
-    } finally {
-      openingTabs.delete(reservation);
-    }
-  };
+    );
+    const snapshot = yield* Effect.acquireRelease(
+      manager.open({
+        ...input,
+        beforePublish: (snapshot) => {
+          openingTabs.delete(reservation.key);
+          reservation.key = tabKey(snapshot.threadId, snapshot.tabId);
+          openingTabs.set(reservation.key, input.automationOwner ?? null);
+          input.beforePublish?.(snapshot);
+        },
+      }),
+      // A failed or interrupted launch must not leave a session that can relaunch without a slot.
+      (snapshot, exit) =>
+        Exit.isFailure(exit)
+          ? manager
+              .close({ threadId: ThreadId.make(snapshot.threadId), tabId: snapshot.tabId })
+              .pipe(Effect.orDie)
+          : Effect.void,
+    );
+    return yield* Effect.tryPromise({
+      try: () => ensureTab(snapshot),
+      catch: ServerBrowserPage.toOperationError,
+    });
+  }, Effect.scoped);
 
   /** Closes agent tabs that no one watches and the agent stopped using. */
   const closeIdleAgentTabs = () => {
@@ -1771,14 +1778,16 @@ const make = Effect.gen(function* () {
         }
         const tab =
           existing ??
-          (await openTab({
-            threadId: request.threadId,
-            ...(url ? { url } : {}),
-            ...(profileId === undefined ? {} : { profileId }),
-            runtime: "server",
-            reveal: false,
-            automationOwner: request.agentSessionId,
-          }));
+          (await runPromise(
+            openTab({
+              threadId: request.threadId,
+              ...(url ? { url } : {}),
+              ...(profileId === undefined ? {} : { profileId }),
+              runtime: "server",
+              reveal: false,
+              automationOwner: request.agentSessionId,
+            }),
+          ));
         if (existing?.dialog)
           throw new BrowserControlInterrupted(
             "A browser dialog is pending. Read preview_status and use preview_dialog first.",
