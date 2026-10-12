@@ -185,15 +185,8 @@ const PR_LOOKUP_FAILURE_MAX_TTL = Duration.minutes(15);
 const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 const REPOSITORY_FACTS_CACHE_TTL = Duration.seconds(60);
 
-interface BranchUpstream {
-  readonly upstream: string;
-  readonly remoteName: string;
-  readonly remoteRef: string;
-}
-
 interface RepositoryFacts {
   readonly remoteNames: ReadonlyArray<string>;
-  readonly upstreamByRef: ReadonlyMap<string, BranchUpstream>;
   readonly remoteUrlByName: ReadonlyMap<string, string>;
   readonly remoteByBranch: ReadonlyMap<string, string>;
   readonly defaultBranch: string | null;
@@ -1559,23 +1552,13 @@ export const make = Effect.gen(function* () {
     if (firstRemoteName === undefined) {
       return {
         remoteNames,
-        upstreamByRef: new Map(),
         remoteUrlByName: new Map(),
         remoteByBranch: new Map(),
         defaultBranch: null,
       } satisfies RepositoryFacts;
     }
-    const [branchRefs, remoteConfig, defaultBranch] = yield* Effect.all(
+    const [remoteConfig, defaultBranch] = yield* Effect.all(
       [
-        gitCore.execute({
-          operation: "GitManager.branchPullRequest.branchRefs",
-          cwd,
-          args: [
-            "for-each-ref",
-            "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)",
-            "refs/heads",
-          ],
-        }),
         gitCore.execute({
           operation: "GitManager.branchPullRequest.remoteConfig",
           cwd,
@@ -1591,14 +1574,8 @@ export const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     );
-    const upstreamByRef = new Map<string, BranchUpstream>();
-    for (const line of branchRefs.stdout.split("\n")) {
-      const [refName = "", upstream = "", remoteName = "", remoteRef = ""] = line.split("\u0000");
-      if (refName.length > 0) upstreamByRef.set(refName, { upstream, remoteName, remoteRef });
-    }
     return {
       remoteNames,
-      upstreamByRef,
       ...parseRemoteConfig(remoteConfig.exitCode === 0 ? remoteConfig.stdout : ""),
       defaultBranch,
     } satisfies RepositoryFacts;
@@ -2466,12 +2443,22 @@ export const make = Effect.gen(function* () {
     facts: RepositoryFacts,
   ) {
     const { remoteNames, defaultBranch } = facts;
-    const {
-      upstream: savedUpstream = "",
-      remoteName: savedRemoteName = "",
-      remoteRef: savedRemoteRef = "",
-    } = facts.upstreamByRef.get(`refs/heads/${branch}`) ?? {};
-    const localBranchExists = facts.upstreamByRef.has(`refs/heads/${branch}`);
+    const branchRef = yield* gitCore.execute({
+      operation: "GitManager.branchPullRequest.branchRef",
+      cwd: cacheCwd,
+      args: [
+        "for-each-ref",
+        "--format=%(refname)%00%(upstream:short)%00%(upstream:remotename)%00%(upstream:remoteref)",
+        `refs/heads/${branch}`,
+      ],
+    });
+    const expectedRefName = `refs/heads/${branch}`;
+    const exactBranch = branchRef.stdout
+      .split("\n")
+      .find((line) => line.split("\u0000", 1)[0] === expectedRefName);
+    const [refName = "", savedUpstream = "", savedRemoteName = "", savedRemoteRef = ""] =
+      exactBranch?.split("\u0000") ?? [];
+    const localBranchExists = refName.length > 0;
     let upstreamRef: string | null = null;
     let remoteName: string | null = null;
     if (savedUpstream.length > 0) {

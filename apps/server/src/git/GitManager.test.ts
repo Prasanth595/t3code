@@ -2137,12 +2137,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     gitOperations
       .filter(
         (operation) =>
-          operation.startsWith("GitManager.branchPullRequest.") ||
+          (operation.startsWith("GitManager.branchPullRequest.") &&
+            operation !== "GitManager.branchPullRequest.branchRef") ||
           operation === "resolveDefaultBranchName",
       )
       .toSorted();
   const allRepositoryFactsReads = [
-    "GitManager.branchPullRequest.branchRefs",
     "GitManager.branchPullRequest.remoteConfig",
     "GitManager.branchPullRequest.remotes",
     "resolveDefaultBranchName",
