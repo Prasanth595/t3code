@@ -198,7 +198,7 @@ export function ServerUpdateProgress({
   return (
     <div className="mt-1 flex items-center gap-2 text-xs font-medium text-foreground">
       <span
-        className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-foreground"
+        className="size-1.5 shrink-0 motion-safe:animate-status-pulse rounded-full bg-foreground"
         aria-hidden="true"
       />
       <span>{serverUpdateStageLabel(state.stage)}</span>
