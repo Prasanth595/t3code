@@ -980,19 +980,34 @@ it.effect.each([
   {
     name: "the host and a group on it",
     mounts: ["", "/group"],
+    remotes: {
+      a: "https://git.example.internal/group/a.git",
+      b: "https://git.example.internal/other/b.git",
+    },
     expected: { a: null, b: "https://git.example.internal" },
   },
   {
     name: "a group on the host",
     mounts: ["/group"],
+    remotes: {
+      a: "https://git.example.internal/group/a.git",
+      b: "https://git.example.internal/other/b.git",
+    },
     expected: { a: "https://git.example.internal/group", b: null },
+  },
+  // Parsed as given, a's path keeps `...git`, so a sits under the mount `mount` and both logins
+  // serve it. Removing `.git` before parsing would leave `team/..` and put a on the host's key.
+  {
+    name: "the host and a mount, for a remote named ...git",
+    mounts: ["", "/mount"],
+    remotes: {
+      a: "https://git.example.internal/mount/team/...git",
+      b: "https://git.example.internal/other/b.git",
+    },
+    expected: { a: null, b: "https://git.example.internal" },
   },
 ] as const)("gives each remote of one mount its own Forgejo answer: logins at $name", (scenario) =>
   Effect.gen(function* () {
-    const remotes = {
-      a: "https://git.example.internal/group/a.git",
-      b: "https://git.example.internal/other/b.git",
-    };
     for (const order of [
       ["a", "b"],
       ["b", "a"],
@@ -1016,7 +1031,7 @@ it.effect.each([
       for (const remote of order) {
         const handle = yield* registry.resolveHandle({
           cwd: `/${remote}`,
-          context: unknownRemote(remotes[remote]),
+          context: unknownRemote(scenario.remotes[remote]),
         });
         assert.strictEqual(
           handle.provider.kind === "forgejo" ? handle.context?.provider.baseUrl : null,

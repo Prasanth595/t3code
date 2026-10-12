@@ -160,18 +160,21 @@ function selectProviderContext(
 }
 
 // What the refiners read, minus `owner/repo`: the provider name and base URL (GitHub, GitLab),
-// the remote's scheme, host, port and any installation mount (Forgejo), and a requested host.
-// Scheme and host ignore case; a mount path does not, as Forgejo login matching compares it as is.
-// A Forgejo login mounted below the mount reads `owner/repo` as well, so the Forgejo refiner does
-// not settle a verdict that heard one.
+// the remote's scheme, host, port and mount (Forgejo), and a requested host. The mount is the
+// parsed URL path minus its last two segments, the rule the Forgejo refiner uses for its mount,
+// so the URL is parsed as given and not edited first. Scheme and host ignore case; the mount does
+// not, as Forgejo login matching compares it as is. A Forgejo login below the mount serves some
+// remotes of the key and not others, so the Forgejo refiner leaves that verdict unsettled.
 function unknownRemoteKey(context: SourceControlProvider.SourceControlProviderContext): string {
-  const remote = context.remoteUrl
-    .trim()
-    .replace(/\/+$/u, "")
-    .replace(/\.git$/iu, "");
+  const remote = context.remoteUrl;
   const url = /^[a-z][a-z0-9+.-]*:\/\//iu.test(remote) ? URL.parse(remote) : null;
+  const mount = url?.pathname
+    .replace(/^\/+|\/+$/gu, "")
+    .split("/")
+    .slice(0, -2)
+    .join("/");
   const server = url
-    ? `${url.protocol}//${url.host.toLowerCase()}${url.pathname.split("/").slice(0, -2).join("/")}`
+    ? `${url.protocol}//${url.host.toLowerCase()}/${mount}`
     : remote
         .replace(/^[^@/]+@/u, "")
         .replace(/:.*$/u, "")
