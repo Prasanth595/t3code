@@ -236,7 +236,18 @@ function ThreadUndoShortcut() {
   const noticeVisible = useSidebarVisibility();
 
   useEffect(() => {
+    let undoKeyHeld = false;
     const onKeyDown = (event: KeyboardEvent) => {
+      // A held key undoes once. Cancel its repeats so they cannot fall through
+      // to the editor's own undo, even after the last notice is gone.
+      if (event.repeat) {
+        if (undoKeyHeld) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+      undoKeyHeld = false;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
@@ -251,13 +262,8 @@ function ThreadUndoShortcut() {
         return;
       }
       if (isCommandPaletteOpen() || isModelPickerOpen()) return;
-      // A held key undoes once. Cancel repeats so they cannot fall through to
-      // the editor's own undo while an older group still owns the shortcut.
-      if (event.repeat) {
-        event.preventDefault();
-        return;
-      }
       if (undoLatestThreadAction()) {
+        undoKeyHeld = true;
         event.preventDefault();
         event.stopPropagation();
       }
