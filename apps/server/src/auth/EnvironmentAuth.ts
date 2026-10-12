@@ -708,7 +708,7 @@ function firstHeaderValue(value: string | undefined): string | undefined {
  * `Host`), come from this server's own host (directly or behind a proxy that
  * reports `X-Forwarded-Host`), or come from one of the trusted app origins.
  */
-export function isBrowserOriginAllowed(
+function isBrowserOriginAllowed(
   request: HttpServerRequest.HttpServerRequest,
   trustedOrigins: ReadonlySet<string>,
 ): boolean {
