@@ -4052,7 +4052,8 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             ) : (
               "Thought"
             )
-          ) : row.entry.questionAnswer &&
+          ) : !row.expanded &&
+            row.entry.questionAnswer &&
             hasQuestionAnswer(row.entry.questionAnswer) &&
             getQuestionIds(row.entry.questionAnswer).length === 1 ? (
             <span className="flex min-w-0 gap-1.5">
