@@ -39,6 +39,7 @@ import {
 } from "@t3tools/client-runtime/state/filesystem";
 import {
   appendBrowsePathSegment,
+  ensureBrowseDirectoryPath,
   inferProjectTitleFromPath,
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
@@ -706,10 +707,59 @@ async function draftWithPrompt(
   return draftId;
 }
 
+// Adding a path the environment already tracks should feel like picking that
+// project from the list, so callers open its draft instead of failing. Stored
+// workspace roots are absolute, so a `~` path is resolved by the environment
+// first. Resolves to whether the path matched an existing project.
+function useOpenExistingProject(environment: EnvironmentOption | null) {
+  const navigation = useNavigation();
+  const projects = useProjects();
+  const loadBrowsePath = useAtomQueryRunner(filesystemEnvironment.browse, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+
+  return useCallback(
+    async (path: string, prompt?: string | null) => {
+      if (!environment) return false;
+      let workspaceRoot = path;
+      if (path.startsWith("~")) {
+        // Browsing a directory path reports it back with home expanded.
+        const browseResult = await loadBrowsePath({
+          environmentId: environment.environmentId,
+          input: { partialPath: ensureBrowseDirectoryPath(path) },
+        });
+        if (!AsyncResult.isSuccess(browseResult)) return false;
+        workspaceRoot = browseResult.value.parentPath;
+      }
+      const existing = findExistingAddProject({
+        projects,
+        environmentId: environment.environmentId,
+        path: workspaceRoot,
+      });
+      if (!existing) return false;
+      openNewTaskDraft(navigation, {
+        environmentId: existing.environmentId,
+        projectId: existing.id,
+        title: existing.title,
+        ...(prompt
+          ? // Without its prompt the draft still opens on the project.
+            await draftWithPrompt(existing.environmentId, existing.id, prompt).then(
+              (draftId) => ({ draftId }),
+              () => ({}),
+            )
+          : {}),
+      });
+      return true;
+    },
+    [environment, loadBrowsePath, navigation, projects],
+  );
+}
+
 function useCreateProject(environment: EnvironmentOption | null) {
   const navigation = useNavigation();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
-  const projects = useProjects();
+  const openExistingProject = useOpenExistingProject(environment);
 
   return useCallback(
     async (workspaceRoot: string) => {
@@ -725,30 +775,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
         return;
       }
 
-      const existing = findExistingAddProject({
-        projects,
-        environmentId: environment.environmentId,
-        path: workspaceRoot,
-      });
-      if (existing) {
-        Alert.alert("Project already exists", existing.title);
-        navigation.dispatch(
-          CommonActions.reset({
-            index: 0,
-            routes: [
-              {
-                name: "NewTaskDraft",
-                params: {
-                  environmentId: existing.environmentId,
-                  projectId: existing.id,
-                  title: existing.title,
-                },
-              },
-            ],
-          }),
-        );
-        return;
-      }
+      if (await openExistingProject(workspaceRoot)) return;
 
       const projectId = ProjectId.make(uuidv4());
       const command = buildProjectCreateCommand({
@@ -780,7 +807,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
       );
       return result;
     },
-    [createProject, environment, projects, navigation],
+    [createProject, environment, navigation, openExistingProject],
   );
 }
 
@@ -1345,6 +1372,7 @@ export function AddProjectDestinationScreen(props: {
   );
   const canCloneProject = canWriteSourceControl && canCreateProject;
   const createProject = useCreateProject(environment);
+  const openExistingProject = useOpenExistingProject(environment);
   const remoteUrl = stringParam(props.remoteUrl);
   const repositoryTitle = stringParam(props.repositoryTitle);
   const prompt = stringParam(props.prompt);
@@ -1383,6 +1411,12 @@ export function AddProjectDestinationScreen(props: {
     }
 
     setIsSubmitting(true);
+    // Cloning into a directory that is already a project fails, so open that
+    // project instead.
+    if (await openExistingProject(resolved.path, prompt)) {
+      setIsSubmitting(false);
+      return;
+    }
     if (environment.supportsCloneTracking) {
       // The server creates the project and clones in the background; the
       // draft screen shows progress and holds Start until the files land.
@@ -1455,6 +1489,7 @@ export function AddProjectDestinationScreen(props: {
     isBrowseNavigating,
     isSubmitting,
     navigation,
+    openExistingProject,
     pathInput,
     prompt,
     remoteUrl,
