@@ -121,6 +121,7 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { DesktopChangeRequestLinksSetting } from "./DesktopChangeRequestLinksSetting";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -1528,6 +1529,7 @@ export function IntegrationsSettingsPanel() {
       <BrowserRecordingFrameRateSetting disabled={previewDefaultsDisabled} />
       <BrowserRecordingInputSettings disabled={previewDefaultsDisabled} />
       <BrowserLinkTargetSetting disabled={previewDefaultsDisabled} />
+      <DesktopChangeRequestLinksSetting />
       <BrowserAutoShowFloatingPreviewSetting disabled={previewDefaultsDisabled} />
     </>
   );

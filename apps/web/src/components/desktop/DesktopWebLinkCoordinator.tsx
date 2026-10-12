@@ -9,14 +9,30 @@ import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
+import {
+  ensureClientSettingsHydrated,
+  getClientSettings,
+  useClientSettings,
+  useClientSettingsHydrated,
+} from "../../hooks/useSettings";
+import { useOpenChangeRequestUrl } from "../../lib/openPullRequestLink";
+import { useAllEnvironmentShellsBootstrapped } from "../../state/entities";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
+import { useEnvironmentQuery } from "../../state/query";
+import { environmentShell } from "../../state/shell";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+
+function reportFailure(url: string, description = url) {
+  toastManager.add(
+    stackedThreadToast({ type: "error", title: "Could not open the link", description }),
+  );
+}
 
 /**
  * The thread on screen when its browser panel is showing, so a link opens as
@@ -46,12 +62,14 @@ function threadShowingBrowser(
 
 /**
  * Opens each web link or HTML file the OS hands T3 Code as the default browser
- * (macOS). With a browser panel on screen the page opens as a new tab there;
- * otherwise it starts a thread without a project, its browser panel maximized.
+ * (macOS). Opt-in PR/MR routing opens known repositories in the native PR view
+ * and forwards other web links to the chosen browser. Otherwise the existing
+ * browser panel behavior applies, including for HTML files.
  */
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
+  const openChangeRequest = useOpenChangeRequestUrl();
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const openThread = useNewThreadHandler();
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -62,15 +80,21 @@ export function DesktopWebLinkCoordinator() {
   const httpBaseUrl = useEnvironmentHttpBaseUrl(primaryEnvironment?.environmentId ?? null);
   const queueRef = useRef(Promise.resolve());
   const webLinks = window.desktopBridge?.webLinks;
+  const settingsHydrated = useClientSettingsHydrated();
+  const routingEnabled = useClientSettings((settings) => settings.desktopChangeRequestLinksEnabled);
+  const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
+  const shell = useEnvironmentQuery(
+    primaryEnvironment === null
+      ? null
+      : environmentShell.stateAtom(primaryEnvironment.environmentId),
+  );
   const ready =
     webLinks !== undefined &&
+    settingsHydrated &&
+    (!routingEnabled || environmentsBootstrapped) &&
     primaryEnvironment?.connection.phase === "connected" &&
-    primaryEnvironment.serverConfig !== null;
-
-  const reportFailure = (url: string, description = url) =>
-    toastManager.add(
-      stackedThreadToast({ type: "error", title: "Could not open the link", description }),
-    );
+    primaryEnvironment.serverConfig !== null &&
+    shell.data?.snapshot._tag === "Some";
 
   // The OS hands each link over once, so a thread that could not start says so.
   const startThread = async (url: string): Promise<ScopedThreadRef | null> => {
@@ -94,6 +118,16 @@ export function DesktopWebLinkCoordinator() {
 
   const openLink = useEffectEvent(async (url: string) => {
     const isFile = url.startsWith("file:");
+    await ensureClientSettingsHydrated();
+    const settings = getClientSettings();
+    if (!isFile && settings.desktopChangeRequestLinksEnabled) {
+      if (openChangeRequest(url)) return;
+      if (!settings.desktopLinkFallbackBrowserId || !webLinks?.openInBrowser) {
+        throw new Error("Choose a fallback browser in Settings → Integrations → Browser.");
+      }
+      await webLinks.openInBrowser(url, settings.desktopLinkFallbackBrowserId);
+      return;
+    }
     const routeParams = router.state.matches.at(-1)?.params ?? {};
     const threadRef =
       threadShowingBrowser(
@@ -129,7 +163,11 @@ export function DesktopWebLinkCoordinator() {
     let subscribed = true;
     // Links open one at a time, in the order they came.
     const unsubscribe = webLinks.onOpen((url) => {
-      queueRef.current = queueRef.current.then(() => openLink(url)).catch(() => undefined);
+      queueRef.current = queueRef.current
+        .then(() => openLink(url))
+        .catch((error: unknown) => {
+          reportFailure(url, error instanceof Error ? error.message : url);
+        });
     });
     // Skip readiness if React runs cleanup before this subscription can receive links.
     queueMicrotask(() => {

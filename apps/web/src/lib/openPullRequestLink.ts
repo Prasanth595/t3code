@@ -129,14 +129,11 @@ export function shouldOpenPullRequestExternally(
   return event.metaKey || event.ctrlKey;
 }
 
-export function useOpenChangeRequestLink(
+/** Opens a change request from a click or a desktop URL activation. */
+export function useOpenChangeRequestUrl(
   threadRef?: ScopedThreadRef,
   panelRef?: ScopedThreadRef,
 ): (
-  event: Pick<
-    MouseEvent<HTMLElement>,
-    "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
-  >,
   targetUrl: string,
   targetThreadRef?: ScopedThreadRef,
   targetEnvironmentId?: EnvironmentId,
@@ -146,8 +143,7 @@ export function useOpenChangeRequestLink(
   const serverConfigs = useServerConfigs();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useCallback(
-    (event, targetUrl, targetThreadRef, targetEnvironmentId) => {
-      if (shouldOpenPullRequestExternally(event)) return false;
+    (targetUrl, targetThreadRef, targetEnvironmentId) => {
       const resolvedThreadRef = targetThreadRef ?? threadRef;
       const resolvedPanelRef = panelRef ?? resolvedThreadRef;
       const parsed = parseChangeRequestUrl(targetUrl);
@@ -191,8 +187,6 @@ export function useOpenChangeRequestLink(
         true
           ? parsed.repository
           : (sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository);
-      event.preventDefault();
-      event.stopPropagation();
       if (resolvedPanelRef) {
         useRightPanelStore.getState().openPullRequest(resolvedPanelRef, {
           // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
@@ -244,6 +238,28 @@ export function useOpenChangeRequestLink(
       return true;
     },
     [allProjects, navigate, panelRef, primaryEnvironmentId, serverConfigs, threadRef],
+  );
+}
+
+export function useOpenChangeRequestLink(threadRef?: ScopedThreadRef, panelRef?: ScopedThreadRef) {
+  const openChangeRequest = useOpenChangeRequestUrl(threadRef, panelRef);
+  return useCallback(
+    (
+      event: Pick<
+        MouseEvent<HTMLElement>,
+        "preventDefault" | "stopPropagation" | "metaKey" | "ctrlKey"
+      >,
+      targetUrl: string,
+      targetThreadRef?: ScopedThreadRef,
+      targetEnvironmentId?: EnvironmentId,
+    ) => {
+      if (shouldOpenPullRequestExternally(event)) return false;
+      if (!openChangeRequest(targetUrl, targetThreadRef, targetEnvironmentId)) return false;
+      event.preventDefault();
+      event.stopPropagation();
+      return true;
+    },
+    [openChangeRequest],
   );
 }
 

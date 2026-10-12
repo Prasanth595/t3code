@@ -11,6 +11,10 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopWebLinkBrowser from "../app/DesktopWebLinkBrowser.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
+
 // Remote open-in-editor deep links (`vscode://vscode-remote/ssh-remote+…`,
 // `zed://ssh/<host>/<path>`, `jetbrains://gateway/ssh/environment?h=…`) must
 // reach the OS handler; every other non-web scheme stays blocked.
@@ -89,3 +93,37 @@ export const make = ElectronShell.of({
 });
 
 export const layer = Layer.succeed(ElectronShell, make);
+
+/** System-browser actions use the fallback only while PR routing is enabled. */
+export const layerWithBrowserRouting = Layer.effect(
+  ElectronShell,
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    const browsers = yield* DesktopWebLinkBrowser.DesktopWebLinkBrowser;
+
+    return ElectronShell.of({
+      ...make,
+      openExternal: Effect.fn("desktop.shell.openExternal")(
+        function* (rawUrl) {
+          const externalUrl = parseSafeExternalUrl(rawUrl);
+          if (Option.isNone(externalUrl)) return false;
+          if (
+            environment.platform !== "darwin" ||
+            !SAFE_WEB_PROTOCOLS.has(new URL(externalUrl.value).protocol)
+          ) {
+            return yield* make.openExternal(externalUrl.value);
+          }
+          const settings = yield* clientSettings.get;
+          if (Option.isNone(settings) || !settings.value.desktopChangeRequestLinksEnabled) {
+            return yield* make.openExternal(externalUrl.value);
+          }
+          const fallback = settings.value.desktopLinkFallbackBrowserId;
+          if (fallback === null) return false;
+          return yield* browsers.open(externalUrl.value, fallback).pipe(Effect.as(true));
+        },
+        Effect.orElseSucceed(() => false),
+      ),
+    });
+  }),
+);

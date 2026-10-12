@@ -36,6 +36,7 @@ import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
 import * as DesktopAppActivation from "./app/DesktopAppActivation.ts";
 import * as DesktopWebLinks from "./app/DesktopWebLinks.ts";
+import * as DesktopWebLinkBrowser from "./app/DesktopWebLinkBrowser.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopConnectionCatalogStore from "./app/DesktopConnectionCatalogStore.ts";
 import * as DesktopClerk from "./app/DesktopClerk.ts";
@@ -135,7 +136,6 @@ const layerElectron = Layer.mergeAll(
   ElectronPowerMonitor.layer,
   ElectronProtocol.layer,
   ElectronSafeStorage.layer,
-  ElectronShell.layer,
   ElectronTheme.layer,
   ElectronUpdater.layer,
   ElectronWindow.layer,
@@ -157,6 +157,12 @@ const layerDesktopFoundation = Layer.mergeAll(
 
 const layerDesktopSsh = layerDesktopSshEnvironment.pipe(
   Layer.provideMerge(DesktopSshPasswordPrompts.layer()),
+);
+
+const layerDesktopShell = ElectronShell.layerWithBrowserRouting.pipe(
+  Layer.provideMerge(DesktopWebLinkBrowser.layer),
+  Layer.provideMerge(DesktopClientSettings.layer),
+  Layer.provideMerge(layerDesktopEnvironment),
 );
 
 const layerDesktopServerExposure = DesktopServerExposure.layer.pipe(
@@ -231,13 +237,14 @@ const layerDesktopApplication = Layer.mergeAll(
 // Clerk resolves userData before Electron is ready, so it gets the synchronous FileSystem.
 const layerDesktopClerk = DesktopClerk.layer.pipe(
   Layer.provide(DesktopPreReadyFileSystem.layer),
-  Layer.provideMerge(ElectronShell.layer),
+  Layer.provideMerge(layerDesktopShell),
   Layer.provideMerge(layerDesktopEnvironment),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(ElectronApp.layer),
 );
 
 const layerDesktopApplicationRuntime = layerDesktopApplication.pipe(
+  Layer.provideMerge(layerDesktopShell),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(NetService.layer),

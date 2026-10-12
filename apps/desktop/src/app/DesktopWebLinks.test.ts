@@ -1,13 +1,21 @@
 // @effect-diagnostics nodeBuiltinImport:off - Stands in for an Electron webContents.
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeEvents from "node:events";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
+import * as DesktopWebLinkBrowser from "./DesktopWebLinkBrowser.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
 
 const makeWindow = () => {
   const sent: Array<string> = [];
@@ -89,5 +97,78 @@ describe("DesktopWebLinks", () => {
       yield* webLinks.setRendererReady(true);
       assert.deepStrictEqual(sent, ["https://example.com/during-reload"]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("opens only installed fallback browsers with safe arguments", () => {
+    const commands: Array<ChildProcess.StandardCommand> = [];
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.sync(() => {
+        assert.equal(command._tag, "StandardCommand");
+        if (command._tag !== "StandardCommand") throw new Error("Unexpected pipeline.");
+        commands.push(command);
+        const output =
+          command.command === "/usr/bin/osascript"
+            ? JSON.stringify([{ id: "com.apple.Safari", name: "Safari" }])
+            : "";
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(1),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          isRunning: Effect.succeed(false),
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.drain,
+          stdout: Stream.make(new TextEncoder().encode(output)),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const environment = DesktopEnvironment.layer({
+      dirname: "/repo/apps/desktop/dist-electron",
+      homeDirectory: "/Users/alice",
+      platform: "darwin",
+      processArch: "arm64",
+      appVersion: "0.0.45",
+      appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+      isPackaged: false,
+      resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+      runningUnderArm64Translation: false,
+    }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))));
+
+    return Effect.gen(function* () {
+      const browser = yield* DesktopWebLinkBrowser.make.pipe(
+        Effect.provide(environment),
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      assert.deepEqual(yield* browser.list, [{ id: "com.apple.Safari", name: "Safari" }]);
+      const url = "https://forge.example/team/repo/pulls/2?next=$(touch%20/tmp/nope)&a=b";
+      yield* browser.open(url, "com.apple.Safari");
+      assert.equal(commands.at(-1)?.command, "/usr/bin/open");
+      assert.deepEqual(commands.at(-1)?.args, ["-b", "com.apple.Safari", url]);
+      assert.isFalse(commands.at(-1)?.options.shell);
+
+      for (const browserId of [
+        "com.t3tools.t3code",
+        "com.t3tools.t3code.dev.local",
+        "com.t3tools.t3code.nightly",
+        "custom.brand.t3",
+        "com.google.Chrome",
+      ]) {
+        assert.isTrue(Option.isNone(yield* browser.open(url, browserId).pipe(Effect.option)));
+      }
+      assert.isTrue(
+        Option.isNone(
+          yield* browser.open("file:///tmp/report.html", "com.apple.Safari").pipe(Effect.option),
+        ),
+      );
+      assert.equal(commands.filter((command) => command.command === "/usr/bin/open").length, 1);
+
+      assert.isTrue(yield* browser.openSettings);
+      assert.deepEqual(commands.at(-1)?.args, [
+        "x-apple.systempreferences:com.apple.Desktop-Settings.extension?DefaultWebBrowser",
+      ]);
+    });
   });
 });

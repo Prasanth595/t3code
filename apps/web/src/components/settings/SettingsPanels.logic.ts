@@ -117,6 +117,7 @@ export type BrowserDefaultSettings = Pick<
   | "browserRecordingShowKeyPresses"
   | "browserRecordingShowMousePresses"
   | "browserLinkTarget"
+  | "desktopChangeRequestLinksEnabled"
   | "browserAutoShowFloatingPreview"
 >;
 
@@ -162,6 +163,7 @@ export function getChangedBrowserSettingLabels(settings: BrowserDefaultSettings)
     ...(settings.browserLinkTarget !== DEFAULT_UNIFIED_SETTINGS.browserLinkTarget
       ? ["Open links in"]
       : []),
+    ...(settings.desktopChangeRequestLinksEnabled ? ["Open PR and MR links in T3 Code"] : []),
     ...(settings.browserAutoShowFloatingPreview !==
     DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview
       ? ["Floating preview"]

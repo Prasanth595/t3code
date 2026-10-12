@@ -287,6 +287,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
   webLinks: {
     setReady: (ready) => ipcRenderer.invoke(IpcChannels.WEB_LINK_READY_CHANNEL, ready),
+    listBrowsers: () => ipcRenderer.invoke(IpcChannels.WEB_LINK_BROWSERS_CHANNEL),
+    openInBrowser: (url, browserId) =>
+      ipcRenderer.invoke(IpcChannels.WEB_LINK_BROWSER_OPEN_CHANNEL, { url, browserId }),
+    openSettings: () => ipcRenderer.invoke(IpcChannels.WEB_LINK_SETTINGS_CHANNEL),
     onOpen: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, url: unknown) => {
         if (typeof url === "string") listener(url);

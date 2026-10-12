@@ -52,6 +52,7 @@ export interface SettingsSearchItem {
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
+  readonly desktopChangeRequestLinksOnly?: boolean;
   readonly macOnly?: boolean;
   // Its row only renders on Windows desktop, so other desktop platforms must
   // not expose a result that points to a missing anchor.
@@ -779,6 +780,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "desktop-change-request-links",
+    title: "Open PR and MR links in T3 Code",
+    to: "/settings/integrations",
+    desktopOnly: true,
+    desktopChangeRequestLinksOnly: true,
+    searchTerms: [
+      "pull merge request github gitlab forgejo gitea self-hosted external links default browser fallback opt in macos",
+    ],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
@@ -1165,6 +1176,7 @@ export function searchSettings(
   return items
     .flatMap((item, index) => {
       if (!isElectron && item.desktopOnly === true) return [];
+      if (item.desktopChangeRequestLinksOnly && !desktopChangeRequestLinksAvailable()) return [];
       if (item.releaseChannelOnly && !isElectron && HOSTED_APP_CHANNEL === null) return [];
       if (item.macOnly && !isMacPlatform(platform)) return [];
       if (item.windowsOnly && !isWindowsPlatform(platform)) return [];
@@ -1199,4 +1211,14 @@ export function searchSettings(
         left.index - right.index,
     )
     .map(({ item }) => item);
+}
+
+export function desktopChangeRequestLinksAvailable(): boolean {
+  const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
+  return (
+    bridge?.getClientPlatform?.() === "darwin" &&
+    bridge.webLinks?.listBrowsers !== undefined &&
+    bridge.webLinks.openInBrowser !== undefined &&
+    bridge.webLinks.openSettings !== undefined
+  );
 }

@@ -1,5 +1,9 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { openExternalMock, writeTextMock } = vi.hoisted(() => ({
@@ -17,6 +21,10 @@ vi.mock("electron", () => ({
 }));
 
 import * as ElectronShell from "./ElectronShell.ts";
+import * as DesktopConfig from "../app/DesktopConfig.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopWebLinkBrowser from "../app/DesktopWebLinkBrowser.ts";
+import * as DesktopClientSettings from "../settings/DesktopClientSettings.ts";
 
 describe("ElectronShell", () => {
   beforeEach(() => {
@@ -193,4 +201,105 @@ describe("ElectronShell", () => {
       assert.equal(result, false);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
+
+  it.effect("uses the chosen browser for external web links without routing loops", () => {
+    const opened: Array<{ url: string; browserId: string }> = [];
+    const layerEnvironment = DesktopEnvironment.layer({
+      dirname: "/repo/apps/desktop/dist-electron",
+      homeDirectory: "/Users/alice",
+      platform: "darwin",
+      processArch: "arm64",
+      appVersion: "0.0.45",
+      appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+      isPackaged: false,
+      resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+      runningUnderArm64Translation: false,
+    }).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))));
+    const browsers = DesktopWebLinkBrowser.DesktopWebLinkBrowser.of({
+      list: Effect.succeed([{ id: "com.apple.Safari", name: "Safari" }]),
+      open: (url, browserId) =>
+        browserId === "com.apple.Safari"
+          ? Effect.sync(() => {
+              opened.push({ url, browserId });
+            })
+          : Effect.fail(
+              new DesktopWebLinkBrowser.DesktopWebLinkBrowserError({
+                message: "Browser no longer installed.",
+              }),
+            ),
+      openSettings: Effect.succeed(true),
+    });
+    const shellFor = (enabled: boolean, fallback: string | null) =>
+      ElectronShell.ElectronShell.pipe(
+        Effect.provide(
+          ElectronShell.layerWithBrowserRouting.pipe(
+            Layer.provide(layerEnvironment),
+            Layer.provide(
+              DesktopClientSettings.layerTest(
+                Option.some({
+                  ...DEFAULT_CLIENT_SETTINGS,
+                  desktopChangeRequestLinksEnabled: enabled,
+                  desktopLinkFallbackBrowserId: fallback,
+                }),
+              ),
+            ),
+            Layer.provide(Layer.succeed(DesktopWebLinkBrowser.DesktopWebLinkBrowser, browsers)),
+          ),
+        ),
+      );
+
+    return Effect.gen(function* () {
+      openExternalMock.mockResolvedValue(undefined);
+      const enabled = yield* shellFor(true, "com.apple.Safari");
+      assert.isTrue(yield* enabled.openExternal("https://github.com/t3tools/t3code/pull/1"));
+      assert.deepEqual(opened, [
+        { url: "https://github.com/t3tools/t3code/pull/1", browserId: "com.apple.Safari" },
+      ]);
+      assert.equal(openExternalMock.mock.calls.length, 0);
+
+      const missingBrowser = yield* shellFor(true, null);
+      assert.isFalse(yield* missingBrowser.openExternal("https://example.com/oauth"));
+      const staleBrowser = yield* shellFor(true, "com.t3tools.t3code.dev.local");
+      assert.isFalse(yield* staleBrowser.openExternal("https://example.com/oauth"));
+      assert.isFalse(yield* staleBrowser.openExternal("file:///etc/passwd"));
+      assert.equal(openExternalMock.mock.calls.length, 0);
+
+      const unreadable = yield* ElectronShell.ElectronShell.pipe(
+        Effect.provide(
+          ElectronShell.layerWithBrowserRouting.pipe(
+            Layer.provide(layerEnvironment),
+            Layer.provide(
+              Layer.succeed(DesktopClientSettings.DesktopClientSettings, {
+                get: Effect.fail(
+                  new DesktopClientSettings.DesktopClientSettingsReadError({
+                    operation: "read-file",
+                    path: "/Users/alice/.t3/userdata/client-settings.json",
+                    cause: new Error("Permission denied."),
+                  }),
+                ),
+                set: () => Effect.void,
+              }),
+            ),
+            Layer.provide(Layer.succeed(DesktopWebLinkBrowser.DesktopWebLinkBrowser, browsers)),
+          ),
+        ),
+      );
+      assert.isFalse(yield* unreadable.openExternal("https://example.com/oauth"));
+      assert.equal(openExternalMock.mock.calls.length, 0);
+
+      for (const fallback of [null, "com.apple.Safari", "com.t3tools.t3code.dev.local"]) {
+        const disabled = yield* shellFor(false, fallback);
+        assert.isTrue(yield* disabled.openExternal("https://example.com/oauth"));
+      }
+      assert.deepEqual(openExternalMock.mock.calls, [
+        ["https://example.com/oauth"],
+        ["https://example.com/oauth"],
+        ["https://example.com/oauth"],
+      ]);
+      assert.equal(opened.length, 1);
+      const editorUrl = "vscode://vscode-remote/ssh-remote+example.com/home/user/project";
+      assert.isTrue(yield* staleBrowser.openExternal(editorUrl));
+      assert.deepEqual(openExternalMock.mock.calls.at(-1), [editorUrl]);
+    });
+  });
 });

@@ -90,6 +90,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
   yield* ipc.handle(WebLinksIpc.setReady);
+  yield* ipc.handle(WebLinksIpc.listBrowsers);
+  yield* ipc.handle(WebLinksIpc.openInBrowser);
+  yield* ipc.handle(WebLinksIpc.openSettings);
 
   yield* ipc.handleSync(takeLegacyLocalStorage);
   yield* ipc.handle(completeLegacyLocalStorage);

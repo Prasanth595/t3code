@@ -1253,6 +1253,9 @@ export interface DesktopBridge {
   webLinks?: {
     setReady: (ready: boolean) => Promise<void>;
     onOpen: (listener: (url: string) => void) => () => void;
+    listBrowsers?: () => Promise<ReadonlyArray<{ id: string; name: string }>>;
+    openInBrowser?: (url: string, browserId: string) => Promise<void>;
+    openSettings?: () => Promise<boolean>;
   };
   appActivation?: {
     setReady: (ready: boolean) => Promise<void>;

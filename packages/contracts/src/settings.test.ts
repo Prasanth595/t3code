@@ -23,6 +23,32 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("desktop change request link routing", () => {
+  it("keeps new and existing installations opted out", () => {
+    for (const input of [{}, { browserLinkTarget: "app" }]) {
+      const settings = decodeClientSettings(input);
+      expect(settings.desktopChangeRequestLinksEnabled).toBe(false);
+      expect(settings.desktopLinkFallbackBrowserId).toBeNull();
+    }
+  });
+
+  it("persists opting in and disabling without losing the fallback browser", () => {
+    const enabled = decodeClientSettings({
+      desktopChangeRequestLinksEnabled: true,
+      desktopLinkFallbackBrowserId: "org.mozilla.firefox",
+    });
+    expect(encodeClientSettings(enabled)).toMatchObject({
+      desktopChangeRequestLinksEnabled: true,
+      desktopLinkFallbackBrowserId: "org.mozilla.firefox",
+    });
+    const patch = decodeClientSettingsPatch({ desktopChangeRequestLinksEnabled: false });
+    expect(decodeClientSettings({ ...enabled, ...patch })).toMatchObject({
+      desktopChangeRequestLinksEnabled: false,
+      desktopLinkFallbackBrowserId: "org.mozilla.firefox",
+    });
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");
