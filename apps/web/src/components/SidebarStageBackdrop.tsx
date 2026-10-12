@@ -60,13 +60,19 @@ export function SidebarStageBackdrop({
   const [hasLoadError, setHasLoadError] = useState(false);
 
   useEffect(() => {
+    let isCurrent = true;
     setHasLoadError(false);
     if (!customBackdropImageUrl) return;
 
     const img = new Image();
-    img.src = customBackdropImageUrl;
     img.onerror = () => {
-      setHasLoadError(true);
+      if (isCurrent) setHasLoadError(true);
+    };
+    img.src = customBackdropImageUrl;
+
+    return () => {
+      isCurrent = false;
+      img.onerror = null;
     };
   }, [customBackdropImageUrl]);
 
