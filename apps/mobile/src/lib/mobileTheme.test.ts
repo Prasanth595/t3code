@@ -273,9 +273,11 @@ describe("mobile themes", () => {
       ).toBeGreaterThanOrEqual(4.5);
       expect(fill).toBe(
         variables[
-          themeId === DEFAULT_MOBILE_THEME_ID || themeId === "t3-chat"
-            ? "--color-foreground"
-            : "--color-primary"
+          themeId === "t3-chat" && appearance === "dark"
+            ? "--color-primary-foreground"
+            : themeId === DEFAULT_MOBILE_THEME_ID || themeId === "t3-chat"
+              ? "--color-foreground"
+              : "--color-primary"
         ],
       );
     }

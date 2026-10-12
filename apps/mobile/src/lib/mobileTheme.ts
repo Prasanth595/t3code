@@ -247,7 +247,7 @@ export function createMobileThemeVariables(
   colors: ThemeColors,
   appearance: MobileThemeAppearance,
   groupedCardColor = colors.surface,
-  useAccentForActions = false,
+  prominentAction: readonly [string, string] = [colors.text, colors.canvas],
 ) {
   const c = nativeColors(colors);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
@@ -300,10 +300,8 @@ export function createMobileThemeVariables(
     "--color-inline-skill-border": withAlpha(c.accent, 0.42),
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
     "--color-primary": c.messageAction,
-    "--color-prominent-action": useAccentForActions ? c.messageAction : c.text,
-    "--color-prominent-action-foreground": useAccentForActions
-      ? c.messageActionForeground
-      : c.canvas,
+    "--color-prominent-action": themeColorToNativeColor(prominentAction[0]),
+    "--color-prominent-action-foreground": themeColorToNativeColor(prominentAction[1]),
     "--color-primary-foreground": c.messageActionForeground,
     "--color-primary-text": themeColorWithContrast(c.messageAction, textSurfaces),
     "--color-primary-shadow": "#000000",
@@ -420,7 +418,11 @@ export function getMobileThemeVariables(
     mobileColors,
     appearance,
     groupedCard,
-    themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat",
+    themeId === "t3-chat" && appearance === "dark"
+      ? [colors.messageActionForeground, colors.messageAction]
+      : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
+        ? [colors.messageAction, colors.messageActionForeground]
+        : undefined,
   );
 
   // The complete base record guarantees that optional overrides cannot leave a token undefined.
