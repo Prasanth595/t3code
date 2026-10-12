@@ -214,6 +214,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
+  timelineEntryTurnFoldRunId,
   timelineTurnFoldRunIdsByEntryId,
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -679,6 +680,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const expandCitedRun = useCallback((runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   }, []);
+  const getCitedTurnFoldRunId = useCallback(
+    (entryId: string) =>
+      timelineEntryTurnFoldRunId(
+        { timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive },
+        entryId,
+      ),
+    [timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive],
+  );
   // Nested tool state shares the bounded thread-position cache.
   const workGroupViewState = useMemo<WorkGroupViewState>(
     () =>
@@ -1094,6 +1103,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
     loadEarlier,
+    getTurnFoldRunId: getCitedTurnFoldRunId,
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
