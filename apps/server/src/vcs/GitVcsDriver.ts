@@ -1115,7 +1115,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         });
       }
       // Restoring away the last tracked file can remove a nested workspace directory.
-      yield* fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+      const recreateWorkspace = fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
         Effect.mapError(
           (cause) =>
             new VcsProcessExitError({
@@ -1127,6 +1127,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
         ),
       );
+      yield* recreateWorkspace;
       const cleaned = yield* execute({
         operation,
         cwd: input.cwd,
@@ -1151,6 +1152,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
       }
+      // On Windows the same clean can remove './' and exit 0.
+      yield* recreateWorkspace;
 
       const headExists = yield* hasHeadCommit(input.cwd);
       if (headExists) {
