@@ -60,7 +60,7 @@ import {
 } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -189,7 +189,7 @@ import { guideRunKey, useGuideRunStore } from "./guide/guideRunStore";
 import { useReviewGuideWriter } from "./guide/useReviewGuideWriter";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
 
-type DetailTab = "summary" | "guide" | "timeline" | "code";
+type DetailTab = PullRequestDetailTab;
 
 /** Said as the thing that did not happen, rather than as the operation that returned an error. */
 const ACTION_FAILURE_LABELS: Record<PullRequestAction, string> = {
@@ -420,6 +420,8 @@ export function PullRequestDetailPanel({
   onBack,
   onSelectPullRequest,
   onGuideShown,
+  initialTab = "summary",
+  onTabChange,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -469,6 +471,10 @@ export function PullRequestDetailPanel({
   onBack?: (() => void) | undefined;
   /** Told when a written guide comes on screen. The page maximizes its panel for the guide. */
   onGuideShown?: (() => void) | undefined;
+  /** The tab to open on, such as the one the reader left this pull request on. */
+  initialTab?: DetailTab;
+  /** Told whenever the shown tab changes, so its holder can reopen on it. */
+  onTabChange?: ((tab: DetailTab) => void) | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -502,7 +508,11 @@ export function PullRequestDetailPanel({
   const [threadPickerOpen, setThreadPickerOpen] = useState(false);
   // Counted up by the guide's last stop to open the composer on the review.
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
-  const [tab, setTab] = useState<DetailTab>("summary");
+  const [tab, setTab] = useState<DetailTab>(initialTab);
+  const tabChanged = useEffectEvent((next: DetailTab) => onTabChange?.(next));
+  useEffect(() => {
+    tabChanged(tab);
+  }, [tab]);
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
@@ -544,7 +554,7 @@ export function PullRequestDetailPanel({
   const tabScopeKey = `${environmentId}:${pullRequestKey}`;
   const [tabMountState, setTabMountState] = useState(() => ({
     key: tabScopeKey,
-    tabs: new Set<DetailTab>(["summary"]),
+    tabs: new Set<DetailTab>([tab]),
   }));
   // A previously visited Code tab must not fetch diffs for every later PR while hidden.
   const mountedTabs =
