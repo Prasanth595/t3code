@@ -31,7 +31,7 @@ describe("projectPendingUserInputAnswer", () => {
     );
   });
 
-  it("omits a deleted reference while its payload is retained for undo", () => {
+  it("leaves plain answers unchanged when the draft has unreferenced thread records", () => {
     expect(projectPendingUserInputAnswer("Plain answer", [record])).toBe("Plain answer");
   });
 
