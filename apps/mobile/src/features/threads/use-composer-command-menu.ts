@@ -7,8 +7,8 @@ import type {
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-
-const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
+import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   COMPOSER_CONTEXT_MAX_RECORDS,
   PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS,
@@ -47,11 +47,14 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
+import { environmentThreadShells } from "../../state/threads";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useComposerPathSearch, useComposerPullRequestSearch } from "../../state/queries";
 import type { ComposerCommandItem } from "./ComposerCommandPopover";
 import { matchesSlashSkillQuery } from "./composerSlashSkillSearch";
+
+const EMPTY_THREAD_SHELLS_ATOM = Atom.make<ReadonlyArray<EnvironmentThreadShell>>([]);
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
@@ -174,7 +177,6 @@ export function useComposerCommandMenu({
   draftMessage,
   ownerKey,
   environmentId,
-  threadShells = EMPTY_THREAD_SHELLS,
   currentThreadId = null,
   projectCwd,
   pullRequestProjectId = null,
@@ -191,8 +193,6 @@ export function useComposerCommandMenu({
   readonly draftMessage: string;
   readonly ownerKey: string | null;
   readonly environmentId: EnvironmentId | null;
-  /** Candidates for `@` thread suggestions; the caller reads them from the entity store. */
-  readonly threadShells?: ReadonlyArray<EnvironmentThreadShell>;
   /** Left out of `@` thread suggestions: a thread is never context for itself. */
   readonly currentThreadId?: ThreadId | null;
   readonly projectCwd: string | null;
@@ -348,6 +348,11 @@ export function useComposerCommandMenu({
     }
     return detectComposerTrigger(draftMessage, selection.end);
   }, [draftMessage, enabled, selection]);
+  const threadShells = useAtomValue(
+    trigger?.kind === "path" && trigger.query.trim().length > 0 && environmentId !== null
+      ? environmentThreadShells.environmentThreadShellsAtom(environmentId)
+      : EMPTY_THREAD_SHELLS_ATOM,
+  );
   const pathSearch = useComposerPathSearch({
     environmentId,
     cwd: trigger?.kind === "path" ? projectCwd : null,
