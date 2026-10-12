@@ -44,7 +44,7 @@ diff --git a/lib/windowsPtyAgent.js b/lib/windowsPtyAgent.js
 +            agent.on('error', function () {
 +                finish([_this._innerPid]);
 +            });
-+            agent.on('exit', function () {
++            agent.on('close', function () {
 +                finish([_this._innerPid]);
              });
              var timeout = setTimeout(function () {
