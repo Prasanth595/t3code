@@ -817,36 +817,23 @@ describe("DesktopWindow", () => {
           shift: true,
           isComposing: false,
         };
-        const shortcuts = [
+        // Let renderer preview zoom bindings see the input before the native
+        // menu's app zoom fallback.
+        for (const shortcut of [
           {},
           { key: "=" },
           { code: "BracketRight", shift: false },
           { code: "NumpadAdd", shift: false },
-        ];
-        for (const [index, shortcut] of shortcuts.entries()) {
-          const preventDefault = vi.fn();
-          beforeInput({ preventDefault }, { ...input, ...shortcut });
-          assert.equal(preventDefault.mock.calls.length, 1);
-          assert.equal(fakeWindow.window.webContents.getZoomLevel(), (index + 1) * 0.5);
-        }
-        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0, 0.5, 1, 1.5, 2]);
-
-        for (const shortcut of [
           { key: "=", shift: false },
           { key: "-", shift: false },
           { key: "0", shift: false },
-          { type: "keyUp" },
-          { meta: false },
-          { control: true },
-          { alt: true },
-          { isComposing: true },
         ]) {
           const preventDefault = vi.fn();
           beforeInput({ preventDefault }, { ...input, ...shortcut });
           assert.equal(preventDefault.mock.calls.length, 0);
-          assert.equal(fakeWindow.window.webContents.getZoomLevel(), 2);
+          assert.equal(fakeWindow.window.webContents.getZoomLevel(), 0);
         }
-        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0, 0.5, 1, 1.5, 2]);
+        assert.deepEqual(previewZoomReapplies, [-0.5, -1, -0.5, 0]);
         assert.equal(popup.setZoomLevel.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),

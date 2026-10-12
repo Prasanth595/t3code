@@ -685,21 +685,6 @@ export const make = Effect.gen(function* () {
     });
     window.webContents.on("before-input-event", (event, input) => {
       quitShortcutHandler(event, input);
-      // Handle Cmd+plus before renderer key handlers and layout-dependent
-      // native accelerator matching, including + from the numpad.
-      if (
-        environment.platform === "darwin" &&
-        input.type === "keyDown" &&
-        !input.isComposing &&
-        input.meta &&
-        !input.control &&
-        !input.alt &&
-        (input.key === "+" || (input.key === "=" && input.shift))
-      ) {
-        event.preventDefault();
-        runFork(zoomMain("in"));
-        return;
-      }
       if (input.type !== "keyDown" || !input.isAutoRepeat) return;
       const modifier = environment.platform === "darwin" ? input.meta : input.control;
       if (modifier && !input.alt && !input.shift && input.key.toLowerCase() === "w") {
@@ -992,26 +977,6 @@ export const make = Effect.gen(function* () {
     yield* dispatch;
   });
 
-  const zoomMain = Effect.fn("desktop.window.zoomMain")(function* (
-    direction: MainWindowZoomDirection,
-  ) {
-    yield* Effect.annotateCurrentSpan({ direction });
-    const window = yield* electronWindow.main;
-    if (Option.isNone(window) || window.value.isDestroyed()) {
-      return;
-    }
-    const webContents = window.value.webContents;
-    // Same step size as the Electron zoomIn/zoomOut menu roles.
-    webContents.setZoomLevel(
-      direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
-    );
-    if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
-    // Chromium pushes the new level down to embedded guests, which would zoom
-    // the previewed page along with the app UI. The preview browser keeps its
-    // own zoom, so put each guest back where the preview left it.
-    yield* previewManager.reapplyZoom();
-  });
-
   return DesktopWindow.of({
     createMain,
     ensureMain,
@@ -1069,7 +1034,23 @@ export const make = Effect.gen(function* () {
         reveal: event.type === "started",
       });
     }),
-    zoomMain,
+    zoomMain: Effect.fn("desktop.window.zoomMain")(function* (direction) {
+      yield* Effect.annotateCurrentSpan({ direction });
+      const window = yield* electronWindow.main;
+      if (Option.isNone(window) || window.value.isDestroyed()) {
+        return;
+      }
+      const webContents = window.value.webContents;
+      // Same step size as the Electron zoomIn/zoomOut menu roles.
+      webContents.setZoomLevel(
+        direction === "reset" ? 0 : webContents.getZoomLevel() + (direction === "in" ? 0.5 : -0.5),
+      );
+      if (environment.platform === "darwin") syncMacosWindowButtons(window.value);
+      // Chromium pushes the new level down to embedded guests, which would zoom
+      // the previewed page along with the app UI. The preview browser keeps its
+      // own zoom, so put each guest back where the preview left it.
+      yield* previewManager.reapplyZoom();
+    }),
     runMainContentsCommand: Effect.fn("desktop.window.runMainContentsCommand")(function* (command) {
       yield* Effect.annotateCurrentSpan({ command });
       // The registered main window, never the focused one: with an OAuth popup
