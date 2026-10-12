@@ -809,7 +809,24 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.textGenerationModelSelection.instanceId, "claudeAgent");
+      assert.equal(next.textGenerationModelSelection.model, "claude-haiku-5-5");
     }).pipe(Effect.provide(layerServerSettings())),
+  );
+
+  it.effect.each(["claude-haiku-4-5", "claude-haiku-4-5-20251001"])(
+    "preserves the explicitly selected legacy Claude text generation model %s",
+    (model) =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const selection = { instanceId: ProviderInstanceId.make("claudeAgent"), model };
+
+        const next = yield* serverSettings.updateSettings({
+          textGenerationModelSelection: selection,
+        });
+
+        assert.deepEqual(next.textGenerationModelSelection, selection);
+        assert.deepEqual((yield* serverSettings.getSettings).textGenerationModelSelection, selection);
+      }).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("preserves enabled text generation selections for non-built-in drivers", () =>
