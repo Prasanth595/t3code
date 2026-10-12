@@ -859,7 +859,14 @@ it.effect.each([
     },
     runs: 2,
   },
-])("keeps a glab decline only when glab answered in full: $name", (scenario) =>
+  // A claim read from cut output is still used, and the next lookup asks glab again.
+  {
+    name: "this host, in output cut short",
+    output: { ...signedInGitLab, stdoutTruncated: true },
+    kind: "gitlab",
+    runs: 2,
+  },
+])("keeps a glab answer only when glab answered in full: $name", (scenario) =>
   Effect.gen(function* () {
     const commands: Array<string> = [];
     const registry = yield* makeRegistry({
@@ -876,7 +883,7 @@ it.effect.each([
         cwd,
         context: unknownRemote("https://git.example.internal/team/a.git"),
       });
-      assert.strictEqual(handle.provider.kind, "unknown");
+      assert.strictEqual(handle.provider.kind, scenario.kind ?? "unknown");
     }
     assert.strictEqual(commands.length, scenario.runs);
   }),
