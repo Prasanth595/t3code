@@ -168,7 +168,7 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("keeps the shared Codex app-server running after a tool's OOM kill", () =>
+  it.effect("launches the shared Codex app-server with OOMPolicy=continue", () =>
     withFakeSystemd(({ scope }) =>
       Effect.gen(function* () {
         const codex = yield* launchCodex(scope, "a");
@@ -176,6 +176,8 @@ describe("AgentScope service", () => {
         // OOMPolicy=stop would end the app-server of every Codex thread.
         expect(codex.args).toContain("--property=OOMPolicy=continue");
         expect(codex.args).not.toContain("--property=OOMPolicy=stop");
+        // No thread reads a shared scope's result, so systemd may unload it.
+        expect(codex.args).toContain("--collect");
         expect(agent.args).toContain("--property=OOMPolicy=stop");
       }),
     ),
@@ -206,7 +208,7 @@ describe("AgentScope service", () => {
       ({ scope, units }) =>
         Effect.gen(function* () {
           const codex = yield* launchCodex(scope, "a");
-          // Older managers still stop a scope on an OOM kill and record it.
+          // systemd 252 still stops a plain scope on an OOM kill and records it.
           units.set(unitOf(codex), { activeState: "failed", result: "oom-kill" });
           expect(yield* scope.oomKilled("a")).toBe(true);
           expect(codex.args.filter((arg) => arg.includes("OOMPolicy"))).toEqual([]);

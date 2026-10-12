@@ -133,8 +133,9 @@ export const make = Effect.gen(function* () {
           "true",
         ]).pipe(Effect.map((result) => result._tag === "Some" && result.value.code === 0));
       // Stop the whole scope when the kernel kills one of its processes, and
-      // record the result as oom-kill. Scopes take OOMPolicy from systemd 253;
-      // older user managers still get plain scopes, without the OOM label.
+      // record the result as oom-kill. Scopes take OOMPolicy from systemd 253.
+      // Older user managers get plain scopes: 252 still stops them on an OOM
+      // kill and records it, 251 and older do neither.
       const oomOptions = ["--property=OOMPolicy=stop"];
       const scopeOptions = (yield* probe(oomOptions))
         ? oomOptions
