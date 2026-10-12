@@ -175,14 +175,18 @@ export const layerExecutor: Layer.Layer<
               })
               .pipe(
                 Effect.catch((cause) =>
-                  (effect.request.type === "provider-turn.interrupt" &&
-                    effect.request.subagent !== undefined) ||
-                  isNonRetryableProviderTurnControlFailure(
-                    effect.request.type,
-                    Cause.pretty(Cause.fail(cause)),
-                  )
-                    ? Effect.void
-                    : Effect.fail(cause),
+                  effect.request.type === "provider-turn.interrupt" &&
+                  effect.request.subagent !== undefined
+                    ? Effect.logWarning("orchestration-v2.subagent-stop-failed", {
+                        effectId: effect.id,
+                        cause,
+                      })
+                    : isNonRetryableProviderTurnControlFailure(
+                          effect.request.type,
+                          Cause.pretty(Cause.fail(cause)),
+                        )
+                      ? Effect.void
+                      : Effect.fail(cause),
                 ),
                 // The provider has stopped what it still ran and reported it.
                 // Whatever the thread still shows on that provider thread is
