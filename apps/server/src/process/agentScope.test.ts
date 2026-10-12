@@ -68,18 +68,19 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
   }) => Effect.Effect<A, E>,
+  setprivExitCode = 0,
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
-    for (const name of ["systemd-run", "systemctl", "agent"]) {
+    for (const name of ["systemd-run", "systemctl", "setpriv", "agent"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
     const units = new Map<string, { activeState: string; result: string }>();
     const calls: Array<ReadonlyArray<string>> = [];
-    const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+    const output = (stdout: string, code = 0): ProcessRunner.ProcessRunOutput => ({
       stdout,
       stderr: "",
-      code: ChildProcessSpawner.ExitCode(0),
+      code: ChildProcessSpawner.ExitCode(code),
       timedOut: false,
       stdoutTruncated: false,
       stderrTruncated: false,
@@ -87,9 +88,10 @@ const withFakeSystemd = <A, E>(
       stderrInvalidUtf8: false,
     });
     const runner = ProcessRunner.ProcessRunner.of({
-      run: ({ args }) =>
+      run: ({ command, args }) =>
         Effect.sync(() => {
           calls.push(args);
+          if (command.endsWith("/setpriv")) return output("", setprivExitCode);
           const [, verb, unit = ""] = args;
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
@@ -188,5 +190,26 @@ describe("AgentScope service", () => {
         expect(calls.filter(([, verb]) => verb === "stop")).toEqual([]);
       }),
     ),
+  );
+
+  it.effect("launches agents tied to the server only when setpriv supports it", () =>
+    Effect.gen(function* () {
+      const [linked, terminal] = yield* withFakeSystemd(({ scope }) =>
+        Effect.all([
+          scope.wrap({ command: "agent", args: [], name: "t" }),
+          scope.wrap({ command: "agent", args: [], name: "terminal", survivesRestart: true }),
+        ]),
+      );
+      expect(linked.command).toMatch(/\/setpriv$/);
+      expect(linked.args.slice(0, 3)).toEqual(["--pdeathsig", "TERM", "--"]);
+      expect(terminal.command).toBe("/bin/sh");
+
+      // BusyBox's setpriv has no --pdeathsig. Agents still launch, as before.
+      const unlinked = yield* withFakeSystemd(
+        ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
+        1,
+      );
+      expect(unlinked.command).toBe("/bin/sh");
+    }),
   );
 });

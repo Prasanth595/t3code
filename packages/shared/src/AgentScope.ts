@@ -74,8 +74,9 @@ export interface AgentSystemdScope {
 /**
  * Ties an agent to the server that launched it. `setpriv --pdeathsig` asks the
  * kernel to send the agent SIGTERM when the server exits, even when the server
- * is SIGKILLed or crashes and runs no cleanup of its own. Agents stop their own
- * tools on SIGTERM.
+ * is SIGKILLed or crashes and runs no cleanup of its own. Only the agent itself
+ * gets the signal; stopping its tools is up to its SIGTERM handling, which the
+ * Claude CLI does.
  */
 export interface AgentServerLink {
   readonly setpriv: string;
