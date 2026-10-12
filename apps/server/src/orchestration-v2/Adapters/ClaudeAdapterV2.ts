@@ -3497,6 +3497,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // idle, a running subagent's frames are projected through it at once
         // instead of waiting in the wake buffer for a continuation run.
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
+        const subagentStopOutcomes = new Map<string, Deferred.Deferred<void>>();
         // Subagent frames can precede the task_started that registers their
         // subagent (the same race rememberPendingClaudeSubagentLaunch covers).
         // They wait here and replay once task_started registers the owner.
@@ -4805,6 +4806,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const discardBufferedSubagentStarts = (
+          nativeThreadId: string,
+          taskId: string,
+          outcome?: SDKMessage,
+        ) =>
+          Ref.update(wakeBuffers, (current) => {
+            const entry = current.get(nativeThreadId);
+            if (entry === undefined) return current;
+            const outcomeIndex = outcome === undefined ? -1 : entry.messages.indexOf(outcome);
+            const messages = entry.messages.filter(
+              (buffered, index) =>
+                !(
+                  (outcomeIndex === -1 || index < outcomeIndex) &&
+                  buffered.type === "system" &&
+                  (buffered.subtype === "task_started" || buffered.subtype === "task_progress") &&
+                  buffered.task_id === taskId
+                ),
+            );
+            return messages.length === entry.messages.length
+              ? current
+              : new Map(current).set(nativeThreadId, { ...entry, messages });
+          });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -5209,6 +5233,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               result: task.result,
             },
           });
+
+          if (task.status !== "running") {
+            const outcome = subagentStopOutcomes.get(input.taskId);
+            if (outcome !== undefined) yield* Deferred.succeed(outcome, undefined);
+          }
 
           // A completed subagent's result is normally its final assistant
           // message, which is already in the child thread when its text was
@@ -7186,6 +7215,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           if (message.type === "system" && message.subtype === "task_notification") {
+            // A live outcome supersedes earlier idle starts. During replay only
+            // remove frames before this notification, preserving a later resume.
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)) {
+              yield* discardBufferedSubagentStarts(
+                liveQuery.nativeThreadId,
+                message.task_id,
+                message,
+              );
+            }
             // A wake-replay turn has empty ignoredTaskIds, so opaque-task
             // tracking (live roster, wake eligibility, or the short-lived
             // post-buffer replay tombstone) classifies local_bash before any
@@ -8973,28 +9011,54 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const existing = yield* Ref.get(queryContext);
             const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId;
             const subagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
-            if (subagent === undefined || subagent.task.status !== "running") return;
-            if (
-              existing === null ||
-              existing.nativeThreadId !== nativeThreadId ||
-              subagent.task.threadId !== input.providerThread.appThreadId ||
-              existing.subagentsFromEarlierProcesses.has(subagent) ||
-              existing.query.stopTask === undefined
-            ) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: CLAUDE_PROVIDER,
-                detail: "Claude subagent has no live owning query with task stopping support.",
-              });
+            // A projected running task can already be terminal in the registry.
+            if (nativeThreadId != null) {
+              yield* discardBufferedSubagentStarts(nativeThreadId, input.nativeTaskId);
             }
-            yield* existing.query.stopTask(input.nativeTaskId).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterProtocolError({
-                    driver: CLAUDE_PROVIDER,
-                    detail: "Claude native subagent stop failed.",
-                    cause,
-                  }),
-              ),
+            if (subagent === undefined || subagent.task.status !== "running") return;
+            const active = yield* Ref.get(activeTurn);
+            const context =
+              active?.nativeThreadId === nativeThreadId
+                ? active
+                : nativeThreadId == null
+                  ? undefined
+                  : settledTurnByNativeThread.get(nativeThreadId);
+            const outcome = yield* Deferred.make<void>();
+            subagentStopOutcomes.set(input.nativeTaskId, outcome);
+            yield* Effect.gen(function* () {
+              if (
+                existing !== null &&
+                existing.nativeThreadId === nativeThreadId &&
+                subagent.task.threadId === input.providerThread.appThreadId &&
+                !existing.subagentsFromEarlierProcesses.has(subagent) &&
+                existing.query.stopTask !== undefined
+              ) {
+                yield* existing.query
+                  .stopTask(input.nativeTaskId)
+                  .pipe(
+                    Effect.andThen(Deferred.await(outcome)),
+                    Effect.timeout("2 seconds"),
+                    Effect.ignore,
+                  );
+              }
+              const current = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
+              if (
+                context !== undefined &&
+                context !== null &&
+                current?.task.startedAt === subagent.task.startedAt
+              ) {
+                if (nativeThreadId != null) {
+                  yield* discardBufferedSubagentStarts(nativeThreadId, input.nativeTaskId);
+                }
+                yield* updateClaudeSubagentNode({
+                  context,
+                  taskId: input.nativeTaskId,
+                  status: "cancelled",
+                  onlyIfRunningInRun: subagent.task.runId,
+                });
+              }
+            }).pipe(
+              Effect.ensuring(Effect.sync(() => subagentStopOutcomes.delete(input.nativeTaskId))),
             );
           }),
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(

@@ -18,6 +18,8 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
+import * as EventStore from "./EventStore.ts";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -27,6 +29,16 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as ResourceCleanupService from "./ResourceCleanupService.ts";
+import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -49,6 +61,8 @@ const layerTest = ThreadManagementService.layer.pipe(
     Layer.mergeAll(
       layerDatabase,
       ProjectionStore.layer.pipe(Layer.provide(layerDatabase)),
+      EventStore.layer.pipe(Layer.provide(layerDatabase)),
+      EffectOutbox.layer.pipe(Layer.provide(layerDatabase)),
       ProviderReplayHarness.layerWithRegistry(
         { name: "thread-stop" },
         ProviderAdapterRegistry.layerFromAdapters([adapter]),
@@ -589,9 +603,9 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect(
-  "a native child stop persists only its targeted effect and leaves its owner's queue and watch alone",
-  () =>
+it.effect.each(["missing session", "provider no-op", "provider error"] as const)(
+  "a native child stop repairs a %s without settling its owner or sibling",
+  (providerState) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -624,6 +638,49 @@ it.effect(
         nodeId: subagent.id,
         occurredAt: now,
         payload: subagent,
+      });
+      const sibling = {
+        ...subagent,
+        id: NodeId.make("node:native-stop-sibling"),
+        childThreadId: null,
+      };
+      yield* projections.apply({
+        id: EventId.make("event:native-child-stop:sibling"),
+        type: "subagent.updated",
+        threadId,
+        runId: run.id,
+        nodeId: sibling.id,
+        occurredAt: now,
+        payload: sibling,
+      });
+      const item = before.turnItems.find(
+        (item) => item.type === "subagent" && item.subagentId === subagent.id,
+      )!;
+      yield* projections.apply({
+        id: EventId.make("event:native-child-stop:item"),
+        type: "turn-item.updated",
+        threadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...item, status: "running", completedAt: null },
+      });
+      const childRoot = {
+        ...before.nodes.find((node) => node.id === run.rootNodeId)!,
+        id: NodeId.make("node:native-stop-child-root"),
+        threadId: subagent.childThreadId!,
+        runId: null,
+        parentNodeId: null,
+        status: "running" as const,
+        countsForRun: false,
+        completedAt: null,
+      };
+      yield* projections.apply({
+        id: EventId.make("event:native-child-stop:child-root"),
+        type: "node.updated",
+        threadId: childRoot.threadId,
+        nodeId: childRoot.id,
+        occurredAt: now,
+        payload: childRoot,
       });
       const providerThread = before.providerThreads.find(
         (thread) => thread.id === run.providerThreadId,
@@ -669,6 +726,8 @@ it.effect(
       });
       yield* send(threadId, "queued", "queue_after_active");
       const stateBefore = yield* threadState(threadId);
+      const eventStore = yield* EventStore.EventStoreV2;
+      const afterSequence = yield* eventStore.latestSequence({ threadId });
       const commandId = CommandId.make("stop-native-child");
       yield* orchestrator.dispatch({
         type: "subagent.stop",
@@ -703,5 +762,117 @@ it.effect(
         }),
       );
       assert.isTrue(Exit.isFailure(unrelated));
+      // Only execute Stop's durable effect. There is no live provider session
+      // and therefore no terminal notification to ingest.
+      yield* sql`DELETE FROM orchestration_v2_effect_outbox WHERE command_id != ${commandId}`;
+      if (providerState === "missing session") {
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* worker.drain();
+      } else {
+        // A terminal registry entry or an already-stopped CLI task can return
+        // without reporting any outcome, while the projection is still running.
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const [stopEffect] = yield* outbox.listByCommandId(commandId);
+        assert.isDefined(stopEffect);
+        let stopCalls = 0;
+        yield* EffectWorker.OrchestrationEffectExecutorV2.use((executor) =>
+          executor.execute(stopEffect!),
+        ).pipe(
+          Effect.provide(
+            EffectWorker.layerExecutor.pipe(
+              Layer.fresh,
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({
+                    interrupt: (input) => {
+                      assert.equal(input.subagent?.nativeTaskId, "claude-task");
+                      stopCalls++;
+                      return providerState === "provider error"
+                        ? new ProviderTurnControlService.ProviderTurnControlError({
+                            threadId,
+                            providerTurnId,
+                            operation: "interrupt",
+                            cause: "Task no longer exists",
+                          })
+                        : Effect.void;
+                    },
+                  }),
+                  Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
+                  Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+                  Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+                  Layer.mock(ResourceCleanupService.ResourceCleanupService)({}),
+                  Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
+                  Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+                  Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+                ),
+              ),
+            ),
+          ),
+        );
+        assert.equal(stopCalls, 1);
+      }
+      const settled = yield* orchestrator.getThreadProjection(threadId);
+      const cancelled = settled.subagents.find((task) => task.id === subagent.id)!;
+      // Cached clients resume from this sequence, so all lifecycle repairs
+      // must be stored in the parent stream, not just applied to projections.
+      const repaired = yield* eventStore.read({ threadId, afterSequence }).pipe(Stream.runCollect);
+      const terminal = repaired.flatMap(({ event }) =>
+        (event.type === "subagent.updated" ||
+          event.type === "node.updated" ||
+          event.type === "turn-item.updated") &&
+        event.payload.status === "cancelled"
+          ? [event]
+          : [],
+      );
+      assert.deepEqual(terminal.map((event) => event.type).sort(), [
+        "node.updated",
+        "subagent.updated",
+        "turn-item.updated",
+      ]);
+      for (const event of terminal) {
+        assert.equal(event.nodeId, subagent.id);
+        assert.isNotNull(event.payload.completedAt);
+        if (event.type === "subagent.updated" || event.type === "turn-item.updated") {
+          assert.isDefined(event.payload.updatedAt);
+        }
+      }
+
+      assert.equal(cancelled.status, "cancelled");
+      assert.isNotNull(cancelled.completedAt);
+      assert.equal(
+        settled.turnItems.find((candidate) => candidate.id === item.id)?.status,
+        "cancelled",
+      );
+      const child = yield* orchestrator.getThreadProjection(childRoot.threadId);
+      assert.equal(child.nodes.find((node) => node.id === childRoot.id)?.status, "cancelled");
+      assert.isNotNull(child.nodes.find((node) => node.id === childRoot.id)?.completedAt);
+      assert.equal(settled.subagents.find((task) => task.id === sibling.id)?.status, "running");
+      assert.deepEqual(yield* threadState(threadId), stateBefore);
+      // An old Stop follow-up cannot cancel a genuine subsequent resume.
+      yield* TestClock.adjust("1 second");
+      const resumedAt = yield* DateTime.now;
+      yield* projections.apply({
+        id: EventId.make("event:native-child-stop:resume"),
+        type: "subagent.updated",
+        threadId,
+        runId: run.id,
+        nodeId: subagent.id,
+        occurredAt: resumedAt,
+        payload: { ...cancelled, status: "running", startedAt: resumedAt, completedAt: null },
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.background-work.settle",
+        commandId: CommandId.make("old-stop-after-resume"),
+        threadId,
+        providerThreadId: providerThread.id,
+        providerTurnId,
+        subagent: { id: subagent.id, stoppedAt: now },
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+          (task) => task.id === subagent.id,
+        )?.status,
+        "running",
+      );
     }).pipe(Effect.provide(layerTest)),
 );

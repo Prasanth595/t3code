@@ -192,6 +192,18 @@ export const layer: Layer.Layer<
               providerThread: loaded.providerThread,
               nativeTaskId: input.subagent.nativeTaskId,
             });
+            // Terminal adapter events are ingested on another fiber. Preserve
+            // their outcome before the effect repairs a missing notification.
+            yield* Effect.gen(function* () {
+              const deadline = (yield* Clock.currentTimeMillis) + 2_000;
+              while ((yield* Clock.currentTimeMillis) < deadline) {
+                const current = yield* projections.getThreadRecords(input.threadId, ["subagents"]);
+                const task = current.subagents.find((task) => task.id === input.subagent?.id);
+                if (task === undefined || !["pending", "running", "waiting"].includes(task.status))
+                  return;
+                yield* Effect.sleep("10 millis");
+              }
+            }).pipe(Effect.provideService(Clock.Clock, Clock.Clock.defaultValue()));
             return;
           }
           // A settled turn reaches its adapter too: only the adapter knows

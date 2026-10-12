@@ -175,6 +175,8 @@ export const layerExecutor: Layer.Layer<
               })
               .pipe(
                 Effect.catch((cause) =>
+                  (effect.request.type === "provider-turn.interrupt" &&
+                    effect.request.subagent !== undefined) ||
                   isNonRetryableProviderTurnControlFailure(
                     effect.request.type,
                     Cause.pretty(Cause.fail(cause)),
@@ -188,15 +190,21 @@ export const layerExecutor: Layer.Layer<
                 // One Stop can interrupt several provider threads, so the
                 // settle is keyed by effect, not by the Stop command.
                 Effect.andThen(
-                  effect.request.subagent !== undefined
-                    ? Effect.void
-                    : threads.dispatch({
-                        type: "thread.background-work.settle",
-                        commandId: CommandId.make(`${effect.id}:background-work-settled`),
-                        threadId: effect.threadId,
-                        providerThreadId: effect.request.providerThreadId,
-                        providerTurnId: effect.request.providerTurnId,
-                      }),
+                  threads.dispatch({
+                    type: "thread.background-work.settle",
+                    commandId: CommandId.make(`${effect.id}:background-work-settled`),
+                    ...(effect.request.subagent === undefined
+                      ? {}
+                      : {
+                          subagent: {
+                            id: effect.request.subagent.id,
+                            stoppedAt: DateTime.makeUnsafe(effect.createdAt),
+                          },
+                        }),
+                    threadId: effect.threadId,
+                    providerThreadId: effect.request.providerThreadId,
+                    providerTurnId: effect.request.providerTurnId,
+                  }),
                 ),
                 Effect.mapError(
                   (cause) =>

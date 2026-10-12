@@ -849,7 +849,17 @@ it.effect("a native subagent stop does not settle its owner's background work", 
         assert.equal(input.subagent?.nativeTaskId, "native-task");
         return Ref.update(events, (current) => [...current, "stop-child"]);
       },
-      threads: { dispatch: () => Effect.die("The owner's background work must stay running") },
+      threads: {
+        dispatch: (command) => {
+          assert.equal(command.type, "thread.background-work.settle");
+          if (command.type === "thread.background-work.settle") {
+            assert.equal(command.subagent?.id, "subagent");
+          }
+          return Ref.update(events, (current) => [...current, "settle-child"]).pipe(
+            Effect.as({ sequence: 1, storedEvents: [] }),
+          );
+        },
+      },
     });
     yield* Effect.gen(function* () {
       const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
@@ -864,6 +874,6 @@ it.effect("a native subagent stop does not settle its owner's background work", 
         },
       });
     }).pipe(Effect.provide(layer));
-    assert.deepEqual(yield* Ref.get(events), ["stop-child"]);
+    assert.deepEqual(yield* Ref.get(events), ["stop-child", "settle-child"]);
   }),
 );
