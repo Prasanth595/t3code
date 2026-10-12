@@ -3648,8 +3648,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       // Written at the repository root.
       readonly gitmodules?: boolean;
       // .gitmodules is staged but gone from the worktree, and the submodule's
-      // repository stays under .git/modules.
+      // repository stays under the worktree's Git directory's modules.
       readonly deinitializedSubmodule?: boolean;
+      // The fetch runs in a linked worktree of the repository.
+      readonly linkedWorktree?: boolean;
       // The fetch runs in a directory below the repository root.
       readonly subdirectory?: boolean;
       // A plain repository with a worktree by default.
@@ -3739,11 +3741,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         Effect.provideService(HostProcess.Platform, scenario.platform ?? "linux"),
         Effect.provide(layerServerConfig),
       );
-      const root = yield* makeTmpDir();
+      const runGit = (cwd: string, args: ReadonlyArray<string>) =>
+        git(cwd, args).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+      const repository = yield* makeTmpDir();
       if (scenario.repository !== "none") {
-        yield* git(root, scenario.repository === "bare" ? ["init", "--bare"] : ["init"]).pipe(
-          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-        );
+        yield* runGit(repository, scenario.repository === "bare" ? ["init", "--bare"] : ["init"]);
+      }
+      const root = scenario.linkedWorktree ? yield* makeTmpDir() : repository;
+      if (scenario.linkedWorktree) {
+        // The spawner answers `git config` itself, so the identity goes on the command line.
+        yield* runGit(repository, [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@test.com",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial commit",
+        ]);
+        yield* runGit(repository, ["worktree", "add", "--detach", root]);
       }
       if (scenario.gitmodules) {
         yield* writeTextFile(root, ".gitmodules", '[submodule "lib"]\n\tpath = lib\n');
@@ -3751,11 +3768,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       if (scenario.deinitializedSubmodule) {
         const fileSystem = yield* FileSystem.FileSystem;
         yield* writeTextFile(root, ".gitmodules", '[submodule "lib"]\n\tpath = lib\n');
-        yield* git(root, ["add", ".gitmodules"]).pipe(
-          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
-        );
+        yield* runGit(root, ["add", ".gitmodules"]);
         yield* fileSystem.remove((yield* Path.Path).join(root, ".gitmodules"));
-        yield* writeTextFile(root, ".git/modules/lib/HEAD", "ref: refs/heads/main\n");
+        const gitDir = yield* runGit(root, ["rev-parse", "--absolute-git-dir"]);
+        yield* writeTextFile(gitDir, "modules/lib/HEAD", "ref: refs/heads/main\n");
       }
       const cwd = scenario.subdirectory ? (yield* Path.Path).join(root, "app") : root;
       if (scenario.subdirectory) yield* writeTextFile(cwd, "README.md", "# app\n");
@@ -3984,6 +4000,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         refName: "main",
         stderr: [sshPacketLine, sshSigningLine],
         deinitializedSubmodule: true,
+      },
+      {
+        name: "a deinitialized submodule kept only in a linked worktree",
+        refName: "main",
+        stderr: [sshPacketLine, sshSigningLine],
+        deinitializedSubmodule: true,
+        linkedWorktree: true,
       },
       {
         name: "a directory outside any repository",

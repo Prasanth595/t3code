@@ -1242,6 +1242,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .exists(path.join(repositoryPaths.gitCommonDir, "modules"))
       .pipe(Effect.orElseSucceed(() => true));
     if (hasSubmoduleRepositories) return false;
+    // A linked worktree keeps its own under the Git directory that its .git
+    // file names. A .git directory is the common one checked above.
+    const worktreeGitPath = path.join(repositoryPaths.worktreeRoot, ".git");
+    const hasWorktreeSubmoduleRepositories = yield* Effect.gen(function* () {
+      if ((yield* fileSystem.stat(worktreeGitPath)).type === "Directory") return false;
+      const gitFile = yield* fileSystem.readFileString(worktreeGitPath);
+      if (!gitFile.startsWith("gitdir: ")) return true;
+      const gitDir = path.resolve(
+        path.dirname(worktreeGitPath),
+        gitFile.slice("gitdir: ".length).trimEnd(),
+      );
+      return yield* fileSystem.exists(path.join(gitDir, "modules"));
+    }).pipe(Effect.orElseSucceed(() => true));
+    if (hasWorktreeSubmoduleRepositories) return false;
     // Exit 1 means none of these keys is set in any config scope. Initializing
     // a submodule writes submodule.<name>.url. Host-wide keys such as
     // submodule.recurse say nothing about this repository, so they do not count.
