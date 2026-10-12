@@ -69,11 +69,25 @@ describe("tool output images", () => {
     const output = {
       content: [
         { type: "text", text: "Read /tmp/blk.png. Literal marker: [image]" },
-        { type: "image", file: { type: "image/png", sizeBytes: 1024 } },
+        screenshot.output.content[1],
       ],
     };
     expect(turnItemOutputText({ ...screenshot, viewedImagePath: "/tmp/blk.png", output })).toBe(
       "Read /tmp/blk.png. Literal marker: [image]",
     );
+  });
+
+  it("keeps placeholders for unserved images in a list despite a file preview", () => {
+    const blocks = [
+      { type: "text", text: "Read /tmp/blk.png." },
+      { type: "image", file: { type: "image/png", sizeBytes: 1024 } },
+      screenshot.output.content[1],
+      { type: "image", mimeType: "image/svg+xml" },
+    ];
+    for (const output of [blocks, { content: blocks }, { content: blocks, isError: false }]) {
+      const item = { ...screenshot, viewedImagePath: "/tmp/blk.png", output };
+      expect(turnItemOutputText(item)).toBe("Read /tmp/blk.png.\n[image]\n[image]");
+      expect(turnItemOutputImages(item)).toHaveLength(1);
+    }
   });
 });
