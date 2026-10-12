@@ -71,8 +71,10 @@ if (process.env.AGENT_DEVICE_DAEMON_BASE_URL) process.exit(2);`,
       });
       expect((yield* Effect.promise(() => invoke(files[0]!))).daemonAuthToken).toBe("new");
       expect(yield* fs.readFileString(files[1]!)).toBe(second);
-      expect(yield* agentDeviceSession("thread", "mini", "same-id")).not.toBe(
-        yield* agentDeviceSession("thread", "android", "same-id"),
+      expect(
+        yield* agentDeviceSession({ threadId: "thread", hostId: "mini", deviceId: "same-id" }),
+      ).not.toBe(
+        yield* agentDeviceSession({ threadId: "thread", hostId: "android", deviceId: "same-id" }),
       );
       for (const args of [
         ["snapshot"],

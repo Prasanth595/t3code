@@ -102,9 +102,11 @@ export class DeviceHost extends Context.Service<
     readonly current: Effect.Effect<DeviceHostReady | null>;
     /**
      * The agent-device daemon when already running, without starting it.
-     * Agent sessions and their device claims live only inside that daemon.
+     * Agent sessions and their device claims live only inside that daemon, so
+     * null means no daemon holds any. Fails while a daemon may be running but
+     * cannot be reached.
      */
-    readonly currentAgent: Effect.Effect<AgentDeviceEndpoint | null>;
+    readonly currentAgent: Effect.Effect<AgentDeviceEndpoint | null, DeviceHostError>;
     /** Stops only agent-device. Manual viewing through the hub stays available. */
     readonly stopAgent: Effect.Effect<void>;
     /** Stops helpers. Devices themselves keep running; the user owns those. */

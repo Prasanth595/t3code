@@ -113,7 +113,8 @@ const layerDeviceServiceMock = Layer.mock(DeviceService.DeviceService)({
   close: () => Effect.void,
   agentCli: Effect.succeed("/cli"),
   testHost: () => Effect.die("not used"),
-  agentTarget: () => Effect.succeed(["--config", "/host.json", "--session", "thread-device"]),
+  agentTarget: () => Effect.succeed(["--config", "/host.json"]),
+  agentSession: (session) => Effect.succeed(`session-${session.deviceId}`),
 });
 
 const layerTest = McpHttpServer.layerDeviceToolkit.pipe(
@@ -211,8 +212,8 @@ it.effect("names the agent session after the serial a booted AVD receives", () =
   const layerBooting = Layer.mock(DeviceService.DeviceService)({
     list: Effect.succeed({ ...state, devices: [avd] }),
     state: Effect.succeed({ ...state, devices: [{ ...avd, id: "emulator-5554", booted: true }] }),
-    agentTarget: (input) =>
-      Effect.succeed(["--config", "/host.json", "--session", `session-${input.deviceId}`]),
+    agentTarget: () => Effect.succeed(["--config", "/host.json"]),
+    agentSession: (session) => Effect.succeed(`session-${session.deviceId}`),
     open: (input) =>
       Effect.succeed({
         threadId: input.threadId,

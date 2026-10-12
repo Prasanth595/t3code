@@ -96,7 +96,6 @@ interface HubProcess {
 
 interface RunningHost {
   readonly hub: HubProcess;
-  readonly agentDevice: DeviceHost.AgentDeviceEndpoint | null;
   readonly helpers: DeviceHost.DeviceHostReady["helpers"];
 }
 
@@ -236,6 +235,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const hostEnvironment = deviceHostEnvironment(environment, sdk.root, hostPlatform, path);
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
+  // The daemon is its own process and outlives hub restarts, so it is tracked
+  // apart from the hub; only stopAgent and stop end it.
+  const agentRef = yield* Ref.make<DeviceHost.AgentDeviceEndpoint | null>(null);
   const restartDelayRef = yield* Ref.make(0);
   const hostId = LOCAL_DEVICE_HOST_ID;
 
@@ -262,7 +264,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     ]);
     const running = yield* Ref.get(runningRef);
-    const daemon = running?.agentDevice
+    const daemon = (yield* Ref.get(agentRef))
       ? yield* readDaemonFile().pipe(Effect.option)
       : Option.none();
     const hubAlive = running
@@ -634,7 +636,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ]);
       const next: RunningHost = {
         hub,
-        agentDevice: null,
         helpers: {
           serveSimAxSettings: axExists ? candidate.serveSimAxSettings : null,
           serveSimCli: cliExists ? candidate.serveSimCli : null,
@@ -663,7 +664,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         DeviceHost.DeviceHostAgentReady
       > {
         const running = yield* ensureHubReady(onPhase);
-        if (running.agentDevice) return { ...toReady(running), agentDevice: running.agentDevice };
+        const existing = yield* Ref.get(agentRef);
+        if (existing) return { ...toReady(running), agentDevice: existing };
         const installed = yield* isAgentDeviceInstalled(config.baseDir).pipe(
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
@@ -696,9 +698,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.provideService(ProcessRunner.ProcessRunner, runner),
           Effect.ignore,
         );
-        const next = { ...running, agentDevice };
-        yield* Ref.set(runningRef, next);
-        return { ...toReady(next), agentDevice };
+        yield* Ref.set(agentRef, agentDevice);
+        return { ...toReady(running), agentDevice };
       }),
     );
 
@@ -754,16 +755,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     Effect.map((running) => (running ? toReady(running) : null)),
   );
 
-  const currentAgent: DeviceHost.DeviceHost["Service"]["currentAgent"] = Ref.get(runningRef).pipe(
-    Effect.map((running) => running?.agentDevice ?? null),
-  );
+  const currentAgent: DeviceHost.DeviceHost["Service"]["currentAgent"] = Ref.get(agentRef);
 
   const stopAgent: DeviceHost.DeviceHost["Service"]["stopAgent"] = startLock.withPermits(1)(
     Effect.gen(function* () {
       yield* stopAgentDeviceDaemon(agentToolRef);
-      yield* Ref.update(runningRef, (running) =>
-        running ? { ...running, agentDevice: null } : running,
-      );
+      yield* Ref.set(agentRef, null);
     }),
   );
 
@@ -773,6 +770,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       yield* stopHub(running?.hub);
       yield* fs.remove(hubStatePath(), { force: true }).pipe(Effect.ignore);
       yield* stopAgentDeviceDaemon(agentToolRef);
+      yield* Ref.set(agentRef, null);
     }),
   );
 

@@ -160,33 +160,27 @@ const handlers = {
       }
       const target = yield* pickDevice(state.devices, input);
       // Resolve consent and agent connectivity before booting or registering a session.
-      const openedArgs = yield* devices.agentTarget({
-        threadId: scope.thread.threadId,
-        hostId: target.hostId,
-        deviceId: target.id,
-      });
+      const agentArgs = yield* devices.agentTarget(target.hostId);
       const session = yield* devices.open({
         threadId: scope.thread.threadId,
         hostId: target.hostId,
         deviceId: target.id,
         platform: target.platform,
       });
-      // Booting an AVD swaps its name for an emulator serial. The agent session
-      // is named after the device id `device_close` will release.
-      const agentArgs =
-        session.deviceId === target.id
-          ? openedArgs
-          : yield* devices.agentTarget({
-              threadId: scope.thread.threadId,
-              hostId: session.hostId,
-              deviceId: session.deviceId,
-            });
+      // Named after the opened session, not the target: booting an AVD swaps its
+      // name for the emulator serial that `device_close` releases.
+      const agentSession = yield* devices.agentSession(session);
       const after = yield* devices.state;
       const device =
         after.devices.find(
           (candidate) => candidate.hostId === session.hostId && candidate.id === session.deviceId,
         ) ?? target;
-      const targetArgs = [...agentDeviceTargetArgs(device), ...agentArgs];
+      const targetArgs = [
+        ...agentDeviceTargetArgs(device),
+        ...agentArgs,
+        "--session",
+        agentSession,
+      ];
       const config = yield* ServerConfig.ServerConfig;
       const path = yield* Path.Path;
       const platform = yield* HostProcess.Platform;

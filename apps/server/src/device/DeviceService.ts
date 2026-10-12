@@ -126,11 +126,12 @@ export class DeviceService extends Context.Service<
     readonly testHost: (
       config: SshDeviceHostConfig,
     ) => Effect.Effect<DeviceHostSummary, DeviceError>;
-    readonly agentTarget: (input: {
-      threadId: ThreadId;
-      hostId: DeviceHostId;
-      deviceId: DeviceId;
-    }) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
+    /** Connects agent-device commands to the host's daemon, starting it if needed. */
+    readonly agentTarget: (
+      hostId: DeviceHostId,
+    ) => Effect.Effect<ReadonlyArray<string>, DeviceError>;
+    /** The agent-device session an opened device is driven through; closing releases it. */
+    readonly agentSession: (session: DeviceSession) => Effect.Effect<string>;
     readonly state: Effect.Effect<DeviceServiceState>;
     readonly subscribe: Effect.Effect<PubSub.Subscription<DeviceServiceState>, never, Scope.Scope>;
     readonly configure: (
@@ -747,6 +748,9 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     return session;
   });
 
+  const agentSession: DeviceService["Service"]["agentSession"] = (session) =>
+    agentDeviceSession(session).pipe(Effect.provideService(Crypto.Crypto, crypto));
+
   /**
    * Ends the agent-device session `device_open` handed to the thread, releasing
    * its host-wide device claim. The daemon owning it never exits while T3 runs,
@@ -756,34 +760,41 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
   const releaseAgentSession = Effect.fn("DeviceService.releaseAgentSession")(function* (
     session: DeviceSession,
   ) {
-    const agent = yield* hosts.get(session.hostId)?.currentAgent ?? Effect.succeed(null);
-    if (!agent) return;
-    const name = yield* agentDeviceSession(session.threadId, session.hostId, session.deviceId).pipe(
-      Effect.provideService(Crypto.Crypto, crypto),
-    );
+    const name = yield* agentSession(session);
     const failed = (reason: "request_failed" | "command_failed", cause: unknown) =>
       new DeviceOperationError({
         operation: `release of agent-device session ${name} (thread ${session.threadId}, device ${session.deviceId} on host ${session.hostId})`,
         reason,
         cause,
       });
-    yield* HttpClientRequest.post(`${agent.baseUrl}/rpc`).pipe(
-      HttpClientRequest.bearerToken(agent.token),
-      HttpClientRequest.bodyJson({
-        jsonrpc: "2.0",
-        id: name,
-        method: "agent_device.command",
-        params: { session: name, command: "close", positionals: [], flags: {} },
-      }),
-      Effect.flatMap((request) => httpClient.execute(request)),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentDeviceRpcReply)),
-      Effect.scoped,
-      Effect.timeout(AGENT_SESSION_RELEASE_TIMEOUT),
+    yield* (hosts.get(session.hostId)?.currentAgent ?? Effect.succeed(null)).pipe(
       Effect.mapError((cause) => failed("request_failed", cause)),
-      Effect.flatMap((reply) =>
-        ("result" in reply ? reply.result.ok : reply.error.data?.code === "SESSION_NOT_FOUND")
-          ? Effect.void
-          : Effect.fail(failed("command_failed", reply)),
+      Effect.flatMap((agent) =>
+        agent
+          ? HttpClientRequest.post(`${agent.baseUrl}/rpc`).pipe(
+              HttpClientRequest.bearerToken(agent.token),
+              HttpClientRequest.bodyJson({
+                jsonrpc: "2.0",
+                id: name,
+                method: "agent_device.command",
+                params: { session: name, command: "close", positionals: [], flags: {} },
+              }),
+              Effect.flatMap((request) => httpClient.execute(request)),
+              Effect.flatMap(HttpClientResponse.schemaBodyJson(AgentDeviceRpcReply)),
+              Effect.scoped,
+              Effect.timeout(AGENT_SESSION_RELEASE_TIMEOUT),
+              Effect.mapError((cause) => failed("request_failed", cause)),
+              Effect.flatMap((reply) =>
+                (
+                  "result" in reply
+                    ? reply.result.ok
+                    : reply.error.data?.code === "SESSION_NOT_FOUND"
+                )
+                  ? Effect.void
+                  : Effect.fail(failed("command_failed", reply)),
+              ),
+            )
+          : Effect.void,
       ),
       Effect.tapError((error) =>
         Effect.logWarning("Could not release agent-device session", {
@@ -1000,13 +1011,14 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
           reason: "Agent CLI installation is unavailable in this device service.",
         }),
       ),
-      agentTarget: (input) =>
+      agentSession,
+      agentTarget: (hostId) =>
         Effect.gen(function* () {
-          const host = yield* resolveHost(input.hostId);
-          const ready = yield* agentReadinessIfSupported(input.hostId);
+          const host = yield* resolveHost(hostId);
+          const ready = yield* agentReadinessIfSupported(hostId);
           if (!ready)
             return yield* new DeviceHostUnavailableError({
-              hostId: input.hostId,
+              hostId,
               reason:
                 "Agent device access requires enabled device support, agent access, and an available simulator platform on this host.",
             });
@@ -1017,15 +1029,10 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
                   hostId: host.id,
                   reason: "Host configuration changed. Retry the operation.",
                 });
-              return yield* configureAgent(input.hostId, ready);
+              return yield* configureAgent(hostId, ready);
             }),
           );
-          const session = yield* agentDeviceSession(
-            input.threadId,
-            input.hostId,
-            input.deviceId,
-          ).pipe(Effect.provideService(Crypto.Crypto, crypto));
-          return ["--config", configPath, "--session", session];
+          return ["--config", configPath];
         }),
       state: SynchronizedRef.get(stateRef).pipe(Effect.map(({ state }) => state)),
       subscribe: PubSub.subscribe(statePubSub),

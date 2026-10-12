@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Net from "@t3tools/shared/Net";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,8 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     let forwards = 0;
     let failForward = true;
     let rejectConfig = true;
+    const forwardDropped = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+    const reconnecting = yield* Deferred.make<void>();
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
         if (command._tag !== "StandardCommand") return yield* Effect.die("Unexpected command");
@@ -78,7 +81,9 @@ it.effect("preserves installed status after probes and cleans failed agent activ
           stdout: Stream.make(new TextEncoder().encode(output)),
           stderr: Stream.empty,
           all: Stream.empty,
-          exitCode: forwarding ? Effect.never : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: forwarding
+            ? Deferred.await(forwardDropped)
+            : Effect.succeed(ChildProcessSpawner.ExitCode(0)),
           isRunning: Effect.succeed(forwarding),
           kill: () => Effect.void,
           stdin: Sink.drain,
@@ -99,6 +104,10 @@ it.effect("preserves installed status after probes and cleans failed agent activ
                 cause: new Error("fixture failure"),
               }),
             )
+          : Effect.void,
+      (_status, detail) =>
+        detail === "Reconnecting to device host…"
+          ? Deferred.succeed(reconnecting, undefined)
           : Effect.void,
     ).pipe(
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(home, home), Net.layer)),
@@ -132,7 +141,20 @@ it.effect("preserves installed status after probes and cleans failed agent activ
     expect((yield* host.summary).agentDeviceInstalled).toBe(true);
     yield* host.stopAgent;
     expect(forwards).toBe(1);
+    expect(yield* host.currentAgent).toBeNull();
+
+    yield* host.ensureAgentReady(() => Effect.void);
+    expect(yield* host.currentAgent).toMatchObject({ token: "fixture", entryPath: "/agent.mjs" });
+    // The remote daemon outlives a dropped forward, so its sessions cannot be
+    // reported as gone while SSH reconnects.
+    yield* Deferred.succeed(forwardDropped, ChildProcessSpawner.ExitCode(255));
+    yield* Deferred.await(reconnecting);
+    expect(yield* host.currentAgent.pipe(Effect.flip)).toMatchObject({
+      _tag: "DeviceHostError",
+      step: "reaching agent tools",
+    });
     yield* host.stop;
     expect(forwards).toBe(0);
+    expect(yield* host.currentAgent).toBeNull();
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

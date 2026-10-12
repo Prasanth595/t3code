@@ -25,8 +25,15 @@ const key = Effect.fn("AgentDeviceTarget.key")(function* (value: string) {
 export const agentDeviceConfigPath = (stateDir: string, hostId: string, path: Path.Path) =>
   key(hostId).pipe(Effect.map((hash) => path.join(stateDir, "device", "hosts", `${hash}.json`)));
 
-export const agentDeviceSession = (threadId: string, hostId: string, deviceId: string) =>
-  key(JSON.stringify([threadId, hostId, deviceId])).pipe(Effect.map((hash) => `t3-${hash}`));
+/** The agent-device session a thread drives one device through, opened by `device_open`. */
+export const agentDeviceSession = (session: {
+  readonly threadId: string;
+  readonly hostId: string;
+  readonly deviceId: string;
+}) =>
+  key(JSON.stringify([session.threadId, session.hostId, session.deviceId])).pipe(
+    Effect.map((hash) => `t3-${hash}`),
+  );
 
 export const writeAgentDeviceConfig = Effect.fn("AgentDeviceTarget.writeConfig")(function* (
   file: string,

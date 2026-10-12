@@ -437,7 +437,23 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
       ),
     ),
     current: Effect.sync(() => ready),
-    currentAgent: Effect.sync(() => ready?.agentDevice ?? null),
+    // A dropped forward leaves the remote daemon and its claims alive, and a
+    // reconnect reuses it.
+    currentAgent: Effect.suspend(() =>
+      ready?.agentDevice
+        ? Effect.succeed(ready.agentDevice)
+        : wantsAgent
+          ? Effect.fail(
+              new DeviceHost.DeviceHostError({
+                hostId: config.id,
+                step: "reaching agent tools",
+                cause: new Error(
+                  "The SSH connection to the device host is not up. Retry once it reconnects.",
+                ),
+              }),
+            )
+          : Effect.succeed(null),
+    ),
     ensureReady,
     ensureAgentReady: (onPhase) =>
       ensureReady(onPhase).pipe(

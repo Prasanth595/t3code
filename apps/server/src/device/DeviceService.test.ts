@@ -80,6 +80,7 @@ const fixture = Effect.fn("fixture")(function* (
   let agentReply = () => Response.json({ jsonrpc: "2.0", id: 1, result: { ok: true, data: {} } });
   const agentDevice = { baseUrl: "http://agent.test", token: "test", entryPath: "/agent" };
   let agentRunning = false;
+  let agentReachable = true;
   let booted = false;
   let shutDown = false;
   const ready: DeviceHost.DeviceHostReady = {
@@ -126,7 +127,17 @@ const fixture = Effect.fn("fixture")(function* (
         return { ...ready, agentDevice };
       }),
     current: Effect.succeed(null),
-    currentAgent: Effect.sync(() => (agentRunning ? agentDevice : null)),
+    currentAgent: Effect.suspend(() =>
+      agentReachable
+        ? Effect.succeed(agentRunning ? agentDevice : null)
+        : Effect.fail(
+            new DeviceHost.DeviceHostError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              step: "reaching agent tools",
+              cause: new Error("SSH forward is down"),
+            }),
+          ),
+    ),
     stopAgent: Effect.sync(() => {
       agentStops.push("stop");
       agentRunning = false;
@@ -233,6 +244,9 @@ const fixture = Effect.fn("fixture")(function* (
     agentRequests,
     setAgentReply: (reply: () => Response) => {
       agentReply = reply;
+    },
+    setAgentReachable: (reachable: boolean) => {
+      agentReachable = reachable;
     },
     settings,
   };
@@ -787,7 +801,11 @@ describe("agent-device session release", () => {
   ) => service.open({ threadId: thread, deviceId, platform: "android" });
   const poweredOff = [{ id: "Pixel_API_35", booted: false }];
   const closeRequest = (thread: ThreadId) =>
-    agentDeviceSession(thread, LOCAL_DEVICE_HOST_ID, "emulator-5554").pipe(
+    agentDeviceSession({
+      threadId: thread,
+      hostId: LOCAL_DEVICE_HOST_ID,
+      deviceId: "emulator-5554",
+    }).pipe(
       Effect.provide(NodeCrypto.layer),
       Effect.map((session) => ({
         jsonrpc: "2.0",
@@ -825,27 +843,38 @@ describe("agent-device session release", () => {
     }).pipe(Effect.scoped),
   );
 
+  type Harness = Effect.Success<ReturnType<typeof withAgent>>;
   it.effect.each([
     {
       failure: "the daemon rejects the close",
-      reply: () =>
-        Response.json(
-          { jsonrpc: "2.0", id: 1, error: { message: "Busy", data: { code: "COMMAND_FAILED" } } },
-          { status: 500 },
+      breakAgent: (harness: Harness) =>
+        harness.setAgentReply(() =>
+          Response.json(
+            { jsonrpc: "2.0", id: 1, error: { message: "Busy", data: { code: "COMMAND_FAILED" } } },
+            { status: 500 },
+          ),
         ),
       reason: "command_failed",
     },
     {
       failure: "the daemon answers with something unreadable",
-      reply: () => new Response("<html>proxy error</html>", { status: 502 }),
+      breakAgent: (harness: Harness) =>
+        harness.setAgentReply(() => new Response("<html>proxy error</html>", { status: 502 })),
       reason: "request_failed",
     },
-  ] as const)("a failed release fails the close when $failure", ({ reply, reason }) =>
+    {
+      // An SSH host mid-reconnect: its remote daemon still holds the claim.
+      failure: "the daemon is running but unreachable",
+      breakAgent: (harness: Harness) => harness.setAgentReachable(false),
+      reason: "request_failed",
+    },
+  ] as const)("a failed release fails the close when $failure", ({ breakAgent, reason }) =>
     Effect.gen(function* () {
-      const { service, requests, setAgentReply } = yield* withAgent();
+      const harness = yield* withAgent();
+      const { service, requests, setAgentReply, setAgentReachable } = harness;
       const session = yield* openPixel(service);
       const name = (yield* closeRequest(threadId)).params.session;
-      setAgentReply(reply);
+      breakAgent(harness);
       const error = yield* service
         .close({ threadId, deviceId: session.deviceId, shutdown: true })
         .pipe(Effect.flip);
@@ -857,6 +886,7 @@ describe("agent-device session release", () => {
       expect((yield* service.state).sessions).toEqual([session]);
 
       setAgentReply(released);
+      setAgentReachable(true);
       yield* service.close({ threadId, deviceId: session.deviceId, shutdown: true });
       const state = yield* service.state;
       expect(state.sessions).toEqual([]);
