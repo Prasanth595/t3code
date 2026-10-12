@@ -158,6 +158,27 @@ Every agent runs as a child process of the T3 server. An update, a crash or a qu
 - The thread shows the message as a "T3 Code restarted" notice. The agent receives the message text.
 - The code is in `apps/server/src/orchestration-v2/RecoverInterruptedTurns.ts`.
 
+## Pull request watch remark filter
+
+The server setting `pullRequestWatchRemarkFilter` selects which comments and reviews wake an agent that watches a pull request. It is off by default. Turn it on in Settings > Source control > Pull request watch.
+
+```json
+"pullRequestWatchRemarkFilter": {
+  "authorAssociations": ["OWNER", "MEMBER", "COLLABORATOR"],
+  "authorLogins": [],
+  "agentMarker": "<!-- agent -->"
+}
+```
+
+- `authorAssociations` lists GitHub repository roles, the `authorAssociation` of the comment. A GitHub App bot has no such role.
+- `authorLogins` lists logins that wake the agent whatever their role. The compare ignores case.
+- When one of the two lists is not empty, a remark wakes the agent only if its author matches a role or a login. The rule that skips the server's own account does not apply then.
+- When both lists are empty, the upstream rule applies: a remark wakes the agent unless the server's own account wrote it.
+- A remark whose body contains `agentMarker` never wakes the agent, even from an allowed author.
+- Only GitHub reports roles. On other hosts, a remark counts only through `authorLogins`.
+- Check, conflict and push news and the comment wake limit do not change.
+- The code is in `apps/server/src/orchestration-v2/pullRequestWatch.ts`.
+
 ## Secrets and variables
 
 | Name                                                                                    | Kind               | Use                                                                                                                                                                                       |
