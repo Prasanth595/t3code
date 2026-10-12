@@ -158,6 +158,19 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return { provider: null, settled: true };
+        // The registry shares a verdict among the HTTP remotes of one mount, the path before
+        // `owner/repo`. A login mounted below it serves some of them and not others, so a verdict
+        // that heard one is not settled. SSH matching ignores the path.
+        const mount = remote.ssh ? null : remote.path.split("/").slice(0, -2).join("/");
+        const belowMount = (login: { readonly url: string }) => {
+          const url = ForgejoCli.parseForgejoRemote(login.url);
+          return (
+            mount !== null &&
+            url?.host === remote.host &&
+            url.path !== "" &&
+            (mount === "" || url.path.startsWith(`${mount}/`))
+          );
+        };
         // fj goes first, so a tea claim after an fj that could not answer is not settled.
         let settled = true;
         for (const command of ["fj", "tea"] as const) {
@@ -172,6 +185,7 @@ export const makeDiscovery = Effect.gen(function* () {
             settled &&= isMissingExecutable(logins.failure.cause);
             continue;
           }
+          settled &&= !logins.success.some(belowMount);
           const login = ForgejoCli.matchForgejoLogin(
             logins.success,
             remote,

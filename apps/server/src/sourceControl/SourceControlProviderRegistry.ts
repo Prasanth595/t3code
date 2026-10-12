@@ -162,6 +162,8 @@ function selectProviderContext(
 // What the refiners read, minus `owner/repo`: the provider name and base URL (GitHub, GitLab),
 // the remote's scheme, host, port and any installation mount (Forgejo), and a requested host.
 // Scheme and host ignore case; a mount path does not, as Forgejo login matching compares it as is.
+// A Forgejo login mounted below the mount reads `owner/repo` as well, so the Forgejo refiner does
+// not settle a verdict that heard one.
 function unknownRemoteKey(context: SourceControlProvider.SourceControlProviderContext): string {
   const remote = context.remoteUrl
     .trim()

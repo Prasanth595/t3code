@@ -905,6 +905,59 @@ it.effect("keeps Forgejo mounts apart when only their case differs", () =>
   }),
 );
 
+it.effect.each([
+  // Both logins serve group/a, so neither claims it; only the host's login serves other/b.
+  {
+    name: "the host and a group on it",
+    mounts: ["", "/group"],
+    expected: { a: null, b: "https://git.example.internal" },
+  },
+  {
+    name: "a group on the host",
+    mounts: ["/group"],
+    expected: { a: "https://git.example.internal/group", b: null },
+  },
+] as const)("gives each remote of one mount its own Forgejo answer: logins at $name", (scenario) =>
+  Effect.gen(function* () {
+    const remotes = {
+      a: "https://git.example.internal/group/a.git",
+      b: "https://git.example.internal/other/b.git",
+    };
+    for (const order of [
+      ["a", "b"],
+      ["b", "a"],
+    ] as const) {
+      const registry = yield* makeRegistry({
+        remotes: [],
+        forgejo: {
+          listLogins: ({ command }) =>
+            Effect.succeed(
+              command === "tea"
+                ? scenario.mounts.map((mount) => ({
+                    name: `forge${mount}`,
+                    url: `https://git.example.internal${mount}`,
+                    user: "forgejo-user",
+                    default: "false",
+                  }))
+                : [],
+            ),
+        },
+      });
+      for (const remote of order) {
+        const handle = yield* registry.resolveHandle({
+          cwd: `/${remote}`,
+          context: unknownRemote(remotes[remote]),
+        });
+        assert.strictEqual(
+          handle.provider.kind === "forgejo" ? handle.context?.provider.baseUrl : null,
+          scenario.expected[remote],
+          `${remote} after ${order[0] === remote ? "nothing" : order[0]}`,
+        );
+      }
+    }
+  }),
+);
+
 it.effect("asks gh again once it can read its config", () =>
   Effect.gen(function* () {
     // gh cannot load its config file at first, then hands over a token.
