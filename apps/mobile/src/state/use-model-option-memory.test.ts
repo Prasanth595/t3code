@@ -35,6 +35,16 @@ describe("model option memory state", () => {
     rememberModelOptions("codex", "gpt-5.4", []);
     expect(rememberedModelOptions("codex", "gpt-5.4")).toBeUndefined();
   });
+
+  it("clears previously remembered Daybreak options when Save leaves no options", () => {
+    rememberModelOptions("codex", "gpt-test", [
+      { id: "cyberAccessProgram", value: "daybreakBlue" },
+    ]);
+    rememberModelOptions("codex", "gpt-test", []);
+    expect(
+      withRememberedModelOptions({ instanceId: "codex", model: "gpt-test", options: [] }).options,
+    ).toEqual([]);
+  });
 });
 
 describe("withRememberedModelOptions", () => {

@@ -51,16 +51,29 @@ export function pendingModelAfterPress(input: {
     : input.pressed;
 }
 
-/** A model can disappear while the picker is open. */
-export function canCommitPendingModel(
-  pending: ModelOption,
-  groups: ReadonlyArray<ProviderGroup>,
-): boolean {
-  return groups.some((group) =>
-    group.models.some(
-      (model) => model.key === pending.key && !model.isUnavailable && !model.isHidden,
-    ),
-  );
+/** Refresh staged metadata and remove revoked Daybreak choices before display or Save. */
+export function resolvePendingModel(pending: ModelOption, groups: ReadonlyArray<ProviderGroup>) {
+  const model = groups
+    .flatMap((group) => group.models)
+    .find((model) => model.key === pending.key && !model.isUnavailable && !model.isHidden);
+  return model
+    ? {
+        ...model,
+        selection: {
+          ...pending.selection,
+          options: pending.selection.options?.filter(
+            (option) =>
+              option.id !== "cyberAccessProgram" ||
+              model.capabilities?.optionDescriptors?.some(
+                (descriptor) =>
+                  descriptor.id === option.id &&
+                  descriptor.type === "select" &&
+                  descriptor.options.some((choice) => choice.id === option.value),
+              ),
+          ),
+        },
+      }
+    : null;
 }
 
 /**

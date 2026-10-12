@@ -98,7 +98,7 @@ import {
   selectableChoices,
 } from "./thread-settings-options";
 import {
-  canCommitPendingModel,
+  resolvePendingModel,
   favoritesFirst,
   modelFavoriteKey,
   modelMatchesCatalogQuery,
@@ -511,7 +511,12 @@ function ThreadSettingsSessionProvider(
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+  const [stagedModel, setPendingModel] = useState<ModelOption | null>(null);
+  const committableModel = useMemo(
+    () => (stagedModel ? resolvePendingModel(stagedModel, props.providerGroups) : null),
+    [stagedModel, props.providerGroups],
+  );
+  const pendingModel = committableModel ?? stagedModel;
 
   const isApplied = useCallback(
     (option: ModelOption) =>
@@ -561,7 +566,7 @@ function ThreadSettingsSessionProvider(
   );
   const commitPendingModel = useCallback(() => {
     if (pendingModel) {
-      if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
+      if (!committableModel) {
         Alert.alert(
           "Model unavailable",
           "Set up this provider on web or desktop, or select another model.",
@@ -577,7 +582,7 @@ function ThreadSettingsSessionProvider(
       props.onSelectModel(pendingModel);
     }
     return true;
-  }, [pendingModel, props.onSelectModel, props.providerGroups]);
+  }, [pendingModel, committableModel, props.onSelectModel]);
 
   const applyOptionChange = useCallback(
     (id: string, value: string | boolean) => {
@@ -1187,6 +1192,7 @@ function ThreadSettingsChoiceContent(props: {
             id: choice.mode,
             label: choice.label,
             description: choice.description,
+            disabled: false,
             selected: choice.mode === session.runtimeMode,
             onPress: () => {
               void Haptics.selectionAsync();
@@ -1201,6 +1207,7 @@ function ThreadSettingsChoiceContent(props: {
               id: choice.id,
               label: choice.label,
               description: undefined,
+              disabled: choice.disabled,
               selected:
                 choice.id ===
                 getProviderOptionCurrentValue(
@@ -1242,6 +1249,7 @@ function ThreadSettingsChoiceContent(props: {
           <ChoiceRow
             key={row.id}
             description={row.description}
+            disabled={row.disabled}
             isLast={index === submenuContent.rows.length - 1}
             label={row.label}
             selected={row.selected}

@@ -13,9 +13,6 @@ function recordModelOptionsInState(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection>,
 ): ModelOptionMemoryState {
-  if (options.length === 0) {
-    return state;
-  }
   return {
     ...state,
     [instanceId]: {
@@ -40,7 +37,7 @@ export function rememberModelOptions(
   model: string,
   options: ReadonlyArray<ProviderOptionSelection>,
 ): void {
-  if (options.length === 0) {
+  if (options.length === 0 && rememberedModelOptions(instanceId, model) === undefined) {
     return;
   }
   const current = appAtomRegistry.get(modelOptionMemoryAtom);

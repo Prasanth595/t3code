@@ -7,6 +7,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type SelectProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -185,6 +186,22 @@ function withDescriptorCurrentValue(
     ...descriptor,
     currentValue,
   };
+}
+
+/** Show unavailable Daybreak choices without expanding the advertised capabilities. */
+export function getProviderOptionDisplayChoices(descriptor: SelectProviderOptionDescriptor) {
+  const choices =
+    descriptor.id === "cyberAccessProgram"
+      ? [
+          { id: "daybreakRed", label: "Red" },
+          { id: "daybreakBlue", label: "Blue" },
+          { id: "standard", label: "Off" },
+        ]
+      : descriptor.options;
+  return choices.map((choice) => {
+    const advertised = descriptor.options.find((option) => option.id === choice.id);
+    return { ...advertised, ...choice, disabled: advertised === undefined };
+  });
 }
 
 export function getProviderOptionDescriptors(input: {

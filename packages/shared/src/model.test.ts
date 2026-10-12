@@ -13,6 +13,7 @@ import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
+  getProviderOptionDisplayChoices,
   readCustomModelEntries,
   toCustomModelSetting,
   getProviderOptionBooleanSelectionValue,
@@ -26,6 +27,40 @@ it("keeps the Codex catalog display formatting", () => {
   expect(formatCodexModelName("gpt-5.3-codex-spark")).toBe("GPT-5.3-Codex-Spark");
   expect(formatCodexModelName("GPT Test")).toBe("GPT Test");
 });
+
+it.each([
+  [
+    ["standard", "daybreakBlue"],
+    [true, false, false],
+  ],
+  [
+    ["standard", "daybreakRed"],
+    [false, true, false],
+  ],
+  [
+    ["standard", "daybreakBlue", "daybreakRed"],
+    [false, false, false],
+  ],
+  [["daybreakBlue"], [true, false, true]],
+  [["standard"], [true, true, false]],
+  [[], [true, true, true]],
+] as const)(
+  "shows consistent Daybreak choices for %j without granting access",
+  (programs, disabled) => {
+    const options = programs.map((id) => ({ id, label: id }));
+    const descriptor = {
+      id: "cyberAccessProgram",
+      label: "Daybreak",
+      type: "select" as const,
+      options,
+    };
+    const choices = getProviderOptionDisplayChoices(descriptor);
+    expect(choices.map((choice) => choice.id)).toEqual(["daybreakRed", "daybreakBlue", "standard"]);
+    expect(choices.map((choice) => choice.label)).toEqual(["Red", "Blue", "Off"]);
+    expect(choices.map((choice) => choice.disabled)).toEqual(disabled);
+    expect(descriptor.options.map((option) => option.id)).toEqual(programs);
+  },
+);
 
 it.each([
   ["gpt-5.4", "GPT-5.4"],

@@ -4,7 +4,7 @@ import { ProviderInstanceId, type ProviderOptionSelection } from "@t3tools/contr
 
 import type { ModelOption } from "../../lib/modelOptions";
 import {
-  canCommitPendingModel,
+  resolvePendingModel,
   favoritesFirst,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
@@ -129,25 +129,61 @@ describe("thread settings sheet state", () => {
   it("cannot select a hidden model exposed only for visibility management", () => {
     const pending = modelOption("gpt-next");
     expect(
-      canCommitPendingModel(pending, [
+      resolvePendingModel(pending, [
         { providerKey: "codex", providerLabel: "Codex", models: [{ ...pending, isHidden: true }] },
       ]),
-    ).toBe(false);
+    ).toBeNull();
   });
 
   it("cannot save a staged model after sign-out removes it from the catalog", () => {
     const pending = modelOption("gemini-native");
     const group = { providerKey: "codex", providerLabel: "Codex", models: [pending] };
 
-    expect(canCommitPendingModel(pending, [group])).toBe(true);
-    expect(canCommitPendingModel(pending, [])).toBe(false);
+    expect(resolvePendingModel(pending, [group])).toEqual(pending);
+    expect(resolvePendingModel(pending, [])).toBeNull();
     expect(
-      canCommitPendingModel(pending, [
+      resolvePendingModel(pending, [
         {
           ...group,
           models: [{ ...pending, isUnavailable: true }],
         },
       ]),
-    ).toBe(false);
+    ).toBeNull();
+  });
+
+  it("refreshes staged Daybreak access while preserving unrelated options", () => {
+    for (const reasoning of [[], [{ id: "reasoningEffort", value: "high" }]]) {
+      const options = [...reasoning, { id: "cyberAccessProgram", value: "daybreakBlue" }];
+      const pending = modelOption("gpt-test", options);
+      for (const programs of [["daybreakBlue"], ["daybreakRed"], [], undefined]) {
+        const refreshed = {
+          ...pending,
+          capabilities: programs
+            ? {
+                optionDescriptors: [
+                  {
+                    id: "cyberAccessProgram",
+                    label: "Daybreak",
+                    type: "select" as const,
+                    options: programs.map((id) => ({ id, label: id })),
+                  },
+                ],
+              }
+            : null,
+        };
+        expect(
+          resolvePendingModel(pending, [
+            { providerKey: "codex", providerLabel: "Codex", models: [refreshed] },
+          ]),
+        ).toEqual({
+          ...refreshed,
+          selection: {
+            ...pending.selection,
+            options: programs?.includes("daybreakBlue") ? options : reasoning,
+          },
+        });
+      }
+      expect(pending.selection.options).toEqual(options);
+    }
   });
 });

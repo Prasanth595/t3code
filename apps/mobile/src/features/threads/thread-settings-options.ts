@@ -1,4 +1,5 @@
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import { getProviderOptionDisplayChoices } from "@t3tools/shared/model";
 
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
@@ -57,7 +58,7 @@ export function selectableChoices(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
 ) {
   const injected = new Set(descriptor.promptInjectedValues ?? []);
-  return descriptor.options.filter(
+  return getProviderOptionDisplayChoices(descriptor).filter(
     (option) => !injected.has(option.id) && !HIDDEN_EFFORT_OPTION_IDS.has(option.id),
   );
 }
