@@ -8990,6 +8990,84 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("preserves a confirmed native outcome after the synchronous Agent tool result", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let stopCalls = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          stopTask: () => Effect.sync(() => void stopCalls++),
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-stop-after-agent-result"),
+            text: "Run an audit.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "sync-audit",
+            toolUseId: "toolu-sync-audit",
+            uuid: "00000000-0000-4000-8000-000000004301",
+          }),
+        );
+        yield* Queue.take(harness.subagentReceipts);
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId: "sync-audit",
+            toolUseId: "toolu-sync-audit",
+            summary: "Native audit outcome.",
+            uuid: "00000000-0000-4000-8000-000000004302",
+          }),
+        );
+        const completed = yield* Queue.take(harness.subagentReceipts);
+        yield* TestClock.adjust("1 second");
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            message: {
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: "toolu-sync-audit",
+                  content: "Audit tool result.",
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000004303",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        const updated = yield* Queue.take(harness.subagentReceipts);
+        assert.equal(updated.subagent.result, "Audit tool result.");
+        const stopping = yield* harness.runtime.stopSubagent!({
+          providerThread: harness.providerThread,
+          nativeTaskId: "sync-audit",
+        }).pipe(Effect.exit, Effect.forkScoped);
+        yield* TestClock.adjust("2 seconds");
+        const outcome = yield* Fiber.join(stopping);
+        assert.isTrue(Exit.isSuccess(outcome));
+        if (Exit.isSuccess(outcome)) {
+          assert.deepEqual(outcome.value, {
+            status: "completed",
+            completedAt: completed.subagent.completedAt!,
+            result: "Native audit outcome.",
+          });
+        }
+        assert.equal(stopCalls, 0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["completed", "failed", "stopped"] as const)(
     "applies an idle native subagent %s notification before replay and confirms its real outcome",
     (status) =>

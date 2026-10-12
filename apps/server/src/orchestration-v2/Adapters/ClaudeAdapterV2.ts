@@ -5032,7 +5032,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const subagent = {
             task,
             confirmedOutcome:
-              input.nativeOutcome === true ? confirmedSubagentOutcome(task) : undefined,
+              input.nativeOutcome === true
+                ? confirmedSubagentOutcome(task)
+                : isReopen
+                  ? undefined
+                  : existingSubagent?.confirmedOutcome,
             rootNodeId: existingSubagent?.rootNodeId ?? input.context.input.rootNodeId,
             childThreadId,
             childRootNodeId,
@@ -5250,7 +5254,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             },
           });
 
-          if (subagent.confirmedOutcome !== undefined) {
+          if (input.nativeOutcome === true && subagent.confirmedOutcome !== undefined) {
             const outcome = subagentStopOutcomes.get(input.taskId);
             if (outcome !== undefined) yield* Deferred.succeed(outcome, undefined);
           }
