@@ -56,6 +56,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { toastManager } from "~/components/ui/toast";
 import { isHostedStaticApp } from "~/hostedPairing";
+import { environmentCatalog } from "~/connection/catalog";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -330,10 +331,20 @@ export function mergeEnvironmentSettings(
   };
 }
 
-// Never cleared: a server that predates `migrateModelPreferences` drops it and keeps reporting
-// null, so retrying on each settings push would save to that server in a loop. The next
-// favorites or model-preference save still carries the migration.
-const attemptedModelPreferencesMigrations = new Set<EnvironmentId>();
+// Migrate once per connection: a server that predates `migrateModelPreferences` drops it and keeps
+// reporting null, so retrying on each settings push would save to that server in a loop. A
+// reconnect, for example after that server is upgraded, tries again.
+const attemptedModelPreferencesMigrations = new Map<EnvironmentId, number>();
+const connectionGenerationAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) =>
+    environmentId === null
+      ? 0
+      : Option.match(AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))), {
+          onNone: () => 0,
+          onSome: (connection) => connection.generation,
+        }),
+  ),
+);
 
 /** Seed saved client preferences once without overwriting another client's edits. */
 export function useMigrateModelPreferences(
@@ -342,20 +353,21 @@ export function useMigrateModelPreferences(
 ) {
   const clientSettings = useClientSettingsValue();
   const hydrated = useClientSettingsHydrated();
+  const connectionGeneration = useAtomValue(connectionGenerationAtom(environmentId));
   const migrate = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   useEffect(() => {
     if (
       !environmentId ||
       !settings ||
       !hydrated ||
-      attemptedModelPreferencesMigrations.has(environmentId)
+      attemptedModelPreferencesMigrations.get(environmentId) === connectionGeneration
     )
       return;
     const patch = modelPreferencesMigrationPatch(settings, clientSettings);
     if (!patch) return;
-    attemptedModelPreferencesMigrations.add(environmentId);
+    attemptedModelPreferencesMigrations.set(environmentId, connectionGeneration);
     void migrate({ environmentId, input: { patch } });
-  }, [clientSettings, environmentId, hydrated, migrate, settings]);
+  }, [clientSettings, connectionGeneration, environmentId, hydrated, migrate, settings]);
 }
 
 function useMergedSettings<T>(

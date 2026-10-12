@@ -74,6 +74,8 @@ import {
 } from "../../native/StackHeader";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { ChatGptSharingStatus } from "./ChatGptSharingStatus";
+import { environmentCatalog } from "../../connection/catalog";
+import { useEnvironmentQuery } from "../../state/query";
 import { environmentServerConfigsAtom, serverEnvironment } from "../../state/server";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -137,9 +139,10 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly model: string;
 }> = [];
 const FAVORITES_PROVIDER_FILTER = "@favorites";
-// Migrate once per environment: a server that predates `migrateModelPreferences` drops it and
-// keeps reporting null, so retrying on each settings push would save to that server in a loop.
-const attemptedModelPreferencesMigrations = new Set<EnvironmentId>();
+// Migrate once per connection: a server that predates `migrateModelPreferences` drops it and keeps
+// reporting null, so retrying on each settings push would save to that server in a loop. A
+// reconnect, for example after that server is upgraded, tries again.
+const attemptedModelPreferencesMigrations = new Map<EnvironmentId, number>();
 /** Provider catalog header with its harness logo and disclosure state. */
 function ProviderHeader(props: {
   readonly driver: string | undefined;
@@ -355,6 +358,10 @@ function ThreadSettingsSessionProvider(
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
+  const connectionGeneration =
+    useEnvironmentQuery(
+      props.environmentId ? environmentCatalog.stateAtom(props.environmentId) : null,
+    ).data?.generation ?? 0;
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
   const pendingFavorites = useRef(
@@ -397,14 +404,21 @@ function ThreadSettingsSessionProvider(
       !props.environmentId ||
       !settings ||
       !AsyncResult.isSuccess(preferences) ||
-      attemptedModelPreferencesMigrations.has(props.environmentId)
+      attemptedModelPreferencesMigrations.get(props.environmentId) === connectionGeneration
     )
       return;
     const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
     if (!patch) return;
-    attemptedModelPreferencesMigrations.add(props.environmentId);
+    attemptedModelPreferencesMigrations.set(props.environmentId, connectionGeneration);
     void saveSettings({ environmentId: props.environmentId, input: { patch } });
-  }, [legacyFavorites, preferences, props.environmentId, saveSettings, settings]);
+  }, [
+    connectionGeneration,
+    legacyFavorites,
+    preferences,
+    props.environmentId,
+    saveSettings,
+    settings,
+  ]);
   const favoriteKeys = useMemo(
     () =>
       new Set(

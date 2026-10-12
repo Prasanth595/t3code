@@ -5,15 +5,25 @@ import {
   ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  type SupervisorConnectionState,
+} from "@t3tools/client-runtime/connection";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
-const environmentId = EnvironmentId.make("remote");
 const state = vi.hoisted(() => ({
   settings: undefined as unknown as Atom.Writable<ServerSettings | null>,
+  connection: undefined as unknown as Atom.Writable<
+    AsyncResult.AsyncResult<SupervisorConnectionState>
+  >,
   persist: vi.fn(),
+}));
+
+vi.mock("~/connection/catalog", () => ({
+  environmentCatalog: { stateAtom: () => state.connection },
 }));
 
 vi.mock("~/state/server", () => ({
@@ -36,8 +46,8 @@ vi.mock("~/localApi", () => ({
 
 import { useEnvironmentModelPreferences } from "./useSettings";
 
-function ModelPicker() {
-  useEnvironmentModelPreferences(environmentId);
+function ModelPicker(props: { readonly environmentId: EnvironmentId }) {
+  useEnvironmentModelPreferences(props.environmentId);
   return null;
 }
 
@@ -49,8 +59,31 @@ beforeEach(() => {
   registry = AtomRegistry.make();
   // A server that predates the migration never reports favorites.
   state.settings = Atom.make<ServerSettings | null>(DEFAULT_SERVER_SETTINGS);
+  state.connection = Atom.make<AsyncResult.AsyncResult<SupervisorConnectionState>>(
+    AsyncResult.success(connected(1)),
+  );
   state.persist.mockReset().mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
 });
+
+function connected(generation: number): SupervisorConnectionState {
+  return { ...AVAILABLE_CONNECTION_STATE, desired: true, phase: "connected", generation };
+}
+
+async function renderModelPicker(environmentId: EnvironmentId) {
+  await act(async () => {
+    renderer = create(
+      <RegistryContext.Provider value={registry}>
+        <ModelPicker environmentId={environmentId} />
+      </RegistryContext.Provider>,
+    );
+  });
+}
+
+async function pushSettings(count: number) {
+  for (let push = 0; push < count; push += 1) {
+    await act(async () => registry.set(state.settings, { ...DEFAULT_SERVER_SETTINGS }));
+  }
+}
 
 afterEach(async () => {
   await act(() => renderer?.unmount());
@@ -59,16 +92,10 @@ afterEach(async () => {
 });
 
 it("migrates once when the server drops the migration and keeps pushing settings", async () => {
-  await act(async () => {
-    renderer = create(
-      <RegistryContext.Provider value={registry}>
-        <ModelPicker />
-      </RegistryContext.Provider>,
-    );
-  });
-  for (let push = 0; push < 3; push += 1) {
-    await act(async () => registry.set(state.settings, { ...DEFAULT_SERVER_SETTINGS }));
-  }
+  // Attempts are module state, so each test uses its own environment.
+  const environmentId = EnvironmentId.make("remote");
+  await renderModelPicker(environmentId);
+  await pushSettings(3);
   expect(state.persist).toHaveBeenCalledTimes(1);
   expect(state.persist).toHaveBeenCalledWith({
     environmentId,
@@ -80,4 +107,12 @@ it("migrates once when the server drops the migration and keeps pushing settings
       },
     },
   });
+});
+
+it("migrates again after the environment reconnects", async () => {
+  await renderModelPicker(EnvironmentId.make("upgraded"));
+  await pushSettings(2);
+  await act(async () => registry.set(state.connection, AsyncResult.success(connected(2))));
+  await pushSettings(2);
+  expect(state.persist).toHaveBeenCalledTimes(2);
 });
