@@ -111,11 +111,13 @@ const SSH_OVERRIDE_ENV_KEYS = ["GIT_SSH_COMMAND", "GIT_SSH", "GIT_SSH_VARIANT"] 
 // rekeys can add a few more.
 const SSH_SIGNING_LOG_VERBOSE =
   "LogVerbose=sshconnect2.c:sign_and_send_pubkey():*,packet.c:ssh_packet_send2_wrapped():*";
-const SSH_SIGNING_PROBE_TIMEOUT = Duration.seconds(1);
+// The answer is cached for the driver's life, so a slow first probe on a busy
+// host must not turn the watch off for good.
+const SSH_SIGNING_PROBE_TIMEOUT = Duration.seconds(3);
 // Separate from the command timeout, so the wait stays bounded without one.
 const SSH_KEY_AUTHORIZATION_WAIT = Duration.seconds(10);
 const SSH_KEY_AUTHORIZATION_TIMEOUT_DETAIL =
-  "SSH key authorization timed out. Approve or unlock the SSH key in your SSH agent on the computer running T3 Code, then retry, or use an HTTPS remote.";
+  "SSH key authorization timed out. Approve, unlock or touch the SSH key on the computer running T3 Code, then retry, or use an HTTPS remote.";
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
@@ -1215,27 +1217,38 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   // Only Git's default OpenSSH transport is watched. A configured command or
   // variant may not be OpenSSH, and Git for Windows runs its own bundled ssh,
-  // which the probe cannot vouch for.
+  // which the probe cannot vouch for. Git also passes GIT_SSH_COMMAND to the
+  // fetches it runs in submodules, where it would replace their own
+  // core.sshCommand, so a repository with submodules is not watched either.
   const watchesSshSigning = Effect.fnUntraced(function* (cwd: string) {
     if (hostPlatform === "win32") return false;
     if (SSH_OVERRIDE_ENV_KEYS.some((key) => process.env[key] !== undefined)) return false;
-    // Exit 1 means neither key is set in any config scope.
-    const sshConfigUnset = yield* executeGit(
+    // `git config` reads GIT_CONFIG as its only file, but `git fetch` ignores it.
+    if (process.env.GIT_CONFIG !== undefined) return false;
+    if (!(yield* sshAcceptsSigningLog)) return false;
+    // A deinitialized submodule leaves no config key, but Git still fetches it.
+    const hasGitmodules = yield* fileSystem
+      .exists(path.join(cwd, ".gitmodules"))
+      .pipe(Effect.orElseSucceed(() => true));
+    if (hasGitmodules) return false;
+    // Exit 1 means none of these keys is set in any config scope. Initializing
+    // a submodule writes submodule.<name>.url, so any submodule key counts.
+    return yield* executeGit(
       "GitVcsDriver.fetchRemote.sshConfig",
       cwd,
-      ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"],
+      ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant|submodule\\..+)$"],
       { allowNonZeroExit: true },
     ).pipe(Effect.match({ onFailure: () => false, onSuccess: (result) => result.exitCode === 1 }));
-    return sshConfigUnset && (yield* sshAcceptsSigningLog);
   });
 
-  // While an SSH agent waits for the user to approve a key, ssh blocks in the
-  // sign request and git makes no progress until the command times out, which
-  // reads as a network failure. With SSH_SIGNING_LOG_VERBOSE, ssh logs a line
-  // just before each sign request and one for every packet it queues, and the
-  // signed request is the first packet after it. A sign request with no packet
-  // after it for SSH_KEY_AUTHORIZATION_WAIT fails the command with an
-  // authorization error, and interrupting git's run kills it.
+  // While ssh waits on an agent or a security key to sign, for example for the
+  // user to approve, unlock or touch the key, it blocks in the sign request and
+  // git makes no progress until the command times out, which reads as a
+  // network failure. With SSH_SIGNING_LOG_VERBOSE, ssh logs a line just before
+  // each sign request and one for every packet it queues, and the signed
+  // request is the first packet after it. A sign request with no packet after
+  // it for SSH_KEY_AUTHORIZATION_WAIT fails the command with an authorization
+  // error, and interrupting git's run kills it.
   const executeGitWithSshSigningLimit = Effect.fnUntraced(function* (
     operation: string,
     cwd: string,
@@ -1244,19 +1257,26 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   ) {
     // When the outstanding sign request was logged, or null once a packet follows it.
     const pendingSince = yield* Queue.sliding<number | null>(1);
+    // ssh always sends key exchange packets before it signs, so a sign request
+    // only counts once a packet line has matched. An ssh whose packet line no
+    // longer matches then keeps the command timeout instead of a false alarm.
+    let packetSeen = false;
     const execution = executeGitWithStableDiagnostics(operation, cwd, args, {
       ...options,
       env: { ...options.env, GIT_SSH_COMMAND: `ssh -o '${SSH_SIGNING_LOG_VERBOSE}'` },
       progress: {
-        onStderrLine: (line) =>
-          isSshSigningRequestLine(line)
+        onStderrLine: (line) => {
+          if (isSshPacketSentLine(line)) {
+            packetSeen = true;
+            return Queue.offer(pendingSince, null).pipe(Effect.asVoid);
+          }
+          return packetSeen && isSshSigningRequestLine(line)
             ? Clock.currentTimeMillis.pipe(
                 Effect.flatMap((now) => Queue.offer(pendingSince, now)),
                 Effect.asVoid,
               )
-            : isSshPacketSentLine(line)
-              ? Queue.offer(pendingSince, null).pipe(Effect.asVoid)
-              : Effect.void,
+            : Effect.void;
+        },
       },
     });
     const signingStalled = Effect.gen(function* () {
