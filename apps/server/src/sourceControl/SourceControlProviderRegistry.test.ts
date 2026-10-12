@@ -995,6 +995,16 @@ it.effect.each([
     },
     expected: { a: "https://git.example.internal/group", b: null },
   },
+  // As the first row, one level down: the mount is `forge`, and the group login sits below it.
+  {
+    name: "a mount and a group under it",
+    mounts: ["/forge", "/forge/group"],
+    remotes: {
+      a: "https://git.example.internal/forge/group/a.git",
+      b: "https://git.example.internal/forge/other/b.git",
+    },
+    expected: { a: null, b: "https://git.example.internal/forge" },
+  },
   // Parsed as given, a's path keeps `...git`, so a sits under the mount `mount` and both logins
   // serve it. Removing `.git` before parsing would leave `team/..` and put a on the host's key.
   {
