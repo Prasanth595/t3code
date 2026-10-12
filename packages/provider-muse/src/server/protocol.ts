@@ -148,6 +148,22 @@ export const MuseContextUsage = Schema.Struct({
   usedTokens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   windowTokens: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
 });
+/** MSP `usage/changed` / `usage/read` payload: the Meta subscription windows last observed. */
+export const MuseSubscriptionUsage = Schema.Struct({
+  observedAtMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  tier: Schema.String,
+  weekly: Schema.Struct({
+    resetsAtMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  }),
+  window: Schema.Struct({
+    resetsAtMs: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    windowDurationMins: Schema.Finite.check(Schema.isGreaterThan(0)),
+  }),
+});
+export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
+
 export const MuseTodoList = Schema.Struct({
   items: Schema.Array(Schema.Struct({ text: Schema.String, status: Schema.String })),
 });

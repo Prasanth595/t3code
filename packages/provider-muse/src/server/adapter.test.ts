@@ -33,7 +33,7 @@ import * as Stream from "effect/Stream";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import type { MuseItem } from "./protocol.ts";
+import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
 import type { MuseSdkHost } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -191,7 +191,11 @@ const makeHarness = Effect.fnUntraced(function* (
   policy = runtimePolicy,
   overrides: Pick<
     MuseAdapterV2Options,
-    "createHost" | "nativeEventLogger" | "modelCatalog" | "continuationRequests"
+    | "createHost"
+    | "nativeEventLogger"
+    | "modelCatalog"
+    | "continuationRequests"
+    | "onSubscriptionUsage"
   > = {},
 ) {
   let hostCount = 0;
@@ -541,6 +545,39 @@ describe("MuseAdapterV2", () => {
       const harness = yield* makeHarness(fake);
       const { nativeId } = yield* startConversation(harness, fake);
       yield* fake.emit("session/tokenUsage", { turnId: nativeId, usage: "not usage" });
+      yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "completed");
+      assert.strictEqual(fake.closeCount(), 0);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("forwards subscription usage reports and skips unreadable ones", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const reported = yield* Deferred.make<MuseSubscriptionUsage>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          onSubscriptionUsage: (usage) => Deferred.succeed(reported, usage).pipe(Effect.asVoid),
+        },
+      );
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("usage/changed", { tier: 1 });
+      yield* fake.emit("usage/changed", {
+        observedAtMs: 1_000,
+        tier: "meta-subscription",
+        window: { usedPercent: 3, resetsAtMs: 2_000, windowDurationMins: 300 },
+        weekly: { usedPercent: 46, resetsAtMs: 3_000 },
+      });
+      const usage = yield* Deferred.await(reported);
+      assert.strictEqual(usage.window.usedPercent, 3);
+      assert.strictEqual(usage.weekly.usedPercent, 46);
       yield* fake.emit("turn/completed", { turnId: nativeId, terminal: "completed" });
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "completed");
