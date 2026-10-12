@@ -432,15 +432,22 @@ export function SnapShotCoordinator() {
     return unsubscribe;
   }, [drain, playCaptureSound, resolveCaptureTarget]);
 
-  // Captures persisted before the route or project bootstrapped get no new `ready` event,
-  // so retry them once a destination appears instead of on every thread update.
-  const hasDestination = Boolean(currentTarget ?? defaultProjectRef);
-  const hadDestinationRef = useRef(hasDestination);
+  // Captures persisted before the route bootstrapped, or whose draft creation lost a race with
+  // navigation, get no new `ready` event. Retry when the destination changes, not on every
+  // streaming update to the same thread.
+  const destinationKey = routeThreadRef
+    ? `thread:${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
+    : routeDraftId
+      ? `draft:${routeDraftId}`
+      : defaultProjectRef
+        ? `project:${defaultProjectRef.environmentId}:${defaultProjectRef.projectId}`
+        : null;
+  const previousDestinationKeyRef = useRef(destinationKey);
   useEffect(() => {
-    const hadDestination = hadDestinationRef.current;
-    hadDestinationRef.current = hasDestination;
-    if (hasDestination && !hadDestination) void drain();
-  }, [drain, hasDestination]);
+    const previousDestinationKey = previousDestinationKeyRef.current;
+    previousDestinationKeyRef.current = destinationKey;
+    if (destinationKey !== null && destinationKey !== previousDestinationKey) void drain();
+  }, [destinationKey, drain]);
 
   useEffect(() => {
     const dismissOnBlur = () => {

@@ -122,6 +122,8 @@ it("targets the thread the user navigated to for the next capture", async () => 
   await mount(threadA);
   setRoute(threadB, 1);
   await act(async () => root.render(<SnapShotCoordinator />));
+  // Navigation retries captures whose draft creation was abandoned by the route change.
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(2);
 
   await act(async () => {
     bridge.emit({ type: "requested", id: "c0ffee-01" });
