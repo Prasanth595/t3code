@@ -48,8 +48,7 @@ public final class T3PasskeysModule: Module {
 /// One WebAuthn ceremony. The server has checked the origin and RP ID; the
 /// result goes back as a `PreviewStreamPasskeyResult` in JSON.
 final class T3PasskeyCeremony: NSObject, ASAuthorizationControllerDelegate,
-  ASAuthorizationControllerPresentationContextProviding
-{
+  ASAuthorizationControllerPresentationContextProviding {
   let id: String
   private let kind: String
   private let origin: String
@@ -194,14 +193,16 @@ final class T3PasskeyCeremony: NSObject, ASAuthorizationControllerDelegate,
         "authenticatorAttachment": Self.attachment(assertion.attachment),
       ]))
     case let assertion as ASAuthorizationSecurityKeyPublicKeyCredentialAssertion:
-      finish(succeeded([
+      var credential: [String: Any] = [
         "id": assertion.credentialID.base64URL,
         "clientDataJSON": assertion.rawClientDataJSON.base64URL,
         "authenticatorData": assertion.rawAuthenticatorData.base64URL,
         "signature": assertion.signature.base64URL,
-        "userHandle": assertion.userID.base64URL,
         "authenticatorAttachment": "cross-platform",
-      ]))
+      ]
+      // A key asked for a listed, non-discoverable credential may return no user handle.
+      if let userID = assertion.userID { credential["userHandle"] = userID.base64URL }
+      finish(succeeded(credential))
     default:
       finish(Self.notAllowed)
     }
@@ -232,9 +233,9 @@ final class T3PasskeyCeremony: NSObject, ASAuthorizationControllerDelegate,
     guard let completion else { return }
     self.completion = nil
     controller = nil
-    let data = (try? JSONSerialization.data(withJSONObject: result))
-      ?? Data(#"{"success":false,"error":"NotAllowedError"}"#.utf8)
-    completion(String(decoding: data, as: UTF8.self))
+    let json = (try? JSONSerialization.data(withJSONObject: result))
+      .flatMap { String(bytes: $0, encoding: .utf8) }
+    completion(json ?? #"{"success":false,"error":"NotAllowedError"}"#)
   }
 }
 
