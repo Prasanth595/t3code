@@ -2460,15 +2460,12 @@ export const make = Effect.gen(function* () {
     });
     return mergeGitStatusParts(local, remote);
   });
-  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
-    "branchPullRequest",
-  )(function* ({ cwd, branch }, options) {
-    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
-    let facts = yield* options?.refresh
-      ? readFreshRepositoryFacts(cacheCwd)
-      : Cache.get(repositoryFactsCache, cacheCwd);
+  const branchPullRequestLookupKey = Effect.fn("branchPullRequestLookupKey")(function* (
+    cacheCwd: string,
+    branch: string,
+    facts: RepositoryFacts,
+  ) {
     const { remoteNames, defaultBranch } = facts;
-    if (remoteNames.length === 0) return null;
     const {
       upstream: savedUpstream = "",
       remoteName: savedRemoteName = "",
@@ -2522,6 +2519,21 @@ export const make = Effect.gen(function* () {
       localBranchExists,
       ...(localBranchExists ? {} : { remoteName }),
     });
+    return { cacheKey, remoteName, defaultBranch };
+  });
+  const branchPullRequest: GitManager["Service"]["branchPullRequest"] = Effect.fn(
+    "branchPullRequest",
+  )(function* ({ cwd, branch }, options) {
+    const cacheCwd = yield* normalizeStatusCacheKey(cwd);
+    let facts = yield* options?.refresh
+      ? readFreshRepositoryFacts(cacheCwd)
+      : Cache.get(repositoryFactsCache, cacheCwd);
+    if (facts.remoteNames.length === 0) return null;
+    const { cacheKey, remoteName, defaultBranch } = yield* branchPullRequestLookupKey(
+      cacheCwd,
+      branch,
+      facts,
+    );
     if (options?.refresh) {
       // A completed turn can create a PR or reuse a merged PR's branch.
       // Refresh successful answers, but keep failed lookups' retry backoff.
@@ -2553,6 +2565,14 @@ export const make = Effect.gen(function* () {
       !hasSameIdentity(cached.headContext, currentIdentity)
     ) {
       facts = yield* readFreshRepositoryFacts(cacheCwd);
+      // Stale facts may also have produced a stale upstream or default branch.
+      const refreshed =
+        facts.remoteNames.length === 0
+          ? null
+          : yield* branchPullRequestLookupKey(cacheCwd, branch, facts);
+      if (!options?.refresh && refreshed?.cacheKey !== cacheKey) {
+        return yield* branchPullRequest({ cwd, branch }, { refresh: true });
+      }
       currentIdentity = identityOf(cached.headContext);
     }
     if (!canVerifyIdentity(cached.headContext, currentIdentity)) {

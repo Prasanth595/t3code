@@ -2265,6 +2265,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("a lookup that finds stale facts retries with the refreshed upstream", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      for (const branch of ["feature/other", "feature/moved"]) {
+        yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", branch]);
+      }
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:old-owner/old-repository.git",
+        remoteDir,
+      );
+      const { manager } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            "feature/moved-upstream": encodeCliJson([
+              {
+                number: 502,
+                title: "Moved upstream",
+                url: "https://github.com/new-owner/new-repository/pull/502",
+                baseRefName: "main",
+                headRefName: "feature/moved-upstream",
+                state: "OPEN",
+                updatedAt: "2026-04-07T15:00:00Z",
+              },
+            ]),
+          },
+        },
+      });
+
+      yield* manager.branchPullRequest({ cwd: repoDir, branch: "feature/other" });
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "origin",
+        "git@github.com:new-owner/new-repository.git",
+        remoteDir,
+      );
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/moved:feature/moved-upstream"]);
+      const pullRequest = yield* manager.branchPullRequest({
+        cwd: repoDir,
+        branch: "feature/moved",
+      });
+
+      expect(pullRequest).toMatchObject({
+        number: 502,
+        repositoryKey: "github.com/new-owner/new-repository",
+      });
+    }),
+  );
+
   it.effect("branch PR lookup announces a pull request when it reads it merged", () =>
     Effect.scoped(
       Effect.gen(function* () {
