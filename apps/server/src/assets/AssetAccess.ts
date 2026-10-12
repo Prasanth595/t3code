@@ -2,6 +2,7 @@ import type { AssetResource } from "@t3tools/contracts";
 import {
   AssetAttachmentNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetGitLabMediaUrlValidationError,
   AssetPreviewTypeValidationError,
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
@@ -31,6 +32,7 @@ import {
   type ImageDimensions,
 } from "@t3tools/shared/imageDimensions";
 import { githubMediaFetchUrl, githubMediaFileName } from "@t3tools/shared/githubMedia";
+import { gitlabMediaFetchUrl, gitlabMediaFileName } from "@t3tools/shared/gitlabMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
 import {
   isProjectFaviconPath,
@@ -168,6 +170,13 @@ const AssetClaimsSchema = Schema.Union([
     cwd: Schema.String,
     expiresAt: Schema.Number,
   }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("gitlab-media"),
+    /** Already narrowed to a GitLab project upload at mint time. */
+    url: Schema.String,
+    expiresAt: Schema.Number,
+  }),
 ]);
 type AssetClaims = typeof AssetClaimsSchema.Type;
 
@@ -196,6 +205,11 @@ export type ResolvedAsset =
       readonly cwd: string;
       /** When the signed URL that granted this stops working, which bounds how long a client
           may keep the bytes it fetched with it. */
+      readonly expiresAt: number;
+    }
+  | {
+      readonly kind: "gitlab-media";
+      readonly url: string;
       readonly expiresAt: number;
     };
 
@@ -806,6 +820,15 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = githubMediaFileName(fetchUrl);
       break;
     }
+    case "gitlab-media": {
+      const fetchUrl = gitlabMediaFetchUrl(input.resource.url);
+      if (fetchUrl === null) {
+        return yield* new AssetGitLabMediaUrlValidationError({});
+      }
+      claims = { version: 1, kind: "gitlab-media", url: fetchUrl, expiresAt };
+      fileName = gitlabMediaFileName(fetchUrl);
+      break;
+    }
   }
 
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
@@ -910,6 +933,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       kind: "github-media",
       url: claims.url,
       cwd: claims.cwd,
+      expiresAt: claims.expiresAt,
+    } satisfies ResolvedAsset;
+  }
+
+  if (claims.kind === "gitlab-media") {
+    return {
+      kind: "gitlab-media",
+      url: claims.url,
       expiresAt: claims.expiresAt,
     } satisfies ResolvedAsset;
   }

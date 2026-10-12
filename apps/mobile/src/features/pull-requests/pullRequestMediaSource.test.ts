@@ -30,6 +30,19 @@ describe("PR media previews", () => {
     expect(gallery.every((item) => "resource" in item)).toBe(true);
   });
 
+  it("loads GitLab uploads through the environment", () => {
+    const upload =
+      "https://gitlab.example.com/team/app/uploads/66dbcd21ec5d24ed6ea225176098d52b/demo.mp4";
+    const source = {
+      type: "media" as const,
+      name: "Video",
+      mimeType: "video/mp4",
+      ...pullRequestMediaSource(upload, location),
+    };
+    expect(source).toMatchObject({ resource: { _tag: "gitlab-media", url: upload } });
+    expect(mediaVideoThumbnailKey(source)).toContain("gitlab-media");
+  });
+
   it("leaves custom-domain media as direct URLs", () => {
     const external = "https://drop.example/file.mp4";
     expect(pullRequestMediaSource(external, location)).toEqual({ uri: external });

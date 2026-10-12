@@ -11,6 +11,10 @@
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
     },
+    "./server/GitLabCredentials": {
+      "types": "./src/server/GitLabCredentials.ts",
+      "import": "./src/server/GitLabCredentials.ts"
+    },
     "./server/gitLabAuthStatus": {
       "types": "./src/server/gitLabAuthStatus.ts",
       "import": "./src/server/gitLabAuthStatus.ts"

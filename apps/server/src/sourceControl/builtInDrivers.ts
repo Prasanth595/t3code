@@ -22,6 +22,7 @@ import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as GitHubDriver from "@t3tools/source-control-github/server/driver";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as GitLabCredentials from "@t3tools/source-control-gitlab/server/GitLabCredentials";
 import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/GitLabPullRequestCli";
 import * as GitLabDriver from "@t3tools/source-control-gitlab/server/driver";
 import type { SourceControlDriver } from "@t3tools/source-control-core/server/driver";
@@ -57,4 +58,6 @@ export const layer = Layer.mergeAll(
   ForgejoCli.layer,
   GitCafeApi.layer.pipe(Layer.provideMerge(GitCafeCredentials.layer)),
   GitLabPullRequestCli.layer.pipe(Layer.provideMerge(GitLabCli.layer)),
+  // Pull request media from GitLab loads through it; no driver needs it.
+  GitLabCredentials.layer,
 ).pipe(Layer.provideMerge(ServerSourceControlHost.layer));

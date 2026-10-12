@@ -55,7 +55,7 @@ import {
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { pullRequestMediaResource } from "@t3tools/client-runtime/pull-request-markdown";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -239,9 +239,9 @@ interface ChatMarkdownProps {
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
-  /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
-      uploads need; without it those images and videos load unauthenticated and 404. */
-  githubMedia?: boolean | undefined;
+  /** Loads GitHub and GitLab uploads through the server's credential for their host, which a
+      private repository's uploads need; without it they load unauthenticated and fail. */
+  pullRequestMedia?: boolean | undefined;
   /** Levels added to each markdown heading in the accessibility tree so the
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
@@ -1573,6 +1573,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
         | "workspace-file"
         | "media-file"
         | "github-media"
+        | "gitlab-media"
         | "tool-output-image";
     }
   >;
@@ -2319,7 +2320,7 @@ function useChatMarkdownState({
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
-  githubMedia = false,
+  pullRequestMedia = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2726,7 +2727,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
-      githubMedia,
+      pullRequestMedia,
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
@@ -2759,7 +2760,7 @@ function useChatMarkdownState({
       environmentId,
       expandMedia,
       fileLinkChip,
-      githubMedia,
+      pullRequestMedia,
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
@@ -3216,7 +3217,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       expandMedia,
       cwd,
       environmentId,
-      githubMedia,
+      pullRequestMedia,
       imageBaseDir,
       threadRef,
       renderContextReference,
@@ -3247,19 +3248,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     const directUri = imageSource._tag === "Direct" ? imageSource.uri : null;
-    const githubMediaUrl =
-      directUri === null ? null : githubMediaFetchUrl(resolveProtocolRelativeMediaUrl(directUri));
-    if (
-      githubMedia &&
-      cwd !== undefined &&
-      environmentId !== null &&
-      directUri !== null &&
-      githubMediaUrl !== null
-    ) {
+    const hostedMedia =
+      pullRequestMedia && cwd !== undefined && directUri !== null
+        ? pullRequestMediaResource(resolveProtocolRelativeMediaUrl(directUri), cwd)
+        : null;
+    if (hostedMedia !== null && environmentId !== null && directUri !== null) {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={hostedMedia}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
@@ -3271,10 +3268,10 @@ const CHAT_MARKDOWN_COMPONENTS = {
           originalUrl={resolveProtocolRelativeMediaUrl(directUri)}
           // A pull request body draws its own boxes; keep the author's, not the workspace frame.
           framed={false}
-          // A server too old to sign this resource, or one with no route to GitHub, still leaves
-          // the public half of these working exactly as it did before. The canonical URL, not the
-          // authored one: a `blob` link addresses the page, and only the raw host has the bytes.
-          fallbackSrc={githubMediaUrl}
+          // A server too old to sign this resource still leaves the public half of these working
+          // exactly as it did before. The canonical URL, not the authored one: a GitHub `blob`
+          // link addresses the page, and only the raw host has the bytes.
+          fallbackSrc={hostedMedia.url}
           onImageExpand={imageExpand}
         />
       );

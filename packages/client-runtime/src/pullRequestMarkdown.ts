@@ -1,3 +1,7 @@
+import type { AssetResource } from "@t3tools/contracts";
+import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { gitlabMediaFetchUrl } from "@t3tools/shared/gitlabMedia";
+
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
   | { readonly id: string; readonly kind: "markdown"; readonly text: string }
@@ -143,4 +147,23 @@ export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBod
 
   flushMarkdown();
   return segments;
+}
+
+export type PullRequestMediaResource = Extract<
+  AssetResource,
+  { readonly _tag: "github-media" | "gitlab-media" }
+>;
+
+/**
+ * The asset that loads `url` with its host's credential, which a private repository's uploads
+ * need, or null when the URL loads directly.
+ */
+export function pullRequestMediaResource(
+  url: string,
+  cwd: string,
+): PullRequestMediaResource | null {
+  const github = githubMediaFetchUrl(url);
+  if (github !== null) return { _tag: "github-media", cwd, url: github };
+  const gitlab = gitlabMediaFetchUrl(url);
+  return gitlab === null ? null : { _tag: "gitlab-media", url: gitlab };
 }

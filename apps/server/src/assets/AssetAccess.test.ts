@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
@@ -36,7 +37,8 @@ import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
-import { githubMediaResponse } from "./GitHubMediaFetch.ts";
+import * as GitLabCredentials from "@t3tools/source-control-gitlab/server/GitLabCredentials";
+import { githubMediaResponse, gitlabMediaResponse } from "./SourceControlMedia.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -225,6 +227,120 @@ describe("AssetAccess", () => {
         }),
       ),
       Effect.scoped,
+    );
+  });
+
+  describe("GitLab uploads", () => {
+    const SECRET = "66dbcd21ec5d24ed6ea225176098d52b";
+    const asset = {
+      url: `https://gitlab.example.com/team/app/uploads/${SECRET}/shot.png`,
+      expiresAt: Number.MAX_SAFE_INTEGER,
+    };
+    const serve = (
+      token: string | null,
+      respond: (url: string) => Response,
+      invalidated: Array<string> = [],
+    ) => {
+      const requests: Array<{ url: string; authorization: string | undefined }> = [];
+      const response = gitlabMediaResponse(asset, {}).pipe(
+        Effect.provide(
+          Layer.mock(GitLabCredentials.GitLabCredentials)({
+            get: () => Effect.succeed(Option.map(Option.fromNullishOr(token), Redacted.make)),
+            invalidate: (host) => Effect.sync(() => void invalidated.push(host)),
+          }),
+        ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push({ url: request.url, authorization: request.headers.authorization });
+            return Effect.succeed(HttpClientResponse.fromWeb(request, respond(request.url)));
+          }),
+        ),
+        Effect.scoped,
+      );
+      return { response, requests };
+    };
+
+    it.effect("streams a private upload from the upload API with the glab login", () => {
+      const { response, requests } = serve(
+        "glab-token",
+        () => new Response("png", { headers: { "content-type": "application/octet-stream" } }),
+      );
+      return Effect.gen(function* () {
+        const result = yield* response;
+        expect(result.status).toBe(200);
+        // GitLab labels every upload octet-stream, so the name decides.
+        expect(result.headers["content-type"]).toBe("image/png");
+        expect(requests).toEqual([
+          {
+            url: `https://gitlab.example.com/api/v4/projects/team%2Fapp/uploads/${SECRET}/shot.png`,
+            authorization: "Bearer glab-token",
+          },
+        ]);
+      });
+    });
+
+    it.effect("keeps the token off the object store an upload redirects to", () => {
+      const { response, requests } = serve("glab-token", (url) =>
+        url.startsWith("https://gitlab.example.com/")
+          ? new Response(null, {
+              status: 302,
+              headers: { location: "https://objects.example.com/shot.png?signature=1" },
+            })
+          : new Response("png", { headers: { "content-type": "image/png" } }),
+      );
+      return Effect.gen(function* () {
+        expect((yield* response).status).toBe(200);
+        expect(requests.map((request) => request.authorization)).toEqual([
+          "Bearer glab-token",
+          undefined,
+        ]);
+      });
+    });
+
+    it.effect("redirects to the upload itself when the API cannot serve it", () =>
+      Effect.gen(function* () {
+        // No glab login for the host: nothing is fetched with anything.
+        const signedOut = serve(null, () => new Response(null, { status: 500 }));
+        const redirect = yield* signedOut.response;
+        expect(redirect.status).toBe(302);
+        expect(redirect.headers.location).toBe(asset.url);
+        expect(signedOut.requests).toEqual([]);
+
+        // GitLab before 17.4 has no such route.
+        const old = serve("glab-token", () => new Response(null, { status: 404 }));
+        expect((yield* old.response).headers.location).toBe(asset.url);
+
+        // A refused token is dropped, so a refreshed login applies on the next load.
+        const invalidated: Array<string> = [];
+        const refused = serve("expired", () => new Response(null, { status: 401 }), invalidated);
+        expect((yield* refused.response).headers.location).toBe(asset.url);
+        expect(invalidated).toEqual(["gitlab.example.com"]);
+      }),
+    );
+
+    it.effect("signs an upload by its canonical URL and refuses anything else", () =>
+      Effect.gen(function* () {
+        const issued = yield* issueAssetUrl({
+          resource: {
+            _tag: "gitlab-media",
+            url: `https://gitlab.example.com/-/project/7/uploads/${SECRET}/demo.mp4#t=2`,
+          },
+        });
+        const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const separator = suffix.indexOf("/");
+        expect(
+          yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+        ).toEqual({
+          kind: "gitlab-media",
+          url: `https://gitlab.example.com/-/project/7/uploads/${SECRET}/demo.mp4`,
+          expiresAt: issued.expiresAt,
+        });
+        const error = yield* issueAssetUrl({
+          resource: { _tag: "gitlab-media", url: "https://example.com/internal/admin" },
+        }).pipe(Effect.flip);
+        expect(error._tag).toBe("AssetGitLabMediaUrlValidationError");
+      }).pipe(Effect.provide(layerTest)),
     );
   });
 

@@ -15,7 +15,7 @@ import { AppText as Text } from "../../components/AppText";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { FilePreviewItem } from "../../components/FilePreviewModal";
 import { isBotBadgeImage } from "./botBadgeImages";
-import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestMarkdown, usePullRequestMarkdownText } from "./PullRequestMarkdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 
 const COLLAPSED_HEIGHT = 240;
@@ -31,14 +31,15 @@ export function PullRequestDescription(props: {
   const mediaContext = useContext(PullRequestMediaContext);
   const { themeVariables: colors } = useAppearancePreferences();
   const fadeColor = colors[Platform.OS === "android" ? "--color-sheet-solid" : "--color-screen"];
+  const markdown = usePullRequestMarkdownText(props.markdown);
   const content = useMemo(() => {
-    const document = parseMarkdownDocument(props.markdown);
-    const content = pullRequestDescriptionContent(document, splitPullRequestBody(props.markdown));
+    const document = parseMarkdownDocument(markdown);
+    const content = pullRequestDescriptionContent(document, splitPullRequestBody(markdown));
     return {
       ...content,
       attachments: content.attachments.filter((attachment) => !isBotBadgeImage(attachment.uri)),
     };
-  }, [props.markdown]);
+  }, [markdown]);
   const gallery = useMemo<FilePreviewItem[]>(
     () =>
       content.attachments
@@ -70,7 +71,7 @@ export function PullRequestDescription(props: {
                 style={{ position: "absolute", top: 0, left: 0, right: 0 }}
                 onLayout={(event) => setBodyHeight(event.nativeEvent.layout.height)}
               >
-                <PullRequestMarkdown markdown={props.markdown} />
+                <PullRequestMarkdown markdown={markdown} />
               </View>
             </View>
             {collapsed ? (

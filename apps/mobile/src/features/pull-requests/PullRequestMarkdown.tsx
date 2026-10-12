@@ -11,6 +11,7 @@ import {
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useCallback, useMemo, useState } from "react";
 import { githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
+import { resolveGitLabUploadLinks } from "@t3tools/shared/gitlabMedia";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -27,9 +28,21 @@ import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 
 const RepositoryContext = createContext<string | null>(null);
+const GitLabProjectContext = createContext<string | null>(null);
+
+/** The body with GitLab's project-relative upload links made absolute. */
+export function usePullRequestMarkdownText(markdown: string): string {
+  const gitlabProjectUrl = useContext(GitLabProjectContext);
+  return useMemo(
+    () => (gitlabProjectUrl ? resolveGitLabUploadLinks(markdown, gitlabProjectUrl) : markdown),
+    [gitlabProjectUrl, markdown],
+  );
+}
 
 export function PullRequestMarkdownRepository(props: {
   readonly value: string | null;
+  /** The GitLab project a body's relative `/uploads/` links belong to. */
+  readonly gitlabProjectUrl?: string | null;
   readonly params: PullRequestParams;
   readonly children: ReactNode;
 }) {
@@ -45,7 +58,9 @@ export function PullRequestMarkdownRepository(props: {
   );
   return (
     <RepositoryContext value={props.value}>
-      <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      <GitLabProjectContext value={props.gitlabProjectUrl ?? null}>
+        <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
+      </GitLabProjectContext>
     </RepositoryContext>
   );
 }
@@ -81,7 +96,9 @@ export function PullRequestMarkdown(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
 }) {
-  const segments = useMemo(() => splitPullRequestBody(props.markdown), [props.markdown]);
+  const text = usePullRequestMarkdownText(props.markdown);
+  const imageGroupText = usePullRequestMarkdownText(props.imageGroupMarkdown ?? text);
+  const segments = useMemo(() => splitPullRequestBody(text), [text]);
   return (
     <View style={{ gap: 12 }}>
       {segments.map((segment) =>
@@ -89,7 +106,7 @@ export function PullRequestMarkdown(props: {
           <PullRequestMarkdownContent
             key={segment.id}
             markdown={segment.text}
-            imageGroupMarkdown={props.imageGroupMarkdown ?? props.markdown}
+            imageGroupMarkdown={imageGroupText}
           />
         ) : (
           <PullRequestMedia key={segment.id} url={segment.url} kind={segment.media} />

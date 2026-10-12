@@ -1,3 +1,4 @@
+import { changeRequestRepositoryUrl } from "@t3tools/shared/changeRequestUrl";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
@@ -368,6 +369,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     <PullRequestMarkdownRepository
       params={params}
       value={pr?.provider === "github" ? pr.url : null}
+      gitlabProjectUrl={pr?.provider === "gitlab" ? changeRequestRepositoryUrl(pr.url) : null}
     >
       <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
         <NativeStackScreenOptions

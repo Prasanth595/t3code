@@ -1,3 +1,4 @@
+import { changeRequestRepositoryUrl } from "@t3tools/shared/changeRequestUrl";
 import { useAtomRefresh } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -120,6 +121,9 @@ function Discussion({ params }: { params: PullRequestParams & { readonly discuss
     <PullRequestMarkdownRepository
       params={params}
       value={detail.data?.provider === "github" ? detail.data.url : null}
+      gitlabProjectUrl={
+        detail.data?.provider === "gitlab" ? changeRequestRepositoryUrl(detail.data.url) : null
+      }
     >
       <KeyboardAvoidingView automaticOffset behavior="height" className="flex-1 bg-screen">
         <NativeStackScreenOptions

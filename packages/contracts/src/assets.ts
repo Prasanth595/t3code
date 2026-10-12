@@ -66,6 +66,11 @@ export const AssetResource = Schema.Union([
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
   }),
+  // An upload a GitLab merge request points at. The server fetches it with the `glab`
+  // credential for the URL's own host, and falls back to redirecting to the URL itself.
+  Schema.TaggedStruct("gitlab-media", {
+    url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
 
@@ -312,6 +317,15 @@ export class AssetGitHubMediaUrlValidationError extends Schema.TaggedError<Asset
   }
 }
 
+export class AssetGitLabMediaUrlValidationError extends Schema.TaggedError<AssetGitLabMediaUrlValidationError>()(
+  "AssetGitLabMediaUrlValidationError",
+  {},
+) {
+  override get message(): string {
+    return "Only GitLab project uploads can be fetched with a GitLab credential.";
+  }
+}
+
 export const AssetAccessError = Schema.Union([
   AssetWorkspaceContextNotFoundError,
   AssetWorkspaceContextResolutionError,
@@ -326,6 +340,7 @@ export const AssetAccessError = Schema.Union([
   AssetProjectFaviconInspectionError,
   AssetProjectFaviconNotFoundError,
   AssetGitHubMediaUrlValidationError,
+  AssetGitLabMediaUrlValidationError,
   AssetSigningKeyLoadError,
 ]);
 export type AssetAccessError = typeof AssetAccessError.Type;

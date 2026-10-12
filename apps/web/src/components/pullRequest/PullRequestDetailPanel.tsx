@@ -801,9 +801,10 @@ export function PullRequestDetailPanel({
     () => ({
       repositoryUrl:
         repositoryUrl === null ? null : hostClient.referenceAutolinkRepositoryUrl(repositoryUrl),
+      gitlabProjectUrl: detail?.provider === "gitlab" ? repositoryUrl : null,
       threadRef,
     }),
-    [hostClient, repositoryUrl, threadRef],
+    [detail?.provider, hostClient, repositoryUrl, threadRef],
   );
   const authorProfileUrl =
     detail?.author && repositoryUrl !== null

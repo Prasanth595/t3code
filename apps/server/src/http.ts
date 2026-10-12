@@ -30,7 +30,7 @@ import { OtlpTracer, OtlpSerialization } from "effect/observability";
 
 import * as ServerConfig from "./config.ts";
 import { ASSET_ROUTE_PREFIX, readMcpAppHtml, resolveAsset } from "./assets/AssetAccess.ts";
-import { githubMediaResponse } from "./assets/GitHubMediaFetch.ts";
+import { githubMediaResponse, gitlabMediaResponse } from "./assets/SourceControlMedia.ts";
 import { statMediaFile, streamMediaFile, type OpenMediaFile } from "./assets/MediaFile.ts";
 import {
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
@@ -448,6 +448,20 @@ export const layerAssetRoute = HttpRouter.add(
       return yield* githubMediaResponse(asset, request.headers).pipe(
         Effect.tapError((cause) =>
           Effect.logWarning("Failed to fetch GitHub media.", { url: asset.url, cause }),
+        ),
+        Effect.orElseSucceed(() =>
+          HttpServerResponse.empty({
+            status: 502,
+            headers: { "cache-control": "private, no-store", "x-content-type-options": "nosniff" },
+          }),
+        ),
+      );
+    }
+    if (asset.kind === "gitlab-media") {
+      return yield* gitlabMediaResponse(asset, request.headers).pipe(
+        // Request errors can carry the token, so only the URL is logged.
+        Effect.tapError(() =>
+          Effect.logWarning("Failed to fetch GitLab media.", { url: asset.url }),
         ),
         Effect.orElseSucceed(() =>
           HttpServerResponse.empty({

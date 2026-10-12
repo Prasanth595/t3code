@@ -1,7 +1,11 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  pullRequestMediaResource,
+  type PullRequestMediaResource,
+} from "@t3tools/client-runtime/pull-request-markdown";
+import { resolveGitLabUploadLinks } from "@t3tools/shared/gitlabMedia";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
@@ -15,37 +19,32 @@ import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestM
 
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
+  /** The GitLab project a body's relative `/uploads/` links belong to. */
+  gitlabProjectUrl?: string | null | undefined;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
 /**
- * A video GitHub hosts for the repository. It plays through a signed asset URL the server
- * fetches with the repository's GitHub credential, which is what a private repository's
- * uploads need; the URL is re-signed on retry, so a stale one recovers without a reload.
+ * A video the repository's host keeps. It plays through a signed asset URL the server fetches
+ * with the host's credential, which is what a private repository's uploads need; the URL is
+ * re-signed on retry, so a stale one recovers without a reload.
  */
-function PullRequestGitHubVideo({
+function PullRequestHostedVideo({
   environmentId,
-  cwd,
+  resource,
   url,
-  fetchUrl,
 }: {
   environmentId: EnvironmentId;
-  cwd: string;
+  resource: PullRequestMediaResource;
   /** What the body authored, which is what "Open original" should reach. */
   url: string;
-  /** The canonical GitHub media URL: a `blob` link addresses the page, not the bytes. */
-  fetchUrl: string;
 }) {
-  const resource = useMemo<AssetResource>(
-    () => ({ _tag: "github-media", cwd, url: fetchUrl }),
-    [cwd, fetchUrl],
-  );
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
-  // A server too old to sign this resource, or one with no route to GitHub, still leaves a
-  // public repository's video playing exactly as it did before.
+  // A server too old to sign this resource still leaves a public repository's video playing
+  // exactly as it did before.
   const src =
-    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? fetchUrl : null;
+    assetUrl._tag === "Success" ? assetUrl.url : assetUrl._tag === "Failure" ? resource.url : null;
   return (
     <MediaVideoPlayer
       src={src === null ? null : src + markdownImageSourceFragment(url)}
@@ -73,8 +72,15 @@ export function PullRequestMarkdown({
   threadRef?: ScopedThreadRef | null;
   className?: string;
 }) {
-  const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
+  const gitlabProjectUrl = context?.gitlabProjectUrl;
+  const segments = useMemo(
+    () =>
+      splitPullRequestBody(
+        gitlabProjectUrl ? resolveGitLabUploadLinks(text, gitlabProjectUrl) : text,
+      ),
+    [gitlabProjectUrl, text],
+  );
   const repositoryUrl = context?.repositoryUrl;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
@@ -100,19 +106,19 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
-              githubMedia
+              pullRequestMedia
             />
           );
         }
-        const githubMediaUrl = segment.media === "video" ? githubMediaFetchUrl(segment.url) : null;
-        if (githubMediaUrl !== null) {
+        const hostedVideo =
+          segment.media === "video" ? pullRequestMediaResource(segment.url, cwd) : null;
+        if (hostedVideo !== null) {
           return (
-            <PullRequestGitHubVideo
+            <PullRequestHostedVideo
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
-              cwd={cwd}
+              resource={hostedVideo}
               url={segment.url}
-              fetchUrl={githubMediaUrl}
             />
           );
         }
