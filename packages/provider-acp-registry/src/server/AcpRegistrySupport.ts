@@ -12,7 +12,6 @@ import {
 } from "@t3tools/contracts";
 import type { AcpRegistryDistributionPreference } from "../settings.ts";
 import type { AcpRegistrySettings } from "../settings.ts";
-import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   mergePathEntries,
@@ -1510,7 +1509,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
         yield* fileSystem.rename(archivePath, targetPath);
       } else {
-        const tarCommand = cliArchiveTarCommand(platform, hostEnvironment);
         const listArgs =
           kind === "tar_gz"
             ? ["-tzf", archivePath]
@@ -1522,7 +1520,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const entries =
           listArgs === undefined
             ? yield* runCommand("unzip", ["-Z1", archivePath])
-            : yield* runCommand(tarCommand, listArgs);
+            : yield* runCommand("tar", listArgs);
         if (!validateArchiveEntries(entries)) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
@@ -1533,7 +1531,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot]);
         } else {
           const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
-          yield* runCommand(tarCommand, [extractFlag, archivePath, "-C", extractionRoot]);
+          yield* runCommand("tar", [extractFlag, archivePath, "-C", extractionRoot]);
         }
       }
 
