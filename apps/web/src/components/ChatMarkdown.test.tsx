@@ -380,8 +380,17 @@ describe("ChatMarkdown streaming", () => {
       await act(async () => vi.advanceTimersToNextTimerAsync());
       expect(highlight).toHaveBeenCalled();
       highlight.mockClear();
+      const highlightedCode = renderer!.root.findByType("code");
+      const appendedText = `${continuedText}\nconst appended = 4;`;
       await act(async () => {
-        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={continuedText + "\n```"} />);
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={appendedText} isStreaming />);
+      });
+      expect(renderer!.root.findByType("code")).toBe(highlightedCode);
+      await act(async () => vi.advanceTimersToNextTimerAsync());
+      expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
+      highlight.mockClear();
+      await act(async () => {
+        renderer!.update(<ChatMarkdown cwd="/tmp/project" text={appendedText + "\n```"} />);
       });
       await act(async () => vi.advanceTimersToNextTimerAsync());
       expect(highlight).toHaveBeenCalled();

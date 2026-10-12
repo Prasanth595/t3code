@@ -849,7 +849,14 @@ export const layer = Layer.effectContext(
           ).pipe(Effect.mapError((cause) => persistenceError("save-thread", cause)));
           // Control records or one oversized row can exceed the HTTP target.
           // Such snapshots use HTTP next time instead of growing the disk cache.
-          if (cacheEncoder.encode(encoded).length > THREAD_CACHE_MAX_BYTES) return;
+          if (cacheEncoder.encode(encoded).length > THREAD_CACHE_MAX_BYTES) {
+            yield* removeDatabaseValue(
+              database,
+              THREAD_STORE_NAME,
+              threadCacheKey(environmentId, snapshot.projection.thread.id),
+            );
+            return;
+          }
           yield* writeDatabaseValue(
             database,
             THREAD_STORE_NAME,

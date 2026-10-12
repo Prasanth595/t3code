@@ -1257,10 +1257,13 @@ function UncachedShikiCodeBlock({
   }, []);
 
   const matchingResult =
-    result?.input.code === code &&
+    result &&
     result.input.language === language &&
     result.input.themeName === themeName &&
-    result.input.preserveLines === preserveLines
+    result.input.preserveLines === preserveLines &&
+    (result.input.code === code ||
+      // Keep completed lines mounted while append-only updates await highlighting.
+      (preserveLines && "highlighted" in result && code.startsWith(result.input.code)))
       ? result
       : null;
   if (matchingResult && "error" in matchingResult) throw matchingResult.error;

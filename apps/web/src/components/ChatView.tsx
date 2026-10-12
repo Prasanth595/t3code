@@ -8151,7 +8151,11 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
-      if (command.startsWith("composer.") && composerRef.current === null) mountChromeForInput();
+      if (
+        (command.startsWith("composer.") || command === "modelPicker.toggle") &&
+        composerRef.current === null
+      )
+        mountChromeForInput();
 
       if (command === "thread.copyReference") {
         event.preventDefault();
