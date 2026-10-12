@@ -1236,6 +1236,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       .exists(path.join(repositoryPaths.worktreeRoot, ".gitmodules"))
       .pipe(Effect.orElseSucceed(() => true));
     if (hasGitmodules) return false;
+    // Without that file Git reads .gitmodules from the index or HEAD, and a
+    // deinitialized submodule keeps its repository under modules.
+    const hasSubmoduleRepositories = yield* fileSystem
+      .exists(path.join(repositoryPaths.gitCommonDir, "modules"))
+      .pipe(Effect.orElseSucceed(() => true));
+    if (hasSubmoduleRepositories) return false;
     // Exit 1 means none of these keys is set in any config scope. Initializing
     // a submodule writes submodule.<name>.url. Host-wide keys such as
     // submodule.recurse say nothing about this repository, so they do not count.

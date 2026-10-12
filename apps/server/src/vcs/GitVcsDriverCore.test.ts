@@ -3647,6 +3647,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       readonly gitConfigExitCode?: number;
       // Written at the repository root.
       readonly gitmodules?: boolean;
+      // .gitmodules is staged but gone from the worktree, and the submodule's
+      // repository stays under .git/modules.
+      readonly deinitializedSubmodule?: boolean;
       // The fetch runs in a directory below the repository root.
       readonly subdirectory?: boolean;
       // A plain repository with a worktree by default.
@@ -3745,6 +3748,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       if (scenario.gitmodules) {
         yield* writeTextFile(root, ".gitmodules", '[submodule "lib"]\n\tpath = lib\n');
       }
+      if (scenario.deinitializedSubmodule) {
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* writeTextFile(root, ".gitmodules", '[submodule "lib"]\n\tpath = lib\n');
+        yield* git(root, ["add", ".gitmodules"]).pipe(
+          Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+        );
+        yield* fileSystem.remove((yield* Path.Path).join(root, ".gitmodules"));
+        yield* writeTextFile(root, ".git/modules/lib/HEAD", "ref: refs/heads/main\n");
+      }
       const cwd = scenario.subdirectory ? (yield* Path.Path).join(root, "app") : root;
       if (scenario.subdirectory) yield* writeTextFile(cwd, "README.md", "# app\n");
       const fetching = yield* driver
@@ -3754,9 +3766,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ...(scenario.refName === undefined ? {} : { refName: scenario.refName }),
         })
         .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
-      const writeStderr = Effect.fnUntraced(function* (lines: ReadonlyArray<string>) {
+      const writeStderr = Effect.fnUntraced(function* (
+        lines: ReadonlyArray<string>,
+        bound: Duration.Input = "1 second",
+      ) {
         yield* Queue.offer(stderrBatches, lines);
-        const read = yield* withinLiveSecond(Queue.take(stderrRead));
+        const read = yield* Queue.take(stderrRead).pipe(
+          Effect.timeoutOption(bound),
+          TestClock.withLive,
+        );
         assert.isTrue(Option.isSome(read), "fetch never read its stderr");
       });
       if (scenario.sshProbeDelay !== undefined) {
@@ -3764,7 +3782,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         assert.isTrue(Option.isSome(started), "OpenSSH probe never started");
         yield* TestClock.adjust(scenario.sshProbeDelay);
       }
-      yield* writeStderr(scenario.stderr);
+      // The first read also waits for the real repository root lookup.
+      yield* writeStderr(scenario.stderr, "5 seconds");
       return { driver, cwd, fetching, exit, writeStderr, fetchEnvs, counts };
     });
 
@@ -3959,6 +3978,12 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         stderr: [sshPacketLine, sshSigningLine],
         gitmodules: true,
         subdirectory: true,
+      },
+      {
+        name: "a deinitialized submodule with .gitmodules only in the index",
+        refName: "main",
+        stderr: [sshPacketLine, sshSigningLine],
+        deinitializedSubmodule: true,
       },
       {
         name: "a directory outside any repository",
