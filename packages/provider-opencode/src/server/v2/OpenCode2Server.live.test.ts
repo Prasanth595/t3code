@@ -1,13 +1,14 @@
 /**
  * Live check of the OpenCode 2 server lifecycle against a real binary:
  *
- *   OPENCODE2_BIN=/path/to/opencode vp test run src/provider/opencode2/OpenCode2Server.live.test.ts
+ *   OPENCODE2_BIN=/path/to/opencode vp test run packages/provider-opencode/src/server/v2/OpenCode2Server.live.test.ts
  *
  * No model is called. The server runs with isolated HOME and XDG directories.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AbsolutePath, Location } from "@opencode/client/effect";
 import { assert, it } from "@effect/vitest";
+import { parseSemver } from "@t3tools/shared/semver";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -147,7 +148,10 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Server live", () => {
             return { ...connection, pid: info.pid, session };
           }),
         );
-        assert.strictEqual(spawned.version, "2.0.18");
+        // The binary's own version, not the pinned client version: this asserts the
+        // probe routed a 2.x server to the v2 runtime. Pinning an exact patch here
+        // breaks on every CLI upgrade, which is how this sat stale at 2.0.18.
+        assert.isAtLeast(parseSemver(spawned.version)?.major ?? 0, 2);
         assert.isFalse(spawned.external);
         assert.isTrue(isAlive(spawned.pid));
 
@@ -204,7 +208,7 @@ describe.runIf(binaryPath !== undefined)("OpenCode2Server live", () => {
         const utf8Connection = yield* utf8.withConnection((connection) =>
           Effect.succeed(connection),
         );
-        assert.strictEqual(utf8Connection.version, "2.0.18");
+        assert.isAtLeast(parseSemver(utf8Connection.version)?.major ?? 0, 2);
         assert.isTrue(utf8Connection.external);
         const asciiOnly = yield* OpenCode2Server.make({
           binaryPath: binaryPath!,

@@ -1,5 +1,5 @@
 diff --git a/dist/api.d.ts b/dist/api.d.ts
-index 68fe350..7c8f3f5 100644
+index 4e26c2f..cb10045 100644
 --- a/dist/api.d.ts
 +++ b/dist/api.d.ts
 @@ -1,5 +1,5 @@
@@ -10,7 +10,7 @@ index 68fe350..7c8f3f5 100644
  import { GenerateGroup } from "./groups/generate.js";
  import { MessageGroup } from "./groups/message.js";
 diff --git a/dist/api.js b/dist/api.js
-index c68e3ea..0ed6447 100644
+index cc92c9f..e79f5c1 100644
 --- a/dist/api.js
 +++ b/dist/api.js
 @@ -1,5 +1,5 @@
@@ -120,7 +120,7 @@ index 228002a..14748f6 100644
  export const ConfigGroup = HttpApiGroup.make("server.config")
      .add(HttpApiEndpoint.get("config.get", "/api/config", {
 diff --git a/dist/groups/credential.d.ts b/dist/groups/credential.d.ts
-index 12de0a3..a4c616e 100644
+index b268e42..9df8dfb 100644
 --- a/dist/groups/credential.d.ts
 +++ b/dist/groups/credential.d.ts
 @@ -1,5 +1,5 @@
@@ -227,7 +227,7 @@ index c8294ac..af3ac60 100644
  export declare const FileSystemGroup: HttpApiGroup.HttpApiGroup<"server.fs", HttpApiEndpoint.HttpApiEndpoint<"fs.read", "GET", "/api/fs/read/*", never, Schema.toCodecStringTree<Schema.Struct<{
      readonly location: Schema.optional<Schema.Struct<{
 diff --git a/dist/groups/fs.js b/dist/groups/fs.js
-index 313dbeb..68ff2ef 100644
+index 84d7155..3a79429 100644
 --- a/dist/groups/fs.js
 +++ b/dist/groups/fs.js
 @@ -2,7 +2,7 @@ import { FileSystem } from "@opencode/schema/filesystem";
@@ -263,7 +263,7 @@ index 4faaee7..f7f5a57 100644
  export const GenerateGroup = HttpApiGroup.make("server.generate")
      .add(HttpApiEndpoint.post("generate.text", "/api/experimental/generate", {
 diff --git a/dist/groups/integration.d.ts b/dist/groups/integration.d.ts
-index e7b4bf8..d3b5d1f 100644
+index 3e06cf0..98d890e 100644
 --- a/dist/groups/integration.d.ts
 +++ b/dist/groups/integration.d.ts
 @@ -1,6 +1,6 @@
@@ -275,7 +275,7 @@ index e7b4bf8..d3b5d1f 100644
  export declare const IntegrationGroup: HttpApiGroup.HttpApiGroup<"server.integration", HttpApiEndpoint.HttpApiEndpoint<"integration.list", "GET", "/api/integration", never, Schema.toCodecStringTree<Schema.Struct<{
      readonly location: Schema.optional<Schema.Struct<{
 diff --git a/dist/groups/integration.js b/dist/groups/integration.js
-index 6ca6f55..27b3792 100644
+index 01aee5b..bb888ba 100644
 --- a/dist/groups/integration.js
 +++ b/dist/groups/integration.js
 @@ -2,7 +2,7 @@ import { Integration } from "@opencode/schema/integration";
@@ -382,7 +382,7 @@ index 20cf324..ef048e9 100644
      label: Schema.String,
      numerator: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 diff --git a/dist/groups/model.d.ts b/dist/groups/model.d.ts
-index 8bb1daa..787fe05 100644
+index add09a7..32bb259 100644
 --- a/dist/groups/model.d.ts
 +++ b/dist/groups/model.d.ts
 @@ -1,6 +1,6 @@
@@ -527,27 +527,27 @@ index b587f80..20f52fa 100644
  import { LocationQuery, locationQueryOpenApi } from "./location.js";
  export const ProviderGroup = HttpApiGroup.make("server.provider")
 diff --git a/dist/groups/pty.d.ts b/dist/groups/pty.d.ts
-index a1ec2fb..7bbe99b 100644
+index 2594154..35d9f69 100644
 --- a/dist/groups/pty.d.ts
 +++ b/dist/groups/pty.d.ts
 @@ -1,5 +1,5 @@
- import { Schema } from "effect";
--import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
-+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
- import { ForbiddenError, PtyNotFoundError } from "../errors.js";
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema } from "effect/http-api";
+ import { ForbiddenError, LocationNotFoundError, PtyNotFoundError } from "../errors.js";
  export declare const PTY_CONNECT_TICKET_QUERY = "ticket";
  export declare const PTY_CONNECT_TOKEN_HEADER = "x-opencode-ticket";
 diff --git a/dist/groups/pty.js b/dist/groups/pty.js
-index dd17efa..88eb22b 100644
+index 7e2fa95..1c0b509 100644
 --- a/dist/groups/pty.js
 +++ b/dist/groups/pty.js
 @@ -2,7 +2,7 @@ import { Pty } from "@opencode/schema/pty";
  import { PtyTicket } from "@opencode/schema/pty-ticket";
  import { Location } from "@opencode/schema/location";
- import { Schema } from "effect";
--import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
-+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/http-api";
- import { ForbiddenError, PtyNotFoundError } from "../errors.js";
+ import { Context, Schema } from "effect";
+-import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi";
++import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/http-api";
+ import { ForbiddenError, LocationNotFoundError, PtyNotFoundError } from "../errors.js";
  import { LocationQuery, locationQueryOpenApi } from "./location.js";
  export const PTY_CONNECT_TICKET_QUERY = "ticket";
 diff --git a/dist/groups/reference.d.ts b/dist/groups/reference.d.ts
