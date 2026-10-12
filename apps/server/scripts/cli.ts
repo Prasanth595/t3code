@@ -49,7 +49,9 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
 
 // What `npm config get <keys>` prints in `cwd`, where `npm publish` runs, so
 // it reads the same .npmrc files and npm_config_* variables. npm exits non-zero
-// rather than print a protected value, such as a registry URL with a password.
+// rather than print a protected value (a URL password, a UUID or an `npm_`
+// token), which stops the publish before any upload; configure such a registry
+// without them.
 const npmConfigGet = Effect.fn("npmConfigGet")(function* (
   cwd: string,
   keys: ReadonlyArray<string>,

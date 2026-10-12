@@ -109,7 +109,8 @@ const npmConfigValue = (printed: string | undefined) =>
  * `configGet` returns what `npm config get <keys>` prints: the bare value for
  * one key, `key=value` lines for several. Fails unless the pick is an http or
  * https URL, so a config the probe cannot use stops the publish before any
- * upload.
+ * upload. Returns it without a user name or password, since the probe is
+ * anonymous and `fetch` refuses a URL that has either.
  */
 export const npmPublishRegistry = <E, R>(
   configGet: (keys: ReadonlyArray<string>) => Effect.Effect<string, E, R>,
@@ -130,14 +131,16 @@ export const npmPublishRegistry = <E, R>(
         : npmConfigValue((yield* configGet([`${scope}:registry`])).trim())) ??
       npmConfigValue(config.get("registry")) ??
       "https://registry.npmjs.org/";
-    const { protocol } = yield* Effect.try({
+    const url = yield* Effect.try({
       try: () => new URL(registry),
       catch: (cause) => new ServerCliNpmRegistryInvalidError({ cause }),
     });
-    if (protocol !== "http:" && protocol !== "https:") {
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
       return yield* new ServerCliNpmRegistryInvalidError({});
     }
-    return registry;
+    url.username = "";
+    url.password = "";
+    return url.href;
   });
 
 const NpmVersionMetadata = Schema.Struct({
@@ -149,7 +152,8 @@ const NpmVersionMetadata = Schema.Struct({
  * metadata, then the tarball that metadata points to. A transport error or a
  * request that takes over 10 seconds is reported like any other not-ready
  * answer. The requests are anonymous, so a restricted package, or a registry
- * that needs auth to read, never passes and the launcher is skipped.
+ * that needs auth to read, never passes and the launcher is skipped. They use
+ * Node's `fetch`, so npm's proxy, CA and `strict-ssl` settings do not apply.
  */
 export const checkNpmVersionInstallable = Effect.fn("checkNpmVersionInstallable")(function* (
   registry: string,

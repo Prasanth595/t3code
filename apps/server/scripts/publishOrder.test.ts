@@ -309,6 +309,36 @@ it.effect.each([
     scopeRead: "@mirror:registry",
   },
   {
+    config: "sets a scope with an empty registry",
+    printed: [printedConfig("undefined", "@mirror"), "\n"],
+    scopeRead: "@mirror:registry",
+  },
+  {
+    config: "sets a scope with a null registry",
+    printed: [printedConfig("undefined", "@mirror"), "null\n"],
+    scopeRead: "@mirror:registry",
+  },
+  {
+    config: "sets a scope with a false registry",
+    printed: [printedConfig("undefined", "@mirror"), "false\n"],
+    scopeRead: "@mirror:registry",
+  },
+  {
+    config: "sets a scope and npm prints CRLF line ends",
+    printed: [
+      printedConfig("undefined", "@mirror").replaceAll("\n", "\r\n"),
+      `${mirrorRegistry}\r\n`,
+    ],
+    expected: mirrorRegistry,
+    scopeRead: "@mirror:registry",
+  },
+  {
+    // The probe is anonymous, and fetch refuses a URL with a user name.
+    config: "sets @t3code:registry to a URL with a user name",
+    printed: [printedConfig("https://guest@npm.example.com/prefix", "")],
+    expected: "https://npm.example.com/prefix",
+  },
+  {
     config: "sets nothing",
     printed: [printedConfig("undefined", "", "undefined")],
     expected: "https://registry.npmjs.org/",
