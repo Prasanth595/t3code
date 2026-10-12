@@ -681,12 +681,17 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             maxOutputBytes: 64 * 1024,
           })
           .pipe(
-            Effect.map((result) => [pid, parseTasklistProcessName(result.stdout, pid)] as const),
-            Effect.orElseSucceed(() => [pid, null] as const),
+            // Only a completed lookup is cached; failures retry on the next scan.
+            Effect.map((result) =>
+              result.code !== null && result.code !== 0
+                ? []
+                : [[pid, parseTasklistProcessName(result.stdout, pid)] as const],
+            ),
+            Effect.orElseSucceed(() => []),
           ),
       { concurrency: "unbounded" },
     );
-    const names = new Map([...cached, ...fetched].filter(([pid]) => pids.has(pid)));
+    const names = new Map([...cached, ...fetched.flat()].filter(([pid]) => pids.has(pid)));
     yield* Ref.set(windowsProcessNamesRef, names);
     const withName = (server: DiscoveredLocalServer): DiscoveredLocalServer =>
       server.pid === null || server.processName !== null
