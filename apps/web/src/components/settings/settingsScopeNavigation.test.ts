@@ -302,22 +302,34 @@ describe("scheduled task scope navigation", () => {
 
 describe("seedSettingsMachine", () => {
   const environmentId = EnvironmentId.make("fedora");
-  const one = { kind: "one", environmentId } as const;
+  const active = { status: "active", environmentId, online: true } as const;
 
   it("starts on the selected environment, keeping the project", () => {
-    expect(seedSettingsMachine({}, one)).toEqual({ machine: environmentId });
-    expect(seedSettingsMachine({ project: "repository:t3code" }, one)).toEqual({
+    expect(seedSettingsMachine({}, active)).toEqual({ machine: environmentId });
+    expect(seedSettingsMachine({ project: "repository:t3code" }, active)).toEqual({
       project: "repository:t3code",
       machine: environmentId,
     });
   });
 
+  it("starts on a selected environment that is offline", () => {
+    expect(seedSettingsMachine({}, { ...active, online: false })).toEqual({
+      machine: environmentId,
+    });
+  });
+
   it("leaves links that name their own target alone", () => {
-    expect(seedSettingsMachine({ machine: "other" }, one)).toBeNull();
-    expect(seedSettingsMachine({ project: "p", checkout: "other:/repo" }, one)).toBeNull();
+    expect(seedSettingsMachine({ machine: "other" }, active)).toBeNull();
+    expect(seedSettingsMachine({ project: "p", checkout: "other:/repo" }, active)).toBeNull();
   });
 
   it("does nothing while every environment is shown", () => {
-    expect(seedSettingsMachine({}, { kind: "all" })).toBeNull();
+    expect(seedSettingsMachine({}, { status: "all", environmentIds: [environmentId] })).toBeNull();
+  });
+
+  it("never seeds a missing, disabled or still-loading environment", () => {
+    // A disabled environment resolves as missing.
+    expect(seedSettingsMachine({}, { status: "missing", environmentId })).toBeNull();
+    expect(seedSettingsMachine({}, { status: "pending", environmentId })).toBeNull();
   });
 });

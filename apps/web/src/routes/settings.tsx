@@ -23,7 +23,7 @@ import {
   seedSettingsMachine,
   validateSettingsRouteSearch,
 } from "../components/settings/settingsScopeNavigation";
-import { useUiStateStore } from "../uiStateStore";
+import { useEnvironmentSelection } from "../state/environmentSelection";
 import {
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
@@ -153,12 +153,14 @@ function SettingsRouteLayout() {
   const rawSearch = Route.useSearch();
   const navigate = Route.useNavigate();
   const pathname = useLocation({ select: (location) => location.pathname });
-  // Seed once on entry; later "All environments" choices stay explicit.
+  const { resolved: environmentSelection } = useEnvironmentSelection();
+  // Seed once on entry, after the selection resolves; later "All environments"
+  // choices stay explicit.
   const seededRef = useRef(false);
   useEffect(() => {
-    if (seededRef.current) return;
+    if (seededRef.current || environmentSelection.status === "pending") return;
     seededRef.current = true;
-    const seeded = seedSettingsMachine(rawSearch, useUiStateStore.getState().environmentSelection);
+    const seeded = seedSettingsMachine(rawSearch, environmentSelection);
     if (seeded === null) return;
     void navigate({
       to: pathname,
@@ -167,7 +169,7 @@ function SettingsRouteLayout() {
       replace: true,
       resetScroll: false,
     });
-  }, [navigate, pathname, rawSearch]);
+  }, [environmentSelection, navigate, pathname, rawSearch]);
   return (
     <SettingsScopeProvider
       search={rawSearch}
