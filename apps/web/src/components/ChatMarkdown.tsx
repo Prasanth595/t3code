@@ -1280,7 +1280,10 @@ function UncachedShikiCodeBlock({
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />
   ) : (
     <div className="chat-markdown-shiki">
-      <HighlightedCodeLines root={highlighted} />
+      <HighlightedCodeLines
+        root={highlighted}
+        pendingText={code.slice(matchingResult.input.code.length)}
+      />
     </div>
   );
 }

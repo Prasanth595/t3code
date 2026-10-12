@@ -386,6 +386,9 @@ describe("ChatMarkdown streaming", () => {
         renderer!.update(<ChatMarkdown cwd="/tmp/project" text={appendedText} isStreaming />);
       });
       expect(renderer!.root.findByType("code")).toBe(highlightedCode);
+      expect(highlightedCode.findAllByType("span").flatMap((span) => span.children)).toContain(
+        "const appended = 4;\n",
+      );
       await act(async () => vi.advanceTimersToNextTimerAsync());
       expect(highlight.mock.calls.every(([code]) => !code.includes("const completed"))).toBe(true);
       highlight.mockClear();
