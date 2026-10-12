@@ -136,10 +136,12 @@ describe("question Markdown", () => {
     await renderPanel();
     const toggle = element("[data-pending-user-input-toggle]", HTMLButtonElement);
     await act(async () => toggle.click());
-    expect(toggle.textContent).toContain("Open Linear login link and confirm when ready.");
-    expect(toggle.textContent).not.toContain("https://");
-    expect(toggle.textContent).not.toContain("**");
-    expect(toggle.querySelector("a")).toBeNull();
+    const preview = element("[data-pending-user-input-preview]", HTMLSpanElement);
+    expect(preview.textContent).toContain("Linear login link");
+    expect(preview.textContent).not.toContain("https://");
+    expect(preview.textContent).not.toContain("**");
+    expect(preview.querySelector("a")?.closest("button")).toBeNull();
+    expect(preview.hasAttribute("inert")).toBe(true);
   });
 
   it("renders block Markdown in the expanded question", async () => {
@@ -174,8 +176,29 @@ describe("question Markdown", () => {
     ]);
     const toggle = element("[data-pending-user-input-toggle]", HTMLButtonElement);
     await act(async () => toggle.click());
-    expect(toggle.textContent).toContain("Open help and keep *literal*.");
-    expect(toggle.textContent).not.toContain("long-destination");
+    const preview = element("[data-pending-user-input-preview]", HTMLSpanElement);
+    expect(preview.textContent).toContain("Open help and keep *literal*.");
+    expect(preview.textContent).not.toContain("long-destination");
+  });
+
+  it.each([
+    "First<br>Second",
+    "First<br />Second",
+    "First<BR>Second",
+    "<p>First</p><p>Second</p>",
+    "First<div>Second</div>Third",
+    "<em>First</em>Second",
+    "<p>First &amp; second</p>",
+    "<p>First</p><script>hidden()</script><p>Second</p>",
+  ])("uses the expanded renderer unchanged in the collapsed preview: %s", async (markdown) => {
+    await renderPanel([{ ...question, question: markdown }]);
+    const expanded = element(".chat-markdown", HTMLDivElement);
+    const rendered = expanded.innerHTML;
+    const toggle = element("[data-pending-user-input-toggle]", HTMLButtonElement);
+    await act(async () => toggle.click());
+    const preview = element("[data-pending-user-input-preview] .chat-markdown", HTMLDivElement);
+    expect(preview.innerHTML).toBe(rendered);
+    expect(preview.textContent).not.toContain("hidden()");
   });
 
   it("renders option formatting without nesting links inside selection buttons", async () => {
@@ -206,7 +229,7 @@ describe("question Markdown", () => {
   it("submits the original option value after a formatted option is selected", async () => {
     await renderPanel();
     const button = [...container.querySelectorAll("button")].find(
-      (candidate) => candidate.getAttribute("aria-labelledby") !== null,
+      (candidate) => candidate.getAttribute("aria-pressed") !== null,
     );
     if (!button) throw new Error("Missing option selection button");
     await act(async () => button.click());
@@ -234,7 +257,7 @@ describe("question Markdown", () => {
 
   it("toggles multi-select answers without advancing", async () => {
     await renderPanel([{ ...question, multiSelect: true }]);
-    const button = element("button[aria-labelledby]", HTMLButtonElement);
+    const button = element("button[aria-pressed]", HTMLButtonElement);
     await act(async () => button.click());
     expect(onToggleOption).toHaveBeenCalledWith("login", "**Done**");
     await act(async () => vi.advanceTimersByTime(200));
@@ -268,7 +291,7 @@ describe("question Markdown", () => {
 
   it("does not select a formatted answer when responses are disabled", async () => {
     await renderPanel([question], true);
-    const button = element("button[aria-labelledby]", HTMLButtonElement);
+    const button = element("button[aria-pressed]", HTMLButtonElement);
     expect(button.disabled).toBe(true);
     await act(async () => button.click());
     expect(onToggleOption).not.toHaveBeenCalled();

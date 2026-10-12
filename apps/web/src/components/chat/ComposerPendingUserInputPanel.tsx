@@ -1,8 +1,5 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "../ChatMarkdown";
 import { type PendingUserInput } from "../../session-logic";
 import {
@@ -88,6 +85,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const responseDisabled = disabled || isResponding || !canRespond;
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const optionIdPrefix = useId();
+  const headerId = `${optionIdPrefix}-header`;
+  const previewId = `${optionIdPrefix}-preview`;
   const activeQuestion = progress.activeQuestion;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const onAdvanceRef = useRef(onAdvance);
@@ -205,27 +204,39 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         setCollapsedQuestionId(open ? null : activeQuestion.id);
       }}
     >
-      <CollapsibleTrigger
-        render={<ComposerBanner.Row render={<button type="button" />} />}
-        title={
-          isCollapsed ? "Show the question and its options" : "Hide the question and its options"
-        }
-        data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
-      >
-        <ComposerBanner.Icon />
-        <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
+      <ComposerBanner.Row className="relative">
+        <CollapsibleTrigger
+          render={<button type="button" />}
+          className="absolute inset-0 cursor-pointer rounded-md focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          aria-labelledby={headerId}
+          aria-describedby={isCollapsed ? previewId : undefined}
+          title={
+            isCollapsed ? "Show the question and its options" : "Hide the question and its options"
+          }
+          data-pending-user-input-toggle={isCollapsed ? "collapsed" : "expanded"}
+        />
+        <ComposerBanner.Icon className="pointer-events-none relative" />
+        <ComposerBanner.Content className="pointer-events-none relative">
+          <span id={headerId} className="shrink-0 font-medium text-muted-foreground">
             {activeQuestion.header}
           </span>
           {isCollapsed ? (
-            <span className="min-w-0 flex-1 truncate text-secondary-label">
-              <ReactMarkdown remarkPlugins={[remarkGfm, remarkQuestionPreview]}>
-                {activeQuestion.question}
-              </ReactMarkdown>
+            <span
+              id={previewId}
+              inert
+              className="min-w-0 flex-1 text-secondary-label"
+              data-pending-user-input-preview
+            >
+              <ChatMarkdown
+                text={activeQuestion.question}
+                cwd={cwd}
+                threadRef={threadRef}
+                className="line-clamp-1"
+              />
             </span>
           ) : null}
         </ComposerBanner.Content>
-        <ComposerBanner.Actions>
+        <ComposerBanner.Actions className="pointer-events-none relative">
           {prompt.questions.length > 1 ? (
             <span className="text-3xs font-medium text-muted-foreground tabular-nums">
               {questionIndex + 1}/{prompt.questions.length}
@@ -233,29 +244,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           ) : null}
           <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
           {prompt.dismissible ? (
-            // Sits inside the trigger button, so stop the click from toggling
-            // the disclosure. Dismiss closes the question without a reply.
             <ComposerBanner.Dismiss
-              render={<span role="button" tabIndex={0} />}
+              className="pointer-events-auto"
               aria-label="Dismiss question without answering"
               title="Dismiss question without answering"
               disabled={isResponding}
               data-pending-user-input-dismiss
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
-                event.stopPropagation();
-                onDismiss(prompt.requestId);
-              }}
+              onClick={() => onDismiss(prompt.requestId)}
             />
           ) : null}
         </ComposerBanner.Actions>
-      </CollapsibleTrigger>
+      </ComposerBanner.Row>
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
@@ -345,23 +344,3 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     </Collapsible>
   );
 });
-
-function remarkQuestionPreview() {
-  return (tree: Root) => {
-    const text = (node: Root | RootContent): string => {
-      if (node.type === "html" || node.type === "definition") return "";
-      if ("alt" in node) return node.alt ?? "";
-      if ("value" in node) return node.value;
-      if ("children" in node) {
-        const separator = ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(
-          node.type,
-        )
-          ? " "
-          : "";
-        return node.children.map(text).join(separator);
-      }
-      return node.type === "break" ? " " : "";
-    };
-    tree.children = [{ type: "text", value: text(tree).replace(/\s+/g, " ").trim() }];
-  };
-}
