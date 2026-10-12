@@ -211,6 +211,24 @@ describe("question Markdown", () => {
     );
   });
 
+  it("preserves option description paragraphs with the existing renderer", async () => {
+    await renderPanel([
+      {
+        ...question,
+        options: [{ label: "**Done**", description: "<p>First</p><p>Second</p>" }],
+      },
+    ]);
+    const button = element("button[aria-pressed]", HTMLButtonElement);
+    const descriptionId = button.getAttribute("aria-describedby");
+    if (!descriptionId) throw new Error("Missing option description");
+    const description = document.getElementById(descriptionId);
+    if (!description) throw new Error("Missing rendered option description");
+    expect([...description.querySelectorAll("p")].map((node) => node.textContent)).toEqual([
+      "First",
+      "Second",
+    ]);
+  });
+
   it.each([false, true])(
     "does not answer on an option link click (multiSelect=%s)",
     async (multiSelect) => {
