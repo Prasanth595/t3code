@@ -1119,6 +1119,28 @@ it.live("captures the viewport a desktop-drawn page actually has", () =>
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("captures a desktop-drawn page resized to a phone preset without a 1280x800 clip", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      // An iPhone 12 Pro preset on a 100% display; Playwright still reports 1280x800.
+      reportPage(context, { ratio: 1, width: 390, height: 844 });
+      const snapshot = yield* broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      // At scale 1 the capture needs no clip, so nothing cuts it to the stale 1280x800.
+      expect(captureClips(context)).toEqual([]);
+      expect(snapshot.screenshot).toMatchObject({ width: 390, height: 844 });
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("leaves page zoom out of a desktop-drawn tab's snapshot scale", () =>
   Effect.scoped(
     Effect.gen(function* () {
