@@ -106,6 +106,27 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect("requires the destination source control grant to start Fork Sync", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const start = createCommandPermissions(runtime, WS_METHODS.forkChangelogStartSync);
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(start.permissionAtom(env))).toBe(false);
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthSourceControlWriteScope],
+            permissions: [AuthSourceControlWriteScope],
+          }),
+        );
+        expect(registry.get(start.permissionAtom(env))).toBe(true);
+        yield* start.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("uses the target grant for both availability and execution", () =>
     Effect.scoped(
       Effect.gen(function* () {

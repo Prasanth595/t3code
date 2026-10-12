@@ -140,6 +140,20 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires source control writes to start Fork Sync but not to read the fork changelog", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.forkChangelogStartSync)).toBe(
+      AuthSourceControlWriteScope,
+    );
+    for (const method of [
+      WS_METHODS.forkChangelogListReleases,
+      WS_METHODS.forkChangelogReleaseChanges,
+      WS_METHODS.forkChangelogUpstreamPending,
+      WS_METHODS.forkChangelogSyncStatus,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("separates viewing pull request file progress from writing it", () => {
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsFilesViewed)).toBe(
       AuthOrchestrationReadScope,

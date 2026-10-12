@@ -657,7 +657,6 @@ describe("ClientSettings sidebar", () => {
       decodeClientSettingsPatch({ confirmTerminalClose: false, terminalAppShortcutsFirst: true }),
     ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
   });
-
 });
 
 describe("ClientSettings context window meter", () => {

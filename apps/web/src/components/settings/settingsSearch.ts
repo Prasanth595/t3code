@@ -589,6 +589,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["about check for updates download install upgrade release"],
   },
   {
+    id: "fork-changelog",
+    title: "Fork changelog",
+    to: "/settings/general",
+    searchTerms: ["changelog release notes versions upstream fork sync workflow"],
+  },
+  {
     id: "update-track",
     title: "Update track",
     to: "/settings/general",

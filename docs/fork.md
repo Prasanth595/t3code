@@ -113,6 +113,17 @@ scripts/fork-live/build.sh
 
 The first build creates `current` and sets the setting for apps that start later. Then quit and start the app once. The build log is `~/Library/Logs/t3-live-build.log`.
 
+## Changelog
+
+The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is off by default. Turn it on in Settings > General > About > Fork changelog.
+
+- Open it from the Fork changelog row in Settings, or from "Open changelog" in the update button popover on the desktop app. It opens also when no update is available.
+- The Releases tab lists the fork releases, newest version first. Each fork commit of a release shows as its own item with a "Fork" mark. The upstream commits of the release stay in one group.
+- A fork commit is a commit that `pingdotgg/t3code` main does not contain. Merge commits do not show.
+- The Upstream tab lists the upstream main commits that fork main does not have yet. Its "Start Fork Sync" button starts `.github/workflows/fork-sync.yml` and shows the run and each job. The tab reads the run again every 5 seconds while the run is queued or running.
+- The server reads GitHub with the GitHub credential of its machine, the same one that pull requests use (settings, `GH_TOKEN` or `gh auth login`). Without a credential, the changelog shows the GitHub error.
+- Starting Fork Sync needs the `source-control:write` scope on the connection.
+
 ## Deploy to the VPS
 
 The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.

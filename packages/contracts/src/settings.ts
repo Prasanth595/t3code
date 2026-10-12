@@ -419,6 +419,8 @@ export const ClientSettingsSchema = Schema.Struct({
   terminalAppShortcutsFirst: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: background work status icons open a details popover; their descriptions render markdown links. */
   backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
+  forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1701,6 +1703,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmTerminalClose: Schema.optionalKey(Schema.Boolean),
   terminalAppShortcutsFirst: Schema.optionalKey(Schema.Boolean),
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
+  forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
