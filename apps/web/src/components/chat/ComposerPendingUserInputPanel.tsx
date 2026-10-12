@@ -244,14 +244,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           ) : null}
           <ComposerBanner.ToggleIcon expanded={!isCollapsed} />
           {prompt.dismissible ? (
-            <ComposerBanner.Dismiss
-              className="pointer-events-auto"
-              aria-label="Dismiss question without answering"
-              title="Dismiss question without answering"
-              disabled={isResponding}
-              data-pending-user-input-dismiss
-              onClick={() => onDismiss(prompt.requestId)}
-            />
+            <span className="pointer-events-auto inline-flex">
+              <ComposerBanner.Dismiss
+                aria-label="Dismiss question without answering"
+                title="Dismiss question without answering"
+                disabled={isResponding}
+                data-pending-user-input-dismiss
+                onClick={() => onDismiss(prompt.requestId)}
+              />
+            </span>
           ) : null}
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
