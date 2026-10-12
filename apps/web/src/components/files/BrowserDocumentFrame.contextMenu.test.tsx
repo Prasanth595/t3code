@@ -47,21 +47,27 @@ const resource = {
   threadId: ThreadId.make("thread"),
   path: "/exports/report.html",
 };
-function RemoteDocument() {
-  const showMenu = useExternalBrowserMenu(environmentId, resource);
+function RemoteDocument({ pdf }: { pdf: boolean }) {
+  const documentResource = { ...resource, path: pdf ? "/exports/report.pdf" : resource.path };
+  const showMenu = useExternalBrowserMenu(environmentId, documentResource);
   return (
     <BrowserDocumentFrame
-      src="https://source.test/api/assets/expired/report.html"
+      src={`https://source.test/api/assets/expired/report.${pdf ? "pdf" : "html"}`}
       title="Report"
-      pdf={false}
+      pdf={pdf}
       onContextMenuRequest={showMenu}
     />
   );
 }
 
-it.each([false, true])(
-  "reauthorizes a native document selection with grant revocation=%s",
-  async (revoke) => {
+it.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])(
+  "reauthorizes a native document selection with PDF=%s and grant revocation=%s",
+  async (pdf, revoke) => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("desktopBridge", {});
     browser.canRead = true;
@@ -70,12 +76,15 @@ it.each([false, true])(
     browser.errors.mockReset();
     browser.mint.mockReset().mockImplementation(async () => {
       if (revoke) browser.canRead = false;
-      return AsyncResult.success({ relativeUrl: "/api/assets/fresh/report.html", expiresAt: 1 });
+      return AsyncResult.success({
+        relativeUrl: `/api/assets/fresh/report.${pdf ? "pdf" : "html"}`,
+        expiresAt: 1,
+      });
     });
     const container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
-    await act(async () => root!.render(<RemoteDocument />));
+    await act(async () => root!.render(<RemoteDocument pdf={pdf} />));
     const frame = container.querySelector("iframe")!;
     vi.spyOn(frame, "getBoundingClientRect").mockReturnValue(new DOMRect(100, 150, 300, 200));
     frame.focus();
@@ -88,7 +97,10 @@ it.each([false, true])(
       );
     });
     expect(browser.choose).not.toHaveBeenCalled();
-    expect(browser.mint).toHaveBeenCalledExactlyOnceWith({ environmentId, input: { resource } });
+    expect(browser.mint).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: { resource: { ...resource, path: pdf ? "/exports/report.pdf" : resource.path } },
+    });
     if (revoke) {
       expect(browser.open).not.toHaveBeenCalled();
       expect(browser.errors).toHaveBeenCalledWith(
@@ -96,7 +108,7 @@ it.each([false, true])(
       );
     } else {
       expect(browser.open).toHaveBeenCalledExactlyOnceWith(
-        "https://source.test/api/assets/fresh/report.html",
+        `https://source.test/api/assets/fresh/report.${pdf ? "pdf" : "html"}`,
       );
       expect(browser.errors).not.toHaveBeenCalled();
     }

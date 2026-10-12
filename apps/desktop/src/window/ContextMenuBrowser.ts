@@ -36,7 +36,7 @@ export function assetFrameBrowserRequest(params: {
     const url = new URL(params.frameURL ?? "");
     if (
       (url.protocol !== "http:" && url.protocol !== "https:") ||
-      !/^\/api\/assets\/.+\.html?$/i.test(url.pathname) ||
+      !/^\/api\/assets\/.+\.(?:html?|pdf)$/i.test(url.pathname) ||
       !Number.isFinite(params.x) ||
       !Number.isFinite(params.y)
     )

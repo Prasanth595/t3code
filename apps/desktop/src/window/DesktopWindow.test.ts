@@ -584,7 +584,7 @@ describe("DesktopWindow", () => {
             {
               ...params,
               frame: documentFrame,
-              frameURL: "https://source.test/api/assets/expired/report.html",
+              frameURL: "https://source.test/api/assets/expired/report.pdf",
             },
           );
           const documentMenu = (yield* Queue.take(menus)).input;

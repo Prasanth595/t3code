@@ -25,24 +25,27 @@ it("leaves signed assets to their resource owner instead of opening expired capa
   ).toBeUndefined();
   expect(contextMenuBrowserUrl({ frameURL: "http://localhost:5000/thread/id" })).toBeUndefined();
 });
-it("forwards a document selection to its owner without passing the expired URL", () => {
-  const request = assetFrameBrowserRequest({
-    frameURL: "https://host.test/api/assets/expired/page.html",
-    x: 120,
-    y: 180,
-  });
-  expect(request).toBeDefined();
-  const postMessage = vi.fn();
-  new Function("window", request!)({ parent: { postMessage } });
-  expect(postMessage).toHaveBeenCalledWith(
-    {
-      jsonrpc: "2.0",
-      method: "t3/open-asset-externally",
-      params: { x: 120, y: 180 },
-    },
-    "*",
-  );
-});
+it.each(["report.html", "report.pdf"])(
+  "forwards %s selection to its owner without passing the expired URL",
+  (filename) => {
+    const request = assetFrameBrowserRequest({
+      frameURL: `https://host.test/api/assets/expired/${filename}`,
+      x: 120,
+      y: 180,
+    });
+    expect(request).toBeDefined();
+    const postMessage = vi.fn();
+    new Function("window", request!)({ parent: { postMessage } });
+    expect(postMessage).toHaveBeenCalledWith(
+      {
+        jsonrpc: "2.0",
+        method: "t3/open-asset-externally",
+        params: { x: 120, y: 180 },
+      },
+      "*",
+    );
+  },
+);
 it.each([
   "file:///tmp/page.html",
   "https://host.test/thread/id",
