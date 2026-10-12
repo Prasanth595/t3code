@@ -31,7 +31,7 @@ export function AnimatedWidth({
       )}
       style={width === null ? undefined : { width }}
     >
-      <span ref={contentRef} className="inline-block w-max whitespace-nowrap">
+      <span ref={contentRef} className="block w-max whitespace-nowrap">
         {children}
       </span>
     </span>
