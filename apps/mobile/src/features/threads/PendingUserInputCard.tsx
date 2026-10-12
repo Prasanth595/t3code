@@ -12,6 +12,7 @@ import {
 } from "../../lib/mobileTheme";
 import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
 import { useThreadMarkdownImageRenderer } from "./useThreadMarkdownImageRenderer";
+import { ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { RequestActionButton } from "./RequestActionButton";
@@ -461,21 +462,23 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
       <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
       <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
       {bar}
-      {EXPANDED_CARD_IS_OVERLAY ? (
-        // Clipping window for the collapse slide: same footprint as the
-        // expanded card, bottom edge on the bar's bottom edge. The sliding
-        // card exits through the bottom edge instead of drawing over the
-        // composer area, wiping the bar (and the transcript) into view.
-        <View
-          pointerEvents={props.collapsed ? "none" : "box-none"}
-          className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
-          style={{ height: props.maxHeight }}
-        >
-          {card}
-        </View>
-      ) : (
-        card
-      )}
+      <ThreadMediaVisibleContext value={!props.collapsed}>
+        {EXPANDED_CARD_IS_OVERLAY ? (
+          // Clipping window for the collapse slide: same footprint as the
+          // expanded card, bottom edge on the bar's bottom edge. The sliding
+          // card exits through the bottom edge instead of drawing over the
+          // composer area, wiping the bar (and the transcript) into view.
+          <View
+            pointerEvents={props.collapsed ? "none" : "box-none"}
+            className="absolute inset-x-0 bottom-0 justify-end overflow-hidden"
+            style={{ height: props.maxHeight }}
+          >
+            {card}
+          </View>
+        ) : (
+          card
+        )}
+      </ThreadMediaVisibleContext>
     </View>
   );
 }
