@@ -63,14 +63,11 @@ export class ServerCliLauncherManifestInvalidError extends Schema.TaggedError<Se
 export class ServerCliNpmRegistryInvalidError extends Schema.TaggedError<ServerCliNpmRegistryInvalidError>()(
   "ServerCliNpmRegistryInvalidError",
   {
-    protocol: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    const found =
-      this.protocol === undefined ? "" : `; the npm config names a ${this.protocol} URL`;
-    return `Cannot tell which http or https registry npm publishes @t3code packages to${found}. Check the registry settings in \`npm config list\`.`;
+    return "Cannot tell which http or https registry npm publishes @t3code packages to. Check the registry settings in `npm config list`.";
   }
 }
 

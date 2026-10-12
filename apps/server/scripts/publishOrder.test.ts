@@ -300,8 +300,10 @@ it.effect.each([
 );
 
 it.effect.each([
-  { value: "a value without a scheme", registry: "npm.example.com/prefix" },
-  { value: "an ftp URL", registry: "ftp://user@npm.example.com/", protocol: "ftp:" },
+  { value: "a value without a scheme", registry: "npm.example.com/prefix", unparsable: true },
+  // URL parsing reads the user name as the scheme here.
+  { value: "a login without a scheme", registry: "user:secret@npm.example.com/" },
+  { value: "an ftp URL", registry: "ftp://user@npm.example.com/" },
 ])("rejects $value as the registry npm publishes to", (test) =>
   Effect.gen(function* () {
     const error = yield* npmPublishRegistry({ "@t3code:registry": test.registry }).pipe(
@@ -309,8 +311,8 @@ it.effect.each([
     );
 
     assert.strictEqual(error._tag, "ServerCliNpmRegistryInvalidError");
-    assert.strictEqual(error.protocol, test.protocol);
-    assert.strictEqual(error.cause instanceof TypeError, test.protocol === undefined);
+    assert.strictEqual(error.cause instanceof TypeError, test.unparsable === true);
+    assert.notInclude(error.message, "user");
     assert.notInclude(error.message, "npm.example.com");
   }),
 );

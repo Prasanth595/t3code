@@ -123,7 +123,7 @@ export const npmPublishRegistry = Effect.fn("npmPublishRegistry")(function* (
     catch: (cause) => new ServerCliNpmRegistryInvalidError({ cause }),
   });
   if (protocol !== "http:" && protocol !== "https:") {
-    return yield* new ServerCliNpmRegistryInvalidError({ protocol });
+    return yield* new ServerCliNpmRegistryInvalidError({});
   }
   return registry;
 });
