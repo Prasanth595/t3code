@@ -378,6 +378,25 @@ describe("buildBreakdownRows", () => {
     );
     expect(rows.filter((row) => row.kind === "item").map((row) => row.key)[0]).toBe("claude");
   });
+  it("opens a provider's accounts down to the threads that match the search", () => {
+    const rows = buildBreakdownRows(
+      input({
+        dimension: "provider",
+        query: "explore",
+        accountsOfProvider: () => 2,
+        nameOf: (_: string, key: string) => key,
+      }),
+    );
+    const items = rows.flatMap((row) => (row.kind === "item" ? [row] : []));
+    // Provider, account, model and project come first; the match sits below them.
+    expect(items.map((row) => row.dimension).slice(0, 4)).toEqual([
+      "provider",
+      "account",
+      "model",
+      "project",
+    ]);
+    expect(items.some((row) => row.key === "env-a\u001fagent:claude:s:a")).toBe(true);
+  });
   it("finds a model used only outside threads", () => {
     // Cursor's "auto" usage has no thread; its project opens to Not in a thread.
     const rows = buildBreakdownRows(input({ query: "auto" }));

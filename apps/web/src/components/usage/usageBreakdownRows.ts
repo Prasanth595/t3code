@@ -256,7 +256,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
       : [];
     const expandable = isThread
       ? liveChildren.length > 0
-      : childDim !== null && depth < 3 && !(dim === "project" && !scopeThreads?.any);
+      : childDim !== null && !(dim === "project" && !scopeThreads?.any);
     // A search opens the path to its matches.
     const isOpen =
       expandable &&
