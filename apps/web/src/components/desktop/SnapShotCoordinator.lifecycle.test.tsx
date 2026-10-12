@@ -226,3 +226,23 @@ it("validates a rerun pass against the route it started on", async () => {
 
   expect(bridge.readSnapShot).toHaveBeenCalledWith(pendingCapture.id);
 });
+
+it("resolves an unpinned capture against the route its drain pass started on", async () => {
+  await mount(threadA);
+  let finishListing: ((captures: DesktopPendingSnapShot[]) => void) | undefined;
+  bridge.listPendingSnapShots.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishListing = resolve;
+      }),
+  );
+
+  // A capture persisted across relaunch never saw `requested`, so it has no pinned target.
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  setRoute(null, 1);
+  route.href = "/settings";
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => finishListing?.([pendingCapture]));
+
+  expect(bridge.readSnapShot).toHaveBeenCalledWith(pendingCapture.id);
+});

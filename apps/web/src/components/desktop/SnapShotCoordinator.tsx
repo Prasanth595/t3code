@@ -58,6 +58,33 @@ export function resolveExistingSnapShotTarget(
     : null;
 }
 
+type SnapShotCaptureContext = Pick<
+  ReturnType<typeof useHandleNewThread>,
+  "activeDraftThread" | "activeThread" | "defaultProjectRef" | "handleNewThread" | "routeThreadRef"
+>;
+
+// Reuses the last target while it is still valid for the given route, otherwise creates a draft
+// in the context's project. Drain passes pass the context they started with, so navigation during
+// `listPendingSnapShots` cannot redirect an unpinned capture.
+async function resolveSnapShotCaptureTarget(
+  context: SnapShotCaptureContext,
+  lastTarget: CaptureTarget | null,
+): Promise<CaptureTarget | null> {
+  if (lastTarget) {
+    const existingTarget = resolveExistingSnapShotTarget(lastTarget, context.routeThreadRef);
+    if (existingTarget) return existingTarget;
+  }
+  const projectRef = resolveThreadActionProjectRef({
+    activeDraftThread: context.activeDraftThread,
+    activeThread: context.activeThread ?? undefined,
+    defaultProjectRef: context.defaultProjectRef,
+    handleNewThread: context.handleNewThread,
+  });
+  if (!projectRef) return null;
+  const created = await context.handleNewThread(projectRef);
+  return created?.draftId ?? null;
+}
+
 const NEXT_PAINT_FALLBACK_MS = 100;
 
 export async function beginSnapShotAnimationWhenReady(
@@ -251,39 +278,16 @@ export function SnapShotCoordinator() {
     routeThreadRef,
   ]);
 
-  const resolveTarget = useCallback(async (): Promise<CaptureTarget | null> => {
-    const {
-      activeDraftThread: currentDraftThread,
-      activeThread: currentActiveThread,
-      defaultProjectRef: currentDefaultProjectRef,
-      handleNewThread: currentHandleNewThread,
-      routeThreadRef: currentRouteThreadRef,
-    } = latestContextRef.current;
-    const lastTarget = lastTargetRef.current;
-    if (lastTarget) {
-      const existingTarget = resolveExistingSnapShotTarget(lastTarget, currentRouteThreadRef);
-      if (existingTarget) {
-        lastTargetRef.current = existingTarget;
-        return existingTarget;
-      }
-      lastTargetRef.current = null;
-    }
-    const projectRef = resolveThreadActionProjectRef({
-      activeDraftThread: currentDraftThread,
-      activeThread: currentActiveThread ?? undefined,
-      defaultProjectRef: currentDefaultProjectRef,
-      handleNewThread: currentHandleNewThread,
-    });
-    if (!projectRef) return null;
-    const created = await currentHandleNewThread(projectRef);
-    if (!created) return null;
-    lastTargetRef.current = created.draftId;
-    return created.draftId;
-  }, []);
-
   const resolveCaptureTarget = useCallback(
-    () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget),
-    [resolveTarget],
+    () =>
+      resolveSnapShotTargetOnce(targetResolutionRef, async () => {
+        lastTargetRef.current = await resolveSnapShotCaptureTarget(
+          latestContextRef.current,
+          lastTargetRef.current,
+        );
+        return lastTargetRef.current;
+      }),
+    [],
   );
 
   const playCaptureSound = useCallback((id: string) => {
@@ -306,19 +310,26 @@ export function SnapShotCoordinator() {
     const operation = (async () => {
       do {
         rerunRequestedRef.current = false;
-        // Validate against the route this pass started on: a pinned capture on a routed thread
-        // whose shell has not loaded yet must not be dropped because the user navigated mid-pass.
-        const { routeThreadRef: passRouteThreadRef } = latestContextRef.current;
+        // Resolve and validate against the context this pass started on: a capture for a routed
+        // thread whose shell has not loaded yet must not be dropped or redirected because the
+        // user navigated mid-pass.
+        const passContext = latestContextRef.current;
+        let passLastTarget = lastTargetRef.current;
+        const resolvePassTarget = () =>
+          resolveSnapShotTargetOnce(targetResolutionRef, async () => {
+            passLastTarget = await resolveSnapShotCaptureTarget(passContext, passLastTarget);
+            return passLastTarget;
+          });
         const pending = await bridge.listPendingSnapShots();
         for (const item of pending) {
           playCaptureSound(item.id);
           const capturedTarget = await resolveSnapShotDeliveryTarget(
             captureTargetsRef.current,
             item.id,
-            resolveCaptureTarget,
+            resolvePassTarget,
           );
           const target = capturedTarget
-            ? resolveExistingSnapShotTarget(capturedTarget, passRouteThreadRef)
+            ? resolveExistingSnapShotTarget(capturedTarget, passContext.routeThreadRef)
             : null;
           if (!target) {
             await dismissSnapShotAnimation(item.id);
@@ -368,7 +379,7 @@ export function SnapShotCoordinator() {
       });
     drainingRef.current = operation;
     return operation;
-  }, [playCaptureSound, resolveCaptureTarget]);
+  }, [playCaptureSound]);
 
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
