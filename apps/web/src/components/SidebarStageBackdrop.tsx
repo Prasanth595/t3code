@@ -48,7 +48,7 @@ export function useSidebarStageBackdropVariant(enabled = true): SidebarStageBack
 
 /** Stage-channel header art; palettes mirror the per-channel app icons in `assets/`. */
 export interface SidebarStageBackdropProps {
-  variant: SidebarStageBackdropVariant;
+  variant?: SidebarStageBackdropVariant | null;
   customBackdropImageUrl?: string | null;
 }
 
@@ -60,18 +60,16 @@ export function SidebarStageBackdrop({
   return (
     <div
       aria-hidden
-      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden"
+      className="sidebar-stage-backdrop pointer-events-none absolute inset-x-0 top-0 z-0 h-20 select-none overflow-hidden bg-cover bg-center"
       style={
         customBackdropImageUrl
           ? {
               backgroundImage: `url(${customBackdropImageUrl})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
             }
           : undefined
       }
     >
-      {customBackdropImageUrl ? null : <StageBackdropArt variant={variant} />}
+      {customBackdropImageUrl ? null : variant ? <StageBackdropArt variant={variant} /> : null}
     </div>
   );
 }

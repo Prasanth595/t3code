@@ -3,7 +3,14 @@ import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
 import { Spinner } from "~/components/ui/spinner";
 import { NotificationSettings } from "./NotificationSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
-import { ArchiveIcon, ArchiveX, CheckIcon, ChevronRightIcon, SettingsIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  CheckIcon,
+  ChevronRightIcon,
+  SettingsIcon,
+  UploadIcon,
+} from "lucide-react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import type { CSSProperties, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -1189,6 +1196,23 @@ export function AppearanceSettingsPanel() {
     "--settings-slider-fill-offset": `${0.5 - panelAnimationDurationRatio}rem`,
   } as CSSProperties;
 
+  const handleBackdropFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result;
+        if (typeof result === "string") {
+          updateSettings({ customBackdropImageUrl: result });
+        }
+      };
+      reader.readAsDataURL(file);
+      e.target.value = "";
+    },
+    [updateSettings],
+  );
+
   return (
     <SettingsPageContainer>
       <SettingsSection id="appearance" title="Colors & themes" variant="plain" hideTitle>
@@ -1349,6 +1373,66 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+
+        <SettingsRow
+          title="Header Backdrop Image"
+          description="Custom background image URL or file for the sidebar header."
+          resetAction={
+            settings.customBackdropImageUrl ? (
+              <SettingResetButton
+                label="header backdrop image"
+                onClick={() => updateSettings({ customBackdropImageUrl: null })}
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+              <DraftInput
+                size="sm"
+                className="w-full sm:w-64"
+                value={settings.customBackdropImageUrl ?? ""}
+                onCommit={(next) => {
+                  const trimmed = next.trim();
+                  updateSettings({ customBackdropImageUrl: trimmed.length > 0 ? trimmed : null });
+                }}
+                placeholder="e.g. /custom-header-backdrop.png"
+                spellCheck={false}
+                aria-label="Header backdrop image URL"
+              />
+              <label className="inline-flex cursor-pointer items-center justify-center gap-1.5 rounded-[var(--control-radius)] border border-input bg-popover px-2.5 py-1 text-xs font-medium text-foreground shadow-xs/5 hover:bg-accent/50 focus-within:ring-2 focus-within:ring-ring">
+                <UploadIcon className="size-3.5 text-muted-foreground" />
+                <span>Choose File</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="sr-only"
+                  aria-label="Upload backdrop image file"
+                  onChange={handleBackdropFileChange}
+                />
+              </label>
+            </div>
+          }
+        />
+
+        <SettingsRow
+          title="Show Header Title"
+          description="Display 'T3 Code' brand title text over the header backdrop."
+          resetAction={
+            settings.showSidebarHeaderTitle !== true ? (
+              <SettingResetButton
+                label="show header title"
+                onClick={() => updateSettings({ showSidebarHeaderTitle: true })}
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.showSidebarHeaderTitle}
+              onCheckedChange={(checked) => updateSettings({ showSidebarHeaderTitle: checked })}
+              aria-label="Show header title"
+            />
+          }
+        />
 
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}
