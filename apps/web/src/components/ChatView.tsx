@@ -10384,13 +10384,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (
-      questionId: string,
-      value: string,
-      nextCursor: number,
-      expandedCursor: number,
-      _cursorAdjacentToMention: boolean,
-    ) => {
+    (questionId: string, value: string) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -10410,16 +10404,10 @@ export default function ChatView(props: ChatViewProps) {
           ),
         },
       }));
-      const snapshot = composerRef.current?.readSnapshot();
-      if (
-        snapshot?.value !== value ||
-        snapshot.cursor !== nextCursor ||
-        snapshot.expandedCursor !== expandedCursor
-      ) {
-        composerRef.current?.focusAt(nextCursor);
-      }
+      // The composer owns selection. Refocusing before its controlled value
+      // updates can report the old editor text and overwrite a picker insertion.
     },
-    [activePendingUserInput, activePendingRequestKey, composerRef],
+    [activePendingUserInput, activePendingRequestKey],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {

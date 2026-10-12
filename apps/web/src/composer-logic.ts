@@ -93,10 +93,11 @@ export function expandCollapsedComposerCursor(
   text: string,
   cursorInput: number,
   literalText = false,
+  answerThreadLinks = false,
 ): number {
   if (literalText) return clampCursor(text, cursorInput);
   const collapsedCursor = clampCursor(text, cursorInput);
-  const segments = splitPromptIntoComposerSegments(text);
+  const segments = splitPromptIntoComposerSegments(text, answerThreadLinks);
   if (segments.length === 0) {
     return collapsedCursor;
   }
@@ -164,10 +165,11 @@ export function clampCollapsedComposerCursor(
   text: string,
   cursorInput: number,
   literalText = false,
+  answerThreadLinks = false,
 ): number {
   if (literalText) return clampCursor(text, cursorInput);
   return clampCollapsedComposerCursorForSegments(
-    splitPromptIntoComposerSegments(text),
+    splitPromptIntoComposerSegments(text, answerThreadLinks),
     cursorInput,
   );
 }
@@ -176,10 +178,11 @@ export function collapseExpandedComposerCursor(
   text: string,
   cursorInput: number,
   literalText = false,
+  answerThreadLinks = false,
 ): number {
   if (literalText) return clampCursor(text, cursorInput);
   const expandedCursor = clampCursor(text, cursorInput);
-  const segments = splitPromptIntoComposerSegments(text);
+  const segments = splitPromptIntoComposerSegments(text, answerThreadLinks);
   if (segments.length === 0) {
     return expandedCursor;
   }
@@ -232,8 +235,9 @@ export function isCollapsedCursorAdjacentToInlineToken(
   text: string,
   cursorInput: number,
   direction: "left" | "right",
+  answerThreadLinks = false,
 ): boolean {
-  const segments = splitPromptIntoComposerSegments(text);
+  const segments = splitPromptIntoComposerSegments(text, answerThreadLinks);
   if (!segments.some(isInlineTokenSegment)) {
     return false;
   }
@@ -326,16 +330,20 @@ export function pastedPathQueryLength(
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  answerThreadLinks = false,
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
 } {
-  const cursor = collapseExpandedComposerCursor(text, text.length, literalText);
+  const cursor = collapseExpandedComposerCursor(text, text.length, literalText, answerThreadLinks);
   return {
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(
+          text,
+          expandCollapsedComposerCursor(text, cursor, literalText, answerThreadLinks),
+        ),
   };
 }
 

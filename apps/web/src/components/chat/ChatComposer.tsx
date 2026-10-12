@@ -1,3 +1,4 @@
+import { collectThreadLinks } from "@t3tools/shared/threadLinks";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -56,6 +57,7 @@ import {
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { composerThreadReferenceText } from "./composerThreadReference";
 import { folderDropTarget, resolveDroppedFolderPath } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
@@ -1682,13 +1684,7 @@ export interface ChatComposerProps {
   onAdvanceActivePendingUserInput: () => void;
   onDismissActivePendingUserInput: (requestId: RuntimeRequestId) => void;
   onPreviousActivePendingUserInputQuestion: () => void;
-  onChangeActivePendingUserInputCustomAnswer: (
-    questionId: string,
-    value: string,
-    nextCursor: number,
-    expandedCursor: number,
-    cursorAdjacentToMention: boolean,
-  ) => void;
+  onChangeActivePendingUserInputCustomAnswer: (questionId: string, value: string) => void;
 
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
@@ -1839,6 +1835,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const pendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
   const activePendingProgress = holdingUserInput ? null : incomingPendingProgress;
   const activePendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
+  const answerThreadLinks = activePendingProgress?.activeQuestion != null;
   const isLiteralPendingAnswer = activePendingProgress?.activeQuestion?.initialAnswer !== undefined;
   // Opening a running thread resyncs for a few frames. Show the sync row, and
   // hide the tasks row for it, only when the sync lasts. Logic that depends on
@@ -1972,12 +1969,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         terminalContexts: composerTerminalContexts,
         reviewComments: composerReviewComments,
         previewAnnotations: composerPreviewAnnotations,
-        threadContexts: composerThreadContexts,
+        threadContexts: answerThreadLinks
+          ? collectThreadLinks(activePendingProgress?.customAnswer ?? "").map(
+              ({ threadId, label }) => threadContextRecord({ environmentId, threadId }, label),
+            )
+          : composerThreadContexts,
         images: composerImages,
         files: composerFiles,
         uploadsByImageId,
       }),
     [
+      answerThreadLinks,
+      activePendingProgress?.customAnswer,
+      environmentId,
       composerFiles,
       composerImages,
       composerPreviewAnnotations,
@@ -2438,7 +2442,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   const [composerCursor, setComposerCursor] = useState(() => {
     const value = isLiteralPendingAnswer ? (activePendingProgress?.customAnswer ?? prompt) : prompt;
-    return collapseExpandedComposerCursor(value, value.length, isLiteralPendingAnswer);
+    return collapseExpandedComposerCursor(
+      value,
+      value.length,
+      isLiteralPendingAnswer,
+      answerThreadLinks,
+    );
   });
   const {
     trigger: composerTrigger,
@@ -3442,10 +3451,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Sync refs back to parent
   // ------------------------------------------------------------------
   useEffect(() => {
-    if (isLiteralPendingAnswer) return;
+    if (activePendingProgress?.activeQuestion) return;
     promptRef.current = prompt;
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
-  }, [isLiteralPendingAnswer, prompt, promptRef]);
+  }, [activePendingProgress?.activeQuestion, prompt, promptRef]);
 
   useEffect(() => {
     if (composerSubmissionError === null) return;
@@ -3546,7 +3555,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
 
     promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer);
+    const { cursor, trigger } = composerStateAtPromptEnd(
+      nextCustomAnswer,
+      isLiteralPendingAnswer,
+      answerThreadLinks,
+    );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setComposerHighlightedItemId(null);
@@ -3554,6 +3567,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.customAnswer,
     activePendingProgress?.activeQuestion?.id,
     isLiteralPendingAnswer,
+    answerThreadLinks,
     activePendingUserInput?.requestId,
     prompt,
     promptRef,
@@ -3568,7 +3582,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedSearchKey(null);
     setComposerSubmissionError(null);
     setProviderInputSubmissionError(null);
-    const { cursor, trigger } = composerStateAtPromptEnd(promptRef.current, isLiteralPendingAnswer);
+    const { cursor, trigger } = composerStateAtPromptEnd(
+      promptRef.current,
+      isLiteralPendingAnswer,
+      answerThreadLinks,
+    );
     setComposerCursor(cursor);
     resetComposerTrigger(trigger);
     setIsDragOverComposer(false);
@@ -3577,6 +3595,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     draftId,
     activeThreadId,
     isLiteralPendingAnswer,
+    answerThreadLinks,
     promptRef,
     resetComposerTrigger,
     setIsComposerScrollCollapsed,
@@ -3742,9 +3761,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
           nextPrompt,
-          nextCursor,
-          expandedCursor,
-          cursorAdjacentToMention,
         );
         return;
       }
@@ -3920,11 +3936,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         next.text,
         options?.expandedCursorAfterReplace ?? next.cursor,
         isLiteralPendingAnswer,
+        answerThreadLinks,
       );
       const nextExpandedCursor = expandCollapsedComposerCursor(
         next.text,
         nextCursor,
         isLiteralPendingAnswer,
+        answerThreadLinks,
       );
       if (options?.citationComment) {
         composerEditorRef.current?.requestCitationComment({
@@ -3938,13 +3956,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
-        onChangeActivePendingUserInputCustomAnswer(
-          activePendingQuestion.id,
-          next.text,
-          nextCursor,
-          nextExpandedCursor,
-          isLiteralPendingAnswer,
-        );
+        onChangeActivePendingUserInputCustomAnswer(activePendingQuestion.id, next.text);
       } else {
         setPrompt(next.text);
         onTypingGuardDraftChange();
@@ -3969,6 +3981,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       isLiteralPendingAnswer,
+      answerThreadLinks,
       onChangeActivePendingUserInputCustomAnswer,
       onTypingGuardDraftChange,
       promptRef,
@@ -3994,10 +4007,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         promptRef.current,
         composerCursor,
         isLiteralPendingAnswer,
+        answerThreadLinks,
       ),
       contextIds: isLiteralPendingAnswer ? [] : collectInlineContextIds(promptRef.current),
     };
-  }, [composerCursor, isLiteralPendingAnswer, promptRef]);
+  }, [composerCursor, isLiteralPendingAnswer, answerThreadLinks, promptRef]);
 
   const resolveActiveComposerTrigger = useCallback((): {
     snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -4144,7 +4158,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const shell = readThreadShell(item.thread);
         if (!shell) return;
         const record = threadContextRecord(item.thread, shell.title);
-        const replacement = `${formatInlineContextReference(threadContextReference(record))} `;
+        const answeringQuestion = activePendingProgress?.activeQuestion != null;
+        const replacement = `${composerThreadReferenceText(record, answeringQuestion)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
           snapshot.value,
           trigger.rangeEnd,
@@ -4157,15 +4172,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
         );
         if (applied) {
-          addComposerDraftThreadContexts(composerDraftTarget, [record], {
-            appendReference: false,
-          });
+          if (!answeringQuestion) {
+            addComposerDraftThreadContexts(composerDraftTarget, [record], {
+              appendReference: false,
+            });
+          }
           setComposerHighlightedItemId(null);
         }
         return;
       }
     },
     [
+      activePendingProgress?.activeQuestion,
       addComposerDraftReviewComment,
       addComposerDraftThreadContexts,
       applyPromptReplacement,
@@ -6527,6 +6545,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           promptForState,
           options?.cursor ?? 0,
           isLiteralPendingAnswer,
+          answerThreadLinks,
         );
         setComposerHighlightedItemId(null);
         setComposerCursor(cursor);
@@ -6534,7 +6553,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           options?.detectTrigger && !isLiteralPendingAnswer
             ? detectComposerTrigger(
                 promptForState,
-                expandCollapsedComposerCursor(promptForState, cursor),
+                expandCollapsedComposerCursor(
+                  promptForState,
+                  cursor,
+                  isLiteralPendingAnswer,
+                  answerThreadLinks,
+                ),
               )
             : null,
         );
@@ -6637,6 +6661,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       isComposerApprovalState,
       isChoiceOnlyPendingQuestion,
       isLiteralPendingAnswer,
+      answerThreadLinks,
       pendingUserInputs.length,
       projectSelectionRequired,
       applyPromptReplacement,
@@ -7501,6 +7526,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
                     literalText={isLiteralPendingAnswer}
+                    answerThreadLinks={answerThreadLinks}
                     isPathQueryActive={() =>
                       resolveActiveComposerTrigger().trigger?.kind === "path"
                     }

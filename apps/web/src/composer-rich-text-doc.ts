@@ -542,7 +542,13 @@ function textJsonForSpan(text: string, marks: RichTextMark[]): Record<string, un
 export function buildTiptapContent(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean; blocks?: boolean; literalText?: boolean; literalLength?: number },
+  options?: {
+    styling?: boolean;
+    blocks?: boolean;
+    literalText?: boolean;
+    literalLength?: number;
+    answerThreadLinks?: boolean;
+  },
 ): Record<string, unknown>[] {
   // Editor answers are verbatim text, including Markdown and context-token sources.
   if (options?.literalText) {
@@ -566,7 +572,10 @@ export function buildTiptapContent(
   // place of the sentinel rather than building an atom for it.
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
-  const text = splitPromptIntoComposerSegments(value.slice(literal.length))
+  const text = splitPromptIntoComposerSegments(
+    value.slice(literal.length),
+    options?.answerThreadLinks,
+  )
     .map((segment) => {
       if (segment.type === "text") return segment.text;
       atoms.push(atomJsonForSegment(segment, skillLabelFor));
@@ -780,7 +789,7 @@ export function buildTiptapContent(
 export function buildDocJson(
   value: string,
   skillLabelFor: (name: string) => SkillMeta,
-  options?: { styling?: boolean; literalText?: boolean },
+  options?: { styling?: boolean; literalText?: boolean; answerThreadLinks?: boolean },
 ) {
   const content = buildTiptapContent(value, skillLabelFor, options);
   // The empty line the rule extension keeps after a final rule.
