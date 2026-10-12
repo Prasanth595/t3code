@@ -21,6 +21,10 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
+import {
+  openIdleInstallPromptIfAgentsRun,
+  useIdleInstallArmed,
+} from "../desktop/DesktopUpdateIdleInstall";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -136,6 +140,7 @@ function SidebarUpdateControl() {
   // A fork live server update restarts only the server, so it gets its own color.
   const isServerOnlyUpdate = action === "install" && isLiveServerUpdate(state);
   const isDownloading = state?.status === "downloading";
+  const idleInstallArmed = useIdleInstallArmed() && action === "install";
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
     isChecking: state?.status === "checking",
@@ -146,13 +151,15 @@ function SidebarUpdateControl() {
     isDownloading,
     showCheckIcon,
   });
-  const tooltip = showUpdateDetails
-    ? state
-      ? getDesktopUpdateButtonTooltip(state)
-      : "Update available"
-    : showCheckIcon
-      ? "Checking for updates…"
-      : "Check for updates";
+  const tooltip = idleInstallArmed
+    ? "Installs when the running agents finish. Click to change."
+    : showUpdateDetails
+      ? state
+        ? getDesktopUpdateButtonTooltip(state)
+        : "Update available"
+      : showCheckIcon
+        ? "Checking for updates…"
+        : "Check for updates";
   const disabled = showCheckIcon
     ? true
     : showUpdateDetails
@@ -215,6 +222,10 @@ function SidebarUpdateControl() {
     }
 
     if (action === "install") {
+      if (openIdleInstallPromptIfAgentsRun()) {
+        setIsActionPending(false);
+        return;
+      }
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
@@ -311,14 +322,15 @@ function SidebarUpdateControl() {
         showUpdateIconState && isServerOnlyUpdate
           ? cn("bg-info/15 text-info-foreground", !isInteractionDisabled && "hover:bg-info/25")
           : showUpdateIconState
-          ? cn(
-              "bg-sidebar-control-surface text-sidebar-foreground",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover",
-            )
-          : cn(
-              "text-(--sidebar-icon-color)",
-              !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-            ),
+            ? cn(
+                "bg-sidebar-control-surface text-sidebar-foreground",
+                !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+              )
+            : cn(
+                "text-(--sidebar-icon-color)",
+                !isInteractionDisabled &&
+                  "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+              ),
         disabled && !showUpdateIconState && "opacity-60",
       )}
       onClick={handleAction}

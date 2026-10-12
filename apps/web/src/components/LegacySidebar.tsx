@@ -147,6 +147,7 @@ import {
   shouldToastDesktopUpdateActionResult,
 } from "./desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "./desktopUpdate.toast";
+import { openIdleInstallPromptIfAgentsRun } from "./desktop/DesktopUpdateIdleInstall";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import {
@@ -3793,6 +3794,10 @@ export default function LegacySidebar() {
     }
 
     if (desktopUpdateButtonAction === "install") {
+      if (openIdleInstallPromptIfAgentsRun()) {
+        setDesktopUpdateActionPending(false);
+        return;
+      }
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(

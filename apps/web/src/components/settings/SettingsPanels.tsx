@@ -96,6 +96,10 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
+  openIdleInstallPromptIfAgentsRun,
+  useIdleInstallArmed,
+} from "../desktop/DesktopUpdateIdleInstall";
+import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
   selectsPlanAgent,
@@ -288,6 +292,7 @@ function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
+  const idleInstallArmed = useIdleInstallArmed();
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -347,6 +352,7 @@ function AboutVersionSection() {
 
     if (action === "install") {
       if (isUpdateActionPending) return;
+      if (openIdleInstallPromptIfAgentsRun()) return;
       setIsUpdateActionPending(true);
       let confirmed = false;
       try {
@@ -430,11 +436,14 @@ function AboutVersionSection() {
   };
   const buttonLabel =
     actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
-  const description = isServerOnlyUpdate
-    ? "Server update ready. The server restarts and the app keeps running."
-    : action === "download" || action === "install"
-      ? "Update available."
-      : "Current version of the application.";
+  const description =
+    idleInstallArmed && action === "install"
+      ? "Update installs when the running agents finish."
+      : isServerOnlyUpdate
+        ? "Server update ready. The server restarts and the app keeps running."
+        : action === "download" || action === "install"
+          ? "Update available."
+          : "Current version of the application.";
 
   return (
     <>
