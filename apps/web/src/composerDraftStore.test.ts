@@ -3712,6 +3712,97 @@ describe("confirmed composer model selections", () => {
 
 describe("confirmed model persistence", () => {
   beforeEach(resetComposerDraftStore);
+  it.each([false, true])(
+    "retries a failed confirmation write without losing a newer choice: %j",
+    async (makeNewerChoice) => {
+      vi.useFakeTimers();
+      vi.resetModules();
+      const storage = createMockStorage();
+      vi.stubGlobal("localStorage", storage);
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        const { useComposerDraftStore: isolatedStore } = await import("./composerDraftStore");
+        const { startTurnWithComposerModel: startTurn } =
+          await import("./state/start-turn-with-composer-model");
+        const threadRef = scopeThreadRef(
+          EnvironmentId.make("retry-env"),
+          ThreadId.make("retry-thread"),
+        );
+        const sent = createModelSelection(CODEX_INSTANCE, "gpt-6-astra");
+        const newer = createModelSelection(CODEX_INSTANCE, "gpt-5.6-sol");
+        const store = isolatedStore.getState();
+        store.setModelSelection(threadRef, sent, { explicit: true, replaceOptions: true });
+        store.setPrompt(threadRef, "Keep this unsent text");
+        await vi.advanceTimersByTimeAsync(300);
+        storage.setItem.mockImplementationOnce(() => {
+          throw new Error("Temporary storage failure");
+        });
+
+        const result = await startTurn(threadRef, sent, async () => AsyncResult.success(undefined));
+        expect(result._tag).toBe("Success");
+        if (makeNewerChoice) {
+          store.setModelSelection(threadRef, newer, { explicit: true, replaceOptions: true });
+        }
+        await vi.advanceTimersByTimeAsync(300);
+
+        isolatedStore.setState({ draftsByThreadKey: {} });
+        await isolatedStore.persist.rehydrate();
+        const restored = isolatedStore.getState().getComposerDraft(threadRef);
+        expect(restored?.prompt).toBe("Keep this unsent text");
+        expect(restored?.modelSelectionByProvider).toEqual(
+          makeNewerChoice ? { [CODEX_INSTANCE]: newer } : {},
+        );
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+        vi.unstubAllGlobals();
+        vi.restoreAllMocks();
+        vi.resetModules();
+      }
+    },
+  );
+
+  it("bounds confirmation retries and keeps the accepted turn successful", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+    const storage = createMockStorage();
+    vi.stubGlobal("localStorage", storage);
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const { useComposerDraftStore: isolatedStore } = await import("./composerDraftStore");
+      const { startTurnWithComposerModel: startTurn } =
+        await import("./state/start-turn-with-composer-model");
+      const threadRef = scopeThreadRef(
+        EnvironmentId.make("retry-env"),
+        ThreadId.make("retry-thread"),
+      );
+      const selection = createModelSelection(CODEX_INSTANCE, "gpt-6-astra");
+      isolatedStore.getState().setModelSelection(threadRef, selection, { explicit: true });
+      await vi.advanceTimersByTimeAsync(300);
+      storage.setItem.mockClear();
+      storage.setItem.mockImplementation(() => {
+        throw new Error("Storage remains unavailable");
+      });
+
+      const result = await startTurn(threadRef, selection, async () =>
+        AsyncResult.success(undefined),
+      );
+      expect(result._tag).toBe("Success");
+      await vi.advanceTimersByTimeAsync(300);
+      expect(storage.setItem).toHaveBeenCalledTimes(2);
+      expect(warning).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(storage.setItem).toHaveBeenCalledTimes(2);
+      expect(isolatedStore.getState().getComposerDraft(threadRef)).toBeNull();
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      vi.resetModules();
+    }
+  });
+
   it("does not restore a confirmed choice when the draft store rehydrates immediately", async () => {
     const threadRef = scopeThreadRef(
       EnvironmentId.make("persist-env"),

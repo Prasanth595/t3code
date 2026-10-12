@@ -3236,6 +3236,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             } catch (error) {
               // Acceptance is durable even if this client's storage is unavailable.
               console.warn("Could not persist the confirmed composer model", error);
+              // Retry the latest pending state, including any newer choice made meanwhile.
+              setTimeout(() => {
+                try {
+                  composerDebouncedStorage.flush();
+                } catch (retryError) {
+                  console.warn("Could not retry the confirmed composer model", retryError);
+                }
+              }, COMPOSER_PERSIST_DEBOUNCE_MS);
             }
           }
         },
