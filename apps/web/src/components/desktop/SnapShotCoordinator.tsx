@@ -244,6 +244,10 @@ export function SnapShotCoordinator() {
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
   const currentTarget = routeThreadRef ?? routeDraftId;
+  const routeHref = useLocation({ select: (location) => location.href });
+  const defaultProjectKey = defaultProjectRef
+    ? `${defaultProjectRef.environmentId}:${defaultProjectRef.projectId}`
+    : null;
   const latestContextRef = useRef({
     activeDraftThread,
     activeThread,
@@ -252,6 +256,8 @@ export function SnapShotCoordinator() {
     defaultProjectRef,
     handleNewThread,
     routeThreadRef,
+    routeHref,
+    defaultProjectKey,
   });
 
   useLayoutEffect(() => {
@@ -266,6 +272,8 @@ export function SnapShotCoordinator() {
       defaultProjectRef,
       handleNewThread,
       routeThreadRef,
+      routeHref,
+      defaultProjectKey,
     };
   }, [
     activeDraftThread,
@@ -276,16 +284,25 @@ export function SnapShotCoordinator() {
     defaultProjectRef,
     handleNewThread,
     routeThreadRef,
+    routeHref,
+    defaultProjectKey,
   ]);
 
   const resolveCaptureTarget = useCallback(
     () =>
       resolveSnapShotTargetOnce(targetResolutionRef, async () => {
-        lastTargetRef.current = await resolveSnapShotCaptureTarget(
-          latestContextRef.current,
-          lastTargetRef.current,
-        );
-        return lastTargetRef.current;
+        const context = latestContextRef.current;
+        const lastTarget = lastTargetRef.current;
+        const target = await resolveSnapShotCaptureTarget(context, lastTarget);
+        // A committed navigation owns the live target, even if an older creation finishes later.
+        if (
+          context.routeHref === latestContextRef.current.routeHref &&
+          context.defaultProjectKey === latestContextRef.current.defaultProjectKey &&
+          lastTargetRef.current === lastTarget
+        ) {
+          lastTargetRef.current = target;
+        }
+        return target;
       }),
     [],
   );
@@ -315,19 +332,29 @@ export function SnapShotCoordinator() {
         // user navigated mid-pass.
         const passContext = latestContextRef.current;
         let passLastTarget = lastTargetRef.current;
+        const passResolutionRef = { current: null as Promise<CaptureTarget | null> | null };
         const resolvePassTarget = () =>
-          resolveSnapShotTargetOnce(targetResolutionRef, async () => {
+          resolveSnapShotTargetOnce(passResolutionRef, async () => {
             passLastTarget = await resolveSnapShotCaptureTarget(passContext, passLastTarget);
             return passLastTarget;
           });
         const pending = await bridge.listPendingSnapShots();
         for (const item of pending) {
           playCaptureSound(item.id);
-          const capturedTarget = await resolveSnapShotDeliveryTarget(
+          let capturedTarget = await resolveSnapShotDeliveryTarget(
             captureTargetsRef.current,
             item.id,
             resolvePassTarget,
           );
+          // An animated capture may still be waiting on creation abandoned before this ready pass.
+          // Its null result is evicted by resolveSnapShotDeliveryTarget; retry from this pass's route.
+          if (!capturedTarget) {
+            capturedTarget = await resolveSnapShotDeliveryTarget(
+              captureTargetsRef.current,
+              item.id,
+              resolvePassTarget,
+            );
+          }
           const target = capturedTarget
             ? resolveExistingSnapShotTarget(capturedTarget, passContext.routeThreadRef)
             : null;
@@ -450,10 +477,6 @@ export function SnapShotCoordinator() {
   // Captures persisted before the route bootstrapped, or whose draft creation was abandoned by
   // navigation, get no new `ready` event. Retry when the location or default project changes,
   // which streaming updates to the same thread never do.
-  const routeHref = useLocation({ select: (location) => location.href });
-  const defaultProjectKey = defaultProjectRef
-    ? `${defaultProjectRef.environmentId}:${defaultProjectRef.projectId}`
-    : null;
   const retryKey = currentTarget || defaultProjectKey ? `${routeHref} ${defaultProjectKey}` : null;
   const previousRetryKeyRef = useRef(retryKey);
   useEffect(() => {

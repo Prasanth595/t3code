@@ -20,13 +20,15 @@ import {
   getPendingSnapShotAnimations,
 } from "../../lib/snapShotAnimation";
 import { SnapShotCoordinator } from "./SnapShotCoordinator";
+import { DraftId } from "../../composerDraftStore";
 
 const route = vi.hoisted(() => ({
   current: {
     activeDraftThread: null,
     activeThread: null as { id: string; updatedAt: number } | null,
     defaultProjectRef: null as ScopedProjectRef | null,
-    handleNewThread: async () => null,
+    handleNewThread: async (_projectRef: ScopedProjectRef): Promise<{ draftId: DraftId } | null> =>
+      null,
     routeDraftId: null,
     routeThreadRef: null as ScopedThreadRef | null,
   },
@@ -97,6 +99,14 @@ const pendingCapture: DesktopPendingSnapShot = {
 
 let root: ReturnType<typeof createRoot>;
 
+function deferred<T>() {
+  let complete: ((value: T) => void) | undefined;
+  const promise = new Promise<T>((resolve) => {
+    complete = resolve;
+  });
+  return { promise, resolve: (value: T) => complete?.(value) };
+}
+
 async function mount(routeThreadRef: ScopedThreadRef | null) {
   route.href = "/";
   route.current = { ...route.current, defaultProjectRef: null };
@@ -106,11 +116,78 @@ async function mount(routeThreadRef: ScopedThreadRef | null) {
 }
 
 beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  route.current.handleNewThread = async () => null;
   bridge.listeners.clear();
   bridge.listPendingSnapShots.mockClear().mockResolvedValue([]);
   bridge.readSnapShot.mockClear();
   bridge.onSnapShotEvent.mockClear();
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
+});
+
+it("keeps the committed route after an earlier target resolution is abandoned", async () => {
+  await mount(null);
+  const project = scopeProjectRef(environmentId, ProjectId.make("default-project"));
+  const creation = deferred<{ draftId: DraftId } | null>();
+  const handleNewThread = vi.fn(() => creation.promise);
+  route.current = { ...route.current, defaultProjectRef: project, handleNewThread };
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => bridge.emit({ type: "started", id: "abandoned" }));
+
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => creation.resolve(null));
+  await act(async () => {
+    bridge.emit({ type: "requested", id: "new-capture" });
+    bridge.emit({ type: "started", id: "new-capture" });
+  });
+
+  expect(getPendingSnapShotAnimations()).toContainEqual({ id: "new-capture", target: threadB });
+  expect(handleNewThread).toHaveBeenCalledTimes(1);
+});
+
+it("delivers after ready when navigation already drained before draft creation was abandoned", async () => {
+  await mount(null);
+  const creation = deferred<{ draftId: DraftId } | null>();
+  route.current = {
+    ...route.current,
+    defaultProjectRef: scopeProjectRef(environmentId, ProjectId.make("default-project")),
+    handleNewThread: () => creation.promise,
+  };
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => bridge.emit({ type: "started", id: pendingCapture.id }));
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  // The route drain found nothing; ready arrives while its old target is still pending.
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  await act(async () => creation.resolve(null));
+
+  expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(pendingCapture.id);
+});
+
+it("does not reuse live project resolution for a capture from an earlier drain pass", async () => {
+  await mount(null);
+  const projectA = scopeProjectRef(environmentId, ProjectId.make("project-a"));
+  const projectB = scopeProjectRef(environmentId, ProjectId.make("project-b"));
+  const creationB = deferred<{ draftId: DraftId } | null>();
+  const handleNewThread = vi.fn((project: ScopedProjectRef) =>
+    project.projectId === projectB.projectId ? creationB.promise : Promise.resolve(null),
+  );
+  route.current = { ...route.current, defaultProjectRef: projectA, handleNewThread };
+  await act(async () => root.render(<SnapShotCoordinator />));
+  const listing = deferred<DesktopPendingSnapShot[]>();
+  bridge.listPendingSnapShots.mockImplementationOnce(() => listing.promise);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+
+  route.current = { ...route.current, defaultProjectRef: projectB };
+  route.href = "/settings/projects";
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => bridge.emit({ type: "started", id: "live-project-b" }));
+  await act(async () => listing.resolve([pendingCapture]));
+
+  expect(handleNewThread).toHaveBeenCalledWith(projectA);
+  await act(async () => creationB.resolve(null));
 });
 
 afterEach(async () => {
