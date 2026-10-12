@@ -2375,6 +2375,24 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       true,
     ],
     [
+      "names the base repository over SSH on its own port",
+      "ssh://git@github.com:2222/acme/app.git",
+      "https://github.com/acme/app/pull/7",
+      true,
+    ],
+    [
+      "names the base repository on HTTPS's explicit default port",
+      "https://github.com:443/acme/app.git",
+      "https://github.com/acme/app/pull/7",
+      true,
+    ],
+    [
+      "names the base repository with a slash after .git",
+      "https://github.com/acme/app.git/",
+      "https://github.com/acme/app/pull/7",
+      true,
+    ],
+    [
       "reaches the base repository through an SSH alias",
       "git@github-work:acme/app.git",
       "https://github.com/acme/app/pull/7",
