@@ -4210,9 +4210,79 @@ describe("PreviewManager", () => {
     ["below viewport", { x: 5, y: 601, width: 20, height: 30 }, 2, null],
     ["left of viewport", { x: -100, y: 6, width: 20, height: 30 }, 2, null],
     ["right of viewport", { x: 1001, y: 6, width: 20, height: 30 }, 2, null],
+    [
+      "padding above viewport",
+      { x: 40, y: -100, width: 240, height: 110 },
+      2,
+      null,
+      [{ x: 60, y: -80, width: 200, height: 70 }],
+    ],
+    [
+      "padding below viewport",
+      { x: 40, y: 590, width: 240, height: 110 },
+      2,
+      null,
+      [{ x: 60, y: 610, width: 200, height: 70 }],
+    ],
+    [
+      "padding left of viewport",
+      { x: -230, y: 40, width: 240, height: 110 },
+      2,
+      null,
+      [{ x: -210, y: 60, width: 200, height: 70 }],
+    ],
+    [
+      "padding right of viewport",
+      { x: 990, y: 40, width: 240, height: 110 },
+      2,
+      null,
+      [{ x: 1010, y: 60, width: 200, height: 70 }],
+    ],
+    [
+      "opposite offscreen targets",
+      { x: -230, y: 40, width: 1460, height: 110 },
+      2,
+      null,
+      [
+        { x: -210, y: 60, width: 200, height: 70 },
+        { x: 1010, y: 60, width: 200, height: 70 },
+      ],
+    ],
+    [
+      "partial target with padding",
+      { x: 40, y: -60, width: 240, height: 110 },
+      2,
+      { x: 80, y: 0, width: 480, height: 100 },
+      [{ x: 60, y: -40, width: 200, height: 70 }],
+    ],
+    [
+      "visible and offscreen targets",
+      { x: -230, y: 40, width: 510, height: 110 },
+      2,
+      { x: 0, y: 80, width: 560, height: 220 },
+      [
+        { x: -210, y: 60, width: 200, height: 70 },
+        { x: 60, y: 60, width: 200, height: 70 },
+      ],
+    ],
+    [
+      "offscreen target without crop bounds",
+      null,
+      2,
+      null,
+      [{ x: 60, y: -80, width: 200, height: 70 }],
+    ],
+    [
+      "visible target without crop bounds",
+      null,
+      2,
+      { x: 0, y: 0, width: 2000, height: 1200 },
+      [{ x: 60, y: 80, width: 200, height: 70 }],
+    ],
+    ["no targets or crop bounds", null, 2, { x: 0, y: 0, width: 2000, height: 1200 }, []],
   ] as const)(
     "crops the picked viewport area: %s",
-    ([, cropRect, devicePixelRatio, expectedCrop]) =>
+    ([, cropRect, devicePixelRatio, expectedCrop, targetRects]) =>
       withManager((manager) =>
         Effect.gen(function* () {
           let onPicked: ((event: unknown, ...args: unknown[]) => void) | undefined;
@@ -4222,6 +4292,7 @@ describe("PreviewManager", () => {
           }));
           const capturePage = vi.fn(async () => ({
             getSize: () => ({ width: 2000, height: 1200 }),
+            toDataURL: () => "data:image/png;base64,cropped",
             crop,
           }));
           fromId.mockReturnValue(
@@ -4250,7 +4321,10 @@ describe("PreviewManager", () => {
               pageTitle: "Example",
               comment: "Tighten this spacing",
               elements: [],
-              regions: [{ id: "region_1", rect: cropRect }],
+              regions: (targetRects ?? (cropRect ? [cropRect] : [])).map((rect, index) => ({
+                id: `region_${index}`,
+                rect,
+              })),
               strokes: [],
               styleChanges: [],
               screenshot: null,
@@ -4272,13 +4346,14 @@ describe("PreviewManager", () => {
             expect(result?.screenshotFailed).toBe(true);
             return;
           }
-          expect(crop).toHaveBeenCalledWith(expectedCrop);
+          if (cropRect) expect(crop).toHaveBeenCalledWith(expectedCrop);
+          else expect(crop).not.toHaveBeenCalled();
           expect(result?.screenshotFailed).toBeUndefined();
           expect(result?.annotation.screenshot).toEqual({
             dataUrl: "data:image/png;base64,cropped",
             width: expectedCrop.width,
             height: expectedCrop.height,
-            cropRect,
+            cropRect: cropRect ?? expectedCrop,
           });
         }),
       ),

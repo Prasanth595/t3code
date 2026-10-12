@@ -295,9 +295,27 @@ const cropAnnotationScreenshot = (
   image: Electron.NativeImage,
   cropRect: PreviewAnnotationRect | null,
   devicePixelRatio: number,
+  targetRects: ReadonlyArray<PreviewAnnotationRect>,
 ): PreviewAnnotationPayload["screenshot"] => {
   const full = image.getSize();
   if (full.width <= 0 || full.height <= 0) return null;
+  const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
+  // Padding and unions can overlap the viewport without any selected target.
+  // Check the individual unpadded bounds before accepting even a full capture.
+  if (
+    targetRects.length > 0 &&
+    !targetRects.some(
+      (rect) =>
+        rect.width > 0 &&
+        rect.height > 0 &&
+        rect.x * scale < full.width &&
+        rect.y * scale < full.height &&
+        (rect.x + rect.width) * scale > 0 &&
+        (rect.y + rect.height) * scale > 0,
+    )
+  ) {
+    return null;
+  }
   if (!cropRect) {
     return {
       dataUrl: image.toDataURL(),
@@ -306,7 +324,6 @@ const cropAnnotationScreenshot = (
       cropRect: { x: 0, y: 0, width: full.width, height: full.height },
     };
   }
-  const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
   const x = Math.max(0, Math.floor(cropRect.x * scale));
   const y = Math.max(0, Math.floor(cropRect.y * scale));
   const right = Math.min(full.width, Math.ceil((cropRect.x + cropRect.width) * scale));
@@ -2261,6 +2278,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const submission =
             args[2] === "send" && annotationSendEnabled.get(tabId) === true ? "send" : "attach";
           const devicePixelRatio = typeof args[3] === "number" ? args[3] : 1;
+          const targetRects = [
+            ...payload.elements.map((target) => target.rect),
+            ...payload.regions.map((target) => target.rect),
+            ...payload.strokes.map((target) => target.bounds),
+          ];
           runFork(
             // The full-page capture with retries is what the screenshot button
             // uses. A single cropped `capturePage(rect)` with a fixed timeout
@@ -2270,7 +2292,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               tabId,
               wc,
             ).pipe(
-              Effect.map((image) => cropAnnotationScreenshot(image, cropRect, devicePixelRatio)),
+              Effect.map((image) =>
+                cropAnnotationScreenshot(image, cropRect, devicePixelRatio, targetRects),
+              ),
               Effect.tapError((error) =>
                 Effect.logWarning("preview annotation screenshot failed").pipe(
                   Effect.annotateLogs({ tabId, webContentsId: wc.id, error: error.message }),
