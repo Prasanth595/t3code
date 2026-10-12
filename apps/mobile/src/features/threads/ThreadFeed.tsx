@@ -1,4 +1,4 @@
-import { useOpenPullRequest } from "../../native/useOpenPullRequest";
+import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
 import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentation";
@@ -30,7 +30,6 @@ import {
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import {
   parseComposerContextHref,
   collectComposerContextReferences,
@@ -160,7 +159,6 @@ import {
   normalizeNativeMarkdownUrl,
   resolveMarkdownInlineCodePresentation,
   resolveMarkdownLinkIcon,
-  resolveMarkdownLinkPresentation,
 } from "../../lib/markdownLinks";
 import {
   failedFeedRunIds,
@@ -210,11 +208,6 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentThreadShells, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useV2ItemSupport } from "../../state/v2-item-support";
-import {
-  fileRoutePathSegments,
-  isAbsolutePath,
-  resolveWorkspaceRelativeFilePath,
-} from "../files/filePath";
 import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
@@ -1652,8 +1645,6 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const usesNativeWorkspaceColumns = useNativeWorkspaceColumnsSupported();
-  const openPullRequest = useOpenPullRequest();
-  const navigation = useNavigation();
   const { themeAppearance } = useAppearancePreferences();
   const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disclosureSettleFrameRef = useRef<number | null>(null);
@@ -1774,76 +1765,13 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
-  const onMarkdownLinkPress = useCallback(
-    (href: string, imageEmbed = false) => {
-      // A thread link names a thread in this feed's environment.
-      const linkedThreadId = parseThreadLinkHref(href);
-      if (linkedThreadId) {
-        navigation.navigate("Thread", {
-          environmentId: String(props.environmentId),
-          threadId: String(linkedThreadId),
-        });
-        return;
-      }
-      const media = resolveMarkdownMediaPreview(href, {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-        workspaceRoot: props.workspaceRoot,
-        imageEmbed,
-      });
-      if (media) {
-        void Haptics.selectionAsync();
-        if (media.kind === "video") {
-          setExpandedVideo((current) => current ?? media.source);
-        } else {
-          setExpandedFile((current) => current ?? media.source);
-        }
-        return;
-      }
-
-      const presentation = resolveMarkdownLinkPresentation(href);
-      if (presentation.kind === "file") {
-        const relativePath = resolveWorkspaceRelativeFilePath(
-          props.workspaceRoot,
-          presentation.path,
-        );
-        if (relativePath) {
-          void Haptics.selectionAsync();
-          navigation.navigate("ThreadFile", {
-            environmentId: String(props.environmentId),
-            threadId: String(props.threadId),
-            path: fileRoutePathSegments(relativePath),
-            ...(presentation.line ? { line: String(presentation.line) } : {}),
-          });
-          return;
-        }
-      }
-
-      // A host file outside the workspace, such as a report an agent wrote to
-      // a temp directory, opens read-only in the file screen.
-      if (presentation.kind === "file" && isAbsolutePath(presentation.path)) {
-        void Haptics.selectionAsync();
-        navigation.navigate("ThreadFile", {
-          environmentId: String(props.environmentId),
-          threadId: String(props.threadId),
-          path: fileRoutePathSegments(presentation.path),
-          ...(presentation.line ? { line: String(presentation.line) } : {}),
-        });
-        return;
-      }
-
-      if (presentation.kind !== "file" && presentation.href) {
-        if (/^https?:\/\//i.test(presentation.href) && isPdfFile({ name: presentation.href })) {
-          setExpandedFile(
-            (current) => current ?? { kind: "pdf", uri: presentation.href!, name: "Document.pdf" },
-          );
-          return;
-        }
-        void openPullRequest(presentation.href);
-      }
-    },
-    [props.environmentId, props.threadId, props.workspaceRoot, navigation, openPullRequest],
-  );
+  const onMarkdownLinkPress = useThreadMarkdownLinkPress({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot ?? null,
+    setExpandedFile,
+    setExpandedVideo,
+  });
   const resolveImageSource = useMarkdownImageSource({
     environmentId: props.environmentId,
     threadId: props.threadId,

@@ -1,8 +1,15 @@
+import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
+import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
+import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
+import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
-import type { RuntimeRequestId } from "@t3tools/contracts";
+import type { EnvironmentId, ThreadId, RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
-import { useCallback, useRef } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
   Easing,
@@ -28,6 +35,9 @@ import {
 } from "../../lib/threadActivity";
 
 export interface PendingUserInputCardProps {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly workspaceRoot: string | null;
   readonly canOperateThread: boolean;
   readonly pendingUserInput: PendingUserInput;
   /**
@@ -92,6 +102,56 @@ const EXPANDED_CARD_IS_OVERLAY = Platform.OS === "ios";
 const CARD_LAYOUT_TRANSITION = LinearTransition.duration(200);
 
 export function PendingUserInputCard(props: PendingUserInputCardProps) {
+  const styles = useMarkdownPreviewStyles();
+  const theme = useUniwindTheme();
+  const textStyles = useMemo(() => {
+    const base = styles.nativeTextStyle;
+    return {
+      question: { ...base, color: theme["--color-foreground"], fontSize: 16, lineHeight: 22 },
+      label: {
+        ...base,
+        color: theme["--color-foreground-secondary"],
+        fontFamily: base.boldFontFamily,
+        fontSize: 14,
+        lineHeight: 20,
+      },
+      selectedLabel: {
+        ...base,
+        color: theme["--color-foreground"],
+        fontFamily: base.boldFontFamily,
+        fontSize: 14,
+        lineHeight: 20,
+      },
+      description: {
+        ...base,
+        color: theme["--color-foreground-muted"],
+        fontSize: 14,
+        lineHeight: 20,
+      },
+    };
+  }, [styles.nativeTextStyle, theme]);
+  const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
+  const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
+  const onLinkPress = useThreadMarkdownLinkPress({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+    setExpandedFile,
+    setExpandedVideo,
+  });
+  const resolveImageSource = useMarkdownImageSource({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+  });
+  const onImagePress = useCallback((href: string) => onLinkPress(href, true), [onLinkPress]);
+  const markdownProps = {
+    onLinkPress,
+    onImagePress,
+    resolveImageSource,
+    marginTop: 0,
+    marginBottom: 0,
+  };
   const questionCount = props.pendingUserInput.questions.length;
   // Message responses start a new run and remain available after the provider exits.
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
@@ -277,9 +337,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
               <Text className="font-t3-bold text-xs uppercase tracking-[1px] text-foreground-muted">
                 {question.header}
               </Text>
-              <Text className="font-sans text-base leading-snug text-foreground">
-                {question.question}
-              </Text>
+              <SelectableMarkdownText
+                {...markdownProps}
+                markdown={question.question}
+                textStyle={textStyles.question}
+              />
               <View className="gap-2">
                 {question.options.map((option) => {
                   const optionValue = option.value ?? option.label.trim();
@@ -305,18 +367,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                       }
                     >
                       <View className="min-w-0 flex-1 gap-0.5">
-                        <Text
-                          className={cn(
-                            "font-t3-bold text-sm",
-                            selected ? "text-foreground" : "text-foreground-secondary",
-                          )}
-                        >
-                          {option.label}
-                        </Text>
+                        <SelectableMarkdownText
+                          {...markdownProps}
+                          markdown={option.label}
+                          textStyle={selected ? textStyles.selectedLabel : textStyles.label}
+                        />
                         {description ? (
-                          <Text className="font-sans text-sm leading-5 text-foreground-muted">
-                            {description}
-                          </Text>
+                          <SelectableMarkdownText
+                            {...markdownProps}
+                            markdown={description}
+                            textStyle={textStyles.description}
+                          />
                         ) : null}
                       </View>
                     </Pressable>
@@ -368,6 +429,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   ) : null;
   return (
     <View className="relative">
+      <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
+      <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
       {bar}
       {EXPANDED_CARD_IS_OVERLAY ? (
         // Clipping window for the collapse slide: same footprint as the
