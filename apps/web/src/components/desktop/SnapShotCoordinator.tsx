@@ -216,12 +216,51 @@ export function SnapShotCoordinator() {
   const pendingAnimationStartsRef = useRef(new Set<string>());
 
   const currentTarget = routeThreadRef ?? routeDraftId;
-  if (currentTarget) lastTargetRef.current = currentTarget;
+  const latestContextRef = useRef({
+    activeDraftThread,
+    activeThread,
+    animateCaptures,
+    captureSound,
+    defaultProjectRef,
+    handleNewThread,
+    routeThreadRef,
+  });
+
+  useEffect(() => {
+    if (currentTarget) {
+      lastTargetRef.current = currentTarget;
+    }
+    latestContextRef.current = {
+      activeDraftThread,
+      activeThread,
+      animateCaptures,
+      captureSound,
+      defaultProjectRef,
+      handleNewThread,
+      routeThreadRef,
+    };
+  }, [
+    activeDraftThread,
+    activeThread,
+    animateCaptures,
+    captureSound,
+    currentTarget,
+    defaultProjectRef,
+    handleNewThread,
+    routeThreadRef,
+  ]);
 
   const resolveTarget = useCallback(async (): Promise<CaptureTarget | null> => {
+    const {
+      activeDraftThread: currentDraftThread,
+      activeThread: currentActiveThread,
+      defaultProjectRef: currentDefaultProjectRef,
+      handleNewThread: currentHandleNewThread,
+      routeThreadRef: currentRouteThreadRef,
+    } = latestContextRef.current;
     const lastTarget = lastTargetRef.current;
     if (lastTarget) {
-      const existingTarget = resolveExistingSnapShotTarget(lastTarget, routeThreadRef);
+      const existingTarget = resolveExistingSnapShotTarget(lastTarget, currentRouteThreadRef);
       if (existingTarget) {
         lastTargetRef.current = existingTarget;
         return existingTarget;
@@ -229,33 +268,31 @@ export function SnapShotCoordinator() {
       lastTargetRef.current = null;
     }
     const projectRef = resolveThreadActionProjectRef({
-      activeDraftThread,
-      activeThread: activeThread ?? undefined,
-      defaultProjectRef,
-      handleNewThread,
+      activeDraftThread: currentDraftThread,
+      activeThread: currentActiveThread ?? undefined,
+      defaultProjectRef: currentDefaultProjectRef,
+      handleNewThread: currentHandleNewThread,
     });
     if (!projectRef) return null;
-    const created = await handleNewThread(projectRef);
+    const created = await currentHandleNewThread(projectRef);
     if (!created) return null;
     lastTargetRef.current = created.draftId;
     return created.draftId;
-  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef]);
+  }, []);
 
   const resolveCaptureTarget = useCallback(
     () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget),
     [resolveTarget],
   );
 
-  const playCaptureSound = useCallback(
-    (id: string) => {
-      if (!captureSound || soundedCaptureIdsRef.current.has(id)) return;
-      soundedCaptureIdsRef.current.add(id);
-      try {
-        playSnapShotSound(captureSound);
-      } catch {}
-    },
-    [captureSound],
-  );
+  const playCaptureSound = useCallback((id: string) => {
+    const sound = latestContextRef.current.captureSound;
+    if (!sound || soundedCaptureIdsRef.current.has(id)) return;
+    soundedCaptureIdsRef.current.add(id);
+    try {
+      playSnapShotSound(sound);
+    } catch {}
+  }, []);
 
   const drain = useCallback(async () => {
     const bridge = getDesktopSnapShotBridge();
@@ -277,7 +314,7 @@ export function SnapShotCoordinator() {
             resolveCaptureTarget,
           );
           const target = capturedTarget
-            ? resolveExistingSnapShotTarget(capturedTarget, routeThreadRef)
+            ? resolveExistingSnapShotTarget(capturedTarget, latestContextRef.current.routeThreadRef)
             : null;
           if (!target) {
             await dismissSnapShotAnimation(item.id);
@@ -327,7 +364,7 @@ export function SnapShotCoordinator() {
       });
     drainingRef.current = operation;
     return operation;
-  }, [playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  }, [playCaptureSound, resolveCaptureTarget]);
 
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
@@ -337,7 +374,9 @@ export function SnapShotCoordinator() {
       switch (event.type) {
         case "requested": {
           const current = lastTargetRef.current;
-          const target = current ? resolveExistingSnapShotTarget(current, routeThreadRef) : null;
+          const target = current
+            ? resolveExistingSnapShotTarget(current, latestContextRef.current.routeThreadRef)
+            : null;
           // Creating a new draft would navigate the renderer before a self-capture finishes.
           // Pin existing drafts now; create a destination after acquisition when none exists.
           if (target) {
@@ -349,7 +388,10 @@ export function SnapShotCoordinator() {
         }
         case "started": {
           playCaptureSound(event.id);
-          if (animateCaptures && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          if (
+            latestContextRef.current.animateCaptures &&
+            !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ) {
             void beginSnapShotAnimationWhenReady(
               event.id,
               resolveSnapShotDeliveryTarget(
@@ -388,7 +430,7 @@ export function SnapShotCoordinator() {
       }
     });
     return unsubscribe;
-  }, [animateCaptures, drain, playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  }, [drain, playCaptureSound, resolveCaptureTarget]);
 
   useEffect(() => {
     const dismissOnBlur = () => {
