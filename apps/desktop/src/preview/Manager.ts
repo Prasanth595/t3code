@@ -280,15 +280,15 @@ const normalizeCaptureRect = (value: unknown): PreviewAnnotationRect | null => {
     return null;
   }
   return {
-    x: Math.max(0, Math.floor(x)),
-    y: Math.max(0, Math.floor(y)),
+    x: Math.floor(x),
+    y: Math.floor(y),
     width: Math.max(1, Math.ceil(width)),
     height: Math.max(1, Math.ceil(height)),
   };
 };
 
 /**
- * Crops a full-page capture to a picked annotation. `cropRect` is in CSS px;
+ * Crops a viewport capture to a picked annotation. `cropRect` is in CSS px;
  * the capture's pixels are CSS px × the guest's `devicePixelRatio`.
  */
 const cropAnnotationScreenshot = (
@@ -297,6 +297,7 @@ const cropAnnotationScreenshot = (
   devicePixelRatio: number,
 ): PreviewAnnotationPayload["screenshot"] => {
   const full = image.getSize();
+  if (full.width <= 0 || full.height <= 0) return null;
   if (!cropRect) {
     return {
       dataUrl: image.toDataURL(),
@@ -306,13 +307,18 @@ const cropAnnotationScreenshot = (
     };
   }
   const scale = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
-  const x = Math.min(full.width - 1, Math.max(0, Math.floor(cropRect.x * scale)));
-  const y = Math.min(full.height - 1, Math.max(0, Math.floor(cropRect.y * scale)));
+  const x = Math.max(0, Math.floor(cropRect.x * scale));
+  const y = Math.max(0, Math.floor(cropRect.y * scale));
+  const right = Math.min(full.width, Math.ceil((cropRect.x + cropRect.width) * scale));
+  const bottom = Math.min(full.height, Math.ceil((cropRect.y + cropRect.height) * scale));
+  // A target scrolled out of view has no pixels in this capture. Clamping its
+  // origin onto the edge would attach an unrelated strip as a successful crop.
+  if (right <= x || bottom <= y) return null;
   const cropped = image.crop({
     x,
     y,
-    width: Math.max(1, Math.min(full.width - x, Math.ceil(cropRect.width * scale))),
-    height: Math.max(1, Math.min(full.height - y, Math.ceil(cropRect.height * scale))),
+    width: right - x,
+    height: bottom - y,
   });
   const size = cropped.getSize();
   return { dataUrl: cropped.toDataURL(), width: size.width, height: size.height, cropRect };
