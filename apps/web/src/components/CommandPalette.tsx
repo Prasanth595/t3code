@@ -651,7 +651,7 @@ function OpenCommandPaletteDialog(props: {
   // lookups by id (thread rows, add-project dedupe) still see every project.
   const selectedProjects = useSelectedEnvironmentProjects();
   const { resolved: environmentSelection } = useEnvironmentSelection();
-  const projectMachineLabels = useProjectMachineLabels();
+  const projectMachineLabels = useProjectMachineLabels("commandPaletteMachineLabelMode");
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(

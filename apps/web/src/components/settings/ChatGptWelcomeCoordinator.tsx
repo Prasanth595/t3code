@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { useState } from "react";
+import { useClientSettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
 import { OpenAI } from "../Icons";
 import { Button } from "../ui/button";
@@ -29,6 +30,7 @@ function readAcknowledgedProfiles(): string[] {
 /** Read the verified environment snapshot, never the browser callback acknowledgment. */
 export function ChatGptWelcomeCoordinator() {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
+  const nicknames = useClientSettings((settings) => settings.environmentNicknames);
   const [acknowledged, setAcknowledged] = useState(readAcknowledgedProfiles);
   const profiles = [...presentations].flatMap(([environmentId, presentation]) =>
     presentation.connection.phase !== "connected"
@@ -39,7 +41,7 @@ export function ChatGptWelcomeCoordinator() {
             provider.instanceId,
             provider.auth.profileId ?? provider.auth.email ?? "default",
           ]),
-          environmentLabel: presentation.entry.target.label,
+          environmentLabel: nicknames[environmentId] ?? presentation.entry.target.label,
           providerName: provider.displayName ?? "Codex",
         })),
   );

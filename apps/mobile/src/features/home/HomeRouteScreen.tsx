@@ -26,7 +26,11 @@ import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { useAtomValueWhileVisible, useHomeRouteVisible } from "./home-route-visibility";
 import { useHomeThreadSelection } from "./home-thread-navigation";
-import { buildHomeProjectScopes, homeProjectScopeLabel } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  homeProjectScopeLabel,
+  savedEnvironmentDisplayLabels,
+} from "./homeThreadList";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
@@ -106,10 +110,12 @@ export function HomeRouteScreen() {
         (environment) => [environment.environmentId, environment.connectionState] as const,
       ),
     );
+    const connections = Object.values(savedConnectionsById);
+    const labels = savedEnvironmentDisplayLabels(connections);
     return Arr.sort(
-      Object.values(savedConnectionsById).map((connection) => ({
+      connections.map((connection) => ({
         environmentId: connection.environmentId,
-        label: connection.environmentLabel,
+        label: labels.get(connection.environmentId) ?? connection.environmentLabel,
         connectionState:
           connectionStateByEnvironmentId.get(connection.environmentId) ?? "available",
       })),

@@ -203,6 +203,10 @@
       "types": "./src/state/projectGrouping.ts",
       "default": "./src/state/projectGrouping.ts"
     },
+    "./state/environment-label": {
+      "types": "./src/state/environmentLabel.ts",
+      "default": "./src/state/environmentLabel.ts"
+    },
     "./state/environment-selection": {
       "types": "./src/state/environmentSelection.ts",
       "default": "./src/state/environmentSelection.ts"

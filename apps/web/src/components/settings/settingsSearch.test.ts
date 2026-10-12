@@ -336,6 +336,10 @@ describe("searchSettings", () => {
       id: "project-machine-label",
       to: "/settings/appearance",
     });
+    expect(searchSettings("show machine in command palette")[0]).toMatchObject({
+      id: "command-palette-machine-label",
+      to: "/settings/appearance",
+    });
     expect(searchSettings("environment identification")[0]).toMatchObject({
       id: "environment-identification",
       to: "/settings/appearance",

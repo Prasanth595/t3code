@@ -24,6 +24,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
 import { appAtomRegistry } from "../rpc/atomRegistry";
+import { useNicknamedEnvironments } from "./environments";
 import { environmentPresentations } from "./presentation";
 import { serverEnvironment } from "./server";
 import { environmentSession, readEnvironmentScope } from "./session";
@@ -193,7 +194,7 @@ export function useUsage(
     ],
   );
   const atom = usageByWindowAtom(windowKey);
-  const environments = useAtomValue(atom);
+  const environments = useNicknamedEnvironments(useAtomValue(atom));
   const selectedEnvironments = useMemo(
     () =>
       selectedEnvironmentIds === null

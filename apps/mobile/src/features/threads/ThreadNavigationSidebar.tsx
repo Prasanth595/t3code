@@ -41,7 +41,11 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { useHomeListOptions } from "../home/home-list-options";
 import { buildHomeListFilterMenu } from "../home/home-list-filter-menu";
-import { buildHomeProjectScopes, homeProjectScopeLabel } from "../home/homeThreadList";
+import {
+  buildHomeProjectScopes,
+  homeProjectScopeLabel,
+  savedEnvironmentDisplayLabels,
+} from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
@@ -162,16 +166,16 @@ function ThreadNavigationSidebarPane(
   const pendingTasks = usePendingNewTasks();
   const queuedThreadKeys = useQueuedThreadKeys();
   const { openPendingTask, confirmDeletePendingTask } = usePendingTaskListActions();
-  const environments = useMemo(
-    () =>
-      Object.values(savedConnectionsById)
-        .map((connection) => ({
-          environmentId: connection.environmentId,
-          label: connection.environmentLabel,
-        }))
-        .sort((left, right) => left.label.localeCompare(right.label)),
-    [savedConnectionsById],
-  );
+  const environments = useMemo(() => {
+    const connections = Object.values(savedConnectionsById);
+    const labels = savedEnvironmentDisplayLabels(connections);
+    return connections
+      .map((connection) => ({
+        environmentId: connection.environmentId,
+        label: labels.get(connection.environmentId) ?? connection.environmentLabel,
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }, [savedConnectionsById]);
   const { options, setSelectedEnvironmentId, setSelectedProjectKey } = useHomeListOptions();
   const searchEnvironmentIds = useMemo(
     () =>

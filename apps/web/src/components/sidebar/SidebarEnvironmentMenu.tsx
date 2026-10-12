@@ -4,15 +4,15 @@
  * disambiguated labels). It only appears once there is a choice to make, but
  * stays while one environment is selected so the way back is never hidden.
  */
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/environment-label";
 import { ALL_ENVIRONMENTS_SELECTION } from "@t3tools/client-runtime/state/environment-selection";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { LayersIcon, ServerOffIcon } from "lucide-react";
 import type { ReactElement } from "react";
 
 import { useEnvironmentSelection } from "../../state/environmentSelection";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
-import { settingsScopeEnvironmentLabel } from "../settings/settingsScopeAxis";
 import {
   Menu,
   MenuPopup,
@@ -33,6 +33,7 @@ export function SidebarEnvironmentMenu({
 }) {
   const { selection, resolved, setSelection } = useEnvironmentSelection();
   const { environments: catalogEnvironments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const environments = catalogEnvironments.filter((environment) => environment.entry.enabled);
   if (environments.length <= 1 && selection.kind === "all") return null;
 
@@ -44,7 +45,7 @@ export function SidebarEnvironmentMenu({
     selection.kind === "all"
       ? "All environments"
       : selected
-        ? settingsScopeEnvironmentLabel(selected, environments)
+        ? environmentDisplayLabel(selected, environments, primaryEnvironmentId)
         : resolved.status === "pending"
           ? "Loading environment"
           : "Unavailable environment";
@@ -93,7 +94,7 @@ export function SidebarEnvironmentMenu({
                   className="size-3.5"
                 />
                 <span className="min-w-0 flex-1 truncate">
-                  {settingsScopeEnvironmentLabel(environment, environments)}
+                  {environmentDisplayLabel(environment, environments, primaryEnvironmentId)}
                 </span>
                 {environment.connection.phase === "connected" ? null : (
                   <span className="shrink-0 text-xs text-muted-foreground">Offline</span>

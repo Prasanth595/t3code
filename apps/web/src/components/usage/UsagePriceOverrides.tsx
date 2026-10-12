@@ -6,6 +6,7 @@ import { AsyncResult, Atom } from "effect/reactivity";
 import { useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
+import { useNicknamedEnvironments } from "../../state/environments";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { environmentSession, readEnvironmentScope } from "../../state/session";
@@ -108,7 +109,7 @@ export function UsagePriceOverrides({
   readonly initialModel?: string | undefined;
   readonly onOpenChange: (open: boolean) => void;
 }) {
-  const environments = useAtomValue(priceTargetsAtom);
+  const environments = useNicknamedEnvironments(useAtomValue(priceTargetsAtom));
   const [selectedIds, setSelectedIds] = useState(initialSelectedEnvironmentIds);
   const selected = environments.filter(
     (environment) => selectedIds === null || selectedIds.has(environment.environmentId),

@@ -1,10 +1,15 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/environment-label";
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { ChevronDownIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
-import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
+import {
+  useEnvironments,
+  usePrimaryEnvironmentId,
+  type EnvironmentPresentation,
+} from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { ProjectMachineLabel, useProjectMachineLabels } from "../ProjectMachineLabel";
@@ -28,7 +33,6 @@ import {
   projectScopeMenuEntries,
   selectEnvironmentAxis,
   selectProjectAxis,
-  settingsScopeEnvironmentLabel,
 } from "./settingsScopeAxis";
 
 /** Pages whose every row is saved on this client; they have no scope to pick. */
@@ -129,6 +133,7 @@ function EnvironmentScopeMenu({
   const selected = environments.find(
     (environment) => environment.environmentId === environmentValue,
   );
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   return (
     <ScopeMenu
       ariaLabel="Environment scope"
@@ -143,7 +148,7 @@ function EnvironmentScopeMenu({
       }
       label={
         selected
-          ? settingsScopeEnvironmentLabel(selected, environments)
+          ? environmentDisplayLabel(selected, environments, primaryEnvironmentId)
           : environmentValue !== ALL_ENVIRONMENTS_VALUE
             ? "Unavailable environment"
             : singleEnvironment
@@ -182,7 +187,7 @@ function EnvironmentScopeMenu({
                 className="size-3.5"
               />
               <span className="min-w-0 flex-1 truncate">
-                {settingsScopeEnvironmentLabel(environment, environments)}
+                {environmentDisplayLabel(environment, environments, primaryEnvironmentId)}
               </span>
               {environment.connection.phase === "connected" ? null : (
                 <span className="shrink-0 text-xs text-muted-foreground">Offline</span>

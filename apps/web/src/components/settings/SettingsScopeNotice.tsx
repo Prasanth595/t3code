@@ -1,8 +1,9 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/environment-label";
 import { Button } from "../ui/button";
 import { Alert, AlertAction, AlertDescription } from "../ui/alert";
 import { SettingsPageContainer } from "./settingsLayout";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { useEnvironments } from "../../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import type { SettingsScopeSearch } from "./settingsScope";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { EnvironmentId } from "@t3tools/contracts";
@@ -23,6 +24,7 @@ export function SettingsScopeNotice({
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const choices: { label: string; search: SettingsScopeSearch }[] =
     target === "checkout"
       ? groups
@@ -50,12 +52,7 @@ export function SettingsScopeNotice({
                   eligibleEnvironmentIds.includes(entry.environmentId),
               )
               .map((entry) => ({
-                label: environments.some(
-                  (other) =>
-                    other.environmentId !== entry.environmentId && other.label === entry.label,
-                )
-                  ? `${entry.label} · ${entry.displayUrl || entry.environmentId}`
-                  : entry.label,
+                label: environmentDisplayLabel(entry, environments, primaryEnvironmentId),
                 search: { machine: entry.environmentId },
               }))
           : [{ label: "Open all environments", search: {} }];

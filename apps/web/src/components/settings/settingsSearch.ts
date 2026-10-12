@@ -296,6 +296,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["environment machine name icon project label same name"],
   },
   {
+    id: "command-palette-machine-label",
+    title: "Show machine in command palette",
+    to: "/settings/appearance",
+    searchTerms: ["environment machine name icon project label palette search"],
+  },
+  {
     id: "interface-font",
     title: "Interface font",
     to: "/settings/appearance",

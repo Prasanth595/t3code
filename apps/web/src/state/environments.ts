@@ -5,11 +5,13 @@ import {
   type EnvironmentPresentation as BaseEnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { Discovery } from "@t3tools/client-runtime/relay";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ExecutionEnvironmentPlatformOs } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../connection/catalog";
+import { isWslConnectionTarget } from "../connection/desktopLocal";
+import { useClientSettings } from "../hooks/useSettings";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -21,35 +23,77 @@ import { usePreparedConnection } from "./session";
 
 export interface EnvironmentPresentation extends BaseEnvironmentPresentation {
   readonly environmentId: EnvironmentId;
+  /** This device's nickname for the environment, else `serverLabel`. */
   readonly label: string;
+  /** The name the server reports, normally its hostname. */
+  readonly serverLabel: string;
+  readonly nickname: string | null;
   readonly displayUrl: string | null;
   readonly relayManaged: boolean;
+  readonly platformOs: ExecutionEnvironmentPlatformOs | null;
+  readonly wsl: boolean;
 }
 
-function projectEnvironmentPresentation(
+type EnvironmentNicknames = Readonly<Record<string, string>>;
+
+const selectEnvironmentNicknames = (settings: {
+  readonly environmentNicknames: EnvironmentNicknames;
+}) => settings.environmentNicknames;
+
+/**
+ * The one place an environment's shown name is decided. Every surface that
+ * names an environment reads `label`, so a nickname applies everywhere.
+ */
+export function projectEnvironmentPresentation(
   environmentId: EnvironmentId,
   presentation: BaseEnvironmentPresentation,
+  nicknames: EnvironmentNicknames,
 ): EnvironmentPresentation {
+  const serverLabel = presentation.entry.target.label;
+  const nickname = nicknames[environmentId] ?? null;
   return {
     ...presentation,
     environmentId,
-    label: presentation.entry.target.label,
+    label: nickname ?? serverLabel,
+    serverLabel,
+    nickname,
     displayUrl: connectionCatalogDisplayUrl(presentation.entry),
     relayManaged: hasRelayRoute(presentation.entry),
+    platformOs: presentation.serverConfig?.environment.platform.os ?? null,
+    wsl: isWslConnectionTarget(presentation.entry.target),
   };
+}
+
+/**
+ * Surfaces that read lighter catalog atoms (identities, usage rows) instead
+ * of presentations apply this device's nicknames through here.
+ */
+export function useNicknamedEnvironments<
+  T extends { readonly environmentId: EnvironmentId; readonly label: string },
+>(environments: readonly T[]): readonly T[] {
+  const nicknames = useClientSettings(selectEnvironmentNicknames);
+  return useMemo(
+    () =>
+      environments.map((environment) => {
+        const nickname = nicknames[environment.environmentId];
+        return nickname === undefined ? environment : { ...environment, label: nickname };
+      }),
+    [environments, nicknames],
+  );
 }
 
 export function useEnvironments() {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const networkStatus = useAtomValue(environmentCatalog.networkStatusValueAtom);
   const presentationById = useAtomValue(environmentPresentations.presentationsAtom);
+  const nicknames = useClientSettings(selectEnvironmentNicknames);
 
   const environments = useMemo(
     () =>
       [...presentationById.entries()].map(([environmentId, presentation]) =>
-        projectEnvironmentPresentation(environmentId, presentation),
+        projectEnvironmentPresentation(environmentId, presentation, nicknames),
       ),
-    [presentationById],
+    [nicknames, presentationById],
   );
 
   return {
@@ -68,12 +112,13 @@ export function useEnvironment(
   environmentId: EnvironmentId | null,
 ): EnvironmentPresentation | null {
   const { presentation } = useEnvironmentPresentation(environmentId);
+  const nicknames = useClientSettings(selectEnvironmentNicknames);
   return useMemo(
     () =>
       environmentId === null || presentation === null
         ? null
-        : projectEnvironmentPresentation(environmentId, presentation),
-    [environmentId, presentation],
+        : projectEnvironmentPresentation(environmentId, presentation, nicknames),
+    [environmentId, nicknames, presentation],
   );
 }
 
@@ -95,7 +140,7 @@ export function useEnvironmentIds() {
 }
 
 export function useEnvironmentIdentities() {
-  return useAtomValue(environmentSummaries.identitiesAtom);
+  return useNicknamedEnvironments(useAtomValue(environmentSummaries.identitiesAtom));
 }
 
 export function usePullRequestsSupported() {

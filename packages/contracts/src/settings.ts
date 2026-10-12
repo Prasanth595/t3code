@@ -166,6 +166,8 @@ export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationM
 export const ProjectMachineLabelMode = Schema.Literals(["name", "icon", "icon-name", "off"]);
 export type ProjectMachineLabelMode = typeof ProjectMachineLabelMode.Type;
 export const DEFAULT_PROJECT_MACHINE_LABEL_MODE: ProjectMachineLabelMode = "name";
+/** Palette rows already name the machine on their second line, so the suffix starts off. */
+export const DEFAULT_COMMAND_PALETTE_MACHINE_LABEL_MODE: ProjectMachineLabelMode = "off";
 
 export const SnapShotKeyChord = KeybindingShortcut.check(
   Schema.makeFilter(
@@ -407,6 +409,14 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   projectMachineLabelMode: ProjectMachineLabelMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_MACHINE_LABEL_MODE)),
+  ),
+  commandPaletteMachineLabelMode: ProjectMachineLabelMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMMAND_PALETTE_MACHINE_LABEL_MODE)),
+  ),
+  // Names this device gives environments, keyed by environment id. A nickname
+  // replaces the server-reported hostname in this client's UI only.
+  environmentNicknames: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
   ),
   glassOpacity: GlassOpacity.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GLASS_OPACITY)),
@@ -1699,6 +1709,10 @@ export const ClientSettingsPatch = Schema.Struct({
   diffLayout: Schema.optionalKey(DiffLayout),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   projectMachineLabelMode: Schema.optionalKey(ProjectMachineLabelMode),
+  commandPaletteMachineLabelMode: Schema.optionalKey(ProjectMachineLabelMode),
+  environmentNicknames: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
+  ),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),

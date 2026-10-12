@@ -635,6 +635,40 @@ describe("ClientSettings project machine label", () => {
   });
 });
 
+describe("ClientSettings command palette machine label", () => {
+  it("defaults to off and accepts each mode", () => {
+    expect(decodeClientSettings({}).commandPaletteMachineLabelMode).toBe("off");
+
+    for (const mode of ["name", "icon", "icon-name", "off"] as const) {
+      expect(
+        decodeClientSettings({ commandPaletteMachineLabelMode: mode })
+          .commandPaletteMachineLabelMode,
+      ).toBe(mode);
+      expect(
+        decodeClientSettingsPatch({ commandPaletteMachineLabelMode: mode })
+          .commandPaletteMachineLabelMode,
+      ).toBe(mode);
+    }
+  });
+
+  it("rejects unsupported modes", () => {
+    expect(() => decodeClientSettings({ commandPaletteMachineLabelMode: "path" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ commandPaletteMachineLabelMode: "path" })).toThrow();
+  });
+});
+
+describe("ClientSettings environment nicknames", () => {
+  it("defaults to none and keeps nicknames by environment id", () => {
+    expect(decodeClientSettings({}).environmentNicknames).toEqual({});
+    expect(
+      decodeClientSettings({ environmentNicknames: { "env-1": "Desk" } }).environmentNicknames,
+    ).toEqual({ "env-1": "Desk" });
+    expect(
+      decodeClientSettingsPatch({ environmentNicknames: { "env-1": "Desk" } }).environmentNicknames,
+    ).toEqual({ "env-1": "Desk" });
+  });
+});
+
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);

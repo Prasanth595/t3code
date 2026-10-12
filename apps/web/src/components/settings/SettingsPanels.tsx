@@ -570,6 +570,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.projectMachineLabelMode !== DEFAULT_UNIFIED_SETTINGS.projectMachineLabelMode
         ? ["Show machine on projects"]
         : []),
+      ...(settings.commandPaletteMachineLabelMode !==
+      DEFAULT_UNIFIED_SETTINGS.commandPaletteMachineLabelMode
+        ? ["Show machine in command palette"]
+        : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -708,6 +712,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.projectMachineLabelMode,
+      settings.commandPaletteMachineLabelMode,
       settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
@@ -825,6 +830,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       projectMachineLabelMode: DEFAULT_UNIFIED_SETTINGS.projectMachineLabelMode,
+      commandPaletteMachineLabelMode: DEFAULT_UNIFIED_SETTINGS.commandPaletteMachineLabelMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
@@ -1399,6 +1405,52 @@ export function AppearanceSettingsPanel() {
               >
                 <SelectValue>
                   {PROJECT_MACHINE_LABEL_LABELS[settings.projectMachineLabelMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(PROJECT_MACHINE_LABEL_LABELS).map(([value, label]) => (
+                  <SelectItem hideIndicator key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("command-palette-machine-label")}
+          description="Name the machine after projects in the command palette. Rows already show it on their second line."
+          resetAction={
+            settings.commandPaletteMachineLabelMode !==
+            DEFAULT_UNIFIED_SETTINGS.commandPaletteMachineLabelMode ? (
+              <SettingResetButton
+                label="machine in command palette"
+                onClick={() =>
+                  updateSettings({
+                    commandPaletteMachineLabelMode:
+                      DEFAULT_UNIFIED_SETTINGS.commandPaletteMachineLabelMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.commandPaletteMachineLabelMode}
+              onValueChange={(value) => {
+                if (isProjectMachineLabelMode(value)) {
+                  updateSettings({ commandPaletteMachineLabelMode: value });
+                }
+              }}
+            >
+              <SelectTrigger
+                size="sm"
+                className="w-full sm:w-40"
+                aria-label="Show machine in command palette"
+              >
+                <SelectValue>
+                  {PROJECT_MACHINE_LABEL_LABELS[settings.commandPaletteMachineLabelMode]}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>

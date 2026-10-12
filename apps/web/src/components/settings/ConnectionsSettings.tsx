@@ -4,6 +4,7 @@ import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
+  PencilIcon,
   PlusIcon,
   QrCodeIcon,
   RouteIcon,
@@ -82,6 +83,7 @@ import {
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { EnvironmentNicknameDialog } from "./EnvironmentNicknameDialog";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { usePreparedConnection } from "~/state/session";
 import {
@@ -1495,6 +1497,7 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1768,6 +1771,10 @@ function SavedBackendListRow({
           <EllipsisIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end">
+          <MenuItem onClick={() => setRenaming(true)}>
+            <PencilIcon />
+            Rename…
+          </MenuItem>
           <EnvironmentIconMenu
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
@@ -1788,6 +1795,10 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      <EnvironmentNicknameDialog
+        target={renaming ? environment : null}
+        onClose={() => setRenaming(false)}
+      />
     </EnvironmentRow>
   );
 }
@@ -2169,6 +2180,7 @@ export function ConnectionsSettings() {
   >(null);
   const [isRevokingOtherDesktopClients, setIsRevokingOtherDesktopClients] = useState(false);
   const [addBackendDialogOpen, setAddBackendDialogOpen] = useState(false);
+  const [renamingPrimary, setRenamingPrimary] = useState(false);
   // Set when the dialog adds a route to a saved machine instead of a new one.
   const [routeTarget, setRouteTarget] = useState<EnvironmentPresentation | null>(null);
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
@@ -3642,6 +3654,12 @@ export function ConnectionsSettings() {
                     <EllipsisIcon className="size-3.5" />
                   </MenuTrigger>
                   <MenuPopup align="end">
+                    {primaryEnvironment ? (
+                      <MenuItem onClick={() => setRenamingPrimary(true)}>
+                        <PencilIcon />
+                        Rename…
+                      </MenuItem>
+                    ) : null}
                     <EnvironmentIconMenu
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
@@ -3651,6 +3669,10 @@ export function ConnectionsSettings() {
               ) : null
             }
           >
+            <EnvironmentNicknameDialog
+              target={renamingPrimary ? primaryEnvironment : null}
+              onClose={() => setRenamingPrimary(false)}
+            />
             <LocalEnvironmentSetting />
             {canManageLocalBackend ? (
               <SettingsRow

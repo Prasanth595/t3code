@@ -4,6 +4,7 @@
  * "Show machine on projects" setting reads the same everywhere. A surface
  * calls `useProjectMachineLabels` once and passes the result to each row.
  */
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/environment-label";
 import {
   projectMachineLabelEnvironments,
   projectMachineLabelParts,
@@ -17,10 +18,9 @@ import type { ProjectMachineLabelMode } from "@t3tools/contracts/settings";
 import { Fragment, useMemo } from "react";
 
 import { useClientSettings } from "../hooks/useSettings";
-import { useEnvironments } from "../state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
-import { settingsScopeEnvironmentLabel } from "./settings/settingsScopeAxis";
 
 export interface ProjectMachineLabelEnvironment {
   readonly environmentId: EnvironmentId;
@@ -33,20 +33,26 @@ export interface ProjectMachineLabels {
   readonly environments: readonly ProjectMachineLabelEnvironment[];
 }
 
-/** Catalog environments with their disambiguated labels, for one surface's rows. */
-export function useProjectMachineLabels(): ProjectMachineLabels {
-  const mode = useClientSettings((settings) => settings.projectMachineLabelMode);
+/**
+ * Catalog environments with their disambiguated labels, for one surface's rows.
+ * The command palette reads its own setting; every other surface the general one.
+ */
+export function useProjectMachineLabels(
+  setting: "projectMachineLabelMode" | "commandPaletteMachineLabelMode" = "projectMachineLabelMode",
+): ProjectMachineLabels {
+  const mode = useClientSettings((settings) => settings[setting]);
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useMemo(
     () => ({
       mode,
       environments: environments.map((environment) => ({
         environmentId: environment.environmentId,
-        label: settingsScopeEnvironmentLabel(environment, environments),
+        label: environmentDisplayLabel(environment, environments, primaryEnvironmentId),
         machine: resolveEnvironmentMachineKind(environment.serverConfig),
       })),
     }),
-    [environments, mode],
+    [environments, mode, primaryEnvironmentId],
   );
 }
 

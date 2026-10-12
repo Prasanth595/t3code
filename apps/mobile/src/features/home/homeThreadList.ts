@@ -1,3 +1,4 @@
+import { environmentDisplayLabel } from "@t3tools/client-runtime/state/environment-label";
 import { buildProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import {
   projectMachineLabelEnvironments,
@@ -88,6 +89,31 @@ export function homeProjectScopeLabel(
   return shown.length === 0
     ? scope.title
     : `${scope.title} • ${projectMachineLabelText(shown.map((environment) => environment.label))}`;
+}
+
+/**
+ * Saved environments' names with same-name ones told apart, "SwerveStation ·
+ * 192.168.1.20:3773". Mobile has no environment of its own, so the suffix is
+ * the address, else a short environment id.
+ */
+export function savedEnvironmentDisplayLabels(
+  connections: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string;
+    readonly displayUrl: string;
+  }>,
+): ReadonlyMap<EnvironmentId, string> {
+  const subjects = connections.map((connection) => ({
+    environmentId: connection.environmentId,
+    label: connection.environmentLabel,
+    displayUrl: connection.displayUrl,
+  }));
+  return new Map(
+    subjects.map((subject) => [
+      subject.environmentId,
+      environmentDisplayLabel(subject, subjects, null),
+    ]),
+  );
 }
 
 // Prefers an exact scope key so a caller-supplied project ID that equals another

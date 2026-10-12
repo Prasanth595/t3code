@@ -9,6 +9,7 @@ import {
   buildHomeProjectScopes,
   findHomeProjectScope,
   homeProjectScopeLabel,
+  savedEnvironmentDisplayLabels,
   sortHomeProjectScopes,
 } from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
@@ -458,5 +459,32 @@ describe("homeProjectScopeLabel", () => {
         projectGroupingMode: "repository",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("savedEnvironmentDisplayLabels", () => {
+  it("tells same-name saved environments apart by address and leaves unique names bare", () => {
+    const labels = savedEnvironmentDisplayLabels([
+      {
+        environmentId: EnvironmentId.make("desk"),
+        environmentLabel: "SwerveStation",
+        displayUrl: "http://192.168.1.20:3773/",
+      },
+      {
+        environmentId: EnvironmentId.make("wsl"),
+        environmentLabel: "SwerveStation",
+        displayUrl: "http://192.168.1.20:5964/",
+      },
+      {
+        environmentId: EnvironmentId.make("fedora"),
+        environmentLabel: "Fedora",
+        displayUrl: "",
+      },
+    ]);
+    expect([...labels.values()]).toEqual([
+      "SwerveStation · 192.168.1.20:3773",
+      "SwerveStation · 192.168.1.20:5964",
+      "Fedora",
+    ]);
   });
 });
