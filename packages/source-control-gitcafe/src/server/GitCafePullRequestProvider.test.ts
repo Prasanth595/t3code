@@ -842,8 +842,8 @@ describe("GitCafePullRequestProvider", () => {
     }).pipe(Effect.provide(server.layer));
   });
 
-  it.effect.each(["changes", "diff-files"] as const)(
-    "retries line stats after a failed %s read and retains the complete retry",
+  it.effect.each(["changes", "diff-files", "partial-changes", "partial-diff-files"] as const)(
+    "retries line stats after a failed or incomplete %s read and retains the complete retry",
     (failedRead) => {
       const snapshot = { version: 4, headOid, comparisonBaseOid: baseOid };
       let recovered = false;
@@ -857,25 +857,56 @@ describe("GitCafePullRequestProvider", () => {
         "GET /repos/owner/repo/pulls/7/changes": () =>
           !recovered && failedRead === "changes"
             ? {}
-            : { ...snapshot, items: [{ path: "file.ts" }], next: null },
+            : {
+                ...snapshot,
+                items: [
+                  failedRead === "partial-changes"
+                    ? { path: "file.ts", additions: 5, ...(recovered ? { deletions: 2 } : {}) }
+                    : { path: "file.ts" },
+                  ...(failedRead === "partial-changes"
+                    ? [{ path: "image.png", binary: true }]
+                    : []),
+                ],
+                next: null,
+              },
         "POST /repos/owner/repo/pulls/7/diff-files": () =>
           !recovered && failedRead === "diff-files"
             ? {}
-            : { ...snapshot, items: [{ path: "file.ts", additions: 5, deletions: 2 }] },
+            : {
+                ...snapshot,
+                items: [
+                  {
+                    path: "file.ts",
+                    additions: 5,
+                    ...(!recovered && failedRead === "partial-diff-files" ? {} : { deletions: 2 }),
+                  },
+                ],
+              },
       });
       return Effect.gen(function* () {
         const provider = yield* GitCafePullRequestProvider.make;
+        const firstReadStart = server.sent.length;
         assert.deepInclude(yield* provider.getChangeRequest(target), {
-          additions: 0,
-          changedFiles: failedRead === "changes" ? 0 : 1,
+          additions: failedRead.startsWith("partial-") ? 5 : 0,
+          deletions: 0,
+          changedFiles: failedRead === "changes" ? 0 : failedRead === "partial-changes" ? 2 : 1,
         });
+        assert.strictEqual(
+          server.sent.length - firstReadStart,
+          failedRead === "changes" || failedRead === "partial-changes" ? 4 : 5,
+        );
         recovered = true;
         for (let read = 0; read < 2; read++) {
+          const readStart = server.sent.length;
           assert.deepInclude(yield* provider.getChangeRequest(target), {
             additions: 5,
             deletions: 2,
-            changedFiles: 1,
+            changedFiles: failedRead === "partial-changes" ? 2 : 1,
           });
+          assert.strictEqual(
+            server.sent.length - readStart,
+            read === 1 ? 3 : failedRead === "partial-changes" ? 4 : 5,
+          );
         }
         assert.strictEqual(
           server.sent.filter((request) => request.path.endsWith("/changes")).length,
@@ -883,7 +914,7 @@ describe("GitCafePullRequestProvider", () => {
         );
         assert.strictEqual(
           server.sent.filter((request) => request.path.endsWith("/diff-files")).length,
-          failedRead === "changes" ? 1 : 2,
+          failedRead === "partial-changes" ? 0 : failedRead === "changes" ? 1 : 2,
         );
       }).pipe(Effect.provide(server.layer));
     },

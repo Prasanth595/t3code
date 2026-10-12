@@ -440,7 +440,12 @@ export const make = Effect.gen(function* () {
       : [];
     return {
       revision,
-      complete: Option.isSome(details) && after === null,
+      complete:
+        Option.isSome(details) &&
+        after === null &&
+        counted.every(
+          (file) => file.binary || (file.additions !== undefined && file.deletions !== undefined),
+        ),
       changedFiles: files.length,
       additions: counted.reduce((total, file) => total + (file.additions ?? 0), 0),
       deletions: counted.reduce((total, file) => total + (file.deletions ?? 0), 0),
