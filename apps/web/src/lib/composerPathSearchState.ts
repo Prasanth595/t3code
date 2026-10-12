@@ -1,13 +1,10 @@
-import {
-  type ComposerPathSearchState,
-  type ComposerPathSearchTarget,
-} from "@t3tools/client-runtime/state/threads";
+import { type ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
 
 import { useMemo } from "react";
 
 import { useComposerPathSearch as useComposerPathSearchQuery } from "../state/queries";
 
-export function useComposerPathSearch(target: ComposerPathSearchTarget): ComposerPathSearchState {
+export function useComposerPathSearch(target: ComposerPathSearchTarget) {
   const state = useComposerPathSearchQuery(target);
   // A stable list lets the composer menu memo cache between renders.
   const entries = useMemo(
@@ -18,5 +15,6 @@ export function useComposerPathSearch(target: ComposerPathSearchTarget): Compose
     entries,
     error: state.error,
     isPending: state.isPending,
+    searchedTarget: state.searchedTarget,
   };
 }
