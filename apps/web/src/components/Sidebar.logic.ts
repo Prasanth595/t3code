@@ -1072,7 +1072,7 @@ export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3t
 const EMPTY_CONTENT_MATCH_KEYS: ReadonlySet<string> = new Set<string>();
 
 /**
- * Search the already-ordered sidebar thread collection by title or linked PR,
+ * Search the already-ordered sidebar thread collection by title, linked PR or thread ID,
  * plus any thread whose messages the server matched (`contentMatchKeys`, keyed
  * by `threadSearchMatchKey`). Keeping the input order means lifecycle ordering
  * (active, snoozed, settled) remains stable while the user narrows the list.
@@ -1093,8 +1093,8 @@ export function searchSidebarThreads<
   const titleMatches: T[] = [];
   const contentMatches: T[] = [];
   for (const thread of threads) {
-    const matchesTitle = [thread.title, ...threadPullRequestSearchTerms(thread)].some((term) =>
-      term.toLowerCase().includes(normalizedQuery),
+    const matchesTitle = [thread.title, thread.id, ...threadPullRequestSearchTerms(thread)].some(
+      (term) => term.toLowerCase().includes(normalizedQuery),
     );
     if (matchesTitle) {
       titleMatches.push(thread);
