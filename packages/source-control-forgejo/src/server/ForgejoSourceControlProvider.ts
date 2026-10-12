@@ -18,6 +18,25 @@ import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullR
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
+// The registry shares a verdict among the HTTP remotes of one mount, the path before
+// `owner/repo`. A login mounted below it serves some of them and not others, so a verdict made
+// while one is listed is not settled. SSH matching ignores the path.
+function hasLoginBelowMount(
+  logins: ReturnType<typeof ForgejoCli.parseForgejoLogins>,
+  remote: NonNullable<ReturnType<typeof ForgejoCli.parseForgejoRemote>>,
+) {
+  if (remote.ssh) return false;
+  const mount = remote.path.split("/").slice(0, -2).join("/");
+  return logins.some((login) => {
+    const url = ForgejoCli.parseForgejoRemote(login.url);
+    return (
+      url?.host === remote.host &&
+      url.path !== "" &&
+      (mount === "" || url.path.startsWith(`${mount}/`))
+    );
+  });
+}
+
 export const discovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("forgejo"),
@@ -42,13 +61,10 @@ export const discovery = {
   },
   refineUnknownRemote: (input) => {
     const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
-    const login =
-      remote &&
-      ForgejoCli.matchForgejoLogin(
-        ForgejoCli.parseForgejoLogins(input.auth.stdout),
-        remote,
-        input.context.requestedHost,
-      );
+    if (!remote) return null;
+    const logins = ForgejoCli.parseForgejoLogins(input.auth.stdout);
+    if (hasLoginBelowMount(logins, remote)) return undefined;
+    const login = ForgejoCli.matchForgejoLogin(logins, remote, input.context.requestedHost);
     return login
       ? {
           kind: SourceControlProviderKind.make("forgejo"),
@@ -158,19 +174,6 @@ export const makeDiscovery = Effect.gen(function* () {
       }) {
         const remote = ForgejoCli.parseForgejoRemote(input.context.remoteUrl);
         if (!remote) return { provider: null, settled: true };
-        // The registry shares a verdict among the HTTP remotes of one mount, the path before
-        // `owner/repo`. A login mounted below it serves some of them and not others, so a verdict
-        // that heard one is not settled. SSH matching ignores the path.
-        const mount = remote.ssh ? null : remote.path.split("/").slice(0, -2).join("/");
-        const belowMount = (login: { readonly url: string }) => {
-          const url = ForgejoCli.parseForgejoRemote(login.url);
-          return (
-            mount !== null &&
-            url?.host === remote.host &&
-            url.path !== "" &&
-            (mount === "" || url.path.startsWith(`${mount}/`))
-          );
-        };
         // fj goes first, so a tea claim after an fj that could not answer is not settled.
         let settled = true;
         for (const command of ["fj", "tea"] as const) {
@@ -185,7 +188,7 @@ export const makeDiscovery = Effect.gen(function* () {
             settled &&= isMissingExecutable(logins.failure.cause);
             continue;
           }
-          settled &&= !logins.success.some(belowMount);
+          settled &&= !hasLoginBelowMount(logins.success, remote);
           const login = ForgejoCli.matchForgejoLogin(
             logins.success,
             remote,

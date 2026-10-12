@@ -589,6 +589,33 @@ it.effect("discovers Forgejo accounts and retains the server port", () =>
   }),
 );
 
+it("does not answer from a tea login list with a login below the remote's mount", () => {
+  const refine = (remoteUrl: string, urls: ReadonlyArray<string>) =>
+    ForgejoSourceControlProvider.discovery.refineUnknownRemote({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: SourceControlProviderKind.make("unknown"),
+          name: "git.example.internal",
+          baseUrl: "https://git.example.internal",
+        },
+        remoteName: "origin",
+        remoteUrl,
+      },
+      auth: processOutput(
+        encodeJson(urls.map((url) => ({ name: url, url, user: "maria", default: "false" }))),
+      ),
+    });
+  const urls = ["https://git.example.internal/forge", "https://git.example.internal/forge/group"];
+  // The group login serves forge/group/a and not forge/other/b, so the answer depends on the path.
+  assert.isUndefined(refine("https://git.example.internal/forge/group/a.git", urls));
+  assert.isUndefined(refine("https://git.example.internal/forge/other/b.git", urls));
+  assert.strictEqual(
+    refine("https://git.example.internal/forge/other/b.git", urls.slice(0, 1))?.baseUrl,
+    "https://git.example.internal/forge",
+  );
+});
+
 it.effect("does not choose a default Forgejo login across ambiguous SSH server ports", () =>
   Effect.gen(function* () {
     const logins = ForgejoCli.parseForgejoLogins(
