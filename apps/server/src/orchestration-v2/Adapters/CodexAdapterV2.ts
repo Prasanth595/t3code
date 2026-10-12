@@ -1416,12 +1416,17 @@ const decodeCodexPermissionProfileRequirements = Schema.decodeUnknownEffect(
  * the one Codex selected when T3 last resumed the thread without starting a
  * turn, such as a built-in default or a `default_permissions` profile the user
  * has since removed. T3's next turn clears it.
+ *
+ * It runs the `allowedPermissionProfiles` read only when `defaultPermissions`
+ * is unset, because otherwise the answer can't change the result.
  */
-function codexPermissionProfilesConfigured(input: {
+function codexPermissionProfilesConfigured<E, R>(input: {
   readonly defaultPermissions: unknown;
-  readonly allowedPermissionProfiles: unknown;
-}): boolean {
-  return input.defaultPermissions != null || input.allowedPermissionProfiles != null;
+  readonly allowedPermissionProfiles: Effect.Effect<unknown, E, R>;
+}): Effect.Effect<boolean, E, R> {
+  return input.defaultPermissions != null
+    ? Effect.succeed(true)
+    : input.allowedPermissionProfiles.pipe(Effect.map((profiles) => profiles != null));
 }
 
 const decodeCodexResumeMetadata = Schema.decodeUnknownEffect(
@@ -6289,15 +6294,19 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   Effect.flatMap(({ config }) =>
                     config.sandbox_workspace_write == null
                       ? Effect.succeed(null)
-                      : client.raw.request("configRequirements/read", undefined).pipe(
-                          Effect.flatMap(decodeCodexPermissionProfileRequirements),
-                          Effect.map(({ requirements }) =>
-                            codexPermissionProfilesConfigured({
-                              defaultPermissions: config.default_permissions,
-                              allowedPermissionProfiles: requirements?.allowedPermissionProfiles,
-                            })
-                              ? undefined
-                              : config.sandbox_workspace_write,
+                      : codexPermissionProfilesConfigured({
+                          defaultPermissions: config.default_permissions,
+                          allowedPermissionProfiles: client.raw
+                            .request("configRequirements/read", undefined)
+                            .pipe(
+                              Effect.flatMap(decodeCodexPermissionProfileRequirements),
+                              Effect.map(
+                                ({ requirements }) => requirements?.allowedPermissionProfiles,
+                              ),
+                            ),
+                        }).pipe(
+                          Effect.map((configured) =>
+                            configured ? undefined : config.sandbox_workspace_write,
                           ),
                         ),
                   ),
