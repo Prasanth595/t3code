@@ -295,13 +295,17 @@ jobs:
             latest_version="$(eas build:list --platform "$platform" --build-profile production --limit 1 --json --non-interactive | jq -r '.[0].appVersion // "none"')"
 
             if [ "$finished" -gt 0 ]; then
-              eas update \
+              if eas update \
                 --channel production \
                 --environment production \
                 --platform "$platform" \
                 --message "$message" \
-                --non-interactive
-              echo ":white_check_mark: $platform: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+                --non-interactive; then
+                echo ":white_check_mark: $platform: OTA published to production (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+              else
+                failed=1
+                echo ":x: $platform: OTA publish failed (fingerprint \`$hash\`)" >> "$GITHUB_STEP_SUMMARY"
+              fi
             fi
 
             reason=""
