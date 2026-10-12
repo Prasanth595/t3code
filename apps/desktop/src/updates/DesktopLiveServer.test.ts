@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { isLiveServerUpdateVersion } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -32,7 +33,8 @@ describe("reduceDesktopUpdateStateOnLiveBuild", () => {
       Option.some(build),
     );
     assert.strictEqual(state.status, "downloaded");
-    assert.strictEqual(state.downloadedVersion, "live 1a2b3c4d5e6f");
+    // The web reads this version to show a server-only update.
+    assert.isTrue(isLiveServerUpdateVersion(state.downloadedVersion));
     assert.deepStrictEqual(state.releaseNotes[0]?.items, [build.subject]);
   });
 

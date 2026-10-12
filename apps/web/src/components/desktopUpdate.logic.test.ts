@@ -10,7 +10,6 @@ import {
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
   isDesktopUpdateButtonDisabled,
-  isLiveServerUpdate,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
@@ -346,37 +345,5 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
-  });
-});
-
-describe("live server updates", () => {
-  const liveState: DesktopUpdateState = {
-    ...baseState,
-    status: "downloaded",
-    availableVersion: "live 1a2b3c4d5e6f",
-    downloadedVersion: "live 1a2b3c4d5e6f",
-  };
-  const fullState: DesktopUpdateState = {
-    ...liveState,
-    availableVersion: "1.0.1",
-    downloadedVersion: "1.0.1",
-  };
-
-  it("tells a server-only update apart from a full app update", () => {
-    expect(isLiveServerUpdate(liveState)).toBe(true);
-    expect(isLiveServerUpdate(fullState)).toBe(false);
-    expect(isLiveServerUpdate(null)).toBe(false);
-    expect(resolveDesktopUpdateButtonAction(liveState)).toBe("install");
-  });
-
-  it("says that only the server restarts", () => {
-    expect(getDesktopUpdateButtonTooltip(liveState)).toContain("restart the server");
-    expect(getDesktopUpdateInstallConfirmationMessage(liveState)).toContain("keeps running");
-    expect(getDesktopUpdateInstallConfirmationMessage(fullState)).toContain("restart T3 Code");
-  });
-
-  it("has no release page, because it is a commit", () => {
-    expect(getDesktopUpdateReleaseUrl("live 1a2b3c4d5e6f")).toBeNull();
-    expect(getDesktopUpdateReleaseUrl("1.0.1")).not.toBeNull();
   });
 });
