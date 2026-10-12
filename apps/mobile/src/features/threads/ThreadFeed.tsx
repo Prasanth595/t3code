@@ -47,10 +47,6 @@ import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import {
-  classifyMarkdownImageSource,
-  markdownImageSourceFragment,
-} from "@t3tools/client-runtime/markdown-images";
 import { resolveViewedImageAsset } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexFileCitationsAsMarkdown,
@@ -126,6 +122,7 @@ import { VideoPreviewModal, type VideoPreviewSource } from "../../components/Vid
 import { VideoAttachmentTile } from "../../components/VideoAttachmentTile";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { resolveMarkdownMediaPreview } from "../../lib/markdownMedia";
+import { useThreadMarkdownImageRenderer } from "./useThreadMarkdownImageRenderer";
 import {
   attachmentVideoPreviewSource,
   mediaVideoPreviewUri,
@@ -159,7 +156,6 @@ import { markdownFileIconSource } from "../../lib/markdownFileIcons";
 import { PierreEntryIcon } from "../../components/PierreEntryIcon";
 import { markdownLinkIconSource } from "../../lib/markdownLinkIcons";
 import {
-  normalizeNativeMarkdownUrl,
   resolveMarkdownInlineCodePresentation,
   resolveMarkdownLinkIcon,
 } from "../../lib/markdownLinks";
@@ -215,12 +211,7 @@ import { waitForThreadShellReady } from "./threadForkNavigation";
 import { resolveUserMessageIntentBadge } from "./userMessageIntentBadge";
 import { fileChipMenu, resolveFileChipTarget, type FileChipAction } from "./fileChipMenu";
 import { useFileChipShare } from "./useFileChipShare";
-import {
-  MarkdownImageAvailableWidthContext,
-  ThreadMarkdownImage,
-  ThreadMarkdownImageUnavailable,
-  ThreadMarkdownImageView,
-} from "./ThreadMarkdownImage";
+import { MarkdownImageAvailableWidthContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 
 const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   // Native iOS blockquotes and adjacent selectable text are separate layout
@@ -1846,61 +1837,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }),
     [onMarkdownLinkPress, props.workspaceRoot, shareFileChip, resolveImageSource],
   );
-  const renderMarkdownImage = useCallback<MarkdownImageRenderer>(
-    (image) => {
-      const media = resolveMarkdownMediaPreview(image.href, {
-        environmentId: props.environmentId,
-        threadId: props.threadId,
-        workspaceRoot: props.workspaceRoot,
-        imageEmbed: true,
-      });
-      if (media?.kind === "video") {
-        return (
-          <ThreadMarkdownVideo
-            key={image.href}
-            source={{ ...media.source, name: image.alt ?? media.source.name }}
-          />
-        );
-      }
-      const imageSource = classifyMarkdownImageSource(image.href, props.workspaceRoot ?? null);
-      if (imageSource._tag === "Direct") {
-        return (
-          <ThreadMarkdownImageView
-            uri={normalizeNativeMarkdownUrl(imageSource.uri)}
-            sourceKey={imageSource.uri}
-            format={
-              /\.svg(?:[?#]|$)/i.test(imageSource.uri) ||
-              imageSource.uri.startsWith("data:image/svg+xml")
-                ? "svg"
-                : undefined
-            }
-            unavailable={false}
-            alt={image.alt}
-            actionsSource={media?.source.actionsSource}
-            onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-          />
-        );
-      }
-      if (imageSource._tag === "Blocked") {
-        return <ThreadMarkdownImageUnavailable alt={image.alt} />;
-      }
-      return (
-        <ThreadMarkdownImage
-          environmentId={props.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: props.threadId,
-            path: imageSource.path,
-          }}
-          alt={image.alt}
-          srcFragment={markdownImageSourceFragment(image.href)}
-          actionsSource={media?.source.actionsSource}
-          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
-        />
-      );
-    },
-    [props.environmentId, props.threadId, props.workspaceRoot],
-  );
+  const renderMarkdownImage = useThreadMarkdownImageRenderer({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot ?? null,
+    setExpandedFile,
+  });
   const renderViewedImage = useCallback<MarkdownImageRenderer>(
     (image) => {
       const viewedImage = resolveViewedImageAsset(image.href, {

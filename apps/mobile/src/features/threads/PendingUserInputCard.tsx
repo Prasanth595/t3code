@@ -11,6 +11,7 @@ import {
   themeColorWithContrast,
 } from "../../lib/mobileTheme";
 import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
+import { useThreadMarkdownImageRenderer } from "./useThreadMarkdownImageRenderer";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { RequestActionButton } from "./RequestActionButton";
@@ -175,7 +176,14 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
     workspaceRoot: props.workspaceRoot,
   });
   const onImagePress = useCallback((href: string) => onLinkPress(href, true), [onLinkPress]);
+  const renderImage = useThreadMarkdownImageRenderer({
+    environmentId: props.environmentId,
+    threadId: props.threadId,
+    workspaceRoot: props.workspaceRoot,
+    setExpandedFile,
+  });
   const markdownProps = {
+    renderImage,
     onLinkPress,
     onImagePress,
     resolveImageSource,
@@ -479,7 +487,12 @@ function PendingUserInputOption(props: {
   readonly disabled: boolean;
   readonly markdownProps: Pick<
     SelectableMarkdownTextProps,
-    "onLinkPress" | "onImagePress" | "resolveImageSource" | "marginTop" | "marginBottom"
+    | "onLinkPress"
+    | "onImagePress"
+    | "renderImage"
+    | "resolveImageSource"
+    | "marginTop"
+    | "marginBottom"
   >;
   readonly labelTextStyle: SelectableMarkdownTextProps["textStyle"];
   readonly descriptionTextStyle: SelectableMarkdownTextProps["textStyle"];
