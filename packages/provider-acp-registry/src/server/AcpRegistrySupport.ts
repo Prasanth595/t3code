@@ -12,6 +12,7 @@ import {
 } from "@t3tools/contracts";
 import type { AcpRegistryDistributionPreference } from "../settings.ts";
 import type { AcpRegistrySettings } from "../settings.ts";
+import { cliArchiveTarCommand } from "@t3tools/shared/cliRelease";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   mergePathEntries,
@@ -1363,6 +1364,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return {
       commandSegments,
       installRoot,
+      platformTarget: matchedPlatformTarget,
       executablePath: path.join(installRoot, ...commandSegments),
     };
   };
@@ -1509,6 +1511,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         yield* fileSystem.makeDirectory(path.dirname(targetPath), { recursive: true });
         yield* fileSystem.rename(archivePath, targetPath);
       } else {
+        // The new Windows ARM fallback must extract x64 ZIPs even when Git's GNU tar wins PATH.
+        // Keep archive selection for existing native distributions unchanged in this PR.
+        const tarCommand =
+          platformTarget === "windows-aarch64" &&
+          paths.platformTarget === "windows-x86_64" &&
+          kind === "zip"
+            ? cliArchiveTarCommand(platform, hostEnvironment)
+            : "tar";
         const listArgs =
           kind === "tar_gz"
             ? ["-tzf", archivePath]
@@ -1520,7 +1530,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const entries =
           listArgs === undefined
             ? yield* runCommand("unzip", ["-Z1", archivePath])
-            : yield* runCommand("tar", listArgs);
+            : yield* runCommand(tarCommand, listArgs);
         if (!validateArchiveEntries(entries)) {
           return yield* new AcpRegistryError({
             reason: "archive_invalid",
@@ -1531,7 +1541,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot]);
         } else {
           const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
-          yield* runCommand("tar", [extractFlag, archivePath, "-C", extractionRoot]);
+          yield* runCommand(tarCommand, [extractFlag, archivePath, "-C", extractionRoot]);
         }
       }
 
