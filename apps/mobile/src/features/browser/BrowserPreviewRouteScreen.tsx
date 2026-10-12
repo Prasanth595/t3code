@@ -1,11 +1,6 @@
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import {
-  EnvironmentId,
-  FILL_PREVIEW_VIEWPORT,
-  ThreadId,
-  type PreviewSessionSnapshot,
-} from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import type { PreviewStreamInput } from "@t3tools/client-runtime/preview/server-browser-stream";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import * as Clipboard from "expo-clipboard";
