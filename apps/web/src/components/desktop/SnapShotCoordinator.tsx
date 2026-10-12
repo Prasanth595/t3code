@@ -3,6 +3,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { useLocation } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import {
@@ -302,12 +303,12 @@ export function SnapShotCoordinator() {
       return drainingRef.current;
     }
 
-    // Validate against the route this drain started on: a pinned capture on a routed thread whose
-    // shell has not loaded yet must not be dropped because the user navigated mid-drain.
-    const { routeThreadRef: drainRouteThreadRef } = latestContextRef.current;
     const operation = (async () => {
       do {
         rerunRequestedRef.current = false;
+        // Validate against the route this pass started on: a pinned capture on a routed thread
+        // whose shell has not loaded yet must not be dropped because the user navigated mid-pass.
+        const { routeThreadRef: passRouteThreadRef } = latestContextRef.current;
         const pending = await bridge.listPendingSnapShots();
         for (const item of pending) {
           playCaptureSound(item.id);
@@ -317,7 +318,7 @@ export function SnapShotCoordinator() {
             resolveCaptureTarget,
           );
           const target = capturedTarget
-            ? resolveExistingSnapShotTarget(capturedTarget, drainRouteThreadRef)
+            ? resolveExistingSnapShotTarget(capturedTarget, passRouteThreadRef)
             : null;
           if (!target) {
             await dismissSnapShotAnimation(item.id);
@@ -435,22 +436,20 @@ export function SnapShotCoordinator() {
     return unsubscribe;
   }, [drain, playCaptureSound, resolveCaptureTarget]);
 
-  // Captures persisted before the route bootstrapped, or whose draft creation lost a race with
-  // navigation, get no new `ready` event. Retry when the destination changes, not on every
-  // streaming update to the same thread.
-  const destinationKey = routeThreadRef
-    ? `thread:${routeThreadRef.environmentId}:${routeThreadRef.threadId}`
-    : routeDraftId
-      ? `draft:${routeDraftId}`
-      : defaultProjectRef
-        ? `project:${defaultProjectRef.environmentId}:${defaultProjectRef.projectId}`
-        : null;
-  const previousDestinationKeyRef = useRef(destinationKey);
+  // Captures persisted before the route bootstrapped, or whose draft creation was abandoned by
+  // navigation, get no new `ready` event. Retry when the location or default project changes,
+  // which streaming updates to the same thread never do.
+  const routeHref = useLocation({ select: (location) => location.href });
+  const defaultProjectKey = defaultProjectRef
+    ? `${defaultProjectRef.environmentId}:${defaultProjectRef.projectId}`
+    : null;
+  const retryKey = currentTarget || defaultProjectKey ? `${routeHref} ${defaultProjectKey}` : null;
+  const previousRetryKeyRef = useRef(retryKey);
   useEffect(() => {
-    const previousDestinationKey = previousDestinationKeyRef.current;
-    previousDestinationKeyRef.current = destinationKey;
-    if (destinationKey !== null && destinationKey !== previousDestinationKey) void drain();
-  }, [destinationKey, drain]);
+    const previousRetryKey = previousRetryKeyRef.current;
+    previousRetryKeyRef.current = retryKey;
+    if (retryKey !== null && retryKey !== previousRetryKey) void drain();
+  }, [drain, retryKey]);
 
   useEffect(() => {
     const dismissOnBlur = () => {

@@ -1,11 +1,13 @@
 // @vitest-environment jsdom
 
-import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   DEFAULT_CLIENT_SETTINGS,
   type DesktopPendingSnapShot,
   type DesktopSnapShotEvent,
   EnvironmentId,
+  ProjectId,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -23,14 +25,19 @@ const route = vi.hoisted(() => ({
   current: {
     activeDraftThread: null,
     activeThread: null as { id: string; updatedAt: number } | null,
-    defaultProjectRef: null,
+    defaultProjectRef: null as ScopedProjectRef | null,
     handleNewThread: async () => null,
     routeDraftId: null,
     routeThreadRef: null as ScopedThreadRef | null,
   },
+  href: "/",
 }));
 vi.mock("../../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => route.current,
+}));
+vi.mock("@tanstack/react-router", () => ({
+  useLocation: <T,>({ select }: { select: (location: { href: string }) => T }) =>
+    select({ href: route.href }),
 }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: <T,>(selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
@@ -66,6 +73,7 @@ const threadA = scopeThreadRef(environmentId, ThreadId.make("thread-a"));
 const threadB = scopeThreadRef(environmentId, ThreadId.make("thread-b"));
 
 function setRoute(routeThreadRef: ScopedThreadRef | null, updatedAt: number) {
+  if (routeThreadRef) route.href = `/${routeThreadRef.environmentId}/${routeThreadRef.threadId}`;
   route.current = {
     ...route.current,
     routeThreadRef,
@@ -90,6 +98,8 @@ const pendingCapture: DesktopPendingSnapShot = {
 let root: ReturnType<typeof createRoot>;
 
 async function mount(routeThreadRef: ScopedThreadRef | null) {
+  route.href = "/";
+  route.current = { ...route.current, defaultProjectRef: null };
   setRoute(routeThreadRef, 0);
   root = createRoot(document.createElement("div"));
   await act(async () => root.render(<SnapShotCoordinator />));
@@ -175,6 +185,44 @@ it("delivers a capture pinned to the drain's route when the user navigates mid-d
   setRoute(threadB, 1);
   await act(async () => root.render(<SnapShotCoordinator />));
   await act(async () => finishListing?.([pendingCapture]));
+
+  expect(bridge.readSnapShot).toHaveBeenCalledWith(pendingCapture.id);
+});
+
+it("retries abandoned draft creation when navigating between non-thread pages", async () => {
+  await mount(null);
+  route.current = {
+    ...route.current,
+    defaultProjectRef: scopeProjectRef(environmentId, ProjectId.make("default-project")),
+  };
+  route.href = "/settings/general";
+  await act(async () => root.render(<SnapShotCoordinator />));
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(2);
+
+  // Draft creation that started on the first page returns null once the href changes.
+  route.href = "/settings/projects";
+  await act(async () => root.render(<SnapShotCoordinator />));
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(3);
+});
+
+it("validates a rerun pass against the route it started on", async () => {
+  await mount(threadA);
+  let finishListing: ((captures: DesktopPendingSnapShot[]) => void) | undefined;
+  bridge.listPendingSnapShots
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishListing = resolve;
+        }),
+    )
+    .mockResolvedValue([pendingCapture]);
+
+  await act(async () => bridge.emit({ type: "ready", id: "c0ffee-01" }));
+  // Thread B has no loaded shell, so its capture is only valid while B is the route.
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  await act(async () => bridge.emit({ type: "requested", id: pendingCapture.id }));
+  await act(async () => finishListing?.([]));
 
   expect(bridge.readSnapShot).toHaveBeenCalledWith(pendingCapture.id);
 });
