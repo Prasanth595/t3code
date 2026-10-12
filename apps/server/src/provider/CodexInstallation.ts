@@ -705,6 +705,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     // neither leak disk nor make an otherwise empty runtime look removable. Two
     // servers can share a home, so one touched within the last hour may be
     // another server's install in progress and stays.
+    let canRemove = false;
     if (yield* fs.exists(managedDirectory)) {
       const entries = yield* fs
         .readDirectory(managedDirectory)
@@ -722,13 +723,11 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
         yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
       }
-      // An unreadable directory is not an empty one; never delete on a failed read.
+      // The empty root itself stays: deleting it could race another server
+      // creating a staging directory inside. An unreadable root stays removable.
       const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);
-      if (Option.isSome(remaining) && remaining.value.length === 0) {
-        yield* fs.remove(managedDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
-      }
+      canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }
-    const canRemove = yield* fs.exists(managedDirectory);
     yield* SubscriptionRef.update(state, (current) => ({ ...current, canRemove }));
     if (yield* reuseLocal()) return;
     if (!(yield* fs.exists(activePath))) return;

@@ -408,7 +408,7 @@ it.live("startup removes only stale staging directories", () =>
     yield* fs.makeDirectory(`${managed}/.install-stale`);
     yield* fs.utimes(`${managed}/.install-stale`, stale, stale);
     const fresh = yield* makeHarness({ baseDir });
-    expect(yield* fs.exists(managed)).toBe(false);
+    expect(yield* fs.readDirectory(managed)).toEqual([]);
     expect((yield* fresh.installation.state).canRemove).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
