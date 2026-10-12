@@ -813,7 +813,7 @@ export function ThreadTerminalStatusButton({
             aria-label={label}
             data-testid={`sidebar-terminal-status-${threadRef.threadId}`}
             className={cn(
-              "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring",
+              "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
               status?.colorClass,
             )}
             onPointerDown={(event) => event.stopPropagation()}
