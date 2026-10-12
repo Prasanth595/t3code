@@ -29,6 +29,7 @@ describe("projectScripts helpers", () => {
     runOnSettle: false,
     previewUrl: null,
     autoOpenPreview: false,
+    previewOverlay: false,
   } as const;
 
   it("stores runInBackground only when it is on", () => {
@@ -56,6 +57,7 @@ describe("projectScripts helpers", () => {
         runOnSettle: false,
         previewUrl: "http://localhost:5733",
         autoOpenPreview: true,
+        previewOverlay: false,
         runInBackground: false,
       }),
     ).toEqual({
@@ -69,6 +71,27 @@ describe("projectScripts helpers", () => {
     });
   });
 
+  it("stores previewOverlay only with a preview URL and only when it is on", () => {
+    const input = {
+      name: "Navgator",
+      command: "navgator web --no-open",
+      icon: "play",
+      runOnWorktreeCreate: false,
+      waitForSetup: false,
+      runOnSettle: false,
+      autoOpenPreview: true,
+      runInBackground: true,
+    } as const;
+    const overlay = buildProjectScript("nav", {
+      ...input,
+      previewUrl: "http://127.0.0.1:4748",
+      previewOverlay: true,
+    });
+    expect(overlay.previewOverlay).toBe(true);
+    const noUrl = buildProjectScript("nav", { ...input, previewUrl: null, previewOverlay: true });
+    expect("previewOverlay" in noUrl).toBe(false);
+  });
+
   it("omits preview settings when no preview URL is configured", () => {
     expect(
       buildProjectScript("test", {
@@ -80,6 +103,7 @@ describe("projectScripts helpers", () => {
         runOnSettle: false,
         previewUrl: null,
         autoOpenPreview: false,
+        previewOverlay: false,
         runInBackground: false,
       }),
     ).toEqual({
@@ -98,6 +122,7 @@ describe("projectScripts helpers", () => {
       icon: "configure",
       previewUrl: null,
       autoOpenPreview: false,
+      previewOverlay: false,
       runInBackground: false,
       runOnSettle: false,
     } as const;
@@ -199,6 +224,7 @@ describe("projectScripts helpers", () => {
       waitForSetup: false,
       previewUrl: null,
       autoOpenPreview: false,
+      previewOverlay: false,
       runInBackground: false,
     } as const;
     const holder = {

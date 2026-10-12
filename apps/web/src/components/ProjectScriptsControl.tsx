@@ -159,6 +159,7 @@ export default function ProjectScriptsControl({
       ...(readEnvironmentScope(environmentId, AuthSettingsWriteScope) ? { keybinding: null } : {}),
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
+      previewOverlay: false,
       runInBackground: fileScript.runInBackground ?? false,
     };
     const result = await onAddScript(payload);
