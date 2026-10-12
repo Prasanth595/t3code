@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as Crypto from "effect/Crypto";
 import * as Schema from "effect/Schema";
@@ -29,7 +30,6 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
-import * as Settings from "../../../serverSettings.ts";
 
 const shared = {
   success: Project,
@@ -62,7 +62,7 @@ const ProjectReadTool = Tool.make("t3_project_read", {
   description:
     "Read a registered project in this environment, including its workspace and saved scripts.",
   parameters: Schema.Struct({ projectId: ProjectId }),
-  dependencies: [...shared.dependencies, Settings.ServerSettingsService],
+  dependencies: [...shared.dependencies, ServerSettings.ServerSettingsService],
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
@@ -78,7 +78,7 @@ const ProjectCreateTool = Tool.make("t3_project_create", {
   dependencies: [
     ...shared.dependencies,
     ManagedProjectFolders.ManagedProjectFolders,
-    Settings.ServerSettingsService,
+    ServerSettings.ServerSettingsService,
   ],
 }).annotate(Tool.Destructive, true);
 const ProjectUpdateTool = Tool.make("t3_project_update", {
@@ -86,7 +86,7 @@ const ProjectUpdateTool = Tool.make("t3_project_update", {
   description:
     "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. scripts replaces the project's actions, the list the app shows and runs.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
-  dependencies: [...shared.dependencies, Settings.ServerSettingsService],
+  dependencies: [...shared.dependencies, ServerSettings.ServerSettingsService],
 }).annotate(Tool.Destructive, true);
 const ProjectDeleteTool = Tool.make("t3_project_delete", {
   ...shared,
@@ -151,7 +151,7 @@ const ThreadLaunchTool = Tool.make("t3_thread_launch", {
     GitVcsDriver.GitVcsDriver,
     FileSystem.FileSystem,
     ServerConfig.ServerConfig,
-    Settings.ServerSettingsService,
+    ServerSettings.ServerSettingsService,
   ],
 })
   .annotate(Tool.Destructive, true)

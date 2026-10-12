@@ -19,10 +19,10 @@ import * as Stream from "effect/Stream";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ServerConfig from "../../../config.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
-import * as Settings from "../../../serverSettings.ts";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
@@ -82,7 +82,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       Layer.mock(Project.ProjectService)({}),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      Settings.layerTest(),
+      ServerSettings.layerTest(),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-link-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -157,7 +157,7 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         ensureScratchProject: Effect.succeed({ projectId: scratchProjectId }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      Settings.layerTest(),
+      ServerSettings.layerTest(),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-scratch-launch-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -261,7 +261,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
           }),
       }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      Settings.layerTest(),
+      ServerSettings.layerTest(),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -327,9 +327,9 @@ it.effect("project settings written by t3_project_update are the ones the app re
       deletedAt: null,
     } as unknown as ProjectRecord;
     // One instance, so every handler call below shares the same settings.
-    const settingsService = yield* Settings.ServerSettingsService.pipe(
+    const settingsService = yield* ServerSettings.ServerSettingsService.pipe(
       // Folded: the aggregate's scripts no longer count, as on a migrated server.
-      Effect.provide(Settings.layerTest({ projectSettingsFolded: true })),
+      Effect.provide(ServerSettings.layerTest({ projectSettingsFolded: true })),
     );
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const aggregateUpdates: Array<Parameters<Project.ProjectService["Service"]["update"]>[0]> = [];
@@ -371,7 +371,7 @@ it.effect("project settings written by t3_project_update are the ones the app re
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-      Layer.succeed(Settings.ServerSettingsService, settingsService),
+      Layer.succeed(ServerSettings.ServerSettingsService, settingsService),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-project-actions-" }).pipe(
         Layer.provide(NodeServices.layer),
@@ -494,7 +494,7 @@ const clientLaunchHarness = (input: {
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     // The default model lives in the project's settings override, where the app reads it.
-    Settings.layerTest({
+    ServerSettings.layerTest({
       projectSettingsFolded: true,
       projectSettingsOverrides: { [projectId]: { defaultModelSelection: modelSelection } },
     }),

@@ -563,7 +563,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? (restartContinuationRun(projection) ??
+          ? (restartContinuationRun(projection, now) ??
             (recoverInterruptedTurns ? settledRunWithOpenBackgroundWork(projection) : undefined))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
@@ -709,7 +709,7 @@ export const make = Effect.gen(function* () {
         )
           return;
         const run =
-          restartContinuationRun(projection) ??
+          restartContinuationRun(projection, yield* DateTime.now) ??
           (enabled.recoverInterruptedTurns
             ? settledRunWithOpenBackgroundWork(projection)
             : undefined);
