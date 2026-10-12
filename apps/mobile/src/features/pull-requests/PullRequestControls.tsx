@@ -26,7 +26,7 @@ export function PullRequestCardGroup(props: { readonly children: ReactNode }) {
   return (
     <Animated.View
       layout={PR_ROW_LAYOUT}
-      className="overflow-hidden rounded-[22px] border-continuous bg-grouped-card"
+      className="overflow-hidden rounded-[22px] border border-composer-border border-continuous bg-grouped-card"
     >
       {props.children}
     </Animated.View>
@@ -239,7 +239,7 @@ export function PullRequestActionToolbar(props: {
               : "bubble.left.and.bubble.right"
             : undefined
         }
-        tintColor={colors["--color-foreground"]}
+        tintColor={colors["--color-prominent-action"]}
         disabled={primaryDisabled}
         separateBackground
       >
@@ -260,7 +260,7 @@ export function PullRequestActionToolbar(props: {
               : "bubble.left.and.bubble.right"
             : undefined
         }
-        tintColor={colors["--color-foreground"]}
+        tintColor={colors["--color-prominent-action"]}
         disabled={primaryDisabled}
         onPress={primaryPress}
         separateBackground
