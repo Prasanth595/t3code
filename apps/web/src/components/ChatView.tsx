@@ -4981,6 +4981,8 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath?: string | null;
         preferNewTerminal?: boolean;
         rememberAsLastInvoked?: boolean;
+        /** Where the script's preview opens. The right panel when omitted. */
+        previewPresentation?: "panel" | "floating";
       },
     ) => {
       if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
@@ -5088,6 +5090,7 @@ export default function ChatView(props: ChatViewProps) {
           threadRef: activeThreadRef,
           url: resolveDiscoveredServerUrl(activeThreadRef.environmentId, script.previewUrl),
           openPreview,
+          ...(options?.previewPresentation ? { presentation: options.previewPresentation } : {}),
         });
         if (previewResult._tag === "Failure" && !isAtomCommandInterrupted(previewResult)) {
           const error = squashAtomCommandFailure(previewResult);
@@ -5134,8 +5137,13 @@ export default function ChatView(props: ChatViewProps) {
   const runPinnedProjectScript = useCallback((script: ProjectScript) => {
     void runProjectScriptRef.current(script);
   }, []);
+  // A global script belongs to no project, so its preview floats over the thread as a popup
+  // instead of taking the project's right panel.
   const runGlobalScript = useCallback((script: ProjectScript) => {
-    void runProjectScriptRef.current(script, { rememberAsLastInvoked: false });
+    void runProjectScriptRef.current(script, {
+      rememberAsLastInvoked: false,
+      previewPresentation: "floating",
+    });
   }, []);
   const globalScripts = settings.globalScripts;
   // The title bar sits outside this view, so it reaches the runner through the store.
@@ -11490,6 +11498,7 @@ export default function ChatView(props: ChatViewProps) {
             onNewThreadInProject={handleNewThreadInActiveProject}
             projectScripts={activeProjectScripts}
             onRunPinnedScript={canOperateTerminal ? runPinnedProjectScript : undefined}
+            onRunPinnedGlobalScript={canOperateTerminal ? runGlobalScript : undefined}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
