@@ -656,7 +656,22 @@ export const make = Effect.gen(function* () {
                     refreshUpstream: !Duration.isZero(interval),
                     policyCwds: [...demandCwds.keys()],
                     onlyIfMissing: true,
-                  }).pipe(Effect.ignore, Effect.forkScoped);
+                  }).pipe(
+                    Effect.retry(
+                      Schedule.exponential(VCS_STATUS_REFRESH_FAILURE_BASE_DELAY).pipe(
+                        Schedule.modifyDelay(({ duration }) =>
+                          Effect.succeed(
+                            Duration.max(
+                              interval,
+                              Duration.min(duration, VCS_STATUS_REFRESH_FAILURE_MAX_DELAY),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    Effect.ignore,
+                    Effect.forkScoped,
+                  );
                 })
               : Effect.void,
           ),

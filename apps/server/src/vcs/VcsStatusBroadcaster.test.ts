@@ -80,7 +80,7 @@ function layerTestFor(state: {
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   backgroundWorkEnabled?: boolean;
   /** Runs before each remote status read, e.g. to hold a fetch open. */
-  beforeRemoteStatus?: Effect.Effect<void>;
+  beforeRemoteStatus?: Effect.Effect<void, GitManagerError>;
 }) {
   return VcsStatusBroadcaster.layer.pipe(
     Layer.provideMerge(NodeServices.layer),
@@ -198,9 +198,9 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect(
-    "loads remote status for a new subscriber after eviction with periodic refreshes disabled",
-    () => {
+  it.effect.each([false, true])(
+    "loads remote status for a new subscriber after eviction with periodic refreshes disabled and transient failure=%s",
+    (transientFailure) => {
       const state = {
         currentLocalStatus: baseLocalStatus,
         currentRemoteStatus: remoteStatusWithPr,
@@ -210,6 +210,7 @@ describe("VcsStatusBroadcaster", () => {
         remoteInvalidationCalls: 0,
         remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
         backgroundWorkEnabled: false,
+        beforeRemoteStatus: Effect.void as Effect.Effect<void, GitManagerError>,
       };
 
       return Effect.gen(function* () {
@@ -225,6 +226,18 @@ describe("VcsStatusBroadcaster", () => {
         for (let index = 0; index < 1_000; index += 1) {
           yield* broadcaster.getStatus({ cwd: `/visited-repo-${index}` });
         }
+        let failed = false;
+        state.beforeRemoteStatus = Effect.suspend(() => {
+          if (!transientFailure || failed) return Effect.void;
+          failed = true;
+          return Effect.fail(
+            new GitManagerError({
+              operation: "remoteStatus",
+              cwd: "/active-repo",
+              detail: "Transient remote status failure",
+            }),
+          );
+        });
 
         const snapshot = yield* Deferred.make<VcsStatusStreamEvent>();
         const remoteUpdated = yield* Deferred.make<VcsStatusStreamEvent>();
@@ -245,6 +258,12 @@ describe("VcsStatusBroadcaster", () => {
           remote: null,
         });
         yield* TestClock.adjust(Duration.zero);
+        if (transientFailure) {
+          assert.isTrue(failed);
+          assert.equal(state.remoteStatusCalls, remoteCalls);
+          assert.isTrue(Option.isNone(yield* Deferred.poll(remoteUpdated)));
+          yield* TestClock.adjust(Duration.seconds(30));
+        }
         assert.equal(state.remoteStatusCalls, remoteCalls + 1);
         assert.deepStrictEqual(yield* Deferred.await(remoteUpdated), {
           _tag: "remoteUpdated",
