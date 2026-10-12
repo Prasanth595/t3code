@@ -1,6 +1,10 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- The probe is a plain Node child; this deadline kills it if it hangs.
-import * as NodeChildProcess from "node:child_process";
-import { describe, expect, it } from "vite-plus/test";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 const cursorSdkUrl = new URL("./sdk.ts", import.meta.url).href;
 
@@ -118,85 +122,84 @@ console.error("Unknown Cursor SDK model probe: " + mode);
 process.exit(2);
 `;
 
-function runProbe(mode: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = NodeChildProcess.spawn(
-      process.execPath,
-      [
-        "--experimental-strip-types",
-        "--disable-warning=ExperimentalWarning",
-        "--input-type=module",
-        "-e",
-        probeProgram,
-        mode,
-      ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+const runProbe = Effect.fnUntraced(
+  function* (mode: string) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        HostProcess.ExecutablePath.defaultValue(),
+        [
+          "--experimental-strip-types",
+          "--disable-warning=ExperimentalWarning",
+          "--input-type=module",
+          "-e",
+          probeProgram,
+          mode,
+        ],
+        { stdin: "ignore" },
+      ),
     );
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk: string) => {
-      stderr += chunk;
-    });
-    const timer = setTimeout(() => {
-      child.kill();
-      reject(new Error(`probe ${mode} timed out`));
-    }, 5_000);
-    child.on("error", reject);
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ code, stdout, stderr });
-    });
-  });
-}
+    return yield* Effect.all(
+      {
+        code: child.exitCode,
+        stdout: child.stdout.pipe(Stream.decodeText(), Stream.mkString),
+        stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+      },
+      { concurrency: "unbounded" },
+    );
+  },
+  Effect.scoped,
+  Effect.timeout("5 seconds"),
+  Effect.provide(NodeServices.layer),
+);
 
 describe("Cursor long-context requests", () => {
-  it("sets Max Mode in real SDK sends for the reported context tiers", async () => {
-    const result = await runProbe("sdk-model-requests");
-    expect(result.code, result.stderr.slice(-2_000)).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual([
-      { model: "grok-4.7", context: "500k", maxMode: true },
-      { model: "grok-4.7", context: "256k", maxMode: false },
-      { model: "claude-opus-5-5", context: "1m", maxMode: true },
-      { model: "claude-opus-5-5", context: "300k", maxMode: false },
-    ]);
-  });
+  it.live("sets Max Mode in real SDK sends for the reported context tiers", () =>
+    Effect.gen(function* () {
+      const result = yield* runProbe("sdk-model-requests");
+      expect(result.code, result.stderr.slice(-2_000)).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        { model: "grok-4.7", context: "500k", maxMode: true },
+        { model: "grok-4.7", context: "256k", maxMode: false },
+        { model: "claude-opus-5-5", context: "1m", maxMode: true },
+        { model: "claude-opus-5-5", context: "300k", maxMode: false },
+      ]);
+    }),
+  );
 
-  it("serializes Max Mode for long tiers and preserves standard requests", async () => {
-    const result = await runProbe("model-requests");
-    expect(result.code).toBe(0);
-    const { requests, unrelatedMaxMode } = JSON.parse(result.stdout);
-    expect(requests.map((request: { maxMode: boolean }) => request.maxMode)).toEqual([
-      true,
-      true,
-      true,
-      true,
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      false,
-      true,
-    ]);
-    expect(requests[0]).toEqual({
-      maxMode: true,
-      modelId: "claude-opus-5-5",
-      parameters: [
-        { id: "reasoning_effort", value: "high" },
-        { id: "context", value: "1m" },
-        { id: "fast", value: "true" },
-      ],
-      sourceUnchanged: true,
-    });
-    expect(requests.every((request: { sourceUnchanged: boolean }) => request.sourceUnchanged)).toBe(
-      true,
-    );
-    expect(unrelatedMaxMode).toBe(false);
-  });
+  it.live("serializes Max Mode for long tiers and preserves standard requests", () =>
+    Effect.gen(function* () {
+      const result = yield* runProbe("model-requests");
+      expect(result.code).toBe(0);
+      const { requests, unrelatedMaxMode } = JSON.parse(result.stdout);
+      expect(requests.map((request: { maxMode: boolean }) => request.maxMode)).toEqual([
+        true,
+        true,
+        true,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+      ]);
+      expect(requests[0]).toEqual({
+        maxMode: true,
+        modelId: "claude-opus-5-5",
+        parameters: [
+          { id: "reasoning_effort", value: "high" },
+          { id: "context", value: "1m" },
+          { id: "fast", value: "true" },
+        ],
+        sourceUnchanged: true,
+      });
+      expect(
+        requests.every((request: { sourceUnchanged: boolean }) => request.sourceUnchanged),
+      ).toBe(true);
+      expect(unrelatedMaxMode).toBe(false);
+    }),
+  );
 });
