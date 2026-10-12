@@ -3195,6 +3195,15 @@ function OpenCommandPaletteDialog(props: {
       requestThreadFindOpen();
       return;
     }
+    // ChatView ignores shortcuts while the palette is open, so the palette runs
+    // its own settle item, even when the query has filtered it out.
+    if (command === "thread.settle") {
+      event.preventDefault();
+      event.stopPropagation();
+      const settleItem = actionItems.find((item) => item.shortcutCommand === "thread.settle");
+      if (settleItem) executeItem(settleItem);
+      return;
+    }
 
     if (addProjectCloneFlow?.step === "repository" && event.key === "Enter") {
       event.preventDefault();
