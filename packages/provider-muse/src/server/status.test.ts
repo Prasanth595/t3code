@@ -208,6 +208,16 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
         type: "accountLogin",
         label: "Team login",
       });
+      expect(museAccountAuth({ state: "accountLogin", label: "Team @ Meta" })).toEqual({
+        status: "authenticated",
+        type: "accountLogin",
+        label: "Team @ Meta",
+      });
+      expect(museAccountAuth({ state: "accountLogin", label: " dev@example.com " })).toEqual({
+        status: "authenticated",
+        type: "accountLogin",
+        email: "dev@example.com",
+      });
       // A keyless endpoint needs no login, and a lane this version does not know stays unknown.
       expect(museAccountAuth({ state: "loggedOut", credentialRequired: false })).toEqual({
         status: "unknown",

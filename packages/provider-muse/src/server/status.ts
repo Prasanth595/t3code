@@ -31,6 +31,9 @@ const MUSE_PRESENTATION = {
 } as const;
 
 const FALLBACK_CAPABILITIES = museModelCapabilities();
+// A login usually names its account by email. A display name such as
+// "Team @ Meta" stays a label so Settings never shows it as an address.
+const EMAIL_ADDRESS = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * The credential `account/read` reports. A login names its account, which is
@@ -44,7 +47,7 @@ export function museAccountAuth(account: MuseAccountState | undefined): ServerPr
       return {
         status: "authenticated",
         type: "accountLogin",
-        ...(label ? (label.includes("@") ? { email: label } : { label }) : {}),
+        ...(label ? (EMAIL_ADDRESS.test(label) ? { email: label } : { label }) : {}),
       };
     case "apiKey":
     case "envKey":
