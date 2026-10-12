@@ -11252,7 +11252,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : threadDispatch.withLock(parentThreadId, dispatch);
     });
 
-  const delegatedTaskResultPending = (childThreadId: ThreadId, taskId?: NodeId) =>
+  const delegatedTaskResultPending = (
+    childThreadId: ThreadId,
+    taskId?: NodeId,
+    settledContinuationOf?: RunId,
+  ) =>
     Effect.gen(function* () {
       const child = yield* projectionStore.getThreadRecords(
         childThreadId,
@@ -11263,13 +11267,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
         const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
         if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run);
+        return yield* childAwaitsRestartContinuation(runs, run, settledContinuationOf);
       }
       const progress = delegatedTaskProgress(child);
       // A caller's older read saw a result; newer work since then means it is not final.
       if (progress.state !== "result_available") return true;
       if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRestartContinuation(child.runs, progress.resultRun);
+      return yield* childAwaitsRestartContinuation(
+        child.runs,
+        progress.resultRun,
+        settledContinuationOf,
+      );
     }).pipe(
       Effect.mapError(
         (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
@@ -11289,7 +11297,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         parentThreadId,
         finalizeAppOwnedSubagent(childThreadId, options),
       );
-      if (yield* delegatedTaskResultPending(childThreadId)) return;
+      if (
+        yield* delegatedTaskResultPending(childThreadId, undefined, options?.settledContinuationOf)
+      )
+        return;
       const { runtimeRequests } = yield* projectionStore.getThreadRecords(childThreadId, [
         "runtimeRequests",
       ]);
