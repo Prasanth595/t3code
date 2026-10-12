@@ -11286,39 +11286,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   // Async questions do not stop a delegated child's run. Once its task result is
   // final, nothing reads the answers, so the questions close instead of
-  // showing on the parent forever.
+  // showing on the parent forever. The parent lock is held throughout, so a
+  // follow-up run cannot start between the check and the dismissal.
   const finishAppOwnedSubagent = (
     parentThreadId: ThreadId,
     childThreadId: ThreadId,
     options?: { readonly settledContinuationOf?: RunId },
   ) =>
-    Effect.gen(function* () {
-      yield* threadDispatch.withLock(
-        parentThreadId,
-        finalizeAppOwnedSubagent(childThreadId, options),
-      );
-      if (
-        yield* delegatedTaskResultPending(childThreadId, undefined, options?.settledContinuationOf)
-      )
-        return;
-      const { runtimeRequests } = yield* projectionStore.getThreadRecords(childThreadId, [
-        "runtimeRequests",
-      ]);
-      for (const request of runtimeRequests) {
-        if (
-          request.status !== "pending" ||
-          request.kind !== "user_input" ||
-          request.responseCapability.type !== "message"
-        )
-          continue;
-        yield* dispatchWithReceipt({
-          type: "thread.user-input.dismiss",
-          commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
-          threadId: childThreadId,
-          requestId: request.id,
-        });
-      }
-    });
+    threadDispatch.withLock(
+      parentThreadId,
+      Effect.gen(function* () {
+        yield* finalizeAppOwnedSubagent(childThreadId, options);
+        const settledContinuationOf = options?.settledContinuationOf;
+        if (yield* delegatedTaskResultPending(childThreadId, undefined, settledContinuationOf))
+          return;
+        const { runtimeRequests } = yield* projectionStore.getThreadRecords(childThreadId, [
+          "runtimeRequests",
+        ]);
+        for (const request of runtimeRequests) {
+          if (
+            request.status !== "pending" ||
+            request.kind !== "user_input" ||
+            request.responseCapability.type !== "message"
+          )
+            continue;
+          // Takes the child lock inside the parent's, the order follow-up intake uses.
+          yield* threadDispatch.withLock(
+            childThreadId,
+            dispatchWithReceiptEffect({
+              type: "thread.user-input.dismiss",
+              commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
+              threadId: childThreadId,
+              requestId: request.id,
+            }),
+          );
+        }
+      }),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
