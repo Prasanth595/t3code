@@ -22,6 +22,13 @@ import {
 import { SnapShotCoordinator } from "./SnapShotCoordinator";
 import { DraftId } from "../../composerDraftStore";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { playSnapShotSound } from "../../lib/snapShotSound";
+import { toastManager } from "../ui/toast";
+
+vi.mock("../../lib/snapShotSound", async (original) => ({
+  ...(await original<typeof import("../../lib/snapShotSound")>()),
+  playSnapShotSound: vi.fn(),
+}));
 
 const shellState = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
@@ -54,6 +61,7 @@ const route = vi.hoisted(() => ({
     routeThreadRef: null as ScopedThreadRef | null,
   },
   href: "/",
+  playSound: false,
 }));
 vi.mock("../../hooks/useHandleNewThread", () => ({
   useHandleNewThread: () => route.current,
@@ -64,7 +72,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("../../hooks/useSettings", () => ({
   useClientSettings: <T,>(selector: (settings: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
-    selector({ ...DEFAULT_CLIENT_SETTINGS, snapShotPlaySound: false, snapShotAnimations: true }),
+    selector({
+      ...DEFAULT_CLIENT_SETTINGS,
+      snapShotPlaySound: route.playSound,
+      snapShotAnimations: true,
+    }),
 }));
 
 const bridge = vi.hoisted(() => {
@@ -137,6 +149,8 @@ async function mount(routeThreadRef: ScopedThreadRef | null) {
 }
 
 beforeEach(() => {
+  route.playSound = false;
+  vi.mocked(playSnapShotSound).mockClear();
   appAtomRegistry.set(shellState.threadAAvailable, false);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   route.current.handleNewThread = async () => null;
@@ -145,6 +159,29 @@ beforeEach(() => {
   bridge.readSnapShot.mockClear();
   bridge.onSnapShotEvent.mockClear();
   vi.stubGlobal("matchMedia", () => ({ matches: false }));
+});
+
+it("keeps shell-waiting captures pending without failure feedback or replaying their sound", async () => {
+  route.playSound = true;
+  const toast = vi.spyOn(toastManager, "add");
+  await mount(threadA);
+  await act(async () => bridge.emit({ type: "requested", id: pendingCapture.id }));
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+
+  expect(
+    toast.mock.calls.some(
+      ([value]) => value.title === "Snapshot taken, but no project is available",
+    ),
+  ).toBe(false);
+  expect(playSnapShotSound).toHaveBeenCalledTimes(1);
+  // Another drain during the wait is still pending, not a new capture/failure.
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  await act(async () => appAtomRegistry.set(shellState.threadAAvailable, true));
+  expect(bridge.readSnapShot).toHaveBeenCalledExactlyOnceWith(pendingCapture.id);
+  expect(playSnapShotSound).toHaveBeenCalledTimes(1);
 });
 
 it("retries a capture pinned to an unloaded thread when that thread's shell arrives", async () => {
@@ -270,6 +307,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   dismissAllSnapShotAnimations();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 it("does not list pending captures when streaming updates the active thread", async () => {

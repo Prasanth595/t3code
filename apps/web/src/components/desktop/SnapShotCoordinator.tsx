@@ -379,27 +379,27 @@ export function SnapShotCoordinator() {
               ? resolveExistingSnapShotTarget(capturedTarget, passContext.routeThreadRef)
               : null;
             if (!target) {
-              if (
-                capturedTarget &&
-                typeof capturedTarget !== "string" &&
-                !waitingThreadShellsRef.current.has(item.id)
-              ) {
-                const waitingTarget = capturedTarget;
-                // Only retained captures with an unavailable target need a shell subscription.
-                // Stop it on the first available shell so streaming never becomes IPC polling.
-                const retryWhenAvailable = () => {
-                  if (readThreadShell(waitingTarget) === null) return;
-                  stopWaitingForThreadShell(item.id);
-                  void drainPendingSnapShots();
-                };
-                waitingThreadShellsRef.current.set(
-                  item.id,
-                  appAtomRegistry.subscribe(
-                    environmentThreadShells.threadShellAtom(waitingTarget),
-                    retryWhenAvailable,
-                  ),
-                );
-                retryWhenAvailable();
+              if (capturedTarget && typeof capturedTarget !== "string") {
+                if (!waitingThreadShellsRef.current.has(item.id)) {
+                  const waitingTarget = capturedTarget;
+                  // Only retained captures with an unavailable target need a shell subscription.
+                  // Stop it on the first available shell so streaming never becomes IPC polling.
+                  const retryWhenAvailable = () => {
+                    if (readThreadShell(waitingTarget) === null) return;
+                    stopWaitingForThreadShell(item.id);
+                    void drainPendingSnapShots();
+                  };
+                  waitingThreadShellsRef.current.set(
+                    item.id,
+                    appAtomRegistry.subscribe(
+                      environmentThreadShells.threadShellAtom(waitingTarget),
+                      retryWhenAvailable,
+                    ),
+                  );
+                  retryWhenAvailable();
+                }
+                await dismissSnapShotAnimation(item.id);
+                continue;
               }
               await dismissSnapShotAnimation(item.id);
               soundedCaptureIdsRef.current.delete(item.id);
