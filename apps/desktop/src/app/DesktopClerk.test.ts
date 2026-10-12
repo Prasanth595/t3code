@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalFetchInEffect:off - Hosted handoff test uses a real localhost listener without an OpenAI account.
 import * as NodeHttp from "node:http";
+import * as NodeEvents from "node:events";
 import * as NodePath from "@effect/platform-node/NodePath";
 import { codexAuthHandoffUrl, readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
@@ -7,6 +8,8 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -38,6 +41,8 @@ import * as DesktopClerk from "./DesktopClerk.ts";
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
+import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
+import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 
 /** Clerk forwards web links; tests that are not about links ignore them. */
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
@@ -57,6 +62,7 @@ const layerDesktopClerk = (
     openSystemSettings: () => Effect.succeed(false),
     copyText: () => Effect.void,
   },
+  appOverrides: Partial<ElectronApp.ElectronApp["Service"]> = {},
 ) => {
   const environment = DesktopEnvironment.DesktopEnvironment.of({
     stateDir: "/tmp/t3-state",
@@ -66,6 +72,8 @@ const layerDesktopClerk = (
   } as unknown as DesktopEnvironment.DesktopEnvironment["Service"]);
 
   const electronApp = {
+    on: () => Effect.void,
+    ...appOverrides,
     setPath: (name: string, value: string) =>
       Effect.sync(() => {
         events.push(`setPath:${name}:${value}`);
@@ -123,6 +131,12 @@ describe("DesktopClerk", () => {
   });
 
   it.each([
+    {
+      name: "packaged macOS",
+      isDevelopment: false,
+      platform: "darwin" as const,
+      userData: "/tmp/app-data/t3code-v2",
+    },
     {
       name: "packaged Windows",
       isDevelopment: false,
@@ -229,7 +243,7 @@ describe("DesktopClerk", () => {
       assert.equal(quit.mock.calls.length, 0);
       assert.deepEqual(registeredEvents, ["open-url", "open-file", "second-instance"]);
     }).pipe(
-      Effect.provide(layerDesktopClerk()),
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
       Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
@@ -258,7 +272,7 @@ describe("DesktopClerk", () => {
       assert.equal(quit.mock.calls.length, 1);
       assert.deepEqual(registeredEvents, []);
     }).pipe(
-      Effect.provide(layerDesktopClerk()),
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
       Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
@@ -305,7 +319,7 @@ it.effect(
       assert.equal(event.preventDefault.mock.calls.length, 1);
     }).pipe(
       Effect.scoped,
-      Effect.provide(layerDesktopClerk()),
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
       Effect.provideService(DesktopWebLinks.DesktopWebLinks, ignoreWebLinks),
@@ -384,7 +398,7 @@ it.effect.each(["startup", "open-url"] as const)(
         assert.strictEqual(delivery?.flowId, request.flowId);
         assert.strictEqual(delivery?.returnUrl, request.returnUrl);
       }).pipe(
-        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell)),
+        Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, shell, electronApp)),
         Effect.provideService(HostProcess.Arguments, entry === "startup" ? ["t3", link] : ["t3"]),
         Effect.provideService(ElectronApp.ElectronApp, electronApp),
         Effect.provideService(
@@ -425,7 +439,7 @@ it.effect("hands a web link to the renderer and leaves other links alone", () =>
       yield* Effect.yieldNow;
       assert.deepStrictEqual(received, ["https://example.com/page", "http://localhost:3000/"]);
     }).pipe(
-      Effect.provide(layerDesktopClerk(true, [], "darwin")),
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
       Effect.provideService(HostProcess.Arguments, ["t3"]),
       Effect.provideService(ElectronApp.ElectronApp, electronApp),
       Effect.provideService(
@@ -440,5 +454,112 @@ it.effect("hands a web link to the renderer and leaves other links alone", () =>
         }),
       ),
     );
+  }).pipe(Effect.scoped),
+);
+
+it.effect.each([
+  {
+    kind: "open-url",
+    timing: "cold",
+    value: "https://example.com/report",
+    expected: "https://example.com/report",
+  },
+  {
+    kind: "open-file",
+    timing: "cold",
+    value: "/tmp/report #1.html",
+    expected: "file:///tmp/report%20%231.html",
+  },
+  {
+    kind: "open-url",
+    timing: "warm",
+    value: "https://example.com/report",
+    expected: "https://example.com/report",
+  },
+  {
+    kind: "open-file",
+    timing: "warm",
+    value: "/tmp/report #1.html",
+    expected: "file:///tmp/report%20%231.html",
+  },
+])("retains $kind during $timing startup exactly once", ({ kind, timing, value, expected }) =>
+  Effect.gen(function* () {
+    storageMock.mockReturnValue(storageAdapter);
+    createClerkBridgeMock.mockReturnValue({ cleanup: vi.fn(), isPrimaryInstance: true });
+    const appEvents = new NodeEvents.EventEmitter();
+    const electronApp = {
+      on: (name: string, listener: (...args: unknown[]) => void) =>
+        Effect.acquireRelease(
+          Effect.sync(() => {
+            appEvents.on(name, listener);
+          }),
+          () =>
+            Effect.sync(() => {
+              appEvents.removeListener(name, listener);
+            }),
+        ).pipe(Effect.asVoid),
+    } as unknown as ElectronApp.ElectronApp["Service"];
+    const received: string[] = [];
+    const probeStarted = yield* Deferred.make<void>();
+    const finishProbe = yield* Deferred.make<void>();
+    const delivered = yield* Deferred.make<void>();
+    const webContents = Object.assign(new NodeEvents.EventEmitter(), {
+      isDestroyed: () => false,
+      send: (channel: string, url: string) => {
+        assert.equal(channel, WEB_LINK_OPEN_CHANNEL);
+        received.push(url);
+      },
+    });
+    const window = { webContents } as unknown as Electron.BrowserWindow;
+    const electronWindow = {
+      currentMainOrFirst: Effect.succeed(Option.some(window)),
+      reveal: () => Deferred.succeed(delivered, undefined).pipe(Effect.asVoid),
+    } as unknown as ElectronWindow.ElectronWindow["Service"];
+    const shellEnvironment = DesktopShellEnvironment.DesktopShellEnvironment.of({
+      installIntoProcess: Deferred.succeed(probeStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(finishProbe)),
+      ),
+    });
+    const event = { preventDefault: vi.fn() };
+    yield* Effect.gen(function* () {
+      const clerk = yield* DesktopClerk.DesktopClerk;
+      const webLinks = yield* DesktopWebLinks.DesktopWebLinks;
+      // Match DesktopApp's startup boundary: Clerk is acquired before the shell
+      // probe, but configure waits for the probe (and settings) to finish.
+      const startup = yield* Effect.gen(function* () {
+        yield* shellEnvironment.installIntoProcess;
+        yield* clerk.configure;
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(probeStarted);
+      if (timing === "cold") appEvents.emit(kind, event, value);
+      assert.deepEqual(received, []);
+      yield* Deferred.succeed(finishProbe, undefined);
+      yield* Fiber.join(startup);
+      assert.deepEqual(received, []);
+      yield* webLinks.setRendererReady(true);
+      if (timing === "warm") {
+        appEvents.emit(kind, event, value);
+        yield* Deferred.await(delivered);
+      }
+      assert.deepEqual(received, [expected]);
+      assert.equal(event.preventDefault.mock.calls.length, 1);
+      yield* webLinks.setRendererReady(true);
+      assert.deepEqual(received, [expected]);
+      // Unrelated events must neither be claimed nor replay a queued page.
+      const unrelated = { preventDefault: vi.fn() };
+      appEvents.emit("open-url", unrelated, "mailto:hello@example.com");
+      appEvents.emit("open-file", unrelated, "/tmp/report.txt");
+      assert.equal(unrelated.preventDefault.mock.calls.length, 0);
+      assert.deepEqual(received, [expected]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layerDesktopClerk(true, [], "darwin", undefined, undefined, electronApp)),
+      Effect.provideService(HostProcess.Arguments, ["t3"]),
+      Effect.provideService(ElectronApp.ElectronApp, electronApp),
+      Effect.provide(DesktopWebLinks.layer),
+      Effect.provideService(ElectronWindow.ElectronWindow, electronWindow),
+    );
+    assert.equal(appEvents.listenerCount("open-url"), 0);
+    assert.equal(appEvents.listenerCount("open-file"), 0);
   }).pipe(Effect.scoped),
 );
