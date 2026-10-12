@@ -15,7 +15,7 @@ import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, Suspense, use, useMemo } from "react";
 
-import { useTheme } from "../../hooks/useTheme";
+import { useRenderedAppearance } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
@@ -44,7 +44,7 @@ interface V2ItemInspectorProps {
 }
 
 function JsonTokens({ text }: { readonly text: string }) {
-  const { resolvedTheme } = useTheme();
+  const resolvedTheme = useRenderedAppearance();
   const highlighter = use(getSyntaxHighlighterPromise("json"));
   const { tokens } = useMemo(
     () =>

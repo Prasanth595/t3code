@@ -23,7 +23,7 @@ const target = {
 };
 
 vi.mock("~/hooks/useActiveProjectTarget", () => ({ useActiveProjectTarget: () => target }));
-vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
+vi.mock("~/hooks/useTheme", () => ({ useRenderedAppearance: () => "light" }));
 vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: { getState: () => ({ openFile: state.openFile }) },
 }));

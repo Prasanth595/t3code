@@ -428,9 +428,13 @@ function getSnapshot(): ThemeSnapshot {
   const systemDark = followSystem ? getSystemDark() : false;
   const themeHalves = readStoredThemeHalves();
 
-  const resolvedTheme =
-    getThemePreviewAppearance() ??
-    resolveThemeAppearance(theme, systemDark, followSystem, appearanceMode, themeHalves);
+  const resolvedTheme = resolveThemeAppearance(
+    theme,
+    systemDark,
+    followSystem,
+    appearanceMode,
+    themeHalves,
+  );
   if (
     lastSnapshot &&
     lastSnapshot.theme === theme &&
@@ -489,12 +493,10 @@ function subscribe(listener: () => void): () => void {
   // subscribers; each event applies the theme once and notifies everyone.
   if (!removeWindowListeners) {
     snapshotStale = true;
-    const unsubscribePreview = subscribeToThemePreview(emitChange);
     const mq = typeof window.matchMedia === "function" ? window.matchMedia(MEDIA_QUERY) : null;
     mq?.addEventListener("change", handleSystemAppearanceChange);
     window.addEventListener("storage", handleStorageChange);
     removeWindowListeners = () => {
-      unsubscribePreview();
       mq?.removeEventListener("change", handleSystemAppearanceChange);
       window.removeEventListener("storage", handleStorageChange);
     };
@@ -507,6 +509,17 @@ function subscribe(listener: () => void): () => void {
       removeWindowListeners = null;
     }
   };
+}
+
+/** The appearance painted on screen, including an unsaved theme editor draft. */
+export function useRenderedAppearance() {
+  const { resolvedTheme } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  const previewAppearance = useSyncExternalStore(
+    subscribeToThemePreview,
+    getThemePreviewAppearance,
+    () => null,
+  );
+  return previewAppearance ?? resolvedTheme;
 }
 
 export function useTheme() {

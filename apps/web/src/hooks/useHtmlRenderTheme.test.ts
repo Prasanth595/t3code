@@ -17,10 +17,14 @@ import { useHtmlRenderTheme } from "./useHtmlRenderTheme";
 const selection = vi.hoisted(() => ({
   theme: "ocean" as ThemePreference,
   resolvedTheme: "dark" as ThemeAppearance,
+  renderedAppearance: "dark" as ThemeAppearance,
   themeHalves: null as ThemeHalves | null,
 }));
 
-vi.mock("./useTheme", () => ({ useTheme: () => selection }));
+vi.mock("./useTheme", () => ({
+  useTheme: () => selection,
+  useRenderedAppearance: () => selection.renderedAppearance,
+}));
 vi.mock("./useSettings", () => ({
   useClientSettings: (
     select: (settings: { fontFamilySans: string; fontFamilyCode: string }) => string,
@@ -66,6 +70,7 @@ describe("useHtmlRenderTheme", () => {
       (preference) => {
         selection.theme = preference;
         selection.resolvedTheme = appearance;
+        selection.renderedAppearance = appearance;
 
         const theme = readRenderTheme();
 
@@ -92,6 +97,7 @@ describe("useHtmlRenderTheme", () => {
     ]);
     selection.theme = "transparent";
     selection.resolvedTheme = "dark";
+    selection.renderedAppearance = "dark";
 
     const theme = readRenderTheme();
 
@@ -112,7 +118,8 @@ describe("useHtmlRenderTheme", () => {
         },
       ]);
       selection.theme = "single-appearance";
-      selection.resolvedTheme = draftAppearance;
+      selection.resolvedTheme = savedAppearance;
+      selection.renderedAppearance = draftAppearance;
 
       const theme = readRenderTheme();
 

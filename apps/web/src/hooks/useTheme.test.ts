@@ -70,10 +70,13 @@ describe("draft rendering appearance", () => {
           return getSnapshot();
         },
       }));
-      const { useTheme } = await import("./useTheme");
+      const { useTheme, useRenderedAppearance } = await import("./useTheme");
       const { applyThemeColorPreview, getStandardThemeColors } = await import("../themePalette");
       const original = useTheme();
       expect(original.resolvedTheme).toBe(savedAppearance);
+      const savedListener = vi.fn();
+      const unsubscribeSaved = subscribeToTheme?.(savedListener);
+      expect(useRenderedAppearance()).toBe(savedAppearance);
       const listener = vi.fn();
       const unsubscribe = subscribeToTheme?.(listener);
       const draftAppearance = savedAppearance === "dark" ? "light" : "dark";
@@ -81,32 +84,51 @@ describe("draft rendering appearance", () => {
       applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);
       expect(classes.has("dark")).toBe(draftAppearance === "dark");
       expect(localStorage.getItem("t3code:theme")).toBe(savedAppearance);
-      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(useRenderedAppearance()).toBe(draftAppearance);
+      expect(useTheme().resolvedTheme).toBe(savedAppearance);
       expect(listener).toHaveBeenCalled();
+      expect(savedListener).not.toHaveBeenCalled();
       expect(useTheme().theme).toBe(savedAppearance);
       expect(useTheme().appearanceMode).toBe(savedAppearance);
 
       listener.mockClear();
       applyThemeColorPreview(getStandardThemeColors(savedAppearance), savedAppearance);
+      expect(useRenderedAppearance()).toBe(savedAppearance);
       expect(useTheme().resolvedTheme).toBe(savedAppearance);
       expect(listener).toHaveBeenCalledTimes(1);
       listener.mockClear();
       applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);
-      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(useRenderedAppearance()).toBe(draftAppearance);
+      expect(useTheme().resolvedTheme).toBe(savedAppearance);
       expect(listener).toHaveBeenCalledTimes(1);
       listener.mockClear();
       applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);
       expect(listener).not.toHaveBeenCalled();
 
       original.refreshTheme({ preservePreview: true });
-      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(useRenderedAppearance()).toBe(draftAppearance);
+      expect(useTheme().resolvedTheme).toBe(savedAppearance);
       original.refreshTheme();
       expect(classes.has("dark")).toBe(savedAppearance === "dark");
+      expect(useRenderedAppearance()).toBe(savedAppearance);
       expect(useTheme().resolvedTheme).toBe(savedAppearance);
       expect(localStorage.getItem("t3code:theme")).toBe(savedAppearance);
       expect(localStorage.getItem("t3code:theme-appearance-mode")).toBeNull();
       expect(listener).toHaveBeenCalled();
+      // A saved appearance can change underneath a visible draft. Rendering
+      // keeps the draft until cancel, then adopts the latest saved appearance.
+      applyThemeColorPreview(getStandardThemeColors(savedAppearance), savedAppearance);
+      expect(original.setAppearanceMode(draftAppearance)).toBe(true);
+      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(useRenderedAppearance()).toBe(savedAppearance);
+      expect(classes.has("dark")).toBe(savedAppearance === "dark");
+      original.refreshTheme();
+      expect(useTheme().resolvedTheme).toBe(draftAppearance);
+      expect(useRenderedAppearance()).toBe(draftAppearance);
+      expect(classes.has("dark")).toBe(draftAppearance === "dark");
+      expect(localStorage.getItem("t3code:theme-appearance-mode")).toBe(draftAppearance);
       unsubscribe?.();
+      unsubscribeSaved?.();
     },
   );
 });
