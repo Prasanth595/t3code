@@ -113,11 +113,11 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
             option.description && option.description !== option.label
               ? markdownAccessibility(option.description)
               : null;
-          const links = [...label.links, ...(description?.links ?? [])];
+          const targets = [...label.targets, ...(description?.targets ?? [])];
           return {
             option,
             label: [label.label, description?.label].filter(Boolean).join(". "),
-            links: links.map((link, index) => ({ ...link, name: `open-link-${index}` })),
+            targets: targets.map((target, index) => ({ ...target, name: `open-target-${index}` })),
           };
         }),
       })),
@@ -364,7 +364,7 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 textStyle={textStyles.question}
               />
               <View className="gap-2">
-                {options.map(({ option, label, links }) => {
+                {options.map(({ option, label, targets }) => {
                   const optionValue = option.value ?? option.label.trim();
                   const selected = isPendingUserInputOptionSelected(question, draft, optionValue);
                   const description =
@@ -375,15 +375,15 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                       accessibilityRole={question.multiSelect ? "checkbox" : "radio"}
                       accessibilityLabel={label}
                       accessibilityState={{ checked: selected, disabled: responseDisabled }}
-                      accessibilityActions={links.map((link) => ({
-                        name: link.name,
-                        label: `Open ${link.label}`,
+                      accessibilityActions={targets.map((target) => ({
+                        name: target.name,
+                        label: `Open ${target.label}`,
                       }))}
                       onAccessibilityAction={(event) => {
-                        const link = links.find(
-                          (link) => link.name === event.nativeEvent.actionName,
+                        const target = targets.find(
+                          (target) => target.name === event.nativeEvent.actionName,
                         );
-                        if (link) onLinkPress(link.href);
+                        if (target) onLinkPress(target.href, target.kind === "image");
                       }}
                       // Pressability suppresses the answer tap after a handled long press.
                       onLongPress={() => undefined}
