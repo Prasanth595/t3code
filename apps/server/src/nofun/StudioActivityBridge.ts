@@ -108,6 +108,12 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
   Layer.effectDiscard(
     Effect.gen(function* () {
       const env = options.env ?? process.env;
+      // Only the No Fun persona publishes. A CATCHES server can inherit the same env from the
+      // login session; it must never post, not even an empty snapshot over No Fun's stream.
+      if (nofunTeamFromEnv(env) !== "nofun") {
+        yield* Effect.logDebug("studio activity bridge disabled for this persona");
+        return;
+      }
       const config = readStudioActivityBridgeConfig(env);
       if (!config) {
         yield* Effect.logDebug(

@@ -223,7 +223,6 @@ const createThread = Effect.gen(function* () {
 
 it.effect.each([
   { name: "No Fun", env: {}, included: true },
-  { name: "CATCHES", env: { T3CODE_PERSONA: "catches" }, included: false },
   {
     name: "outside persona roots",
     env: { T3CODE_PERSONA: "nofun", T3CODE_PERSONA_ROOTS: "/allowed" },
@@ -359,6 +358,14 @@ it.effect.each([
   { name: "empty env", env: {} },
   { name: "URL only", env: { NOFUN_STUDIO_BRIDGE_URL: "http://bridge.test" } },
   { name: "token only", env: { NOFUN_STUDIO_BRIDGE_TOKEN: "test-token" } },
+  {
+    name: "CATCHES persona, fully configured",
+    env: {
+      T3CODE_PERSONA: "catches",
+      NOFUN_STUDIO_BRIDGE_URL: "http://bridge.test",
+      NOFUN_STUDIO_BRIDGE_TOKEN: "test-token",
+    },
+  },
 ])("unconfigured server bridge sends nothing ($name)", ({ env }) =>
   Effect.gen(function* () {
     let calls = 0;
