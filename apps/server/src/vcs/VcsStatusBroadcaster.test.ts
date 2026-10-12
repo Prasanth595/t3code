@@ -198,6 +198,75 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
+  it.effect(
+    "loads remote status for a new subscriber after eviction with periodic refreshes disabled",
+    () => {
+      const state = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: remoteStatusWithPr,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        remoteStatusRefreshUpstreamValues: [] as Array<boolean | undefined>,
+        backgroundWorkEnabled: false,
+      };
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/active-repo" });
+        const initial = yield* Deferred.make<void>();
+        const options = { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) };
+        yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/active-repo" }, options), () =>
+          Deferred.succeed(initial, undefined),
+        ).pipe(Effect.forkScoped);
+        yield* Deferred.await(initial);
+
+        for (let index = 0; index < 1_000; index += 1) {
+          yield* broadcaster.getStatus({ cwd: `/visited-repo-${index}` });
+        }
+
+        const snapshot = yield* Deferred.make<VcsStatusStreamEvent>();
+        const remoteUpdated = yield* Deferred.make<VcsStatusStreamEvent>();
+        const remoteCalls = state.remoteStatusCalls;
+        yield* Stream.runForEach(
+          broadcaster.streamStatus({ cwd: "/active-repo" }, options),
+          (event) =>
+            event._tag === "snapshot"
+              ? Deferred.succeed(snapshot, event)
+              : event._tag === "remoteUpdated"
+                ? Deferred.succeed(remoteUpdated, event)
+                : Effect.void,
+        ).pipe(Effect.forkScoped);
+
+        assert.deepStrictEqual(yield* Deferred.await(snapshot), {
+          _tag: "snapshot",
+          local: baseLocalStatus,
+          remote: null,
+        });
+        yield* TestClock.adjust(Duration.zero);
+        assert.equal(state.remoteStatusCalls, remoteCalls + 1);
+        assert.deepStrictEqual(yield* Deferred.await(remoteUpdated), {
+          _tag: "remoteUpdated",
+          remote: remoteStatusWithPr,
+        });
+        assert.equal(state.remoteInvalidationCalls, 0);
+        assert.equal(state.remoteStatusRefreshUpstreamValues.at(-1), false);
+
+        const completeSnapshot = yield* Stream.runHead(
+          broadcaster.streamStatus({ cwd: "/active-repo" }, options),
+        );
+        assert.deepStrictEqual(Option.getOrThrow(completeSnapshot), {
+          _tag: "snapshot",
+          local: baseLocalStatus,
+          remote: remoteStatusWithPr,
+        });
+        yield* TestClock.adjust(Duration.minutes(2));
+        assert.equal(state.remoteStatusCalls, remoteCalls + 1);
+      }).pipe(Effect.provide(Layer.merge(layerTestFor(state), TestClock.layer())));
+    },
+  );
+
   it.effect.each([true, false])(
     "refreshes a watched PR after eviction with fetching disabled and background work enabled=%s",
     (backgroundWorkEnabled) => {

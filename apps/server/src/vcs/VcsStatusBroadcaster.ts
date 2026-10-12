@@ -466,11 +466,16 @@ export const make = Effect.gen(function* () {
     options?: {
       readonly refreshUpstream?: boolean;
       readonly policyCwds?: ReadonlyArray<string>;
+      readonly onlyIfMissing?: boolean;
     },
   ) {
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
+        if (options?.onlyIfMissing) {
+          const cached = yield* getCachedStatus(cwd);
+          if (cached?.remote) return cached.remote.value;
+        }
         if (options?.refreshUpstream !== false) {
           yield* workflow.invalidateRemoteStatus(cwd);
         }
@@ -642,6 +647,19 @@ export const make = Effect.gen(function* () {
           next.set(demandCwd, (next.get(demandCwd) ?? 0) + 1);
           return next;
         }).pipe(
+          Effect.tap(() =>
+            refreshImmediately
+              ? Effect.gen(function* () {
+                  const interval = yield* automaticRemoteRefreshInterval;
+                  const demandCwds = yield* Ref.get(existing.demandCwds);
+                  yield* refreshRemoteStatus(cwd, {
+                    refreshUpstream: !Duration.isZero(interval),
+                    policyCwds: [...demandCwds.keys()],
+                    onlyIfMissing: true,
+                  }).pipe(Effect.ignore, Effect.forkScoped);
+                })
+              : Effect.void,
+          ),
           Effect.map(() => {
             const nextPollers = new Map(activePollers);
             nextPollers.set(cwd, {
