@@ -314,6 +314,9 @@ patchedDependencies:
   node-pty@1.2.0-beta.15: patches/node-pty@1.2.0-beta.15.patch
   react-native-gesture-handler@3.2.1: patches/react-native-gesture-handler@3.2.1.patch
   react-native-keyboard-controller@1.22.6: patches/react-native-keyboard-controller@1.22.6.patch
+  # Tailwind numeric utilities (tabular-nums) compile to space-joined vars with empty fallbacks.
+  # Drop the empty tokens so Android does not log "Unsupported FontVariant value" per render.
+  uniwind@1.12.1: patches/uniwind@1.12.1.patch
   # Android: a nested WebView hands a vertical drag to its scrolling parent at the page's edge.
   react-native-webview@14.0.1: patches/react-native-webview@14.0.1.patch
 

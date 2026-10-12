@@ -1,0 +1,28 @@
+diff --git a/dist/common/core/native/parsers/fontVariant.js b/dist/common/core/native/parsers/fontVariant.js
+index 138b566..876a994 100644
+--- a/dist/common/core/native/parsers/fontVariant.js
++++ b/dist/common/core/native/parsers/fontVariant.js
+@@ -4,5 +4,5 @@ Object.defineProperty(exports, "__esModule", {
+   value: true
+ });
+ exports.parseFontVariant = void 0;
+-const parseFontVariant = fontVariant => fontVariant.split(" ").filter(token => token !== "undefined");
++const parseFontVariant = fontVariant => fontVariant.split(" ").filter(token => token !== "" && token !== "undefined");
+ exports.parseFontVariant = parseFontVariant;
+\ No newline at end of file
+diff --git a/dist/module/core/native/parsers/fontVariant.js b/dist/module/core/native/parsers/fontVariant.js
+index 6b13f74..c7b775a 100644
+--- a/dist/module/core/native/parsers/fontVariant.js
++++ b/dist/module/core/native/parsers/fontVariant.js
+@@ -1 +1 @@
+-export const parseFontVariant = (fontVariant) => fontVariant.split(" ").filter((token) => token !== "undefined");
++export const parseFontVariant = (fontVariant) => fontVariant.split(" ").filter((token) => token !== "" && token !== "undefined");
+diff --git a/src/core/native/parsers/fontVariant.ts b/src/core/native/parsers/fontVariant.ts
+index ae98bfd..cda458f 100644
+--- a/src/core/native/parsers/fontVariant.ts
++++ b/src/core/native/parsers/fontVariant.ts
+@@ -1,3 +1,3 @@
+ export const parseFontVariant = (fontVariant: string) =>
+     fontVariant
+-        .split(' ').filter(token => token !== 'undefined')
++        .split(' ').filter(token => token !== '' && token !== 'undefined')
