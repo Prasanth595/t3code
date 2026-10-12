@@ -431,29 +431,32 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
-  it.effect("rejects an over-limit message from small fragments before its newline arrives", () =>
-    Effect.gen(function* () {
-      const { input, output, transport, termination, notifications, events } =
-        yield* makeLimitedProtocol(1024);
-      const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
-      yield* Queue.take(output);
+  it.effect(
+    "rejects an over-limit message from small fragments before its newline arrives",
+    () =>
+      Effect.gen(function* () {
+        const { input, output, transport, termination, notifications, events } =
+          yield* makeLimitedProtocol(1024);
+        const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
+        yield* Queue.take(output);
 
-      yield* Queue.offer(input, encoder.encode('{"method":"x/huge","params":{"text":"'));
-      for (let index = 0; index < 512; index++) {
-        yield* Queue.offer(input, encoder.encode("xxxxxxxx"));
-      }
+        yield* Queue.offer(input, encoder.encode('{"method":"x/huge","params":{"text":"'));
+        for (let index = 0; index < 512; index++) {
+          yield* Queue.offer(input, encoder.encode("xxxxxxxx"));
+        }
 
-      const error = yield* awaitMessageLimitFailure(termination);
-      const pendingError = yield* Fiber.join(pending).pipe(
-        Effect.match({
-          onFailure: (failure) => failure,
-          onSuccess: () => assert.fail("Expected the oversized message to fail the request"),
-        }),
-      );
-      assert.strictEqual(pendingError, error);
-      assert.deepEqual(notifications, []);
-      assert.deepEqual(events, []);
-    }),
+        const error = yield* awaitMessageLimitFailure(termination);
+        const pendingError = yield* Fiber.join(pending).pipe(
+          Effect.match({
+            onFailure: (failure) => failure,
+            onSuccess: () => assert.fail("Expected the oversized message to fail the request"),
+          }),
+        );
+        assert.strictEqual(pendingError, error);
+        assert.deepEqual(notifications, []);
+        assert.deepEqual(events, []);
+      }),
+    5_000,
   );
 
   it.effect.each([
@@ -547,6 +550,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
         assert.deepEqual(notifications, []);
         assert.deepEqual(events, []);
       }),
+    5_000,
   );
 
   it.effect.each([1, 7])(
@@ -680,14 +684,48 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       }),
   );
 
+  it.effect("counts an invalid UTF-8 byte as the three bytes of its U+FFFD replacement", () =>
+    Effect.gen(function* () {
+      const message = { method: "x/invalid", params: { text: "a\uFFFDb" } };
+      const line = encodeUnknownJsonString(message);
+      const lineBytes = encoder.encode(line).length;
+      // 0xff is never valid UTF-8, so the decoder replaces it with U+FFFD.
+      const [head, tail] = line.split("\uFFFD");
+      const bytes = Uint8Array.from([
+        ...encoder.encode(head),
+        0xff,
+        ...encoder.encode(`${tail}\n`),
+      ]);
+      // Counting raw input bytes instead would accept the over-limit message.
+      assert.strictEqual(bytes.length - 1, lineBytes - 2);
+
+      const atLimit = yield* makeLimitedProtocol(lineBytes);
+      const overLimit = yield* makeLimitedProtocol(lineBytes - 1);
+      yield* Queue.offer(atLimit.input, bytes);
+      yield* Queue.offer(overLimit.input, bytes);
+      yield* Queue.end(atLimit.input);
+      yield* Queue.end(overLimit.input);
+
+      assert.instanceOf(
+        yield* Deferred.await(atLimit.termination),
+        CodexError.CodexAppServerInputStreamEndedError,
+      );
+      assert.deepEqual(atLimit.notifications, [message]);
+      yield* awaitMessageLimitFailure(overLimit.termination);
+      assert.deepEqual(overLimit.notifications, []);
+      assert.deepEqual(overLimit.events, []);
+    }),
+  );
+
   it.effect("keeps an over-limit message out of protocol logs and the termination error", () =>
     Effect.gen(function* () {
       const secret = "codex-oversized-secret-sentinel";
       const small = { method: "x/small", params: {} };
+      const huge = encodeJsonl({ method: "x/huge", params: { text: secret } });
       const { input, termination, notifications, events } = yield* makeLimitedProtocol(64);
 
       yield* Queue.offer(input, encodeJsonl(small));
-      yield* Queue.offer(input, encodeJsonl({ method: "x/huge", params: { text: secret } }));
+      yield* Queue.offer(input, huge);
       yield* Queue.end(input);
 
       const error = yield* awaitMessageLimitFailure(termination);
@@ -699,6 +737,8 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.notInclude(encodeUnknownJsonString(events), secret);
       assert.notInclude(error.message, secret);
       assert.notInclude(String(error.cause), secret);
+      assert.include(String(error.cause), `reached ${huge.length - 1} bytes`);
+      assert.include(String(error.cause), "over the 64-byte limit");
     }),
   );
 
