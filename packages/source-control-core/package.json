@@ -19,6 +19,10 @@
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
     },
+    "./server/issueReferences": {
+      "types": "./src/server/issueReferences.ts",
+      "import": "./src/server/issueReferences.ts"
+    },
     "./server/mergeMessage": {
       "types": "./src/server/mergeMessage.ts",
       "import": "./src/server/mergeMessage.ts"
@@ -51,7 +55,8 @@
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "mdast-util-from-markdown": "^2.0.3"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

@@ -13,6 +13,7 @@ import {
 } from "@t3tools/shared/markdownLinks";
 import { isAbsolutePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
+import { useIssueLinking } from "~/hooks/useIssueLinking";
 import { AuthFilesystemReadScope, AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -2343,6 +2344,7 @@ function useChatMarkdownState({
     reportFailure: false,
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
+  const issueLinking = useIssueLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
@@ -2527,6 +2529,22 @@ function useChatMarkdownState({
       await pullRequestLinking.changeLink(threadRef, href, linked);
     },
     [linkedThreadPullRequestFor, pullRequestLinking, threadRef],
+  );
+  const threadIssueLinkActionFor = useCallback(
+    (href: string): "link-to-thread" | "unlink-from-thread" | undefined => {
+      if (threadRef === undefined || readThreadShell(threadRef) === null) return undefined;
+      if (issueLinking.linkedIssueFor(threadRef, href) !== null) return "unlink-from-thread";
+      return issueLinking.canLink(threadRef, href) ? "link-to-thread" : undefined;
+    },
+    [issueLinking, threadRef],
+  );
+  const updateThreadIssueLink = useCallback(
+    async (href: string, linked: boolean) => {
+      if (threadRef === undefined) throw new Error("This link is not in a thread.");
+      if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
+      await issueLinking.changeLink(threadRef, href, linked);
+    },
+    [issueLinking, threadRef],
   );
   const openExternalLinkInPreview = useCallback(
     (url: string) => {
@@ -2749,6 +2767,8 @@ function useChatMarkdownState({
       skills,
       text,
       threadRef,
+      threadIssueLinkActionFor,
+      updateThreadIssueLink,
       updateThreadPullRequestLink,
     }),
     [
@@ -2782,6 +2802,8 @@ function useChatMarkdownState({
       skills,
       text,
       threadRef,
+      threadIssueLinkActionFor,
+      updateThreadIssueLink,
       updateThreadPullRequestLink,
     ],
   );
@@ -2927,6 +2949,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
       linkedThreadPullRequestFor,
       resolveThreadPullRequest,
       serverConfig,
+      threadIssueLinkActionFor,
+      updateThreadIssueLink,
       updateThreadPullRequestLink,
       fileLinkChip,
       renderContextReference,
@@ -3081,13 +3105,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
             event.stopPropagation();
             const api = readLocalApi();
             if (!api) return;
-            const threadLinkAction = !canOperateHost
+            const pullRequestLinkAction = !canOperateHost
               ? undefined
               : linkedThreadPullRequestFor(href) !== null
                 ? "unlink-from-thread"
                 : resolveThreadPullRequest(href) === null
                   ? undefined
                   : "link-to-thread";
+            const issueLinkAction =
+              canOperateHost &&
+              pullRequestLinkAction === undefined &&
+              pullRequestAutolink !== "reference"
+                ? threadIssueLinkActionFor(href)
+                : undefined;
+            const linkedNoun = issueLinkAction === undefined ? "pull request" : "issue";
+            const threadLinkAction = pullRequestLinkAction ?? issueLinkAction;
             void showExternalLinkContextMenu({
               href,
               canOpenInPreview,
@@ -3105,20 +3137,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
               },
               openExternal: (target) => api.shell.openExternal(target),
               copyLink: (target) => writeTextToClipboard(target, "link"),
-              updateThreadLink: updateThreadPullRequestLink,
+              updateThreadLink:
+                issueLinkAction === undefined ? updateThreadPullRequestLink : updateThreadIssueLink,
               reportFailure: (operation, cause) => {
                 reportMarkdownActionFailure({ operation, target: href }, cause);
-                if (
-                  operation === "link-pull-request-to-thread" ||
-                  operation === "unlink-pull-request-from-thread"
-                ) {
+                if (operation === "link-to-thread" || operation === "unlink-from-thread") {
                   toastManager.add(
                     stackedThreadToast({
                       type: "error",
                       title:
-                        operation === "link-pull-request-to-thread"
-                          ? "Unable to link pull request"
-                          : "Unable to unlink pull request",
+                        operation === "link-to-thread"
+                          ? `Unable to link ${linkedNoun}`
+                          : `Unable to unlink ${linkedNoun}`,
                       description: cause instanceof Error ? cause.message : "The request failed.",
                     }),
                   );

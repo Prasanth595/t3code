@@ -348,6 +348,7 @@ function createTextGeneration(
         title: "Update workflow",
       }),
     generateReviewGuide: () => Effect.succeed({ stops: [] }),
+    findWorkItemMatches: () => Effect.succeed({ matches: [] }),
     ...overrides,
   };
 
@@ -397,6 +398,17 @@ function createTextGeneration(
         ),
       ),
     generateReviewGuide: (input) => implementation.generateReviewGuide(input),
+    findWorkItemMatches: (input) =>
+      implementation.findWorkItemMatches(input).pipe(
+        Effect.mapError(
+          (cause) =>
+            new TextGenerationError({
+              operation: "findWorkItemMatches",
+              detail: "fake text generation failed",
+              ...(cause !== undefined ? { cause } : {}),
+            }),
+        ),
+      ),
   };
 }
 

@@ -163,6 +163,8 @@ vi.mock("./PullRequestCodeTab", () => ({
 }));
 
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
+import { buildExplainIssueHandoff } from "../issue/issueDetail.logic";
+import { writeHandoffToComposer } from "../sourceControl/handoff";
 import { pullRequestPanelContext } from "./pullRequestDetail.logic";
 
 const detail: PullRequestDetailView = {
@@ -435,4 +437,48 @@ it("changes the title only for the active tab's main scroller", async () => {
   code.scrollTop = 0;
   await act(async () => mainScroll.props.onScrollCapture({ target: code }));
   expect(titleFold().props.inert).toBe(false);
+});
+
+it("replaces an issue hand-off's prompt and chip when a pull request is explained", async () => {
+  useComposerDraftStore.getState().setPrompt(draftId, "Keep my draft");
+  writeHandoffToComposer(
+    draftId,
+    buildExplainIssueHandoff({
+      provider: "github",
+      closesViaPullRequest: true,
+      number: 7,
+      repository: detail.repository,
+      title: "Issue",
+      url: "https://github.com/owner/repo/issues/7",
+      body: "",
+      comments: [],
+    }),
+  );
+  await act(async () => {
+    renderer = create(
+      <PullRequestDetailPanel
+        environmentId={threadRef.environmentId}
+        reference={detail}
+        context="page"
+        composerDraftTarget={draftId}
+        threadRef={threadRef}
+        shortcutsEnabled={false}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+      />,
+    );
+  });
+  await click("Explain this PR");
+  const draft = useComposerDraftStore.getState().getComposerDraft(draftId);
+  expect(draft?.reviewComments.map((comment) => comment.id)).toEqual(["pull-request-context:1"]);
+  expect(draft?.prompt).toContain("Keep my draft");
+  expect(draft?.prompt).toContain("Explain this pull request.");
+  expect(draft?.prompt).not.toContain("Explain this issue.");
+  expect(draft?.prompt).not.toContain("issue-context");
 });

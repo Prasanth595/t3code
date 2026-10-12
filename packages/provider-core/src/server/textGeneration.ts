@@ -4,6 +4,7 @@ import type {
   ModelSelection,
   PullRequestReviewGuide,
   TextGenerationError,
+  WorkItemMatchRelationship,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 
@@ -73,6 +74,30 @@ export interface ThreadTitleGenerationInput {
 export interface ThreadTitleGenerationResult {
   title: string;
   needsRefinement?: boolean | undefined;
+}
+
+export interface WorkItemMatchGenerationInput {
+  cwd: string;
+  relationship: WorkItemMatchRelationship;
+  source: {
+    readonly kind: "issue" | "pull-request";
+    readonly provider: string;
+    readonly repository: string;
+    readonly number: number;
+    readonly title: string;
+    readonly url: string;
+    readonly body: string;
+  };
+  candidates: ReadonlyArray<WorkItemMatchGenerationInput["source"]>;
+  modelSelection: ModelSelection;
+}
+
+export interface WorkItemMatchGenerationResult {
+  matches: ReadonlyArray<{
+    candidate: number;
+    confidence: "high" | "medium";
+    reason: string;
+  }>;
 }
 
 export interface ReviewGuideStackLayer {
@@ -147,4 +172,9 @@ export interface ProviderTextGeneration {
   readonly generateReviewGuide: (
     input: ReviewGuideGenerationInput,
   ) => Effect.Effect<ReviewGuideGenerationResult, TextGenerationError>;
+
+  /** Pick the candidates that relate to or duplicate a source issue or change request. */
+  readonly findWorkItemMatches: (
+    input: WorkItemMatchGenerationInput,
+  ) => Effect.Effect<WorkItemMatchGenerationResult, TextGenerationError>;
 }

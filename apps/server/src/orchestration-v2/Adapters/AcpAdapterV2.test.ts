@@ -783,6 +783,7 @@ describe("AcpAdapterV2", () => {
         endpoint: "http://127.0.0.1:43123/mcp",
         authorizationHeader: "Bearer instruction-transition-token",
         browserToolsAvailable: false,
+        capabilities: new Set(["issues"]),
       });
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
@@ -853,6 +854,7 @@ describe("AcpAdapterV2", () => {
       assert.include(firstDefault.prompt, "T3 Code interaction mode: Default");
       assert.include(firstDefault.prompt, "T3 Code collaborative browser");
       assert.include(firstDefault.prompt, "T3 Code orchestration");
+      assert.include(firstDefault.prompt, "<issue_linking>");
       assert.notInclude(
         firstDefault.methods,
         "session/set_config_option",
@@ -867,6 +869,7 @@ describe("AcpAdapterV2", () => {
       const firstPlan = yield* runTurn(3, planPolicy, "Plan this change.");
       assert.include(firstPlan.prompt, "T3 Code interaction mode: Plan");
       assert.include(firstPlan.methods, "session/set_config_option");
+      assert.include(firstPlan.prompt, "<issue_linking>");
       assert.include(
         (yield* runTurn(4, planPolicy, "Continue planning.")).prompt,
         "Continue planning.",
@@ -878,6 +881,11 @@ describe("AcpAdapterV2", () => {
         "session/set_config_option",
         "Build should restore the native mode that T3 temporarily replaced for Plan",
       );
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      const mcpSession = (yield* mcpSessions.read(threadId))!;
+      yield* mcpSessions.set({ ...mcpSession, capabilities: new Set() });
+      const withoutIssues = yield* runTurn(6, defaultPolicy, "Continue without issue tools.");
+      assert.notInclude(withoutIssues.prompt, "<issue_linking>");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

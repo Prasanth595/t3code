@@ -270,6 +270,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateThreadTitle", nativeGeneration.generateThreadTitle(value)),
     generateReviewGuide: (value) =>
       protect("generateReviewGuide", nativeGeneration.generateReviewGuide(value)),
+    findWorkItemMatches: (value) =>
+      protect("findWorkItemMatches", nativeGeneration.findWorkItemMatches(value)),
   };
   return {
     instanceId,

@@ -8,6 +8,7 @@
  * Do not import t3code modules from the string body. The Pi process resolves
  * `@earendil-works/pi-coding-agent` and `typebox` from the user's pi install.
  */
+import { ISSUE_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import { T3_CODE_ORCHESTRATION_INSTRUCTIONS } from "@t3tools/provider-core/server/orchestrationInstructions";
 
 export const PI_T3_MCP_EXTENSION_FILENAME = "pi-t3-mcp-extension.ts";
@@ -34,6 +35,7 @@ const TOKEN_ENV = ${JSON.stringify(T3_MCP_BEARER_ENV)};
 const RUNTIME_MODE_ENV = ${JSON.stringify(T3_PI_RUNTIME_MODE_ENV)};
 const EXTENSION_PATH_ENV = ${JSON.stringify(T3_PI_MCP_EXTENSION_PATH_ENV)};
 const ORCHESTRATION_INSTRUCTIONS = ${JSON.stringify(T3_CODE_ORCHESTRATION_INSTRUCTIONS.trim())};
+const ISSUE_LINKING_INSTRUCTIONS = ${JSON.stringify(ISSUE_LINKING_INSTRUCTIONS)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
@@ -360,6 +362,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   const client = createMcpClient(endpoint, token);
   let started: Promise<void> | undefined;
+  let issueToolsAvailable = false;
 
   const registerTools = () => {
     // Preserve public names for saved loadouts and tool selectors. Hidden
@@ -407,6 +410,7 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       const signal = AbortSignal.timeout(10_000);
       await client.connect(signal);
       catalog = await client.listTools(signal);
+      issueToolsAvailable = catalog.some((tool) => tool.name === "link_issue");
       registerTools();
     })();
     started = attempt;
@@ -450,7 +454,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
   // Wrapping the first user message instead would stop it from starting
   // with "/" and silently break slash-command expansion.
   pi.on("before_agent_start", (event) => ({
-    systemPrompt: event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS,
+    systemPrompt:
+      event.systemPrompt + "\\n\\n" + ORCHESTRATION_INSTRUCTIONS +
+      (issueToolsAvailable ? "\\n\\n" + ISSUE_LINKING_INSTRUCTIONS : ""),
   }));
 }
 `;

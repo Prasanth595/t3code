@@ -39,6 +39,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
+import { ThreadIssueLinks } from "./ThreadIssueLinks";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -436,6 +437,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      {isServerThread && <ThreadIssueLinks threadRef={activeThreadRef} />}
     </div>
   );
 });

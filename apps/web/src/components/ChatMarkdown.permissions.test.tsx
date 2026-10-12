@@ -25,6 +25,8 @@ const state = vi.hoisted(() => ({
   copy: vi.fn(),
   toast: vi.fn(),
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
+  issueLinked: false,
+  changeIssueLink: vi.fn(),
 }));
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => serverConfig }));
@@ -108,6 +110,14 @@ vi.mock("../localApi", () => ({
     shell: { openExternal: state.openExternal },
   }),
 }));
+vi.mock("~/hooks/useIssueLinking", () => ({
+  useIssueLinking: () => ({
+    canLink: (_threadRef: unknown, href: string) => href === issueUrl,
+    linkedIssueFor: (_threadRef: unknown, href: string) =>
+      state.issueLinked && href === issueUrl ? {} : null,
+    changeLink: state.changeIssueLink,
+  }),
+}));
 vi.mock("~/lib/openPullRequestLink", () => ({
   resolvePullRequestPreviewTarget: () => null,
   findProjectForChangeRequest: (projects: readonly { id: ProjectId }[]) => projects[0],
@@ -136,7 +146,9 @@ const linkedPullRequest: ThreadLinkedPullRequest = {
   number: 42,
   url: "https://github.com/example/repo/pull/42",
 };
+const issueUrl = "https://github.com/example/repo/issues/7";
 const serverConfig = {
+  settings: { issueTracking: { connections: {} } },
   availableEditors: ["vscode", "file-manager"] as readonly EditorId[],
   shellRevealInFileManager: true,
   shellRevealInFileManagerKind: "xdg-open",
@@ -148,6 +160,8 @@ beforeEach(() => {
   state.allowed = true;
   state.listeners.clear();
   state.linkedPullRequest = null;
+  state.issueLinked = false;
+  state.changeIssueLink.mockReset().mockResolvedValue(undefined);
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
@@ -296,5 +310,41 @@ it.each(["link-to-thread", "unlink-from-thread"])(
         linkedPullRequest: action === "link-to-thread" ? linkedPullRequest : null,
       },
     });
+  },
+);
+
+it.each(["link-to-thread", "unlink-from-thread"])(
+  "rechecks issue %s after a native context menu returns",
+  async (action) => {
+    state.issueLinked = action === "unlink-from-thread";
+    let choose: (action: string) => void = () => {
+      throw new Error("Menu not opened");
+    };
+    state.choose.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          choose = resolve;
+        }),
+    );
+    await renderMarkdown(`[Issue](${issueUrl})`);
+    await openContextMenu();
+    expect(offeredActions()).toContain(action);
+    await act(async () => {
+      state.allowed = false;
+      choose(action);
+    });
+    expect(state.changeIssueLink).not.toHaveBeenCalled();
+
+    await act(async () => {
+      state.allowed = true;
+      for (const listener of state.listeners) listener();
+    });
+    state.choose.mockResolvedValue(action);
+    await openContextMenu();
+    expect(state.changeIssueLink).toHaveBeenCalledExactlyOnceWith(
+      threadRef,
+      issueUrl,
+      action === "link-to-thread",
+    );
   },
 );

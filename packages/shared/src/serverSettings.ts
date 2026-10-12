@@ -396,6 +396,7 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
+    issueTracking,
     worktreeCleanup: worktreeCleanupPatch,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
@@ -492,7 +493,20 @@ export function applyServerSettingsPatch(
       },
     };
   }
-  const next = deepMerge(current, patchForMerge);
+  const merged = deepMerge(current, {
+    ...patchForMerge,
+    ...(issueTracking === undefined ? {} : { issueTracking }),
+  });
+  const connections = { ...merged.issueTracking.connections };
+  for (const [provider, patch] of Object.entries(issueTracking?.connections ?? {})) {
+    connections[provider] = {
+      projectBindings: {
+        ...current.issueTracking.connections[provider]?.projectBindings,
+        ...patch.projectBindings,
+      },
+    };
+  }
+  const next = { ...merged, issueTracking: { connections } };
   const nextWithReplacementsBase = {
     ...next,
     favorites,

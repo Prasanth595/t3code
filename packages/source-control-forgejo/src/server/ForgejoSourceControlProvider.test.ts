@@ -213,6 +213,8 @@ it.effect.each([
         assert.strictEqual(result.mergeability, mergeability);
         assert.strictEqual(result.isDraft, isDraft);
       }
+      // Forgejo has no closing-issue references to report.
+      assert.deepStrictEqual(detail.linkedIssues, []);
     }).pipe(
       Effect.provide(
         Layer.mock(ForgejoCli.ForgejoCli)({

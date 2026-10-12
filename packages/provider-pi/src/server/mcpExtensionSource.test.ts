@@ -245,6 +245,64 @@ describe("Pi MCP tool exposure", () => {
   );
 });
 
+describe("Pi issue instructions", () => {
+  it.each([true, false])(
+    "gates instructions on link_issue in the live tool list: %s",
+    async (available) => {
+      type StartHook = (event: { systemPrompt: string }) => { systemPrompt: string };
+      const handlers = new Map<string, StartHook>();
+      const registered: string[] = [];
+      const names = available ? ["link_issue", "list_thread_issues"] : ["list_thread_issues"];
+      const source = NodeModule.stripTypeScriptTypes(
+        PI_T3_MCP_EXTENSION_SOURCE.replace(/^import .*;$/gm, "").replace(
+          "export default async function",
+          "async function",
+        ),
+      );
+      await NodeVM.runInNewContext(`${source}\nt3McpExtension(pi)`, {
+        process: {
+          env: { T3_MCP_URL: "http://fixture.invalid/mcp", T3_MCP_BEARER_TOKEN: "fixture-token" },
+        },
+        AbortSignal,
+        NodePath,
+        Type: { Unsafe: (schema: unknown) => schema },
+        fetch: async (_url: string, transport: { body: string }) => {
+          const request = JSON.parse(transport.body) as { id: number; method: string };
+          const result =
+            request.method === "tools/list"
+              ? {
+                  tools: names.map((name) => ({
+                    name,
+                    inputSchema: { type: "object", properties: {} },
+                  })),
+                }
+              : {};
+          return new Response(JSON.stringify({ jsonrpc: "2.0", id: request.id, result }), {
+            headers: { "content-type": "application/json" },
+          });
+        },
+        pi: {
+          on: (name: string, handler: StartHook) => handlers.set(name, handler),
+          registerTool: (tool: { name: string }) => registered.push(tool.name),
+        },
+      });
+      assert.include(registered, "mcp__t3-code__list_thread_issues");
+      assert.equal(registered.includes("mcp__t3-code__link_issue"), available);
+      const prompt = handlers.get("before_agent_start")!({
+        systemPrompt: "Pi system prompt",
+      }).systemPrompt;
+      assert.isTrue(prompt.startsWith("Pi system prompt\n\n"));
+      assert.equal(prompt.includes("<issue_linking>"), available);
+      if (available) {
+        assert.include(
+          prompt,
+          "call link_issue immediately after creating an issue for this thread",
+        );
+      }
+    },
+  );
+});
+
 describe("Pi tool discovery permissions", () => {
   it.each(["approval-required", "auto-accept-edits", "auto"])(
     "allows annotated T3 reads in %s while gating mutations and replacements",

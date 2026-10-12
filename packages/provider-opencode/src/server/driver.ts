@@ -175,6 +175,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    findWorkItemMatches: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.findWorkItemMatches(input),
+        v2: v2.findWorkItemMatches(input),
+      }),
   };
 }
 

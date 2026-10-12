@@ -603,6 +603,7 @@ export const make = Effect.gen(function* () {
         mergedAt: pull.mergedAt,
         reviewers: Json.toReviewers(pull, input.host),
         checks: checks === null ? [] : Json.toChecks(checks),
+        linkedIssues: [],
         ...(status.checks.total === 0
           ? {}
           : {
