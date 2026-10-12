@@ -11,6 +11,7 @@ import {
   ServerCliLauncherManifestInvalidError,
   ServerCliNpmPackageNotReadyError,
   ServerCliNpmPackagesNotInstallableError,
+  ServerCliNpmRegistryInvalidError,
 } from "./cliErrors.ts";
 
 type NpmPackage = { readonly name: string; readonly version: string };
@@ -95,6 +96,37 @@ export const publishPlatformsThenLauncher = <E, R, R2>(input: {
 
     yield* input.publish(input.launcherTarball);
   });
+
+/**
+ * The registry `npm publish` sends `@t3code` packages to, picked from the
+ * output of `npm config list --json` the way npm-registry-fetch's
+ * `pickRegistry` does: `@t3code:registry`, then the registry of the configured
+ * `scope`, then `registry`, then npm's default. An empty or non-string value
+ * counts as unset, as it does in npm. Fails unless the pick is an http or https
+ * URL, so a config the probe cannot use stops the publish before any upload.
+ */
+export const npmPublishRegistry = Effect.fn("npmPublishRegistry")(function* (
+  config: Readonly<Record<string, unknown>>,
+) {
+  const setting = (key: string) => {
+    const value = config[key];
+    return typeof value === "string" && value !== "" ? value : undefined;
+  };
+  const scope = setting("scope")?.replace(/^@?/, "@");
+  const registry =
+    setting("@t3code:registry") ??
+    (scope === undefined ? undefined : setting(`${scope}:registry`)) ??
+    setting("registry") ??
+    "https://registry.npmjs.org/";
+  const { protocol } = yield* Effect.try({
+    try: () => new URL(registry),
+    catch: (cause) => new ServerCliNpmRegistryInvalidError({ cause }),
+  });
+  if (protocol !== "http:" && protocol !== "https:") {
+    return yield* new ServerCliNpmRegistryInvalidError({ protocol });
+  }
+  return registry;
+});
 
 const NpmVersionMetadata = Schema.Struct({
   dist: Schema.Struct({ tarball: Schema.String }),

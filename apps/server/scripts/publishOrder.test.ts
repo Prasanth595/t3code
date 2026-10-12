@@ -13,6 +13,7 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 import { ServerCliNpmPackageNotReadyError } from "./cliErrors.ts";
 import {
   checkNpmVersionInstallable,
+  npmPublishRegistry,
   publishPlatformsThenLauncher,
   readLauncherPlatformPackages,
 } from "./publishOrder.ts";
@@ -54,7 +55,8 @@ const checkEvents = (events: ReadonlyArray<string>) =>
 // its first `failures[name]` checks, the first with a metadata reason and the
 // rest with a tarball one. `firstRound` opens once every platform package has
 // been checked, and no first check answers before then, so the checks have to
-// run at the same time. A test moves the clock only after the wait started.
+// run at the same time; checks run one at a time die rather than hang. A test
+// moves the clock only after the wait started.
 const fakeCheck = Effect.fn("fakeCheck")(function* (
   events: Array<string>,
   failures: Readonly<Record<string, number>> = {},
@@ -67,7 +69,15 @@ const fakeCheck = Effect.fn("fakeCheck")(function* (
         yield* firstRound.open;
       }
       const checks = checksOf(events, pkg.name);
-      if (checks === 1) yield* firstRound.await;
+      if (checks === 1) {
+        yield* Effect.raceFirst(
+          firstRound.await,
+          Effect.yieldNow.pipe(
+            Effect.repeat({ times: 100 }),
+            Effect.andThen(Effect.die("the checks did not start at once")),
+          ),
+        );
+      }
       if (checks > (failures[pkg.name] ?? 0)) return;
       return yield* new ServerCliNpmPackageNotReadyError({
         packageSpec: `${pkg.name}@${pkg.version}`,
@@ -242,6 +252,66 @@ it.effect("skips the readiness check on a dry run", () =>
 
     assert.deepStrictEqual(checkEvents(events), []);
     assert.strictEqual(events.at(-1), `start ${launcherTarball}`);
+  }),
+);
+
+const t3Registry = "https://t3.example.com/";
+const mirrorRegistry = "https://mirror.example.com/";
+const configuredRegistry = "https://npm.example.com/";
+
+// Configs shaped like `npm config list --json` output.
+it.effect.each([
+  { config: "sets no @t3code registry", settings: { registry: configuredRegistry } },
+  {
+    config: "sets an empty @t3code registry",
+    settings: { "@t3code:registry": "", registry: configuredRegistry },
+  },
+  {
+    config: "sets a @t3code registry",
+    settings: {
+      "@t3code:registry": t3Registry,
+      scope: "@mirror",
+      "@mirror:registry": mirrorRegistry,
+      registry: configuredRegistry,
+    },
+    expected: t3Registry,
+  },
+  {
+    config: "sets a scope",
+    settings: {
+      scope: "@mirror",
+      "@mirror:registry": mirrorRegistry,
+      registry: configuredRegistry,
+    },
+    expected: mirrorRegistry,
+  },
+  {
+    config: "sets a scope without its @",
+    settings: { scope: "mirror", "@mirror:registry": mirrorRegistry, registry: configuredRegistry },
+    expected: mirrorRegistry,
+  },
+  { config: "sets nothing", settings: {}, expected: "https://registry.npmjs.org/" },
+])("picks the registry npm publishes to when the config $config", (test) =>
+  Effect.gen(function* () {
+    const picked = yield* npmPublishRegistry(test.settings);
+
+    assert.strictEqual(picked, test.expected ?? configuredRegistry);
+  }),
+);
+
+it.effect.each([
+  { value: "a value without a scheme", registry: "npm.example.com/prefix" },
+  { value: "an ftp URL", registry: "ftp://user@npm.example.com/", protocol: "ftp:" },
+])("rejects $value as the registry npm publishes to", (test) =>
+  Effect.gen(function* () {
+    const error = yield* npmPublishRegistry({ "@t3code:registry": test.registry }).pipe(
+      Effect.flip,
+    );
+
+    assert.strictEqual(error._tag, "ServerCliNpmRegistryInvalidError");
+    assert.strictEqual(error.protocol, test.protocol);
+    assert.strictEqual(error.cause instanceof TypeError, test.protocol === undefined);
+    assert.notInclude(error.message, "npm.example.com");
   }),
 );
 

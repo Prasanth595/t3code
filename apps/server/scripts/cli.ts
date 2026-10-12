@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { Command, Flag } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -20,9 +21,11 @@ import {
   ServerCliDevelopmentIconSourceMissingError,
   ServerCliDevelopmentIconTargetMissingError,
   ServerCliExecutableImportError,
+  ServerCliNpmRegistryInvalidError,
 } from "./cliErrors.ts";
 import {
   checkNpmVersionInstallable,
+  npmPublishRegistry,
   publishPlatformsThenLauncher,
   readLauncherPlatformPackages,
 } from "./publishOrder.ts";
@@ -46,38 +49,40 @@ const runCommand = Effect.fn("runCommand")(function* (command: ChildProcess.Stan
   }
 });
 
-// The registry `npm publish` run in `cwd` sends `@t3code` packages to:
-// `@t3code:registry` when set, `registry` otherwise. `npm config get` reads the
-// same .npmrc files and npm_config_* variables the publish does.
-const npmPublishRegistry = Effect.fn("npmPublishRegistry")(function* (cwd: string) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const configGet = Effect.fn("npmConfigGet")(function* (key: string) {
-    const spawnCommand = yield* resolveSpawnCommand("npm", ["config", "get", key]);
-    const child = yield* spawner.spawn(
-      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
-        cwd,
-        stderr: "inherit",
-        shell: spawnCommand.shell,
-      }),
-    );
-    const [value, exitCode] = yield* Effect.all(
-      [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
-      { concurrency: "unbounded" },
-    );
-    if (exitCode !== 0) {
-      return yield* new ServerCliCommandExitError({
-        command: spawnCommand.command,
-        args: spawnCommand.args,
-        cwd,
-        exitCode,
-      });
-    }
-    return value.trim();
-  }, Effect.scoped);
+const decodeNpmConfig = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
-  const scoped = yield* configGet("@t3code:registry");
-  return scoped === "undefined" ? yield* configGet("registry") : scoped;
-});
+// The npm config `npm publish` run in `cwd` sees: the same .npmrc files and
+// npm_config_* variables. npm leaves out auth settings and any value it would
+// redact, such as a URL with a password or a UUID in it.
+const readNpmConfig = Effect.fn("readNpmConfig")(function* (cwd: string) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const spawnCommand = yield* resolveSpawnCommand("npm", ["config", "list", "--json"]);
+  const child = yield* spawner.spawn(
+    ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+      cwd,
+      stdin: "ignore",
+      stderr: "inherit",
+      shell: spawnCommand.shell,
+    }),
+  );
+  const [json, exitCode] = yield* Effect.all(
+    [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+    { concurrency: "unbounded" },
+  );
+  if (exitCode !== 0) {
+    return yield* new ServerCliCommandExitError({
+      command: spawnCommand.command,
+      args: spawnCommand.args,
+      cwd,
+      exitCode,
+    });
+  }
+  return yield* decodeNpmConfig(json).pipe(
+    Effect.mapError((cause) => new ServerCliNpmRegistryInvalidError({ cause })),
+  );
+}, Effect.scoped);
 
 const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")(function* (
   repoRoot: string,
@@ -253,10 +258,18 @@ const publishCmd = Command.make(
       const platformPackages = yield* readLauncherPlatformPackages(
         path.join(packagesDir, "t3", "package.json"),
       );
+      for (const { name } of platformPackages) {
+        const tarball = path.join(packagesDir, `${name}.tgz`);
+        if (!platformTarballs.includes(tarball)) {
+          return yield* new ServerCliBuildAssetMissingError({ assetPath: tarball });
+        }
+      }
 
       // A real run checks for the platform packages where npm publishes them,
       // read before any upload. A dry run checks nothing.
-      const registry = config.dryRun ? "" : yield* npmPublishRegistry(packagesDir);
+      const registry = config.dryRun
+        ? ""
+        : yield* npmPublishRegistry(yield* readNpmConfig(packagesDir));
 
       const args = ["publish", "--access", config.access, "--tag", config.tag];
       if (config.provenance) args.push("--provenance");
