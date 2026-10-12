@@ -432,6 +432,16 @@ export function SnapShotCoordinator() {
     return unsubscribe;
   }, [drain, playCaptureSound, resolveCaptureTarget]);
 
+  // Captures persisted before the route or project bootstrapped get no new `ready` event,
+  // so retry them once a destination appears instead of on every thread update.
+  const hasDestination = Boolean(currentTarget ?? defaultProjectRef);
+  const hadDestinationRef = useRef(hasDestination);
+  useEffect(() => {
+    const hadDestination = hadDestinationRef.current;
+    hadDestinationRef.current = hasDestination;
+    if (hasDestination && !hadDestination) void drain();
+  }, [drain, hasDestination]);
+
   useEffect(() => {
     const dismissOnBlur = () => {
       pendingAnimationStartsRef.current.clear();
