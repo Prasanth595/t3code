@@ -227,7 +227,7 @@ describe("desktop update UI helpers", () => {
     ).toBe(false);
   });
 
-  it("shows an Apple Silicon warning for Intel builds under Rosetta", () => {
+  it("shows an ARM64 warning for x64 builds under emulation", () => {
     const state: DesktopUpdateState = {
       ...baseState,
       hostArch: "arm64",
@@ -236,8 +236,8 @@ describe("desktop update UI helpers", () => {
     };
 
     expect(shouldShowArm64IntelBuildWarning(state)).toBe(true);
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Apple Silicon");
-    expect(getArm64IntelBuildWarningDescription(state)).toContain("Intel build");
+    expect(getArm64IntelBuildWarningDescription(state)).toContain("ARM64");
+    expect(getArm64IntelBuildWarningDescription(state)).toContain("x64 build");
   });
 
   it("changes the warning copy when a native build update is ready to download", () => {
