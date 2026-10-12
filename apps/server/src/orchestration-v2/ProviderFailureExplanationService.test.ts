@@ -13,6 +13,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as References from "effect/References";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
@@ -434,9 +436,26 @@ describe("ProviderFailureExplanationService", () => {
             }),
           ),
       });
-      const error = yield* explain().pipe(Effect.provide(harness.layer), Effect.flip);
+      const logs: Array<{ message: unknown; annotations: unknown }> = [];
+      const logger = Logger.make(({ fiber, message }) => {
+        logs.push({ message, annotations: fiber.getRef(References.CurrentLogAnnotations) });
+      });
+      const error = yield* explain().pipe(
+        Effect.provide(
+          Layer.merge(harness.layer, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+        Effect.flip,
+      );
 
       assert.equal(error.reason, "generation_failed");
+      // The log keeps the cause's tag and operation, never its detail.
+      assert.equal(logs.length, 1);
+      assert.deepInclude(logs[0]?.annotations, {
+        reason: "generation_failed",
+        causeTag: "TextGenerationError",
+        operation: "explainProviderFailure",
+      });
+      assert.notInclude(JSON.stringify(logs), "sk-secret-stderr");
       assert.equal(
         error.message,
         "The text generation model could not explain this error. Check the server logs for details.",

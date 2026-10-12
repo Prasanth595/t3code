@@ -152,6 +152,18 @@ export function formatProviderFailureContext(input: ProviderFailureContextInput)
   );
 }
 
+/** The reason plus the cause's tag and operation; never its message, detail or payload. */
+function boundedFailureLogFields(reason: string, cause: unknown): Record<string, string> {
+  const fields: Record<string, string> = { reason };
+  if (typeof cause === "object" && cause !== null) {
+    if ("_tag" in cause && typeof cause._tag === "string") fields.causeTag = cause._tag;
+    if ("operation" in cause && typeof cause.operation === "string") {
+      fields.operation = cause.operation;
+    }
+  }
+  return fields;
+}
+
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -167,7 +179,10 @@ const make = Effect.gen(function* () {
     ) =>
       (cause === undefined
         ? Effect.void
-        : Effect.logWarning("Provider failure explanation failed", reason, cause)
+        : Effect.logWarning("Provider failure explanation failed").pipe(
+            // Only bounded fields: a cause's detail can carry provider output.
+            Effect.annotateLogs(boundedFailureLogFields(reason, cause)),
+          )
       ).pipe(
         Effect.andThen(
           Effect.fail(
