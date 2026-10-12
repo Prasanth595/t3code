@@ -1,4 +1,5 @@
 import {
+  type AuthAccessStreamEvent,
   AuthAccessTokenType,
   AuthAccessWriteScope,
   AuthAdministrativeScopes,
@@ -33,7 +34,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -538,6 +542,15 @@ export class EnvironmentAuth extends Context.Service<
     readonly listClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
+    /** Acquires both live subscriptions before reading the request's snapshot. */
+    readonly streamAccess: (currentSessionId: AuthSessionId) => Effect.Effect<
+      {
+        readonly snapshot: Extract<AuthAccessStreamEvent, { readonly type: "snapshot" }>;
+        readonly changes: Stream.Stream<AuthAccessStreamEvent>;
+      },
+      ServerAuthInternalError,
+      Scope.Scope
+    >;
     readonly revokeClientSession: (
       currentSessionId: AuthSessionId,
       targetSessionId: AuthSessionId,
@@ -585,6 +598,47 @@ export class EnvironmentAuth extends Context.Service<
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
   }
 >()("t3/auth/EnvironmentAuth") {}
+
+function toAuthAccessStreamEvent(
+  change: PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange,
+  revision: number,
+  currentSessionId: AuthSessionId,
+): AuthAccessStreamEvent {
+  switch (change.type) {
+    case "pairingLinkUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "pairingLinkUpserted",
+        payload: { ...change.pairingLink, ...authScopeResponse(change.pairingLink.scopes) },
+      };
+    case "pairingLinkRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "pairingLinkRemoved",
+        payload: { id: change.id },
+      };
+    case "clientUpserted":
+      return {
+        version: 1,
+        revision,
+        type: "clientUpserted",
+        payload: {
+          ...change.clientSession,
+          ...authScopeResponse(change.clientSession.scopes),
+          current: change.clientSession.sessionId === currentSessionId,
+        },
+      };
+    case "clientRemoved":
+      return {
+        version: 1,
+        revision,
+        type: "clientRemoved",
+        payload: { sessionId: change.sessionId },
+      };
+  }
+}
 
 type BootstrapExchangeResult = {
   readonly response: AuthBrowserSessionResult;
@@ -1136,6 +1190,42 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.listClientSessions"),
     );
 
+  const streamAccess: EnvironmentAuth["Service"]["streamAccess"] = Effect.fn(
+    "EnvironmentAuth.streamAccess",
+  )(function* (currentSessionId) {
+    // Buffer both stores before reading; consumers may hold the snapshot before
+    // starting the live tail (for example, while waiting for an RPC ACK).
+    const pairingLinkChanges = yield* bootstrapCredentials.subscribeChanges;
+    const clientChanges = yield* sessions.subscribeChanges;
+    const initialSnapshot = yield* Effect.all({
+      pairingLinks: listPairingLinks(),
+      clientSessions: listClientSessions(currentSessionId),
+    });
+    const revisionRef = yield* Ref.make(1);
+    const accessChanges: Stream.Stream<
+      PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
+    > = Stream.merge(
+      Stream.fromSubscription(pairingLinkChanges),
+      Stream.fromSubscription(clientChanges),
+    );
+    const changes = accessChanges.pipe(
+      Stream.mapEffect((change) =>
+        Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
+          Effect.map((revision) => toAuthAccessStreamEvent(change, revision, currentSessionId)),
+        ),
+      ),
+    );
+    return {
+      snapshot: {
+        version: 1 as const,
+        revision: 1,
+        type: "snapshot" as const,
+        payload: initialSnapshot,
+      },
+      changes,
+    };
+  });
+
   const revokeClientSession: EnvironmentAuth["Service"]["revokeClientSession"] = Effect.fn(
     "EnvironmentAuth.revokeClientSession",
   )(function* (currentSessionId, targetSessionId) {
@@ -1300,6 +1390,7 @@ export const make = Effect.gen(function* () {
     revokeSession,
     revokeOtherSessionsExcept,
     listClientSessions,
+    streamAccess,
     revokeClientSession,
     revokeOtherClientSessions,
     authenticateHttpRequest,

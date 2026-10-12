@@ -26,7 +26,8 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
-import { subscribeAuthAccess, WS_RPC_SERVER_OPTIONS } from "./ws.ts";
+import { rpcInitialItems } from "./rpcInitialItems.ts";
+import { WS_RPC_SERVER_OPTIONS } from "./ws.ts";
 
 const group = WsRpcGroup.omit(
   ...[...WsRpcGroup.requests.keys()].filter(
@@ -41,7 +42,9 @@ const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(ServerEnvironment.layerIdentity),
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-access-stream-test-" })),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-access-stream-test-" }),
+  ),
 );
 
 const makeProtocol = Effect.gen(function* () {
@@ -115,18 +118,25 @@ it.layer(NodeServices.layer)("subscribeAuthAccess snapshot handoff", (it) => {
       const snapshotRead = yield* Deferred.make<void>();
       const releaseSnapshot = yield* Deferred.make<void>();
       const { responses, receive, protocol } = yield* makeProtocol;
-      const snapshotAuth = EnvironmentAuth.EnvironmentAuth.of({
-        ...auth,
-        listClientSessions: (sessionId) =>
-          auth.listClientSessions(sessionId).pipe(
-            Effect.tap(() => Deferred.succeed(snapshotRead, undefined)),
-            Effect.flatMap((snapshot) => Deferred.await(releaseSnapshot).pipe(Effect.as(snapshot))),
-          ),
-      });
+      const snapshotAuth = yield* EnvironmentAuth.make.pipe(
+        Effect.provideService(SessionStore.SessionStore, {
+          ...sessions,
+          listActive: () =>
+            sessions.listActive().pipe(
+              Effect.tap(() => Deferred.succeed(snapshotRead, undefined)),
+              Effect.flatMap((snapshot) =>
+                Deferred.await(releaseSnapshot).pipe(Effect.as(snapshot)),
+              ),
+            ),
+        }),
+      );
       const { write } = yield* startRpc(
         Stream.unwrap(
-          subscribeAuthAccess(current.sessionId).pipe(
-            Effect.provideService(EnvironmentAuth.EnvironmentAuth, snapshotAuth),
+          snapshotAuth.streamAccess(current.sessionId).pipe(
+            Effect.map(({ snapshot, changes }) =>
+              Stream.concat(rpcInitialItems([snapshot]), changes),
+            ),
+            Effect.mapError((error) => new AuthAccessStreamError({ message: error.message })),
           ),
         ),
         { responses, receive, protocol },
@@ -212,48 +222,47 @@ it.layer(NodeServices.layer)("subscribeAuthAccess snapshot handoff", (it) => {
     "releases both subscriptions on cancellation or failure during %s",
     (milestone) =>
       Effect.gen(function* () {
-        const auth = yield* EnvironmentAuth.EnvironmentAuth;
         const pairingLinks = yield* PairingGrantStore.PairingGrantStore;
         const sessions = yield* SessionStore.SessionStore;
         const current = yield* sessions.issue({ subject: "current-client" });
         const acquired = yield* Queue.unbounded<PubSub.Subscription<unknown>>();
         const snapshotRead = yield* Deferred.make<void>();
         const releaseSnapshot = yield* Deferred.make<void>();
-        const snapshotAuth = EnvironmentAuth.EnvironmentAuth.of({
-          ...auth,
-          listClientSessions: (sessionId) =>
-            auth.listClientSessions(sessionId).pipe(
-              Effect.tap(() => Deferred.succeed(snapshotRead, undefined)),
-              Effect.flatMap((snapshot) =>
-                Deferred.await(releaseSnapshot).pipe(
-                  Effect.andThen(
-                    milestone === "snapshot failure"
-                      ? Effect.fail(
-                          new EnvironmentAuth.ServerAuthSessionsListError({ cause: "test" }),
-                        )
-                      : Effect.succeed(snapshot),
+        const snapshotAuth = yield* EnvironmentAuth.make.pipe(
+          Effect.provideService(PairingGrantStore.PairingGrantStore, {
+            ...pairingLinks,
+            subscribeChanges: pairingLinks.subscribeChanges.pipe(
+              Effect.tap((subscription) => Queue.offer(acquired, subscription)),
+            ),
+          }),
+          Effect.provideService(SessionStore.SessionStore, {
+            ...sessions,
+            subscribeChanges: sessions.subscribeChanges.pipe(
+              Effect.tap((subscription) => Queue.offer(acquired, subscription)),
+            ),
+            listActive: () =>
+              sessions.listActive().pipe(
+                Effect.tap(() => Deferred.succeed(snapshotRead, undefined)),
+                Effect.flatMap((snapshot) =>
+                  Deferred.await(releaseSnapshot).pipe(
+                    Effect.andThen(
+                      milestone === "snapshot failure"
+                        ? Effect.fail(new SessionStore.ActiveSessionsListError({ cause: "test" }))
+                        : Effect.succeed(snapshot),
+                    ),
                   ),
                 ),
               ),
-            ),
-        });
+          }),
+        );
         const { responses, receive, protocol } = yield* makeProtocol;
         const { write } = yield* startRpc(
           Stream.unwrap(
-            subscribeAuthAccess(current.sessionId).pipe(
-              Effect.provideService(EnvironmentAuth.EnvironmentAuth, snapshotAuth),
-              Effect.provideService(PairingGrantStore.PairingGrantStore, {
-                ...pairingLinks,
-                subscribeChanges: pairingLinks.subscribeChanges.pipe(
-                  Effect.tap((subscription) => Queue.offer(acquired, subscription)),
-                ),
-              }),
-              Effect.provideService(SessionStore.SessionStore, {
-                ...sessions,
-                subscribeChanges: sessions.subscribeChanges.pipe(
-                  Effect.tap((subscription) => Queue.offer(acquired, subscription)),
-                ),
-              }),
+            snapshotAuth.streamAccess(current.sessionId).pipe(
+              Effect.map(({ snapshot, changes }) =>
+                Stream.concat(rpcInitialItems([snapshot]), changes),
+              ),
+              Effect.mapError((error) => new AuthAccessStreamError({ message: error.message })),
             ),
           ),
           { responses, receive, protocol },
