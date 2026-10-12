@@ -125,9 +125,7 @@ export function getLastNonEmptyOutputLine(stdout: string): string | null {
   );
 }
 
-const collectProcessOutput = <E>(
-  stream: Stream.Stream<Uint8Array, E>,
-): Effect.Effect<string, E> =>
+const collectProcessOutput = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
   stream.pipe(
     Stream.decodeText(),
     Stream.runFold(
