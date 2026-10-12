@@ -5,6 +5,11 @@ import { useMarkdownImageSource } from "../../native/useMarkdownImageSource";
 import { useMarkdownPreviewStyles } from "../files/FileMarkdownPreview";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import {
+  flattenThemeColor,
+  themeColorWithAlpha,
+  themeColorWithContrast,
+} from "../../lib/mobileTheme";
 import { useThreadMarkdownLinkPress } from "./useThreadMarkdownLinkPress";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
@@ -113,7 +118,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const questionTextRole = useScaledTextRole("body");
   const optionTextRole = useScaledTextRole("footnote");
   const textStyles = useMemo(() => {
-    const base = styles.nativeTextStyle;
+    const base = {
+      ...styles.nativeTextStyle,
+      linkColor: themeColorWithContrast(styles.nativeTextStyle.linkColor, [
+        theme["--color-card-alt"],
+        theme["--color-input"],
+        flattenThemeColor(
+          themeColorWithAlpha(theme["--color-primary"], 0.1),
+          theme["--color-card-alt"],
+        ),
+      ]),
+    };
     return {
       question: { ...base, ...questionTextRole, color: theme["--color-foreground"] },
       label: {
