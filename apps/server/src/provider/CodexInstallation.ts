@@ -28,6 +28,7 @@ import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 
 const DRIVER = ProviderDriverKind.make("codex");
+const STAGING_STALE_AFTER_MS = 60 * 60_000;
 const Version = Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/u));
 const ActiveRelease = Schema.Struct({ version: Version });
 const InstalledRelease = Schema.Struct({
@@ -701,17 +702,25 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
 
   yield* Effect.gen(function* () {
     // Clear staging directories left behind by an interrupted install so they
-    // neither leak disk nor make an otherwise empty runtime look removable.
+    // neither leak disk nor make an otherwise empty runtime look removable. Two
+    // servers can share a home, so one touched within the last hour may be
+    // another server's install in progress and stays.
     if (yield* fs.exists(managedDirectory)) {
       const entries = yield* fs
         .readDirectory(managedDirectory)
         .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+      const now = yield* Clock.currentTimeMillis;
       for (const entry of entries) {
-        if (entry.startsWith(".install-") || entry.startsWith(".active-")) {
-          yield* fs
-            .remove(path.join(managedDirectory, entry), { recursive: true, force: true })
-            .pipe(Effect.ignore);
-        }
+        if (!entry.startsWith(".install-") && !entry.startsWith(".active-")) continue;
+        const target = path.join(managedDirectory, entry);
+        const info = yield* fs.stat(target).pipe(Effect.option);
+        if (Option.isNone(info)) continue;
+        const modifiedAt = Option.match(info.value.mtime, {
+          onNone: () => now,
+          onSome: (date) => date.getTime(),
+        });
+        if (now - modifiedAt < STAGING_STALE_AFTER_MS) continue;
+        yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
       }
       // An unreadable directory is not an empty one; never delete on a failed read.
       const remaining = yield* fs.readDirectory(managedDirectory).pipe(Effect.option);

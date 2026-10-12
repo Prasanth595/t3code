@@ -358,3 +358,27 @@ it("publishes complete packages for all supported platforms", () => {
       );
   expect(CodexInstallation.resolveCodexReleaseAsset("linux", "riscv64")).toBeNull();
 });
+// Live clock: staleness compares real filesystem mtimes.
+it.live("startup removes only stale staging directories", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-install-test-" });
+    const managed = `${baseDir}/tools/codex`;
+    const stale = new Date(Date.now() - 2 * 60 * 60_000);
+    for (const name of [".install-stale", ".active-stale", ".install-live"]) {
+      yield* fs.makeDirectory(`${managed}/${name}`, { recursive: true });
+    }
+    yield* fs.utimes(`${managed}/.install-stale`, stale, stale);
+    yield* fs.utimes(`${managed}/.active-stale`, stale, stale);
+    const h = yield* makeHarness({ baseDir });
+    expect(yield* fs.readDirectory(managed)).toEqual([".install-live"]);
+    expect((yield* h.installation.state).canRemove).toBe(true);
+
+    yield* fs.remove(`${managed}/.install-live`, { recursive: true });
+    yield* fs.makeDirectory(`${managed}/.install-stale`);
+    yield* fs.utimes(`${managed}/.install-stale`, stale, stale);
+    const fresh = yield* makeHarness({ baseDir });
+    expect(yield* fs.exists(managed)).toBe(false);
+    expect((yield* fresh.installation.state).canRemove).toBe(false);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
