@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Platform, View } from "react-native";
+import { Platform, useWindowDimensions, View } from "react-native";
 
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
@@ -22,6 +22,9 @@ export function ListRowLayout({
   disabled,
   accessory,
 }: ListRowContentProps & { readonly accessory?: ReactNode }) {
+  const { fontScale } = useWindowDimensions();
+  // Leave the label room to wrap at accessibility text sizes.
+  const stackDetail = fontScale >= 1.5;
   return (
     <View
       className={cn(
@@ -46,8 +49,11 @@ export function ListRowLayout({
         {description ? (
           <AppText className="text-sm text-foreground-muted">{description}</AppText>
         ) : null}
+        {detail && stackDetail ? (
+          <AppText className="text-sm text-foreground-muted">{detail}</AppText>
+        ) : null}
       </View>
-      {detail ? (
+      {detail && !stackDetail ? (
         <AppText
           className="max-w-[40%] shrink text-right text-sm text-foreground-muted"
           numberOfLines={1}
