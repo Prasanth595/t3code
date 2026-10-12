@@ -331,10 +331,8 @@ export function mergeEnvironmentSettings(
   };
 }
 
-// Migrate once per connection: a server that predates `migrateModelPreferences` drops it and keeps
-// reporting null, so retrying on each settings push would save to that server in a loop. A
-// reconnect, for example after that server is upgraded, tries again.
-const attemptedModelPreferencesMigrations = new Map<EnvironmentId, number>();
+// Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
+const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 const connectionGenerationAtom = Atom.family((environmentId: EnvironmentId | null) =>
   Atom.make((get) =>
     environmentId === null
@@ -360,12 +358,12 @@ export function useMigrateModelPreferences(
       !environmentId ||
       !settings ||
       !hydrated ||
-      attemptedModelPreferencesMigrations.get(environmentId) === connectionGeneration
+      attemptedMigrationGenerations.get(environmentId) === connectionGeneration
     )
       return;
     const patch = modelPreferencesMigrationPatch(settings, clientSettings);
     if (!patch) return;
-    attemptedModelPreferencesMigrations.set(environmentId, connectionGeneration);
+    attemptedMigrationGenerations.set(environmentId, connectionGeneration);
     void migrate({ environmentId, input: { patch } });
   }, [clientSettings, connectionGeneration, environmentId, hydrated, migrate, settings]);
 }

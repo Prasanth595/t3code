@@ -14,6 +14,8 @@ import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+const settingsFromServerWithoutMigration = DEFAULT_SERVER_SETTINGS;
+
 const state = vi.hoisted(() => ({
   settings: undefined as unknown as Atom.Writable<ServerSettings | null>,
   connection: undefined as unknown as Atom.Writable<
@@ -57,12 +59,13 @@ let renderer: ReactTestRenderer | undefined;
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   registry = AtomRegistry.make();
-  // A server that predates the migration never reports favorites.
-  state.settings = Atom.make<ServerSettings | null>(DEFAULT_SERVER_SETTINGS);
+  state.settings = Atom.make<ServerSettings | null>(settingsFromServerWithoutMigration);
   state.connection = Atom.make<AsyncResult.AsyncResult<SupervisorConnectionState>>(
     AsyncResult.success(connected(1)),
   );
-  state.persist.mockReset().mockResolvedValue(AsyncResult.success(DEFAULT_SERVER_SETTINGS));
+  state.persist
+    .mockReset()
+    .mockResolvedValue(AsyncResult.success(settingsFromServerWithoutMigration));
 });
 
 function connected(generation: number): SupervisorConnectionState {
@@ -81,7 +84,7 @@ async function renderModelPicker(environmentId: EnvironmentId) {
 
 async function pushSettings(count: number) {
   for (let push = 0; push < count; push += 1) {
-    await act(async () => registry.set(state.settings, { ...DEFAULT_SERVER_SETTINGS }));
+    await act(async () => registry.set(state.settings, { ...settingsFromServerWithoutMigration }));
   }
 }
 
@@ -92,7 +95,6 @@ afterEach(async () => {
 });
 
 it("migrates once when the server drops the migration and keeps pushing settings", async () => {
-  // Attempts are module state, so each test uses its own environment.
   const environmentId = EnvironmentId.make("remote");
   await renderModelPicker(environmentId);
   await pushSettings(3);

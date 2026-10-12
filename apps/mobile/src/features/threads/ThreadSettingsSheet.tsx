@@ -139,10 +139,8 @@ const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly model: string;
 }> = [];
 const FAVORITES_PROVIDER_FILTER = "@favorites";
-// Migrate once per connection: a server that predates `migrateModelPreferences` drops it and keeps
-// reporting null, so retrying on each settings push would save to that server in a loop. A
-// reconnect, for example after that server is upgraded, tries again.
-const attemptedModelPreferencesMigrations = new Map<EnvironmentId, number>();
+// Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
+const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 /** Provider catalog header with its harness logo and disclosure state. */
 function ProviderHeader(props: {
   readonly driver: string | undefined;
@@ -404,12 +402,12 @@ function ThreadSettingsSessionProvider(
       !props.environmentId ||
       !settings ||
       !AsyncResult.isSuccess(preferences) ||
-      attemptedModelPreferencesMigrations.get(props.environmentId) === connectionGeneration
+      attemptedMigrationGenerations.get(props.environmentId) === connectionGeneration
     )
       return;
     const patch = modelPreferencesMigrationPatch(settings, { favorites: legacyFavorites });
     if (!patch) return;
-    attemptedModelPreferencesMigrations.set(props.environmentId, connectionGeneration);
+    attemptedMigrationGenerations.set(props.environmentId, connectionGeneration);
     void saveSettings({ environmentId: props.environmentId, input: { patch } });
   }, [
     connectionGeneration,
