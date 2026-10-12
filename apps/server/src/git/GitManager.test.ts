@@ -5329,6 +5329,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       Effect.gen(function* () {
         const prepared = yield* prepareInCheckoutOfAnotherRepository(mode);
         yield* expectRefusedBeforeAnyWrite(prepared, ["origin"]);
+        // No remote names the pull request's repository, so there is no rename to suggest.
+        expect(prepared.result).toMatchObject({
+          failure: { detail: expect.not.stringContaining("git remote rename") },
+        });
       }),
   );
 
@@ -5366,6 +5370,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           }),
         );
         yield* expectRefusedBeforeAnyWrite(prepared, ["acme", "origin"]);
+        expect(prepared.result).toMatchObject({
+          failure: {
+            detail: expect.stringContaining(
+              "Its remote acme names pingdotgg/codething-mvp; run `git remote rename acme upstream` to open the pull request here.",
+            ),
+          },
+        });
       }),
   );
 
