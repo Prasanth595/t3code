@@ -41,6 +41,7 @@ import { mergePathEntries } from "@t3tools/shared/shell";
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
@@ -1577,21 +1578,13 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     threadId: string,
     terminalId: string,
   ) {
-    let exited = false;
+    // Subscribe before SIGTERM so an immediate exit is not missed. Released with
+    // Effect.ensuring because a JS `finally` does not run when the fiber is interrupted.
+    const exited = Deferred.makeUnsafe<void>();
     const unsubscribeExit = process.onExit(() => {
-      exited = true;
+      Deferred.doneUnsafe(exited, Effect.void);
     });
-    const waitForProcessExit = Effect.callback<boolean>((resume) => {
-      if (exited) {
-        resume(Effect.succeed(true));
-        return;
-      }
-      const stop = process.onExit(() => {
-        resume(Effect.succeed(true));
-      });
-      return Effect.sync(stop);
-    });
-    try {
+    yield* Effect.gen(function* () {
       const terminated = yield* Effect.try({
         try: () => process.kill("SIGTERM"),
         catch: (cause) =>
@@ -1615,13 +1608,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         return;
       }
 
-      const exitedBeforeGrace = yield* waitForProcessExit.pipe(
+      const exitedBeforeGrace = yield* Deferred.await(exited).pipe(
+        Effect.as(true),
         Effect.timeoutOrElse({
           duration: processKillGraceMs,
           orElse: () => Effect.succeed(false),
         }),
       );
-      if (exitedBeforeGrace || exited) {
+      if (exitedBeforeGrace) {
         return;
       }
 
@@ -1643,9 +1637,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           }),
         ),
       );
-    } finally {
-      unsubscribeExit();
-    }
+    }).pipe(Effect.ensuring(Effect.sync(unsubscribeExit)));
   });
 
   const startKillEscalation = Effect.fn("terminal.startKillEscalation")(function* (
