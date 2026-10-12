@@ -304,7 +304,7 @@ export function buildBreakdownRows(input: BreakdownInput): readonly BreakdownRow
         new Map(
           liveChildren.map((child) => [child, scopeThreads?.families.get(child) ?? emptyTotals()]),
         ),
-        { metric, sort: null, nameOf: (key) => nameOf("thread", key) },
+        { metric, sort, nameOf: (key) => nameOf("thread", key) },
       ).filter((child) => threadMatches(child.key));
       pushChildren(
         "thread",
