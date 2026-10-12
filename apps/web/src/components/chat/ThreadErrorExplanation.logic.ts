@@ -14,6 +14,40 @@ export function canExplainThreadError(input: {
   return input.hasTarget && input.errorClass !== "usage_limit";
 }
 
+export interface ThreadErrorExplainTarget {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  /** The run the error belongs to, when the client knows it. */
+  readonly runId: RunId | null;
+}
+
+/**
+ * The thread an Explain request would ask about, or null when the banner must
+ * not offer one: the error is not the server's own record of a server thread,
+ * or this connection cannot operate the thread, which the request requires.
+ */
+export function resolveThreadErrorExplainTarget(input: {
+  readonly showsServerError: boolean;
+  readonly isServerThread: boolean;
+  readonly canOperateThread: boolean;
+  readonly threadRef: { readonly environmentId: EnvironmentId; readonly threadId: ThreadId } | null;
+  readonly runId: RunId | null;
+}): ThreadErrorExplainTarget | null {
+  if (
+    !input.showsServerError ||
+    !input.isServerThread ||
+    !input.canOperateThread ||
+    input.threadRef === null
+  ) {
+    return null;
+  }
+  return {
+    environmentId: input.threadRef.environmentId,
+    threadId: input.threadRef.threadId,
+    runId: input.runId,
+  };
+}
+
 /**
  * Identifies one explanation request. The banner keys its explanation on this,
  * so moving to another thread, environment or run with the same error text

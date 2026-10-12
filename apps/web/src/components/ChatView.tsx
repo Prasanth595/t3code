@@ -483,6 +483,7 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
+import { resolveThreadErrorExplainTarget } from "./chat/ThreadErrorExplanation.logic";
 import {
   QueuedRunsControl,
   type QueuedRunsControlHandle,
@@ -11488,15 +11489,13 @@ export default function ChatView(props: ChatViewProps) {
               <ThreadErrorBanner
                 error={timelineThreadError}
                 errorClass={bannerShowsServerError ? (serverRuntime?.lastErrorClass ?? null) : null}
-                explainTarget={
-                  bannerShowsServerError && isServerThread && activeThreadRef !== null
-                    ? {
-                        environmentId: activeThreadRef.environmentId,
-                        threadId: activeThreadRef.threadId,
-                        runId: serverLatestRun?.runId ?? null,
-                      }
-                    : null
-                }
+                explainTarget={resolveThreadErrorExplainTarget({
+                  showsServerError: bannerShowsServerError,
+                  isServerThread,
+                  canOperateThread,
+                  threadRef: activeThreadRef,
+                  runId: serverLatestRun?.runId ?? null,
+                })}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

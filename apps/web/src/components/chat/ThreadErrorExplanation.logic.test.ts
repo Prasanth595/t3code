@@ -5,6 +5,7 @@ import {
   canExplainThreadError,
   explanationStateFromFailure,
   explanationStateFromResult,
+  resolveThreadErrorExplainTarget,
   THREAD_ERROR_CHANGED_MESSAGE,
   threadErrorExplanationKey,
 } from "./ThreadErrorExplanation.logic";
@@ -22,6 +23,38 @@ describe("canExplainThreadError", () => {
 
   it("hides the action without a server thread to ask about", () => {
     expect(canExplainThreadError({ errorClass: "provider_error", hasTarget: false })).toBe(false);
+  });
+});
+
+describe("resolveThreadErrorExplainTarget", () => {
+  const threadRef = {
+    environmentId: EnvironmentId.make("env-1"),
+    threadId: ThreadId.make("thread-1"),
+  };
+  const input = {
+    showsServerError: true,
+    isServerThread: true,
+    canOperateThread: true,
+    threadRef,
+    runId: RunId.make("run-1"),
+  };
+
+  it("targets the thread and run for a connection that can operate it", () => {
+    expect(resolveThreadErrorExplainTarget(input)).toEqual({
+      environmentId: threadRef.environmentId,
+      threadId: threadRef.threadId,
+      runId: RunId.make("run-1"),
+    });
+  });
+
+  it("offers nothing to a read-only connection, which the request would reject", () => {
+    expect(resolveThreadErrorExplainTarget({ ...input, canOperateThread: false })).toBeNull();
+  });
+
+  it("offers nothing for local errors, draft threads or a missing thread", () => {
+    expect(resolveThreadErrorExplainTarget({ ...input, showsServerError: false })).toBeNull();
+    expect(resolveThreadErrorExplainTarget({ ...input, isServerThread: false })).toBeNull();
+    expect(resolveThreadErrorExplainTarget({ ...input, threadRef: null })).toBeNull();
   });
 });
 
