@@ -118,3 +118,13 @@ it("migrates again after the environment reconnects", async () => {
   await pushSettings(2);
   expect(state.persist).toHaveBeenCalledTimes(2);
 });
+
+it("waits for the environment to connect before migrating", async () => {
+  registry.set(state.connection, AsyncResult.success(AVAILABLE_CONNECTION_STATE));
+  await renderModelPicker(EnvironmentId.make("connecting"));
+  await pushSettings(2);
+  expect(state.persist).not.toHaveBeenCalled();
+  await act(async () => registry.set(state.connection, AsyncResult.success(connected(1))));
+  await pushSettings(2);
+  expect(state.persist).toHaveBeenCalledTimes(1);
+});

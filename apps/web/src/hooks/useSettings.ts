@@ -336,10 +336,10 @@ const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 const connectionGenerationAtom = Atom.family((environmentId: EnvironmentId | null) =>
   Atom.make((get) =>
     environmentId === null
-      ? 0
+      ? null
       : Option.match(AsyncResult.value(get(environmentCatalog.stateAtom(environmentId))), {
-          onNone: () => 0,
-          onSome: (connection) => connection.generation,
+          onNone: () => null,
+          onSome: (connection) => (connection.phase === "connected" ? connection.generation : null),
         }),
   ),
 );
@@ -358,6 +358,7 @@ export function useMigrateModelPreferences(
       !environmentId ||
       !settings ||
       !hydrated ||
+      connectionGeneration === null ||
       attemptedMigrationGenerations.get(environmentId) === connectionGeneration
     )
       return;

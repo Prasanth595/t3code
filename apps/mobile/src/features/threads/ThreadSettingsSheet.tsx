@@ -356,10 +356,10 @@ function ThreadSettingsSessionProvider(
   const configs = useAtomValue(environmentServerConfigsAtom);
   const config = props.environmentId ? configs.get(props.environmentId) : undefined;
   const settings = config?.settings;
-  const connectionGeneration =
-    useEnvironmentQuery(
-      props.environmentId ? environmentCatalog.stateAtom(props.environmentId) : null,
-    ).data?.generation ?? 0;
+  const connection = useEnvironmentQuery(
+    props.environmentId ? environmentCatalog.stateAtom(props.environmentId) : null,
+  ).data;
+  const connectionGeneration = connection?.phase === "connected" ? connection.generation : null;
   const [manageHidden, setManageHidden] = useState(false);
   const pendingHidden = useRef(new Set<string>());
   const pendingFavorites = useRef(
@@ -402,6 +402,7 @@ function ThreadSettingsSessionProvider(
       !props.environmentId ||
       !settings ||
       !AsyncResult.isSuccess(preferences) ||
+      connectionGeneration === null ||
       attemptedMigrationGenerations.get(props.environmentId) === connectionGeneration
     )
       return;
