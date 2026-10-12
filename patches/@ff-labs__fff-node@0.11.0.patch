@@ -1,5 +1,4 @@
 diff --git a/package.json b/package.json
-index e000a78..8432546 100644
 --- a/package.json
 +++ b/package.json
 @@ -11,7 +11,7 @@
@@ -70,16 +69,18 @@ diff --git a/dist/index.js b/dist/index.js
    size: DataType.U64,
    modified: DataType.U64,
    access_frecency_score: DataType.I64,
-@@ -446,7 +457,7 @@ var FFF_SCORE_STRUCT = {
+@@ -445,8 +456,9 @@ var FFF_SCORE_STRUCT = {
+   distance_penalty: DataType.I32,
    current_file_penalty: DataType.I32,
    combo_match_boost: DataType.I32,
++  path_alignment_bonus: DataType.I32,
    exact_match: DataType.U8,
 -  match_type: DataType.External
 +  match_type: DataType.String
  };
  var FFF_SEARCH_RESULT_STRUCT = {
    items: DataType.External,
-@@ -462,8 +473,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
+@@ -462,8 +474,8 @@ var FFF_SEARCH_RESULT_STRUCT = {
    location_end_col: DataType.I32
  };
  var FFF_DIR_ITEM_STRUCT = {
@@ -90,7 +91,7 @@ diff --git a/dist/index.js b/dist/index.js
    max_access_frecency: DataType.I32
  };
  var FFF_DIR_SEARCH_RESULT_STRUCT = {
-@@ -475,9 +486,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
+@@ -475,9 +487,9 @@ var FFF_DIR_SEARCH_RESULT_STRUCT = {
  };
  var FFF_MIXED_ITEM_STRUCT = {
    item_type: DataType.U8,
@@ -103,7 +104,7 @@ diff --git a/dist/index.js b/dist/index.js
    size: DataType.U64,
    modified: DataType.U64,
    access_frecency_score: DataType.I64,
-@@ -500,10 +511,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
+@@ -500,10 +512,10 @@ var FFF_MIXED_SEARCH_RESULT_STRUCT = {
    location_end_col: DataType.I32
  };
  var FFF_GREP_MATCH_STRUCT = {
@@ -118,7 +119,7 @@ diff --git a/dist/index.js b/dist/index.js
    match_ranges: DataType.External,
    context_before: DataType.External,
    context_after: DataType.External,
-@@ -598,18 +609,13 @@ function readMixedItemFromRaw(raw) {
+@@ -598,18 +610,13 @@ function readMixedItemFromRaw(raw) {
  }
  function callAccessor(funcName, resultPtr, index, structDef) {
    loadLibrary();
@@ -139,7 +140,7 @@ diff --git a/dist/index.js b/dist/index.js
  }
  function ptrOffset(base, bytes) {
    return load({
-@@ -766,6 +772,7 @@ function parseSearchResult(rawPtr) {
+@@ -766,6 +773,7 @@ function parseSearchResult(rawPtr) {
    }
    const items = [];
    const scores = [];
@@ -147,7 +148,7 @@ diff --git a/dist/index.js b/dist/index.js
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_search_result_get_item",
-@@ -774,13 +781,15 @@ function parseSearchResult(rawPtr) {
+@@ -774,13 +782,15 @@ function parseSearchResult(rawPtr) {
        FFF_FILE_ITEM_STRUCT
      );
      items.push(readFileItemFromRaw(rawItem));
@@ -170,7 +171,7 @@ diff --git a/dist/index.js b/dist/index.js
    }
    load({
      library: LIBRARY_KEY,
-@@ -824,6 +833,7 @@ function parseDirSearchResult(rawPtr) {
+@@ -824,6 +834,7 @@ function parseDirSearchResult(rawPtr) {
    const count = sr.count;
    const items = [];
    const scores = [];
@@ -178,7 +179,7 @@ diff --git a/dist/index.js b/dist/index.js
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_dir_search_result_get_item",
-@@ -832,13 +842,15 @@ function parseDirSearchResult(rawPtr) {
+@@ -832,13 +843,15 @@ function parseDirSearchResult(rawPtr) {
        FFF_DIR_ITEM_STRUCT
      );
      items.push(readDirItemFromRaw(rawItem));
@@ -201,7 +202,7 @@ diff --git a/dist/index.js b/dist/index.js
    }
    load({
      library: LIBRARY_KEY,
-@@ -897,6 +909,7 @@ function parseMixedSearchResult(rawPtr) {
+@@ -897,6 +910,7 @@ function parseMixedSearchResult(rawPtr) {
    }
    const items = [];
    const scores = [];
@@ -209,7 +210,7 @@ diff --git a/dist/index.js b/dist/index.js
    for (let i = 0; i < count; i++) {
      const rawItem = callAccessor(
        "fff_mixed_search_result_get_item",
-@@ -905,13 +918,15 @@ function parseMixedSearchResult(rawPtr) {
+@@ -905,13 +919,15 @@ function parseMixedSearchResult(rawPtr) {
        FFF_MIXED_ITEM_STRUCT
      );
      items.push(readMixedItemFromRaw(rawItem));
