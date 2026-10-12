@@ -5,6 +5,8 @@ import {
 } from "@t3tools/contracts";
 import { useLocation } from "@tanstack/react-router";
 import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 
 import {
   type DraftId,
@@ -15,6 +17,7 @@ import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useClientSettings } from "../../hooks/useSettings";
 import { readThreadShell } from "../../state/entities";
 import { environmentThreadShells } from "../../state/threads";
+import { environmentShell } from "../../state/shell";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
@@ -379,21 +382,44 @@ export function SnapShotCoordinator() {
               : null;
             if (!target) {
               if (capturedTarget && typeof capturedTarget !== "string") {
+                const waitingTarget = capturedTarget;
+                const availability = Atom.make((get) => {
+                  if (get(environmentThreadShells.threadShellAtom(waitingTarget)) !== null) {
+                    return "available";
+                  }
+                  const shell = get(environmentShell.stateValueAtom(waitingTarget.environmentId));
+                  return shell.status === "live" &&
+                    Option.isSome(shell.snapshot) &&
+                    !shell.snapshot.value.threads.some(
+                      (thread) => thread.id === waitingTarget.threadId,
+                    )
+                    ? "missing"
+                    : "waiting";
+                });
+                if (appAtomRegistry.get(availability) === "missing") {
+                  stopWaitingForThreadShell(item.id);
+                  await dismissSnapShotAnimation(item.id);
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Snapshot failed",
+                      description:
+                        "The original thread is no longer available. Capture again in an existing thread.",
+                    }),
+                  );
+                  continue;
+                }
                 if (!waitingThreadShellsRef.current.has(item.id)) {
-                  const waitingTarget = capturedTarget;
                   // Only retained captures with an unavailable target need a shell subscription.
-                  // Stop it on the first available shell so streaming never becomes IPC polling.
+                  // Availability changes, including a live snapshot confirming deletion, retry once.
                   const retryWhenAvailable = () => {
-                    if (readThreadShell(waitingTarget) === null) return;
+                    if (appAtomRegistry.get(availability) === "waiting") return;
                     stopWaitingForThreadShell(item.id);
                     void drainPendingSnapShots();
                   };
                   waitingThreadShellsRef.current.set(
                     item.id,
-                    appAtomRegistry.subscribe(
-                      environmentThreadShells.threadShellAtom(waitingTarget),
-                      retryWhenAvailable,
-                    ),
+                    appAtomRegistry.subscribe(availability, retryWhenAvailable),
                   );
                   retryWhenAvailable();
                 }

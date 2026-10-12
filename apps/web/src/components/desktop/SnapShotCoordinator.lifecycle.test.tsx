@@ -32,7 +32,20 @@ vi.mock("../../lib/snapShotSound", async (original) => ({
 
 const shellState = await vi.hoisted(async () => {
   const { Atom } = await import("effect/reactivity");
-  return { threadAAvailable: Atom.make(false) };
+  return { threadAAvailable: Atom.make(false), targetDeleted: Atom.make(false) };
+});
+vi.mock("../../state/shell", async (original) => {
+  const state = await original<typeof import("../../state/shell")>();
+  const { Atom } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  const snapshot = Atom.map(shellState.targetDeleted, (deleted) => ({
+    status: deleted ? "live" : "synchronizing",
+    snapshot: deleted ? Option.some({ threads: [] }) : Option.none(),
+  }));
+  return {
+    ...state,
+    environmentShell: { ...state.environmentShell, stateValueAtom: () => snapshot },
+  };
 });
 vi.mock("../../state/threads", async (original) => {
   const state = await original<typeof import("../../state/threads")>();
@@ -152,6 +165,7 @@ beforeEach(() => {
   route.playSound = false;
   vi.mocked(playSnapShotSound).mockClear();
   appAtomRegistry.set(shellState.threadAAvailable, false);
+  appAtomRegistry.set(shellState.targetDeleted, false);
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   route.current.handleNewThread = async () => null;
   bridge.listeners.clear();
@@ -216,6 +230,22 @@ it("stops waiting for the pinned shell when a capture fails", async () => {
 
   await act(async () => appAtomRegistry.set(shellState.threadAAvailable, true));
   expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(listsBeforeShell);
+  expect(bridge.readSnapShot).not.toHaveBeenCalled();
+});
+
+it("stops waiting when a live snapshot confirms the pinned thread was deleted", async () => {
+  const toast = vi.spyOn(toastManager, "add");
+  await mount(threadA);
+  await act(async () => bridge.emit({ type: "requested", id: pendingCapture.id }));
+  setRoute(threadB, 1);
+  await act(async () => root.render(<SnapShotCoordinator />));
+  bridge.listPendingSnapShots.mockResolvedValue([pendingCapture]);
+  await act(async () => bridge.emit({ type: "ready", id: pendingCapture.id }));
+  await act(async () => appAtomRegistry.set(shellState.targetDeleted, true));
+  expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Snapshot failed" }));
+  const listsAfterDeletion = bridge.listPendingSnapShots.mock.calls.length;
+  await act(async () => appAtomRegistry.set(shellState.threadAAvailable, true));
+  expect(bridge.listPendingSnapShots).toHaveBeenCalledTimes(listsAfterDeletion);
   expect(bridge.readSnapShot).not.toHaveBeenCalled();
 });
 
