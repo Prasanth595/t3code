@@ -32,13 +32,32 @@ export const useAppOverlayStore = create<AppOverlayStore>()((set, get) => ({
 /**
  * Fork: a large panel over the whole app for an action's web page (`previewOverlay`). It opens
  * and closes without animation, and the page stays loaded while it is hidden, so it reopens at
- * once with its state. Click outside, press Escape outside the page, or run the action again
- * to close it.
+ * once with its state. Click outside, press Escape outside the page, run the action again, or
+ * let the page post `{ type: "t3:close-overlay" }` to close it.
  */
 export function AppOverlay() {
   const { url, title, open, hide } = useAppOverlayStore();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [reloadCount, setReloadCount] = useState(0);
+
+  // The page may ask to close, for example after the user picked something in it. Only the
+  // overlay's own page counts, and only this one message: `{ type: "t3:close-overlay" }`.
+  useEffect(() => {
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (event.source === null || event.source !== frameRef.current?.contentWindow) return;
+      const data = event.data;
+      if (
+        typeof data === "object" &&
+        data !== null &&
+        "type" in data &&
+        data.type === "t3:close-overlay"
+      ) {
+        hide();
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [hide]);
 
   useEffect(() => {
     if (!open) return;
