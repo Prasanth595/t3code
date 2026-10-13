@@ -14,6 +14,7 @@ import type {
 
 import type { PendingRotation } from "../api.ts";
 import { changesPublicFacts, findMachine } from "../rules/map.ts";
+import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import { hasJoined, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
@@ -136,4 +137,27 @@ export function describeChange(change: MapChange, map: MachineMapDocument): stri
     case "removePreset":
       return `Delete preset ${change.name}`;
   }
+}
+
+/** MM-708: what one press of the big red button reaches now. */
+export interface PauseReach {
+  /** MM-709: every machine gets "stop all agents". */
+  readonly machines: number;
+  /** Offline machines stop their agents when they connect again. */
+  readonly offline: number;
+  /** MM-710: the arrows and map roles that become `none`. */
+  readonly arrows: number;
+  readonly mapRoles: number;
+}
+
+/** Uses the lockdown rule of the pause on the live map without the draft, like the server. */
+export function pauseReach(snapshot: PortalSnapshot): PauseReach {
+  const machines = snapshot.map.machines;
+  const changes = lockdownChanges(snapshot.map);
+  return {
+    machines: machines.length,
+    offline: machines.filter((machine) => snapshot.presence[machine.id]?.online !== true).length,
+    arrows: changes.filter((change) => change._tag === "setArrow").length,
+    mapRoles: changes.filter((change) => change._tag === "putMachine").length,
+  };
 }

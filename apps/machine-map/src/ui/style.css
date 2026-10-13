@@ -1690,6 +1690,90 @@ dialog.palette .dialog-body {
 .panic.dialog .panic-label b {
   font-size: 1.5rem;
 }
+/* The "i" sits on the bottom edge of the frame, out of the flow, so no state moves the box. */
+.panic-info {
+  position: absolute;
+  right: 14px;
+  bottom: -14px;
+  z-index: 3;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #000000;
+  background: var(--info);
+  border: var(--bw) solid #000000;
+  border-radius: 50%;
+  box-shadow: 2px 2px 0 0 #000000;
+  cursor: pointer;
+  transition:
+    transform 80ms,
+    box-shadow 80ms;
+}
+.panic-info:hover {
+  transform: translateY(-1px);
+  box-shadow: 3px 3px 0 0 #000000;
+}
+.panic-info:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+/* The popover opens under the "i" where anchor positioning works, and centred elsewhere. */
+.pause-info {
+  width: min(420px, calc(100vw - 32px));
+  padding: 16px 20px 18px;
+  color: var(--ink);
+}
+@supports (position-area: bottom) {
+  .pause-info {
+    inset: auto;
+    margin: 10px 0;
+    position-area: bottom span-left;
+    position-try-fallbacks: flip-block;
+  }
+}
+.pause-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pause-info h3 {
+  font-size: 1.15rem;
+}
+.pause-info-now {
+  margin: 10px 0 12px;
+  padding: 6px 10px;
+  font-weight: 700;
+  background: var(--warning-surface);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+}
+.pause-info dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.pause-info dl > div {
+  display: grid;
+  grid-template-columns: 5.2rem 1fr;
+  gap: 10px;
+}
+.pause-info dt {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0.2rem;
+}
+.pause-info dd {
+  margin: 0;
+  line-height: 1.4;
+}
 
 /* The paused state (MM-713): a hazard frame around the page and a banner with Resume. */
 .paused-frame {
@@ -1854,6 +1938,26 @@ dialog.palette .dialog-body {
     .toast {
       transform: translateY(-8px);
     }
+  }
+  /* The pause info opens as a bottom sheet, like the dialogs. */
+  .panic-info {
+    width: 2.2rem;
+    height: 2.2rem;
+  }
+  .pause-info {
+    inset: auto 0 0;
+    width: 100%;
+    max-width: none;
+    max-height: 88vh;
+    margin: 0;
+    overflow-y: auto;
+    position-area: none;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -4px 0 0 var(--shadow-ink);
+  }
+  .pause-info::backdrop {
+    background: #0000006b;
   }
   /* Dialogs open as bottom sheets, close to the thumb. */
   dialog.modal,
