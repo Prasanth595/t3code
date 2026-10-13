@@ -9115,6 +9115,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               subagentStopOutcomes.get(input.nativeTaskId) ??
               (yield* Deferred.make<ProviderAdapter.ProviderAdapterV2SubagentOutcome>());
             subagentStopOutcomes.set(input.nativeTaskId, outcome);
+            const recorded = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
+            if (
+              recorded?.task.startedAt === subagent.task.startedAt &&
+              recorded.confirmedOutcome !== undefined
+            ) {
+              if (subagentStopOutcomes.get(input.nativeTaskId) === outcome)
+                subagentStopOutcomes.delete(input.nativeTaskId);
+              return recorded.confirmedOutcome;
+            }
             const confirmedOutcome = yield* existing.query.stopTask(input.nativeTaskId).pipe(
               Effect.andThen(Deferred.await(outcome)),
               Effect.timeout("2 seconds"),
