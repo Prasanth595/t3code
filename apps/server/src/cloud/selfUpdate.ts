@@ -20,6 +20,8 @@ import * as Ref from "effect/Ref";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient } from "effect/http";
 
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
@@ -42,7 +44,24 @@ const PREFLIGHT_TIMEOUT = Duration.seconds(30);
 interface InFlightBootServiceUpdate {
   readonly targetVersion: string;
   readonly fiber: Deferred.Deferred<Fiber.Fiber<ServerSelfUpdateResult, ServerSelfUpdateError>>;
+  /** Latest prepare stage. A client that joins mid-update replays this, then later stages. */
+  readonly progress: SubscriptionRef.SubscriptionRef<ServerSelfUpdateProgressStage | null>;
 }
+
+// The shared fiber publishes here. Each request forwards stages on its own
+// fiber, and a closed progress queue cannot fail the update.
+const followBootServiceProgress = (
+  progress: SubscriptionRef.SubscriptionRef<ServerSelfUpdateProgressStage | null>,
+  reportProgress: (
+    stage: ServerSelfUpdateProgressStage,
+  ) => Effect.Effect<void, ServerSelfUpdateError>,
+) =>
+  Effect.scoped(
+    SubscriptionRef.changes(progress).pipe(
+      Stream.filter((stage): stage is ServerSelfUpdateProgressStage => stage !== null),
+      Stream.runForEach((stage) => reportProgress(stage).pipe(Effect.ignoreCause)),
+    ),
+  ).pipe(Effect.forkChild({ startImmediately: true }));
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -192,9 +211,10 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
   const scope = yield* Effect.scope;
-  // One boot-service update at a time. The fiber belongs to this service, not
-  // the RPC that started it, so a dropped client socket cannot cancel the
-  // download. A later call for the same version joins that fiber.
+  // One boot-service update at a time. The fiber and its stage belong to this
+  // service, not the RPC that started it, so a dropped client socket cannot
+  // cancel the download or fail it through that client's progress callback.
+  // A later call for the same version joins that fiber.
   const inFlight = yield* Ref.make<InFlightBootServiceUpdate | null>(null);
 
   const capability: ServerSelfUpdateCapability | null =
@@ -235,7 +255,12 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
       Effect.gen(function* () {
         const fiberDeferred =
           yield* Deferred.make<Fiber.Fiber<ServerSelfUpdateResult, ServerSelfUpdateError>>();
-        const created: InFlightBootServiceUpdate = { targetVersion, fiber: fiberDeferred };
+        const progress = yield* SubscriptionRef.make<ServerSelfUpdateProgressStage | null>(null);
+        const created: InFlightBootServiceUpdate = {
+          targetVersion,
+          fiber: fiberDeferred,
+          progress,
+        };
         const current = yield* Ref.modify(inFlight, (existing) =>
           existing === null ? ([created, created] as const) : ([existing, existing] as const),
         );
@@ -243,11 +268,15 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
           if (current.targetVersion !== targetVersion) {
             return yield* failWith("A server update is already in progress.");
           }
+          // Subscribe before waiting so a stage published while the fiber
+          // handle is still deferred is not missed.
+          yield* followBootServiceProgress(current.progress, reportProgress);
           return yield* restore(Deferred.await(current.fiber).pipe(Effect.flatMap(Fiber.join)));
         }
 
+        yield* followBootServiceProgress(progress, reportProgress);
         const fiber = yield* Effect.gen(function* () {
-          yield* reportProgress("downloading");
+          yield* SubscriptionRef.set(progress, "downloading");
           const paths = yield* ensurePinnedRuntimeInstalled({
             baseDir: serverConfig.baseDir,
             version: targetVersion,
@@ -335,7 +364,7 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
             ),
           );
 
-          yield* reportProgress("installing");
+          yield* SubscriptionRef.set(progress, "installing");
           const updateId = yield* Effect.uninterruptible(
             launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
               Effect.mapError((error) =>

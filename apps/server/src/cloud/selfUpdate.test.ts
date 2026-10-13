@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -449,10 +450,20 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         secondDownload: yield* Deferred.make<void>(),
       };
       const stages: string[] = [];
+      const sawDownloading = yield* Deferred.make<void>();
       const { selfUpdate, order } = yield* makeHarness({ downloadGate });
       const first = yield* selfUpdate
-        .update({ targetVersion: "1.1.0" }, (stage) => Effect.sync(() => void stages.push(stage)))
+        .update({ targetVersion: "1.1.0" }, (stage) =>
+          Effect.sync(() => {
+            stages.push(stage);
+          }).pipe(
+            Effect.andThen(
+              stage === "downloading" ? Deferred.succeed(sawDownloading, undefined) : Effect.void,
+            ),
+          ),
+        )
         .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(sawDownloading);
       yield* Deferred.await(downloadGate.started);
 
       yield* Fiber.interrupt(first);
@@ -481,8 +492,78 @@ it.layer(NodeServices.layer)("server self update", (it) => {
         updateId: "launcher-id",
       });
       expect(order).toEqual(["download", "extract", "preflight", "accept"]);
-      expect(stages).toEqual(["downloading", "installing"]);
+      // The interrupted caller's callback stops with its request. Later stages
+      // belong to whoever is still attached.
+      expect(stages).toEqual(["downloading"]);
     }),
+  );
+
+  it.effect(
+    "keeps preparing when the initiator progress queue closes, and a joiner sees stages",
+    () =>
+      Effect.gen(function* () {
+        const downloadGate: DownloadGate = {
+          hold: yield* Deferred.make<void>(),
+          started: yield* Deferred.make<void>(),
+          secondDownload: yield* Deferred.make<void>(),
+        };
+        const initiatorQueue = yield* Queue.unbounded<string>();
+        const initiatorOfferRejected = yield* Deferred.make<void>();
+        const joinerStages: string[] = [];
+        const joinerSawDownloading = yield* Deferred.make<void>();
+        const joinerSawInstalling = yield* Deferred.make<void>();
+        const { selfUpdate, order } = yield* makeHarness({ downloadGate });
+        const closed = new ServerSelfUpdateError({ reason: "progress queue closed" });
+
+        const initiator = yield* selfUpdate
+          .update({ targetVersion: "1.1.0" }, (stage) =>
+            Queue.offer(initiatorQueue, stage).pipe(
+              Effect.flatMap((accepted) =>
+                accepted
+                  ? Effect.void
+                  : Deferred.succeed(initiatorOfferRejected, undefined).pipe(
+                      Effect.andThen(Effect.fail(closed)),
+                    ),
+              ),
+            ),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        expect(yield* Queue.take(initiatorQueue)).toBe("downloading");
+        yield* Deferred.await(downloadGate.started);
+        yield* Queue.shutdown(initiatorQueue);
+
+        const joiner = yield* selfUpdate
+          .update({ targetVersion: "1.1.0" }, (stage) =>
+            Effect.sync(() => {
+              joinerStages.push(stage);
+            }).pipe(
+              Effect.andThen(
+                stage === "downloading"
+                  ? Deferred.succeed(joinerSawDownloading, undefined)
+                  : Deferred.succeed(joinerSawInstalling, undefined),
+              ),
+            ),
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* Deferred.await(joinerSawDownloading);
+        expect(joinerStages).toEqual(["downloading"]);
+
+        yield* Deferred.succeed(downloadGate.hold, undefined);
+        yield* Deferred.await(initiatorOfferRejected);
+        yield* Deferred.await(joinerSawInstalling);
+
+        const result = {
+          targetVersion: "1.1.0",
+          method: "boot-service" as const,
+          updateId: "launcher-id",
+        };
+        expect(joinerStages).toEqual(["downloading", "installing"]);
+        expect(yield* Fiber.join(joiner)).toEqual(result);
+        expect(yield* Fiber.join(initiator)).toEqual(result);
+        expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+      }),
   );
 
   it.effect("starts another update after preparation fails", () =>
