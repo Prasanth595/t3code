@@ -26,6 +26,7 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
+  | "/settings/machines"
   | "/settings/archived";
 
 /**
@@ -105,6 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
+  "/settings/machines": "Machines",
   "/settings/archived": "Archive",
 };
 
@@ -1093,6 +1095,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
+  // Fork: machine map (apps/machine-map/SPEC.md MM-203).
+  {
+    id: "machine-map",
+    title: "Machine map",
+    to: "/settings/machines",
+    searchTerms: ["portal join code leave connection status cloudflare access token tunnel"],
+  },
+  {
+    id: "machine-map-reachable",
+    title: "Machines this machine can use",
+    to: "/settings/machines",
+    searchTerms: ["reachable peers arrows levels read standard admin agent tools open"],
+  },
   {
     id: "archive",
     title: "Archived threads",
@@ -1119,6 +1134,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
+  "/settings/machines": null,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
