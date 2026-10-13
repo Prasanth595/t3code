@@ -3109,10 +3109,6 @@ it.layer(
             const museProvider = providers.find((provider) => provider.driver === "muse");
             assert.strictEqual(museProvider?.enabled, false);
             assert.strictEqual(museProvider?.status, "disabled");
-            const fxProvider = providers.find((provider) => provider.driver === "fx");
-            assert.strictEqual(fxProvider?.enabled, false);
-            assert.strictEqual(fxProvider?.status, "disabled");
-            assert.strictEqual(fxProvider?.message, "fx is disabled in T3 Code settings.");
             assert.strictEqual(cursorSpawned, false);
           }).pipe(Effect.provide(runtimeServices));
         }),

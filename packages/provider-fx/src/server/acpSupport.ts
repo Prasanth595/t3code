@@ -23,10 +23,10 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 
 export const FX_DRIVER_KIND = ProviderDriverKind.make("fx");
 export const FX_DEFAULT_MODEL_SLUG = "default";
-export const FX_MODEL_CONFIG_ID = "model";
-export const FX_MODE_CONFIG_ID = "mode";
+const FX_MODEL_CONFIG_ID = "model";
+const FX_MODE_CONFIG_ID = "mode";
 export const FX_EFFORT_CONFIG_ID = "effort";
-export const FX_DEFAULT_EFFORT = "medium";
+const FX_DEFAULT_EFFORT = "medium";
 
 const FX_EFFORT_LEVELS = ["auto", "low", "medium", "high", "xhigh", "max"] as const;
 const FX_EFFORT_LABELS = {
@@ -107,7 +107,7 @@ export interface FxAcpRuntimeInput extends Omit<
   readonly environment?: NodeJS.ProcessEnv;
 }
 
-export function buildFxAcpSpawnInput(
+function buildFxAcpSpawnInput(
   settings: Pick<FxSettings, "binaryPath">,
   cwd: string,
   environment?: NodeJS.ProcessEnv,
@@ -206,7 +206,7 @@ interface FxModeWritingRuntime {
   ) => Effect.Effect<unknown, EffectAcpErrors.AcpError>;
 }
 
-export const applyFxSessionMode = (input: {
+const applyFxSessionMode = (input: {
   readonly runtime: Pick<
     FxModeWritingRuntime,
     "getModeState" | "getConfigOptions" | "setMode" | "request"

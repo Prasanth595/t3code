@@ -47,7 +47,7 @@ export { FX_DRIVER_KIND } from "./acpSupport.ts";
 
 const DEFAULT_FX_SETTINGS = Schema.decodeSync(FxSettings)({});
 
-export const FxProviderCapabilitiesV2 = {
+const FxProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,

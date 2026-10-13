@@ -91,7 +91,7 @@ function loginFromAuth(auth: string | undefined): FxLogin {
   return { _tag: "SignedIn", method };
 }
 
-export function parseFxStatusJson(stdout: string): FxStatus {
+function parseFxStatusJson(stdout: string): FxStatus {
   const decoded = decodeFxStatusWire(stdout);
   if (Option.isNone(decoded)) {
     return { login: { _tag: "Unknown" }, defaultModel: undefined };
@@ -102,7 +102,7 @@ export function parseFxStatusJson(stdout: string): FxStatus {
   };
 }
 
-export function fxLoginToProviderAuth(login: FxLogin): ServerProviderAuth {
+function fxLoginToProviderAuth(login: FxLogin): ServerProviderAuth {
   switch (login._tag) {
     case "SignedIn":
       return { status: "authenticated", label: login.method };
@@ -117,7 +117,7 @@ function modelIdFromUnknown(value: unknown): string | undefined {
   return typeof value === "string" ? nonEmptyTrimmed(value) : undefined;
 }
 
-export function parseFxModelsJson(stdout: string): FxModelCatalog {
+function parseFxModelsJson(stdout: string): FxModelCatalog {
   const decoded = decodeFxModelsWire(stdout);
   if (Option.isNone(decoded) || decoded.value.ids === undefined) return { ids: [] };
   return {
@@ -128,7 +128,7 @@ export function parseFxModelsJson(stdout: string): FxModelCatalog {
   };
 }
 
-export function buildFxModels(input: {
+function buildFxModels(input: {
   readonly ids: ReadonlyArray<string>;
   readonly defaultModel: string | undefined;
   readonly customModels: ReadonlyArray<CustomModelSetting>;
