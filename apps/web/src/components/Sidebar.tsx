@@ -146,7 +146,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
-import { useClientSettings } from "../hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -282,6 +282,15 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
+import { SidebarOwnerFilterMenu, SidebarOwnerFilterNotice } from "./sidebar/SidebarOwnerFilter";
+import {
+  buildSidebarOwnerOptions,
+  filterSidebarProjectGroupsByOwner,
+  filterSidebarThreadsByOwner,
+  resolveSidebarOwnerFilter,
+  sidebarProjectGroupMemberKeys,
+  type SidebarOwner,
+} from "./sidebar/ownerFilter.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2582,6 +2591,46 @@ export default function Sidebar() {
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
+  // Fork: the owner filter hides the projects whose repository owner is not selected. The keys
+  // come from the unsorted groups, which keep their identity while threads stream, so the keys
+  // and the rows that read them stay stable.
+  const repositoryOwnerFiltersEnabled = useClientSettings((s) => s.repositoryOwnerFilters);
+  const savedOwnerFilter = useClientSettings((s) => s.sidebarOwnerFilter);
+  const updateClientSettings = useUpdateClientSettings();
+  const ownerFilter = useMemo(
+    () =>
+      resolveSidebarOwnerFilter({
+        enabled: repositoryOwnerFiltersEnabled,
+        owners: savedOwnerFilter,
+      }),
+    [repositoryOwnerFiltersEnabled, savedOwnerFilter],
+  );
+  const ownerOptions = useMemo(
+    () =>
+      repositoryOwnerFiltersEnabled
+        ? buildSidebarOwnerOptions(unsortedProjectGroups, savedOwnerFilter)
+        : [],
+    [repositoryOwnerFiltersEnabled, savedOwnerFilter, unsortedProjectGroups],
+  );
+  const ownerVisibleProjectKeys = useMemo(
+    () =>
+      ownerFilter === null
+        ? null
+        : sidebarProjectGroupMemberKeys(
+            filterSidebarProjectGroupsByOwner(unsortedProjectGroups, ownerFilter),
+          ),
+    [ownerFilter, unsortedProjectGroups],
+  );
+  // The project scope offers only the projects that the owner filter shows.
+  const visibleProjectGroups = useMemo(
+    () => filterSidebarProjectGroupsByOwner(projectGroups, ownerFilter),
+    [ownerFilter, projectGroups],
+  );
+  const setOwnerFilter = useCallback(
+    (owners: readonly SidebarOwner[]) => void updateClientSettings({ sidebarOwnerFilter: owners }),
+    [updateClientSettings],
+  );
+  const clearOwnerFilter = useCallback(() => setOwnerFilter([]), [setOwnerFilter]);
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -2628,26 +2677,29 @@ export default function Sidebar() {
   // app restarts keep it.
   const persistedProjectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  // A scope that the owner filter hides finds no group here, so the list shows every visible
+  // project. The effect below checks all groups, so it keeps the saved scope for when the owner
+  // filter shows that project again.
   const projectScopeKey = useMemo(
     () =>
       resolveSidebarProjectScopeKey({
-        groups: projectGroups,
+        groups: visibleProjectGroups,
         key: persistedProjectScopeKey,
         settings: projectGroupingSettings,
       }),
-    [persistedProjectScopeKey, projectGroups, projectGroupingSettings],
+    [persistedProjectScopeKey, visibleProjectGroups, projectGroupingSettings],
   );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
   const projectScopeItems = useMemo(
     () => [
       { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
+      ...visibleProjectGroups.map((project) => ({
         value: project.projectKey,
         label: project.displayName,
       })),
     ],
-    [projectGroups],
+    [visibleProjectGroups],
   );
   // Same-named projects on two machines are only told apart by where they
   // live, so rows on another machine carry its icon once the catalog spans
@@ -2705,8 +2757,8 @@ export default function Sidebar() {
     () =>
       projectScopeKey === null
         ? null
-        : (projectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
-    [projectGroups, projectScopeKey],
+        : (visibleProjectGroups.find((project) => project.projectKey === projectScopeKey) ?? null),
+    [visibleProjectGroups, projectScopeKey],
   );
   const scopedProjectKeys = useMemo(
     () =>
@@ -2719,6 +2771,8 @@ export default function Sidebar() {
           ),
     [scopedProjectGroup],
   );
+  // The scope lies inside the owner filter, so the scope wins when both are set.
+  const draftProjectKeys = scopedProjectKeys ?? ownerVisibleProjectKeys;
   // Configs identify scratch projects, so both they and live project snapshots
   // must arrive before a persisted scope can be considered missing.
   const allProjectSnapshotsReady = useAllEnvironmentProjectSnapshotsReady();
@@ -2758,8 +2812,8 @@ export default function Sidebar() {
         continue;
       }
       if (
-        scopedProjectKeys !== null &&
-        !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
+        draftProjectKeys !== null &&
+        !draftProjectKeys.has(`${session.environmentId}:${session.projectId}`)
       ) {
         continue;
       }
@@ -2771,7 +2825,7 @@ export default function Sidebar() {
   // hidden now, and bulk actions must never count or touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, ownerFilter, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot, projectRef?: ScopedProjectRef) => {
@@ -2847,7 +2901,10 @@ export default function Sidebar() {
     const preciseNow = new Date().toISOString();
     // Subagent child threads live in the parent's Agents surface, not the
     // sidebar roster (v2 models them as real threads with lineage).
-    const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys);
+    const visible = filterSidebarV2VisibleThreads(
+      filterSidebarThreadsByOwner(threads, ownerVisibleProjectKeys),
+      scopedProjectKeys,
+    );
     inboxReturns.observe(workingShelfEnabled ? threads : null);
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2950,6 +3007,7 @@ export default function Sidebar() {
   }, [
     nowMinute,
     optimisticDrop,
+    ownerVisibleProjectKeys,
     scopedProjectKeys,
     serverConfigs,
     snoozeWakeTick,
@@ -3026,7 +3084,7 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = projectScopeKey ?? "all";
+  const settledResetKey = JSON.stringify([projectScopeKey, ownerFilter ? [...ownerFilter] : null]);
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -4689,12 +4747,17 @@ export default function Sidebar() {
                 AuthOrchestrationOperateScope,
               ),
               branch: thread.branch ?? null,
-              projectFilter: threadProjectGroup
-                ? {
-                    label: threadProjectGroup.displayName,
-                    isActive: projectScopeKey === threadProjectGroup.projectKey,
-                  }
-                : null,
+              // A thread can show while the owner filter hides its project (it runs or waits
+              // for the user). Scoping to that project would show nothing, so the item stays out.
+              projectFilter:
+                threadProjectGroup &&
+                (ownerVisibleProjectKeys === null ||
+                  ownerVisibleProjectKeys.has(`${thread.environmentId}:${thread.projectId}`))
+                  ? {
+                      label: threadProjectGroup.displayName,
+                      isActive: projectScopeKey === threadProjectGroup.projectKey,
+                    }
+                  : null,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -4921,6 +4984,7 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
+      ownerVisibleProjectKeys,
       projectScopeKey,
       projectByKey,
       serverConfigs,
@@ -5062,6 +5126,15 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
+              ownerFilter={
+                repositoryOwnerFiltersEnabled ? (
+                  <SidebarOwnerFilterMenu
+                    options={ownerOptions}
+                    selected={savedOwnerFilter}
+                    onChange={setOwnerFilter}
+                  />
+                ) : null
+              }
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -5212,6 +5285,9 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
+            {ownerFilter !== null ? (
+              <SidebarOwnerFilterNotice selected={savedOwnerFilter} onClear={clearOwnerFilter} />
+            ) : null}
           </SidebarGroup>
         }
       >
@@ -5472,7 +5548,7 @@ export default function Sidebar() {
                           key="draft-sessions"
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
-                          scopedProjectKeys={scopedProjectKeys}
+                          scopedProjectKeys={draftProjectKeys}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
@@ -5644,6 +5720,8 @@ export default function Sidebar() {
                 </>
               ) : scopedProjectGroup ? (
                 `No threads in ${scopedProjectGroup.displayName} yet`
+              ) : ownerFilter !== null ? (
+                "No threads in the projects of these owners"
               ) : (
                 "No threads yet"
               )}

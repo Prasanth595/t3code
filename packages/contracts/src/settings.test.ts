@@ -658,6 +658,17 @@ describe("ClientSettings sidebar", () => {
       decodeClientSettingsPatch({ confirmTerminalClose: false, terminalAppShortcutsFirst: true }),
     ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
   });
+
+  it("shows every owner by default and keeps the entry for projects without an owner", () => {
+    expect(decodeClientSettings({}).sidebarOwnerFilter).toEqual([]);
+    const saved = encodeClientSettings(
+      decodeClientSettings({ sidebarOwnerFilter: ["qlik-trial", null] }),
+    );
+    expect(decodeClientSettings(saved).sidebarOwnerFilter).toEqual(["qlik-trial", null]);
+    expect(decodeClientSettingsPatch({ sidebarOwnerFilter: [null] }).sidebarOwnerFilter).toEqual([
+      null,
+    ]);
+  });
 });
 
 describe("ClientSettings context window meter", () => {
