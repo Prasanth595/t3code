@@ -605,8 +605,9 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   bindToCurrentThread: Schema.optional(Schema.Boolean),
   /**
    * Changes the provider, model, or options the task's runs use. Resolved
-   * against the task's stored selection, so a field left out keeps its stored
-   * value. Omit to leave the selection unchanged.
+   * like a delegated task's target, against the task's stored selection: a
+   * field left out keeps its stored value while the provider stays the same.
+   * Omit to leave the selection unchanged.
    */
   target: Schema.optional(OrchestratorMcpTarget),
 });

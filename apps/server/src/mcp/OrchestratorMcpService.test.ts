@@ -2204,7 +2204,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       model: "gpt-5.4",
     });
 
-    /** The service with one stored task, recording every selection it saves. */
+    /** The service with one stored task that keeps the last selection saved to it. */
     const service = (
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>,
       enabledForProject = true,
@@ -2232,7 +2232,17 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-              list: () => Effect.succeed({ tasks: [stored] }),
+              list: () =>
+                Ref.get(saved).pipe(
+                  Effect.map((selections) => ({
+                    tasks: [
+                      {
+                        ...stored,
+                        modelSelection: selections[selections.length - 1] ?? stored.modelSelection,
+                      },
+                    ],
+                  })),
+                ),
               upsert: (input) =>
                 Ref.update(saved, (selections) => [...selections, input.modelSelection]).pipe(
                   Effect.as({ task: { ...stored, modelSelection: input.modelSelection } }),
@@ -2300,13 +2310,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           { instanceId: codexInstanceId, model: miniModel },
           {
             instanceId: codexInstanceId,
-            model: "gpt-5.4",
+            model: miniModel,
             options: [{ id: "reasoningEffort", value: "low" }],
           },
         ]);
         assert.equal(retargeted.model, miniModel);
         const listed = yield* mcp.listScheduledTasks(scope, {});
-        assert.equal(listed.tasks[0]?.model, "gpt-5.4");
+        assert.equal(listed.tasks[0]?.model, miniModel);
       }),
     );
 
