@@ -306,6 +306,8 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   readonly projectTitle?: string;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
+  /** Swaps the machine glyph for an unreachable mark. */
+  readonly environmentUnreachable?: boolean;
   readonly pane?: "screen" | "sidebar";
   readonly showPendingDivider: boolean;
   readonly showTrailingDivider?: boolean;
@@ -409,7 +411,17 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               </Text>
             ) : null}
           </Text>
-          {props.environmentLabel && props.environmentMachine ? (
+          {props.environmentLabel && props.environmentUnreachable ? (
+            <SymbolView
+              accessibilityLabel="Unreachable"
+              name="wifi.slash"
+              size={11}
+              tintColorClassName={
+                sidebarPane ? "accent-drawer-foreground-muted" : "accent-foreground-tertiary"
+              }
+              type="monochrome"
+            />
+          ) : props.environmentLabel && props.environmentMachine ? (
             <EnvironmentMachineSymbol
               kind={props.environmentMachine}
               size={11}
@@ -439,7 +451,11 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
               ? "Opens the draft in the new task composer"
               : "Sends when the environment reconnects. Opens the task for editing"
           }
-          accessibilityLabel={pendingTask.title}
+          accessibilityLabel={
+            props.environmentLabel && props.environmentUnreachable
+              ? `${pendingTask.title}, ${props.environmentLabel} unreachable`
+              : pendingTask.title
+          }
           accessibilityRole="button"
           key={pendingTask.key}
           className={sidebarPane ? "bg-drawer" : "bg-screen"}
@@ -486,6 +502,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly providerInstance: ThreadRowProviderInstance | null;
   readonly environmentLabel: string | null;
   readonly environmentMachine?: EnvironmentMachineKind;
+  /** Swaps the machine glyph for an unreachable mark, so the rows read as
+      cached without the header reporting an outage. */
+  readonly environmentUnreachable?: boolean;
   readonly pane?: "screen" | "sidebar";
   readonly showTrailingDivider?: boolean;
   readonly selected?: boolean;
@@ -1052,7 +1071,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 </Text>
               ) : null}
             </Text>
-            {props.environmentLabel && props.environmentMachine ? (
+            {props.environmentLabel && props.environmentUnreachable ? (
+              <SymbolView
+                accessibilityLabel="Unreachable"
+                name="wifi.slash"
+                size={11}
+                tintColorClassName={
+                  selected
+                    ? selectedThreadRowColors.mutedIconTintClassName
+                    : rowAppearance.tertiaryIconTintClassName
+                }
+                type="monochrome"
+              />
+            ) : props.environmentLabel && props.environmentMachine ? (
               <EnvironmentMachineSymbol
                 kind={props.environmentMachine}
                 size={11}
@@ -1136,6 +1167,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     cardContent
   );
 
+  // The row's own label replaces its descendants' for screen readers, so the
+  // states the glyphs carry are spelled out here.
+  const rowAccessibilityLabel = [
+    thread.title,
+    props.hasQueuedMessages ? "messages queued to send" : null,
+    props.environmentLabel && props.environmentUnreachable
+      ? `${props.environmentLabel} unreachable`
+      : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");
+
   const rowContent = (close: () => void) =>
     variant === "card" ? (
       <RowPressable
@@ -1144,9 +1187,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionOpacity={rowAppearance.interactionOpacity}
         className={rowAppearance.className}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         accessibilityActions={rowAccessibilityActions}
@@ -1176,9 +1217,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         interactionClassName={rowAppearance.interactionClassName}
         interactionOpacity={rowAppearance.interactionOpacity}
         accessibilityHint={swipeAccessibilityHint}
-        accessibilityLabel={
-          props.hasQueuedMessages ? `${thread.title}, messages queued to send` : thread.title
-        }
+        accessibilityLabel={rowAccessibilityLabel}
         accessibilityRole="button"
         accessibilityState={{ selected }}
         className={rowAppearance.className}
