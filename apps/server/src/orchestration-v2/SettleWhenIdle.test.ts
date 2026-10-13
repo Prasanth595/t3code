@@ -647,6 +647,71 @@ it.effect("a held automatic run cannot hide background work or prevent settlemen
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect.each([undefined, false, true])(
+  "SQL and memory settlement candidates agree for queued runs (queueHeld: %s)",
+  (queueHeld) =>
+    Effect.gen(function* () {
+      const f = yield* fixture();
+      yield* f.settle();
+      yield* f.setRun("completed");
+      yield* f.setBackground("dynamic_tool", "running");
+      const queuedAt = DateTime.add(f.now, { seconds: 1 });
+      const queuedRunId = RunId.make("run:settlement:queued");
+      yield* f.sink.write({
+        events: [
+          {
+            id: EventId.make("event:settlement:queued"),
+            type: "run.updated",
+            threadId: f.threadId,
+            occurredAt: queuedAt,
+            payload: {
+              ...f.run,
+              id: queuedRunId,
+              ordinal: 2,
+              status: "queued",
+              ...(queueHeld === undefined ? {} : { queueHeld }),
+              requestedAt: queuedAt,
+              startedAt: null,
+              completedAt: null,
+            },
+          },
+        ],
+      });
+
+      const memory = yield* ProjectionStore.ProjectionStoreV2.pipe(
+        Effect.provide(ProjectionStore.layerMemory),
+      );
+      const eventStore = yield* EventStore.EventStoreV2;
+      yield* eventStore
+        .read({ threadId: f.threadId })
+        .pipe(Stream.runForEach(({ event }) => memory.apply(event)));
+
+      const sqlCandidates = yield* f.projections.getSettlementCandidates(f.threadId, true);
+      const memoryCandidates = yield* memory.getSettlementCandidates(f.threadId, true);
+      assert.lengthOf(sqlCandidates, 1);
+      assert.lengthOf(memoryCandidates, 1);
+      const sqlCandidate = sqlCandidates[0]!;
+      const memoryCandidate = memoryCandidates[0]!;
+      for (const key of [
+        "latestRunId",
+        "status",
+        "latestRunRequestedAt",
+        "latestRunStartedAt",
+        "latestRunCompletedAt",
+        "pendingBackgroundTasks",
+      ] as const) {
+        assert.deepEqual(sqlCandidate[key], memoryCandidate[key], key);
+      }
+      assert.equal(sqlCandidate.latestRunId, queueHeld === true ? f.run.id : queuedRunId);
+      assert.equal(sqlCandidate.status, queueHeld === true ? "completed" : "queued");
+      if (queueHeld === true) {
+        assert.isNotEmpty(sqlCandidate.pendingBackgroundTasks);
+      } else {
+        assert.isEmpty(sqlCandidate.pendingBackgroundTasks);
+      }
+    }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect.each([false, true])("a queued user message blocks filing (held: %s)", (held) =>
   Effect.gen(function* () {
     const f = yield* fixture();
