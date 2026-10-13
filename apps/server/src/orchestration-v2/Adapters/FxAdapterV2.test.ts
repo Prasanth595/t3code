@@ -39,6 +39,7 @@ const ENABLED_FX_SETTINGS = Schema.decodeSync(FxSettings)({ enabled: true });
 /** The model `fx status --json` reports. */
 const FX_DEFAULT_MODEL = "anthropic/claude-opus-5.5";
 const NAMED_MODEL = "anthropic/claude-sonnet-5.5";
+const CUSTOM_MODEL = "openai/gpt-6.1-sol";
 const FX_0_0_13_MODES = ["code", "ask"];
 /** fx `main` after vercel-labs/fx#1189. */
 const FX_MAIN_MODES = ["auto", "ask", "full-access"];
@@ -229,6 +230,28 @@ describe("FxAdapterV2", () => {
         ),
         // Written on load even though fx reports ask.
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+      ],
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  // fx 0.0.13's gateway takes any model id (src/acp/server.zig
+  // handleSetConfigOption) and lists the current one even when its catalog
+  // does not, so a custom model reaches fx instead of running on another.
+  it.effect("sends a custom model fx does not list", () =>
+    openFxSession({
+      scenario: "custom-model",
+      runtimeMode: "approval-required",
+      model: CUSTOM_MODEL,
+      frames: [
+        ...initialize,
+        outbound("session/new"),
+        answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+        ...setConfig(
+          "model",
+          CUSTOM_MODEL,
+          fxConfig({ model: CUSTOM_MODEL, modes: FX_0_0_13_MODES }),
+        ),
+        ...setConfig("mode", "ask", fxConfig({ model: CUSTOM_MODEL, modes: FX_0_0_13_MODES })),
       ],
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
