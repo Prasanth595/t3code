@@ -87,6 +87,33 @@ export function mergeEnvironmentPullRequestPages(
   };
 }
 
+/**
+ * A host that loses its network fails every repository at once, so repository failures are
+ * shown as one count the reader can expand, while each failed environment keeps its own line.
+ */
+export function groupPullRequestListErrors<
+  ListError extends {
+    readonly environmentId: EnvironmentId;
+    readonly projectId?: string;
+    readonly projectTitle: string;
+  },
+>(errors: readonly ListError[]) {
+  const environments: ListError[] = [];
+  const repositories = new Map<string, ListError>();
+  for (const error of errors) {
+    if (!error.projectTitle) environments.push(error);
+    else repositories.set(`${error.environmentId}:${error.projectId ?? error.projectTitle}`, error);
+  }
+  return { environments, repositories: [...repositories.values()] };
+}
+
+/** One message for repository failures, short enough for a single line. */
+export function pullRequestListErrorMessage(errors: readonly { readonly message: string }[]) {
+  return errors.length === 1
+    ? errors[0]!.message
+    : `${errors.length} repositories could not be read.`;
+}
+
 export function mergePullRequestListEntries(
   previous: readonly PullRequestListEntry[],
   incoming: readonly PullRequestListEntry[],

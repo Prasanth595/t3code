@@ -10,6 +10,7 @@ import {
   appendPullRequestListPage,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
+  pullRequestListErrorMessage,
   pullRequestListHead,
   pullRequestListKey,
   scopedPullRequestListKey,
@@ -98,7 +99,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           if (controller.signal.aborted || activeScope.current !== scopeKey) return;
           if (response._tag === "Failure") throw squashAtomCommandFailure(response);
           if (response.value.errors.length)
-            throw new Error(response.value.errors.map((error) => error.message).join("\n"));
+            throw new Error(pullRequestListErrorMessage(response.value.errors));
           const next = appendPullRequestListPage(
             registry.get(pagesAtom) ?? pages,
             response.value,

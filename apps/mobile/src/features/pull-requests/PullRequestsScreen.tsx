@@ -1,7 +1,7 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ProjectId } from "@t3tools/contracts";
+import { ProjectId, type EnvironmentId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ActivityIndicator,
@@ -29,6 +29,7 @@ import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
 import {
   filterPullRequestList,
+  groupPullRequestListErrors,
   pullRequestListFacets,
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
@@ -50,6 +51,51 @@ function PullRequestScrollView(props: ScrollViewProps) {
         contentOffset={props.contentOffset ?? { x: 0, y: -insets.top }}
       />
     </ScrollViewMarker>
+  );
+}
+
+/** Repository failures collapse to one line so the pull requests below stay in view. */
+function PullRequestListErrors(props: {
+  readonly errors: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly projectId?: string;
+    readonly projectTitle: string;
+    readonly message: string;
+  }[];
+  readonly environmentLabel: (environmentId: EnvironmentId) => string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const { environments, repositories } = groupPullRequestListErrors(props.errors);
+  const lines = environments.map(
+    (error) => `${props.environmentLabel(error.environmentId)}: ${error.message}`,
+  );
+  if (repositories.length === 1)
+    lines.push(`${repositories[0]!.projectTitle}: ${repositories[0]!.message}`);
+  return (
+    <View className="px-4 py-3">
+      {lines.length ? (
+        <Text className="text-sm text-foreground-muted">{lines.join("\n")}</Text>
+      ) : null}
+      {repositories.length > 1 ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ expanded }}
+          accessibilityHint={expanded ? "Hides the list" : "Lists each repository"}
+          onPress={() => setExpanded((value) => !value)}
+          className="flex-row items-baseline gap-2"
+        >
+          <Text className="shrink text-sm text-foreground-muted">
+            {repositories.length} repositories could not be read.
+          </Text>
+          <Text className="text-sm font-t3-medium text-link">{expanded ? "Hide" : "Show"}</Text>
+        </Pressable>
+      ) : null}
+      {expanded && repositories.length > 1 ? (
+        <Text className="pt-1 text-sm text-foreground-muted">
+          {repositories.map((error) => `${error.projectTitle}: ${error.message}`).join("\n")}
+        </Text>
+      ) : null}
+    </View>
   );
 }
 
@@ -296,14 +342,13 @@ export function PullRequestsScreen(
               projects={projects}
             />
             {result.data?.errors.length ? (
-              <Text className="px-4 py-3 text-sm text-foreground-muted">
-                {result.data.errors
-                  .map(
-                    (error) =>
-                      `${error.projectTitle || environments.find((environment) => environment.environmentId === error.environmentId)?.environmentLabel || "Environment"}: ${error.message}`,
-                  )
-                  .join("\n")}
-              </Text>
+              <PullRequestListErrors
+                errors={result.data.errors}
+                environmentLabel={(environmentId) =>
+                  environments.find((environment) => environment.environmentId === environmentId)
+                    ?.environmentLabel ?? "Environment"
+                }
+              />
             ) : null}
           </>
         }

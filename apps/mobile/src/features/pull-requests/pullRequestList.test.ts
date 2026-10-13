@@ -9,10 +9,12 @@ import {
   appendPullRequestListPage,
   DEFAULT_PR_LIST_CONTROLS,
   filterPullRequestList,
+  groupPullRequestListErrors,
   mergePullRequestListEntries,
   mergeEnvironmentPullRequestPages,
   nextPullRequestListInput,
   pullRequestListFacets,
+  pullRequestListErrorMessage,
   pullRequestListHead,
   pullRequestListReviewStatus,
   pullRequestLabelColor,
@@ -371,5 +373,35 @@ describe("mobile PR scan and filters", () => {
     });
     expect(pullRequestLabelColor("ffab00")).toBe("#ffab00");
     expect(pullRequestLabelColor("not-a-color")).toBeNull();
+  });
+});
+
+describe("pull request list errors", () => {
+  const environmentId = EnvironmentId.make("environment-1");
+  const repository = (index: number) => ({
+    environmentId,
+    projectId: `project-${index}`,
+    projectTitle: `repo-${index}`,
+    message: `org/repo-${index} could not be read.`,
+  });
+
+  it("keeps environment failures apart from repeated repository failures", () => {
+    const offline = { environmentId, projectTitle: "", message: "Disconnected." };
+    const grouped = groupPullRequestListErrors([
+      repository(1),
+      offline,
+      repository(2),
+      repository(1),
+    ]);
+
+    expect(grouped.environments).toEqual([offline]);
+    expect(grouped.repositories.map((error) => error.projectTitle)).toEqual(["repo-1", "repo-2"]);
+  });
+
+  it("summarizes many repository failures in one line", () => {
+    expect(pullRequestListErrorMessage([repository(1)])).toBe("org/repo-1 could not be read.");
+    expect(pullRequestListErrorMessage([1, 2, 3].map(repository))).toBe(
+      "3 repositories could not be read.",
+    );
   });
 });
