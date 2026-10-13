@@ -136,7 +136,7 @@ function panel(relativePath = "answer.ts") {
 
 beforeAll(async () => {
   await getSharedHighlighter({
-    themes: ["pierre-dark", "pierre-light"],
+    themes: ["pierre-dark"],
     langs: ["typescript"],
     preferredHighlighter: "shiki-wasm",
   });
@@ -219,6 +219,8 @@ describe("file editor appearance", () => {
     });
     scroll.scrollTop = 120;
     const darkSyntax = syntaxColours(file);
+    expect(darkSyntax.length).toBeGreaterThan(0);
+    expect(darkSyntax.every((token) => token.colour !== "")).toBe(true);
     const selection = editor.getViewState().selections;
     expect(selection).toHaveLength(1);
     expect(editor.canUndo).toBe(true);
@@ -226,6 +228,15 @@ describe("file editor appearance", () => {
     for (const appearance of ["light", "dark"] as const) {
       state.appearance = appearance;
       await act(async () => root.render(panel()));
+      // Wait for the same theme load the active editor requests, including the
+      // first light preview, before draining its render and tokenizer queues.
+      await act(async () => {
+        await getSharedHighlighter({
+          themes: [appearance === "light" ? "pierre-light" : "pierre-dark"],
+          langs: ["typescript"],
+          preferredHighlighter: "shiki-wasm",
+        });
+      });
       await act(async () => drainFrames());
       expect(edit).toHaveBeenCalledTimes(1);
       expect(container.querySelector("diffs-container")).toBe(file);
@@ -235,6 +246,8 @@ describe("file editor appearance", () => {
       expect(editor.getText()).toBe("const answer = 43;\n");
       expect(editor.canUndo).toBe(true);
       const syntax = syntaxColours(file);
+      expect(syntax.map((token) => token.text)).toEqual(darkSyntax.map((token) => token.text));
+      expect(syntax.every((token) => token.colour !== "")).toBe(true);
       const theme = file.shadowRoot!.querySelector("[data-theme-css]")!.textContent;
       if (appearance === "light") {
         expect(syntax).not.toEqual(darkSyntax);
