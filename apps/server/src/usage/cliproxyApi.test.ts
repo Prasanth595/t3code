@@ -4,6 +4,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
+import { EnvironmentId, UsageLimitSourceId } from "@t3tools/contracts";
+import { collectLimitAccounts } from "@t3tools/shared/usageLimits";
 
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
@@ -242,6 +244,55 @@ describe("CLIProxyAPI built-in management API", () => {
 
   it.effect.each([
     { status: 403, body: { token: "do-not-publish" } },
+    { status: 429, body: {} },
+    { status: 200, body: { organization: { uuid: "   " } } },
+  ])("keeps both same-email quotas when one organization lookup fails: %j", (profile) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: claudeAccounts,
+        upstream: (request) =>
+          request.url?.endsWith("/profile")
+            ? request.auth_index === "a"
+              ? { status: 200, body: { organization: { uuid: "org-max" } } }
+              : profile
+            : {
+                status: 200,
+                body: {
+                  five_hour: { utilization: request.auth_index === "a" ? 20 : 80, resets_at: null },
+                },
+              },
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      const pooled = collectLimitAccounts(
+        new Map([
+          [
+            EnvironmentId.make("env-a"),
+            {
+              entry: { target: { label: "Test" } },
+              serverConfig: {
+                usageLimitSources: [
+                  {
+                    id: UsageLimitSourceId.make("hub"),
+                    label: "hub",
+                    kind: "cliproxy",
+                    checkedAt: result[0]!.usageLimits.checkedAt,
+                    accounts: result,
+                  },
+                ],
+              },
+            },
+          ],
+        ]),
+      );
+      expect(result.map((account) => account.workspaceId)).toEqual(["org-max", undefined]);
+      expect(pooled.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([20, 80]);
+      expect(encodeJson(result)).not.toContain("do-not-publish");
+    }),
+  );
+
+  it.effect.each([
+    { status: 403, body: { token: "do-not-publish" } },
     { status: 200, body: { organization: { uuid: "   " } } },
   ])("keeps Claude quota visible when organization identity is unavailable: %j", (profile) =>
     Effect.gen(function* () {
@@ -277,7 +328,7 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("keeps the last Claude organization through a failed profile lookup", () =>
+  it.effect("does not reuse the last Claude organization through a failed profile lookup", () =>
     Effect.gen(function* () {
       let profileStatus = 200;
       const test = fixture({
@@ -291,8 +342,34 @@ describe("CLIProxyAPI built-in management API", () => {
       yield* api.readAccounts(config);
       profileStatus = 429;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.workspaceId).toBe("org-team");
+      expect(result[0]?.workspaceId).toBeUndefined();
+      expect(result[0]?.usageLimits.windows[0]?.usedPercent).toBe(12);
     }),
+  );
+
+  it.effect.each(["a", "replacement"])(
+    "does not inherit organization identity when an auth file is replaced: %s",
+    (authIndex) =>
+      Effect.gen(function* () {
+        const currentAccounts = [claudeAccounts[0]!];
+        let profileStatus = 200;
+        const test = fixture({
+          accounts: currentAccounts,
+          upstream: (request) =>
+            request.url?.endsWith("/profile")
+              ? { status: profileStatus, body: { organization: { uuid: "old-organization" } } }
+              : { status: 200, body: { five_hour: { utilization: 80, resets_at: null } } },
+        });
+        const api = yield* test.api;
+        expect((yield* api.readAccounts(config))[0]?.workspaceId).toBe("old-organization");
+        currentAccounts.length = 0;
+        expect(yield* api.readAccounts(config)).toEqual([]);
+        currentAccounts.push({ ...claudeAccounts[0]!, auth_index: authIndex });
+        profileStatus = 429;
+        const replacement = yield* api.readAccounts(config);
+        expect(replacement[0]?.usageLimits.windows[0]?.usedPercent).toBe(80);
+        expect(replacement[0]?.workspaceId).toBeUndefined();
+      }),
   );
 
   it.effect("pins redemption to the displayed credit and clears only that account's cooldown", () =>
