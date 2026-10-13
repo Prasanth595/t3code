@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Posts a failed fork workflow run to the repair agent webhook (a T3 scheduled task).
-# Called by the notify_agent job of fork-release.yml and fork-sync.yml. See docs/fork.md.
+# Called by the notify_agent job of fork-ci.yml, fork-release.yml and fork-sync.yml. See docs/fork.md.
 # Env: WEBHOOK_URL, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET, GH_TOKEN, NEEDS_JSON
 # (the workflow's toJSON(needs)), plus the default GITHUB_* variables.
 set -euo pipefail

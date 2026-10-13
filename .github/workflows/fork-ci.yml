@@ -3,13 +3,18 @@ name: Fork CI
 # The commands of ci.yml on GitHub-hosted runners. ci.yml uses upstream's
 # Blacksmith runners, which this fork does not have, so the fork disables it.
 # Limit: this file copies the ci.yml commands by hand. When upstream changes
-# them, update this file. See docs/fork.md.
+# them, update this file. A failure on main calls the repair agent. See docs/fork.md.
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      notify_agent:
+        description: Call the agent webhook if this run fails. The agent sets false on its own retries.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -162,3 +167,27 @@ jobs:
             cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
             cargo test --locked --manifest-path "native/$crate/Cargo.toml"
           done
+
+  # Starts the repair agent, like Fork Sync and Fork Release. Without it, a red
+  # main goes unnoticed. Off until the T3_AGENT_WEBHOOK_URL secret is set.
+  notify_agent:
+    name: Notify repair agent
+    needs: [lint, typecheck, build, test, test_web, test_server, rust]
+    if: failure() && github.event.inputs.notify_agent != 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/fork-notify-agent.sh
+          sparse-checkout-cone-mode: false
+      - name: Call agent webhook
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WEBHOOK_URL: ${{ secrets.T3_AGENT_WEBHOOK_URL }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: scripts/fork-notify-agent.sh

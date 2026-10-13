@@ -7,16 +7,17 @@ The installed app updates itself from the fork releases through the built-in upd
 
 Fork main only moves forward. Nothing rebases or force-pushes it.
 
-- `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge and pushes it as a fast-forward. If main moved during the run, it merges the new main and pushes again.
-- If the merge conflicts or the typecheck fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
+- `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge, runs the fork tests and pushes it as a fast-forward. The fork tests are the test files that differ from upstream main. If main moved during the run, it merges the new main and pushes again.
+- If the merge conflicts, the typecheck fails or a fork test fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
 - `.github/workflows/fork-release.yml` builds the desktop apps. It runs when a push to main changes the app shell (`apps/desktop` without its tests, icons, build config, dependencies), once a day, and on manual dispatch. If the commit already has a release, it stops early. Server and web changes reach the machines without a release, see "Live server updates" and "Deploy to the VPS".
 - The release builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
 - The release carries `nightly-mac.yml` and `nightly.yml` for electron-updater. Until the Windows build adds `nightly.yml`, Windows apps find no update in the new release.
-- If a sync or a release fails, its `notify_agent` job runs `scripts/fork-notify-agent.sh`. The script posts the run to `T3_AGENT_WEBHOOK_URL`, a webhook scheduled task on a T3 server that starts a repair agent. A manual run with `notify_agent=false` does not post. A failure right after a failure of the same workflow does not post either, because the agent that the first failure started watches the next run.
+- If a sync, a release or a Fork CI run fails, its `notify_agent` job runs `scripts/fork-notify-agent.sh`. The script posts the run to `T3_AGENT_WEBHOOK_URL`, a webhook scheduled task on a T3 server that starts a repair agent. A manual run with `notify_agent=false` does not post. A failure right after a failure of the same workflow does not post either, because the agent that the first failure started watches the next run.
 - `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
 - To see all fork changes, run `git diff upstream/main...main`.
 - The top of `README.md` lists the fork features and fixes, up to the first `---` line. A pull request that adds, removes or changes a fork feature or fix updates its line in that list.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
+- A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behaviour needs a test of that behaviour, so that the fork tests catch the break.
 
 The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and the data directory `~/.t3`.
 They replace the upstream Nightly app and keep its data.
