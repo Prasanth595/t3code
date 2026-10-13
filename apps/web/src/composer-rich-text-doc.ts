@@ -257,6 +257,23 @@ export const ComposerListExtensions = [
     addKeyboardShortcuts() {
       return withoutBlockChords(this.parent?.(), ["Mod-Shift-7"]);
     },
+    // Markers come from the source, so `10.` or `100)` can outgrow the default
+    // gutter and get clipped by the editor's overflow. Widen it to fit.
+    renderHTML({ node, HTMLAttributes }) {
+      let widest = 0;
+      node.forEach((item) => {
+        widest = Math.max(widest, String(item.attrs.marker ?? "").length);
+      });
+      return this.parent!({
+        node,
+        HTMLAttributes:
+          widest <= 2
+            ? HTMLAttributes
+            : mergeAttributes(HTMLAttributes, {
+                style: `--list-gutter: max(1.25rem, ${widest + 1}ch)`,
+              }),
+      });
+    },
   }),
   ComposerListItemExtension,
 ];

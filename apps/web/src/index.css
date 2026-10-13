@@ -1850,6 +1850,17 @@ code {
   content: attr(data-marker) " ";
 }
 
+/* The prompt has its own font and size, so a rem gutter clips markers drawn in
+   a monospace or larger composer font. `ch` follows the composer font: `1. ` is
+   at most 3ch. Wider markers widen it inline (ComposerListExtensions). */
+.composer-tiptap ol {
+  --list-gutter: max(1.25rem, 3ch);
+}
+
+.composer-tiptap ul {
+  padding-left: max(1.25rem, 2ch);
+}
+
 :is(.chat-markdown, .composer-tiptap) ul ul {
   list-style-type: circle;
 }
