@@ -6,7 +6,8 @@ import {
   summarizePendingUserInputAnswer,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
+import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
@@ -268,11 +269,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       </CollapsibleTrigger>
       <CollapsiblePanel>
         {prompt.questions.length > 1 ? (
-          <ComposerBanner.Body className="pe-1 pb-2">
+          <ComposerBanner.Body className="flex items-center justify-between gap-2 pe-1 pb-2">
             <div
               role="tablist"
               aria-label="Questions"
-              className="flex gap-1 overflow-x-auto [scrollbar-width:none]"
+              className="flex w-fit min-w-0 gap-0.5 overflow-x-auto rounded-lg bg-input/40 p-0.5 [scrollbar-width:none]"
             >
               {prompt.questions.map((question, index) => {
                 const summary = summarizePendingUserInputAnswer(question, answers[question.id]);
@@ -287,22 +288,53 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     data-pending-user-input-tab={summary === null ? "unanswered" : "answered"}
                     onClick={() => onSelectQuestion(index)}
                     className={cn(
-                      "flex max-w-48 min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-2xs outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                      // Matches the segmented toggle; the marker matches the setup wizard's steps.
+                      "flex h-6 max-w-56 min-w-0 shrink-0 cursor-pointer items-center gap-1.5 rounded-md px-2 text-xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                       isActive
-                        ? "bg-muted/70 text-foreground"
-                        : "text-muted-foreground hover:bg-muted/30 hover:text-foreground/85",
+                        ? "bg-background text-foreground shadow-xs/10 dark:bg-input/72"
+                        : "text-muted-foreground hover:bg-background/55 hover:text-foreground dark:hover:bg-input/32",
                     )}
                   >
-                    <span className="shrink-0 font-medium">{question.header}</span>
-                    {summary !== null ? (
-                      <>
-                        <CheckIcon className="size-3 shrink-0 text-primary" />
-                        <span className="min-w-0 truncate text-secondary-label">{summary}</span>
-                      </>
-                    ) : null}
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "grid size-3.5 shrink-0 place-items-center rounded-full text-3xs tabular-nums ring-1",
+                        summary !== null
+                          ? "bg-primary text-primary-foreground ring-primary"
+                          : "ring-black/10 dark:ring-white/10",
+                      )}
+                    >
+                      {summary !== null ? <CheckIcon className="size-2.5" /> : index + 1}
+                    </span>
+                    <span className="min-w-0 truncate">
+                      {question.header}
+                      {summary !== null ? (
+                        <span className="font-normal text-muted-foreground">: {summary}</span>
+                      ) : null}
+                    </span>
                   </button>
                 );
               })}
+            </div>
+            <div className="flex shrink-0 items-center">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Previous question"
+                disabled={progress.questionIndex === 0}
+                onClick={() => onSelectQuestion(progress.questionIndex - 1)}
+              >
+                <ChevronLeftIcon className="size-3.5" />
+              </Button>
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Next question"
+                disabled={progress.isLastQuestion}
+                onClick={() => onSelectQuestion(progress.questionIndex + 1)}
+              >
+                <ChevronRightIcon className="size-3.5" />
+              </Button>
             </div>
           </ComposerBanner.Body>
         ) : null}

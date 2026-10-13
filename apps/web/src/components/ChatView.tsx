@@ -10478,13 +10478,6 @@ export default function ChatView(props: ChatViewProps) {
     setActivePendingUserInputQuestionIndex,
   ]);
 
-  const onPreviousActivePendingUserInputQuestion = useCallback(() => {
-    if (!activePendingProgress) {
-      return;
-    }
-    setActivePendingUserInputQuestionIndex(Math.max(activePendingProgress.questionIndex - 1, 0));
-  }, [activePendingProgress, setActivePendingUserInputQuestionIndex]);
-
   async function onSubmitPlanFollowUp({
     text,
     context,
@@ -11887,9 +11880,6 @@ export default function ChatView(props: ChatViewProps) {
                               }
                               onAdvanceActivePendingUserInput={onAdvanceActivePendingUserInput}
                               onDismissActivePendingUserInput={onDismissUserInput}
-                              onPreviousActivePendingUserInputQuestion={
-                                onPreviousActivePendingUserInputQuestion
-                              }
                               onSelectActivePendingUserInputQuestion={
                                 setActivePendingUserInputQuestionIndex
                               }
