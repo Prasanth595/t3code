@@ -155,11 +155,17 @@ export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,
   terminal: NonEmptyString,
   reason: Schema.optional(Schema.String),
-  error: Schema.optional(Schema.Struct({ message: Schema.String })),
+  error: Schema.optional(
+    Schema.Struct({
+      message: Schema.String,
+      // Present when Muse recognized the stop as a used-up quota.
+      quota: Schema.optional(Schema.Struct({ resetsAtMs: Schema.Finite })),
+    }),
+  ),
   usage: Schema.optional(MuseUsage),
 });
 /** The latest instant a JavaScript Date holds; formatting a later one throws. */
-const LATEST_DATE_MS = 8.64e15;
+export const LATEST_DATE_MS = 8.64e15;
 const DateMillis = Schema.Finite.check(
   Schema.isGreaterThan(0),
   Schema.isLessThanOrEqualTo(LATEST_DATE_MS),

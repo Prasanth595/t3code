@@ -354,6 +354,9 @@ const SUBSCRIPTION_USAGE = {
 // How Muse ends a turn Meta refuses for quota (from a simulated Meta 429).
 const QUOTA_MESSAGE =
   "API error 429: Subscription quota exhausted. Your usage window resets soon. (rate_limit_error)";
+// How Muse 1.4.6 ended a turn at a real quota stop (2026-10-13), relayed by a credential proxy.
+const RELAYED_QUOTA_MESSAGE =
+  "API error 429: All credentials for model muse-wonder-1.0-contributor are cooling down (last error: rate_limit_exceeded: Subscription quota exhausted. Your usage window resets at 2026-10-13T10:45:52Z.) (after 10 provider attempts)";
 
 const approval = (turnId: string) => ({
   approvalId: "approval-1",
@@ -621,6 +624,46 @@ describe("MuseAdapterV2", () => {
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.failure?.class, "usage_limit");
       assert.isUndefined(terminal.failure?.resetAt);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("resumes a quota stop at the reset the refusal names", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      // A fresh host has no report yet; the refusal itself says when the window resets.
+      const { nativeId } = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", {
+        turnId: nativeId,
+        terminal: "failed",
+        reason: RELAYED_QUOTA_MESSAGE,
+        error: { kind: "modelError", message: RELAYED_QUOTA_MESSAGE, retryable: true },
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.failure?.class, "usage_limit");
+      assert.strictEqual(terminal.failure?.resetAt, "2026-10-13T10:45:52.000Z");
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("limits a stop Muse types as quota at the reset it reports", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const { nativeId } = yield* startConversation(harness, fake);
+      // The typed quota decides even when the text names no quota.
+      yield* fake.emit("turn/completed", {
+        turnId: nativeId,
+        terminal: "failed",
+        error: {
+          kind: "modelError",
+          message: "Model request refused.",
+          quota: { limitKind: "tierLimit", resetsAtMs: SUBSCRIPTION_USAGE.window.resetsAtMs },
+          retryable: true,
+        },
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.failure?.class, "usage_limit");
+      assert.strictEqual(terminal.failure?.resetAt, "2026-10-08T13:19:17.000Z");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
