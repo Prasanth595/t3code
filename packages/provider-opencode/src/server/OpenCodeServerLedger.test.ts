@@ -121,6 +121,65 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
     }).pipe(provideHost),
   );
 
+  it.live("stops a server whose launcher exec'd into it after it was recorded", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const execNow = path.join(stateDir, "exec-now");
+      // Like `systemd-run --scope -- opencode serve …`: recorded as the launcher,
+      // then the same pid execs into the server.
+      const launcher = yield* spawnGroup(
+        ["systemd-run", "--scope", "--", "opencode", ...SERVE_ARGS],
+        `while [ ! -e '${execNow}' ]; do sleep 0.05; done; shift 2; exec /bin/sh -c 'sleep 600 & wait' "$@"`,
+      );
+      yield* recordFromDeadServer(stateDir, launcher);
+      const entryPath = path.join(stateDir, "opencode-servers", `${launcher.pid}.json`);
+      expect(yield* fs.readFileString(entryPath)).toContain(
+        "systemd-run --scope -- opencode serve",
+      );
+
+      yield* fs.writeFileString(execNow, "");
+      const commandLine = () =>
+        NodeChildProcess.execFileSync("ps", ["-ww", "-o", "args=", "-p", String(launcher.pid)], {
+          encoding: "utf8",
+        }).trim();
+      for (let attempt = 0; attempt < 100 && commandLine().includes("systemd-run"); attempt++) {
+        yield* Effect.sleep("20 millis");
+      }
+      expect(commandLine()).toBe(`/bin/sh -c sleep 600 & wait opencode ${SERVE_ARGS.join(" ")}`);
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(yield* launcher.exited).toBe("SIGTERM");
+      expect(groupExists(launcher.pid)).toBe(false);
+      expect(yield* fs.exists(entryPath)).toBe(false);
+    }).pipe(provideHost),
+  );
+
+  it.live("stops a server recorded as its launcher before entries had serve arguments", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-opencode-ledger-" });
+      const orphan = yield* spawnGroup(SERVE_ARGS);
+      yield* recordFromDeadServer(stateDir, orphan);
+      const entryPath = path.join(stateDir, "opencode-servers", `${orphan.pid}.json`);
+      const { args: _args, ...entry } = JSON.parse(yield* fs.readFileString(entryPath));
+      yield* fs.writeFileString(
+        entryPath,
+        JSON.stringify({ ...entry, command: `systemd-run --user --scope -- ${entry.command}` }),
+      );
+
+      const restarted = yield* OpenCodeServerLedger.make({ stateDir });
+      yield* restarted.reapOrphans;
+
+      expect(yield* orphan.exited).toBe("SIGTERM");
+      expect(yield* fs.exists(entryPath)).toBe(false);
+    }).pipe(provideHost),
+  );
+
   it.live("leaves a recycled pid alone when its start time does not match", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -151,7 +210,7 @@ describe.each(observedPlatforms)("OpenCodeServerLedger observing as %s", (platfo
       const entryPath = path.join(stateDir, "opencode-servers", `${unrelated.pid}.json`);
       // Same pid and start second, but not the server T3 started.
       const entry = yield* fs.readFileString(entryPath);
-      yield* fs.writeFileString(entryPath, entry.replace("--port=4096", "--port=4097"));
+      yield* fs.writeFileString(entryPath, entry.replaceAll("--port=4096", "--port=4097"));
 
       const restarted = yield* OpenCodeServerLedger.make({ stateDir });
       yield* restarted.reapOrphans;

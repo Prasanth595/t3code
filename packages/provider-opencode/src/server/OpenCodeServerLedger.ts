@@ -28,6 +28,12 @@ const OpenCodeServerEntry = Schema.Struct({
   /** Linux `/proc/<pid>/stat` start ticks, or macOS `ps` lstart (whole seconds). */
   startTime: Schema.String,
   command: Schema.String,
+  /**
+   * The serve arguments `command` ends with. A launcher such as `systemd-run --scope`
+   * can be recorded before it execs into the server, which keeps its pid and start
+   * time but replaces the command line with one that still ends with these.
+   */
+  args: Schema.optional(Schema.Array(Schema.String)),
   port: Schema.Int,
   /** Entries copied along with a state directory are dropped, never acted on. */
   stateDir: Schema.String,
@@ -242,6 +248,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         pid: member.pid,
         startTime: member.startTime,
         command: member.command,
+        args: server.args,
         port: server.port,
         stateDir: input.stateDir,
         owner,
@@ -268,8 +275,16 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
       ),
     );
 
+  // Entries written before `args` existed only have the launcher's command line,
+  // which ends with the server's once the launcher has exec'd.
+  const sameCommand = (entry: OpenCodeServerEntry, command: string) =>
+    command === entry.command ||
+    (entry.args === undefined
+      ? entry.command.endsWith(` ${command}`)
+      : command.endsWith(` ${entry.args.join(" ")}`));
+
   // Signals only a group whose recorded member still has the same pid, start
-  // time, group, and full command line, so a recycled pid is never touched.
+  // time, group, and serve command line, so a recycled pid is never touched.
   const stopOrphan = (entry: OpenCodeServerEntry) =>
     Effect.gen(function* () {
       const observed = yield* observe(entry.pid);
@@ -278,7 +293,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
         observed.zombie ||
         observed.startTime !== entry.startTime ||
         observed.pgid !== entry.pgid ||
-        observed.command !== entry.command
+        !sameCommand(entry, observed.command)
       ) {
         return;
       }
