@@ -118,7 +118,9 @@ function markdownThreadFindText(
   const tree = processor.runSync(processor.parse(markdown));
   const paths = [
     ...extractMarkdownLinkHrefs(renderCodexFileCitationsAsMarkdown(markdown)),
-    ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
+    ...extractInlineCodeSpans(markdown).flatMap(
+      (span) => inlineCodeFilePathCandidate(span, cwd) ?? [],
+    ),
   ].flatMap((href) => {
     const target = resolveMarkdownFileLinkTarget(href, cwd);
     return target ? [splitFilePathPosition(target).path] : [];
@@ -154,6 +156,7 @@ function markdownThreadFindText(
       ) {
         candidate = inlineCodeFilePathCandidate(
           (node.children ?? []).map((child) => child.value ?? "").join(""),
+          cwd,
         );
       }
       const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
