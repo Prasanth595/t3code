@@ -1,10 +1,13 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -22,6 +25,14 @@ import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEve
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import { enrichMuseSnapshot, latestMuseVersion, museMaintenance } from "./maintenance.ts";
 import { makeMuseEnvironment } from "./sdk.ts";
+import type { MuseSubscriptionUsage } from "./protocol.ts";
+import {
+  isNewerMuseUsageReport,
+  museSubscriptionUsageToLimits,
+  museSubscriptionUsageToUpdate,
+} from "./usageLimits.ts";
+import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
+import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   defaultProviderContinuationIdentity,
   type ProviderDriver,
@@ -92,6 +103,46 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
+      // Meta reports subscription usage only with a reply, and a status check
+      // makes none. Keep the newest report from any of this instance's
+      // sessions so a refresh re-derives the windows instead of dropping
+      // them. Reports and status checks take turns through one permit, so
+      // comparing, retaining and publishing a report is a single step: an
+      // older report arriving late can neither overwrite nor publish over a
+      // newer one.
+      const retainedUsage = yield* Ref.make<MuseSubscriptionUsage | undefined>(undefined);
+      const usagePermit = yield* Semaphore.make(1);
+      // Only the instance's own environment counts: an inherited META_API_KEY
+      // was already dropped so Muse uses its login.
+      const usesApiKey = Object.entries(processEnvironment).some(
+        ([key, value]) => key.toUpperCase() === "META_API_KEY" && (value ?? "").trim() !== "",
+      );
+      const withUsageLimits = (snapshot: ServerProviderDraft) =>
+        usagePermit.withPermits(1)(
+          Effect.gen(function* () {
+            if (!effectiveConfig.enabled || !snapshot.installed) return snapshot;
+            const now = yield* DateTime.now;
+            if (usesApiKey) {
+              return {
+                ...snapshot,
+                usageLimits: makeUnavailableUsageLimits({
+                  checkedAt: DateTime.formatIso(now),
+                  reason: "unsupported",
+                  message: "Muse uses an API key here, which does not report subscription limits.",
+                }),
+              };
+            }
+            const usage = yield* Ref.get(retainedUsage);
+            const usageLimits = usage
+              ? museSubscriptionUsageToLimits({ usage, nowMs: DateTime.toEpochMillis(now) })
+              : makeUnavailableUsageLimits({
+                  checkedAt: DateTime.formatIso(now),
+                  reason: "probeFailed",
+                  message: "Muse reports usage limits with its next reply.",
+                });
+            return { ...snapshot, usageLimits };
+          }),
+        );
       const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
           binaryPath: effectiveConfig.binaryPath,
@@ -126,6 +177,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         initialSnapshot: (settings) =>
           makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
         checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
+          Effect.flatMap(withUsageLimits),
           Effect.map(stampIdentity),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -163,6 +215,24 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         environment: processEnvironment,
         modelCatalog,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
+        onSubscriptionUsage: (usage) =>
+          usagePermit
+            .withPermits(1)(
+              Effect.gen(function* () {
+                // Every session's host reports; only the newest wins.
+                const newer = yield* Ref.modify(retainedUsage, (previous) =>
+                  isNewerMuseUsageReport(previous, usage)
+                    ? ([true, usage] as const)
+                    : ([false, previous] as const),
+                );
+                if (!newer || usesApiKey) return;
+                const now = yield* DateTime.now;
+                yield* snapshot.applyUsageLimits(
+                  museSubscriptionUsageToUpdate({ usage, nowMs: DateTime.toEpochMillis(now) }),
+                );
+              }),
+            )
+            .pipe(Effect.ignoreCause({ log: true })),
         continuationRequests,
       });
       const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {

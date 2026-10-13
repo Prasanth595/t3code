@@ -43,6 +43,13 @@ Muse can list models that your account cannot use. If a message fails with
 "does not exist or you lack access", pick another model, or add one your account
 can use under **Custom models** in the instance settings.
 
+## Usage limits
+
+**Usage → Limits** shows your Meta subscription's session and weekly windows.
+Muse reports them with each reply, so they appear after Muse's first reply
+since the T3 server started. An instance configured with `META_API_KEY` does
+not report subscription limits.
+
 ## Permissions and limitations
 
 Muse offers two [permission modes](./permission-modes.md): **Supervised** asks

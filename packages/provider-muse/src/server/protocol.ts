@@ -151,6 +151,32 @@ export const MuseContextUsage = Schema.Struct({
 export const MuseTodoList = Schema.Struct({
   items: Schema.Array(Schema.Struct({ text: Schema.String, status: Schema.String })),
 });
+/** The latest instant a JavaScript Date holds; formatting a later one throws. */
+const LATEST_DATE_MS = 8.64e15;
+const DateMillis = Schema.Finite.check(
+  Schema.isGreaterThan(0),
+  Schema.isLessThanOrEqualTo(LATEST_DATE_MS),
+);
+/**
+ * `usage/changed` params (the same payload `usage/read` returns): the Meta
+ * subscription windows the latest model response reported. Percentages are
+ * Meta's, verbatim, and may exceed 100. The window duration must be a whole
+ * number of minutes, as the usage-limits contract requires an integer.
+ */
+export const MuseSubscriptionUsage = Schema.Struct({
+  observedAtMs: DateMillis,
+  tier: Schema.String,
+  window: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    windowDurationMins: Schema.Int.check(Schema.isGreaterThan(0)),
+    resetsAtMs: DateMillis,
+  }),
+  weekly: Schema.Struct({
+    usedPercent: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+    resetsAtMs: DateMillis,
+  }),
+});
+export type MuseSubscriptionUsage = typeof MuseSubscriptionUsage.Type;
 export const MuseTurnCompleted = Schema.Struct({
   turnId: NonEmptyString,
   terminal: NonEmptyString,

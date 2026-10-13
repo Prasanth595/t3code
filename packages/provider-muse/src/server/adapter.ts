@@ -50,6 +50,7 @@ import {
   MuseDelta,
   MuseItemEvent,
   MuseSessionResult,
+  MuseSubscriptionUsage,
   MuseTokenUsageEvent,
   MuseTodoList,
   MuseTurnRetryScheduled,
@@ -195,6 +196,8 @@ export interface MuseAdapterV2Options {
   readonly createHost?: typeof createMuseSdkHost;
   readonly requestTimeoutMs?: number;
   readonly nativeEventLogger?: ProviderEventLoggers.EventNdjsonLogger;
+  /** Each subscription-usage report Muse forwards (`usage/changed`); the driver publishes it. */
+  readonly onSubscriptionUsage?: (usage: MuseSubscriptionUsage) => Effect.Effect<void>;
   /** Where a turn Muse starts on its own (a finished workflow's report) asks for its run. */
   readonly continuationRequests?: {
     readonly offer: (
@@ -261,6 +264,7 @@ const INFORMATIONAL_NOTIFICATIONS = new Set([
   "session/tokenUsage",
   "session/todoListChanged",
   "turn/retryScheduled",
+  "usage/changed",
 ]);
 // Tools whose results already show as their own rows: T3's todo list and question
 // rows, and the workflow item a `workflow` call launches.
@@ -1284,6 +1288,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         }
       });
       const handleNotification = Effect.fnUntraced(function* (method: string, data: unknown) {
+        // Subscription usage is connection-scoped: its payload names no session.
+        if (method === "usage/changed") {
+          const usage = yield* decode(MuseSubscriptionUsage, data);
+          if (options.onSubscriptionUsage) yield* options.onSubscriptionUsage(usage);
+          return;
+        }
         const params = yield* decode(recordSchema, data);
         if (params.sessionId !== nativeSessionId) return;
         if (method === "view/gap")
