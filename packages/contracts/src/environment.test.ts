@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ExecutionEnvironmentDescriptor, repositoryOwnerOf } from "./environment.ts";
 
 const decodeDescriptor = Schema.decodeUnknownSync(ExecutionEnvironmentDescriptor);
 
@@ -95,5 +95,26 @@ describe("ExecutionEnvironmentDescriptor", () => {
         },
       }).capabilities.serverResolvedCommandContext,
     ).toBe(true);
+  });
+});
+
+describe("repositoryOwnerOf", () => {
+  const locator = { source: "git-remote" as const, remoteName: "origin", remoteUrl: "x" };
+
+  it("reads the owner of the grouping repository, so a fork counts as its own owner", () => {
+    expect(repositoryOwnerOf({ canonicalKey: "github.com/qlik-trial/app", locator })).toBe(
+      "qlik-trial",
+    );
+    expect(
+      repositoryOwnerOf({
+        canonicalKey: "github.com/pingdotgg/t3code",
+        locator,
+        origin: { canonicalKey: "github.com/yarden-zamir/t3code" },
+      }),
+    ).toBe("yarden-zamir");
+  });
+
+  it("is null for a key without an owner segment", () => {
+    expect(repositoryOwnerOf({ canonicalKey: "local-only", locator })).toBeNull();
   });
 });

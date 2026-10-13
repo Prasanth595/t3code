@@ -271,6 +271,17 @@ export function repositoryGroupingKeyOf(identity: RepositoryIdentity): string {
   return identity.origin?.canonicalKey ?? identity.canonicalKey;
 }
 
+/**
+ * Fork: the account or organization that owns a checkout's repository, such as `qlik-trial` in
+ * `github.com/qlik-trial/app`, read from `repositoryGroupingKeyOf` so a fork counts as its own
+ * owner. Lowercase, because remote keys are. Null when the key has no owner segment. Owner filters
+ * on every surface (pull requests, sidebar, usage, agent tools) use this one definition.
+ */
+export function repositoryOwnerOf(identity: RepositoryIdentity): string | null {
+  const [, owner] = repositoryGroupingKeyOf(identity).split("/");
+  return owner === undefined || owner.length === 0 ? null : owner;
+}
+
 /** Label clients show for a checkout's repository, matching `repositoryGroupingKeyOf`. */
 export function repositoryGroupingDisplayNameOf(identity: RepositoryIdentity): string | undefined {
   return identity.origin
