@@ -205,16 +205,13 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          Effect.all(
-            [
-              probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
-              probeClaudeOrganizationId(effectiveConfig, processEnv).pipe(
-                Effect.timeout(AUTH_PROBE_TIMEOUT_MS),
-                Effect.catch(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
-              ),
-            ],
-            { concurrency: "unbounded" },
-          ).pipe(
+          Effect.all([
+            probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
+            probeClaudeOrganizationId(effectiveConfig, processEnv).pipe(
+              Effect.timeout(AUTH_PROBE_TIMEOUT_MS),
+              Effect.catch(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
+            ),
+          ]).pipe(
             Effect.map(([capabilities, workspaceId]) =>
               capabilities && workspaceId ? { ...capabilities, workspaceId } : capabilities,
             ),
