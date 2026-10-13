@@ -91,8 +91,8 @@ function runMacLookup(): Promise<string> {
       "/usr/bin/osascript",
       ["-l", "JavaScript", "-e", MAC_LOOKUP_SCRIPT],
       { timeout: MAC_LOOKUP_TIMEOUT_MS, maxBuffer: 64 * 1024 },
-      (error, stdout, stderr) => {
-        if (error) reject(Object.assign(error, { stderr }));
+      (error, stdout) => {
+        if (error) reject(error);
         else resolve(stdout);
       },
     );

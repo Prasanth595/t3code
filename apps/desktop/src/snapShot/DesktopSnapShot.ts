@@ -30,6 +30,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -211,17 +212,35 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
       Schema.Literals(["preview-config", "apply-config"]),
     ]),
     reason: Schema.Literals(["unsupported-session", "setup-failed", "shortcut-permissions"]),
-    /** What the failed command reported, shown after the summary. */
-    detail: Schema.optional(Schema.String),
+    /** The part of the macOS test capture that failed, and how. */
+    step: Schema.optional(Schema.Literals(["find-window", "capture-window"])),
+    status: Schema.optional(Schema.Literals(["missing", "timed-out", "exited", "failed"])),
+    exitCode: Schema.optional(Schema.Number),
+    /** The running app, as macOS lists it under Privacy & Security. */
+    appName: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     if (this.action === "test-mac-capture") {
       if (this.reason === "unsupported-session") return "Test capture requires macOS.";
-      return this.detail
-        ? `Could not capture a test snapshot. ${this.detail}`
-        : "Could not capture a test snapshot.";
+      const summary = "Could not capture a test snapshot.";
+      if (this.step === undefined) return summary;
+      if (this.status === "missing") return `${summary} No window is available to capture.`;
+      const [task, command] =
+        this.step === "find-window"
+          ? ["Finding the front window", "osascript"]
+          : ["Capturing the window", "screencapture"];
+      const failure =
+        this.status === "timed-out"
+          ? `${task} timed out.`
+          : this.status === "exited" && this.exitCode !== undefined
+            ? `${task} failed: ${command} exited with code ${this.exitCode}.`
+            : `${task} failed.`;
+      // macOS can report both permissions as allowed while they belong to another install.
+      return this.appName === undefined
+        ? `${summary} ${failure}`
+        : `${summary} ${failure} macOS grants Screen Recording and Accessibility to each app separately. In System Settings, open Privacy & Security and check that "${this.appName}" is allowed for both.`;
     }
     if (this.action === "preview-config" || this.action === "apply-config") {
       if (this.reason === "unsupported-session")
@@ -248,31 +267,16 @@ export class DesktopSnapShotSetupError extends Schema.TaggedError<DesktopSnapSho
   }
 }
 
-const MAC_CAPTURE_FAILURE_DETAIL_MAX_LENGTH = 400;
-
 /**
- * Names the command that failed and what it printed. A child process error's own
- * message repeats the whole command line, which for the window lookup is a script.
+ * How a macOS capture command ended, read from the child process error's own fields.
+ * What the command printed stays in the error's `cause`.
  */
-export function macCaptureFailureDetail(error: unknown): string | undefined {
-  if (!(error instanceof Error)) return undefined;
-  const failure = error as Error & {
-    readonly cmd?: unknown;
-    readonly stderr?: unknown;
-    readonly killed?: unknown;
-    readonly code?: unknown;
-  };
-  if (typeof failure.cmd !== "string") return failure.message.trim() || undefined;
-  const command = failure.cmd.split(" ", 1)[0];
-  const output = typeof failure.stderr === "string" ? failure.stderr.trim() : "";
-  const outcome = output
-    ? `failed: ${output.slice(0, MAC_CAPTURE_FAILURE_DETAIL_MAX_LENGTH)}`
-    : failure.killed === true
-      ? "timed out."
-      : typeof failure.code === "number"
-        ? `exited with code ${failure.code}.`
-        : "could not be run.";
-  return `${command} ${outcome}`;
+function macCommandFailure(cause: unknown) {
+  const failure = Predicate.isObject(cause) ? cause : {};
+  if ("killed" in failure && failure.killed === true) return { status: "timed-out" } as const;
+  return "code" in failure && typeof failure.code === "number"
+    ? ({ status: "exited", exitCode: failure.code } as const)
+    : ({ status: "failed" } as const);
 }
 
 type SnapShotSystemAnimationSettings = Pick<
@@ -1374,25 +1378,41 @@ export const make = Effect.gen(function* () {
                 (cause) => new DesktopSnapShotSetupError({ action, reason: "setup-failed", cause }),
               ),
             );
+          const active = yield* Effect.tryPromise({
+            try: () => activeWindow("darwin"),
+            catch: (cause) =>
+              new DesktopSnapShotSetupError({
+                action,
+                reason: "setup-failed",
+                step: "find-window",
+                ...macCommandFailure(cause),
+                appName: environment.displayName,
+                cause,
+              }),
+          });
+          if (!active)
+            return yield* new DesktopSnapShotSetupError({
+              action,
+              reason: "setup-failed",
+              step: "find-window",
+              status: "missing",
+            });
           yield* Effect.tryPromise({
-            try: async () => {
-              const active = await activeWindow("darwin");
-              if (!active) throw new Error("No window is available to test capture.");
-              await captureMacWindowSnapshot(
+            try: () =>
+              captureMacWindowSnapshot(
                 active,
                 path.join(directory, "test.png"),
                 snapShotThumbnailSize(active),
-              );
-            },
-            catch: (cause) => {
-              const detail = macCaptureFailureDetail(cause);
-              return new DesktopSnapShotSetupError({
+              ),
+            catch: (cause) =>
+              new DesktopSnapShotSetupError({
                 action,
                 reason: "setup-failed",
-                ...(detail === undefined ? {} : { detail }),
+                step: "capture-window",
+                ...macCommandFailure(cause),
+                appName: environment.displayName,
                 cause,
-              });
-            },
+              }),
           });
         }),
       );
