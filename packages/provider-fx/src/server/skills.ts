@@ -11,9 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
-import { parse as parseYamlDocument } from "yaml";
 
-const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const MAX_SKILL_BYTES = 1_000_000;
 
 /**
@@ -47,39 +45,117 @@ const FX_HOME_ROOTS: ReadonlyArray<SkillRoot> = [
   { relative: ".claw/skills", rank: 2 },
 ];
 
-function nonEmptyTrimmed(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+const MAX_FRONTMATTER_BYTES = 64 * 1024;
+const MAX_NAME_BYTES = 256;
+const BLOCK_DESCRIPTION_STYLES = new Set([">", ">-", "|"]);
+const encoder = new TextEncoder();
+
+/** fx's `invalidTextCause`: no ASCII control bytes. */
+const hasControlByte = (value: string) => [...value].some((char) => char < " " || char === "\x7f");
+
+/** fx's `parseRecognizedValue`: one quoted or bare scalar, no YAML. */
+function recognizedValue(raw: string): string | undefined {
+  if (raw.startsWith("|") || raw.startsWith(">")) return undefined;
+  const quoted = /^['"]/.test(raw) || /['"]$/.test(raw);
+  if (!quoted) return raw;
+  return raw.length >= 2 && raw[0] === raw.at(-1) ? raw.slice(1, -1) : undefined;
 }
 
 /**
- * A skill's name and description. fx names a skill by its folder only when
- * SKILL.md has no frontmatter; frontmatter without a usable `name` makes the
- * skill invalid, and fx will not load it.
+ * A skill's name and description, read the way fx 0.0.13 reads SKILL.md
+ * (`parseSkillFile` in src/core/skills/skill_contract.zig): a line-based
+ * `name:` / `description:` header, not YAML. fx names a skill by its folder
+ * only when there is no frontmatter; frontmatter it can't read (no closing
+ * `---`, a missing or repeated `name`, a continued value) makes the skill
+ * invalid, and fx won't load it.
  */
 function parseSkillMetadata(
   contents: string,
   folderName: string,
 ): { readonly name: string; readonly description?: string } | undefined {
-  if (!/^---(?:\r?\n|$)/.test(contents)) {
-    const name = nonEmptyTrimmed(folderName);
-    return name === undefined ? undefined : { name };
+  const opening = /^---(\r?\n|$)/.exec(contents);
+  if (opening === null) {
+    return validSkillName(folderName) ? { name: folderName } : undefined;
   }
-  // An opening `---` without a closing one is invalid frontmatter, not none.
-  const match = FRONTMATTER_PATTERN.exec(contents);
-  if (!match) return undefined;
-  try {
-    const parsed: unknown = parseYamlDocument(match[1] ?? "");
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-    const record = parsed as Record<string, unknown>;
-    const name = nonEmptyTrimmed(record.name);
-    if (name === undefined || name.includes("/") || name.includes("\\")) return undefined;
-    const description = nonEmptyTrimmed(record.description);
-    return { name, ...(description === undefined ? {} : { description }) };
-  } catch {
+  // fx drops a line's trailing `\r` only before a newline, and bounds the
+  // file up to the line after the closing `---`.
+  const lines = contents.slice(opening[0].length).split("\n");
+  const unterminated = (index: number) => index === lines.length - 1;
+  const closing = lines.findIndex(
+    (line, index) => (unterminated(index) ? line : line.replace(/\r$/, "")) === "---",
+  );
+  if (closing === -1) return undefined;
+  const throughClosing = opening[0] + lines.slice(0, closing + 1).join("\n");
+  const bodyStart = throughClosing.length + (unterminated(closing) ? 0 : 1);
+  if (encoder.encode(contents.slice(0, bodyStart)).length > MAX_FRONTMATTER_BYTES) {
     return undefined;
   }
+  const header = lines.slice(0, closing).map((line) => line.replace(/\r$/, ""));
+
+  let name: string | undefined;
+  let description: string | undefined;
+  let sawName = false;
+  let sawDescription = false;
+  let previousRecognized = false;
+  for (let index = 0; index < header.length; index++) {
+    const line = header[index] ?? "";
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
+    if (previousRecognized && /^[ \t]/.test(line)) return undefined;
+    previousRecognized = false;
+    const colon = trimmed.indexOf(":");
+    if (colon === -1) continue;
+    const key = trimmed.slice(0, colon).trim();
+    const raw = trimmed.slice(colon + 1).trim();
+    if (key === "name") {
+      if (sawName) return undefined;
+      sawName = true;
+      name = recognizedValue(raw);
+      if (name === undefined) return undefined;
+      previousRecognized = true;
+    } else if (key === "description") {
+      if (sawDescription) return undefined;
+      sawDescription = true;
+      if (BLOCK_DESCRIPTION_STYLES.has(raw)) {
+        // A block description runs over the following space-indented lines;
+        // fx rejects a tab or a shrinking indent inside it.
+        const block: Array<string> = [];
+        let baseIndent: number | undefined;
+        for (; index + 1 < header.length; index++) {
+          const next = header[index + 1] ?? "";
+          if (next.trim().length === 0) continue;
+          const indent = /^ */.exec(next)?.[0].length ?? 0;
+          if (next[indent] === "\t") return undefined;
+          if (indent === 0) break;
+          if (baseIndent !== undefined && indent < baseIndent) return undefined;
+          baseIndent ??= indent;
+          const content = next.slice(baseIndent);
+          if (hasControlByte(content)) return undefined;
+          block.push(content);
+        }
+        description = block.join(raw === "|" ? "\n" : " ").trim();
+      } else {
+        description = recognizedValue(raw);
+        if (description === undefined || hasControlByte(description)) return undefined;
+        previousRecognized = true;
+      }
+    }
+  }
+  if (name === undefined || !validSkillName(name)) return undefined;
+  return { name, ...(description ? { description } : {}) };
+}
+
+/** fx's `invalidSkillNameCause`. */
+function validSkillName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    encoder.encode(name).length <= MAX_NAME_BYTES &&
+    !hasControlByte(name) &&
+    name !== "." &&
+    name !== ".." &&
+    !name.includes("/") &&
+    !name.includes("\\")
+  );
 }
 
 /**
@@ -213,8 +289,9 @@ export const discoverFxSkills = Effect.fn("discoverFxSkills")(function* (input: 
       found.push({ skill, rank: root.rank });
     }
   }
-  // fx matches `$name` ignoring ASCII case.
-  const nameKey = (skill: ServerProviderSkill) => skill.name.toLowerCase();
+  // fx matches `$name` ignoring ASCII case only.
+  const nameKey = (skill: ServerProviderSkill) =>
+    skill.name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
   const nameCounts = new Map<string, number>();
   for (const { skill } of found) {
     nameCounts.set(nameKey(skill), (nameCounts.get(nameKey(skill)) ?? 0) + 1);

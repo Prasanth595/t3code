@@ -82,6 +82,21 @@ describe("discoverFxSkills", () => {
         "---\ndescription: Missing name\n---\n",
       );
       yield* writeSkillFile(path.join(home, ".fx/skills/unclosed"), "---\nname: unclosed\n");
+      // A continued plain value is fx's `unsupported_multiline`, so this
+      // `review` is invalid and the valid ones stay the only two.
+      yield* writeSkillFile(
+        path.join(home, ".agents/skills/review"),
+        "---\nname: review\ndescription: first line\n  second line\n---\n",
+      );
+      // fx folds only ASCII case, so these two are distinct.
+      yield* writeSkillFile(
+        path.join(home, ".fx/skills/accent-upper"),
+        "---\nname: \u00c9t\u00e9\n---\n",
+      );
+      yield* writeSkillFile(
+        path.join(home, ".fx/skills/accent-lower"),
+        "---\nname: \u00e9t\u00e9\n---\n",
+      );
       yield* writeSkillFile(path.join(home, "library/linked"), "---\nname: linked\n---\n");
       yield* fileSystem.symlink(
         path.join(home, "library/linked"),
@@ -93,6 +108,8 @@ describe("discoverFxSkills", () => {
       assert.deepEqual(
         skills.map((skill) => [skill.name, skill.userInvocable !== false]),
         [
+          ["été", true],
+          ["Été", true],
           ["plain", true],
           ["review", false],
           ["Review", false],
