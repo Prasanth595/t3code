@@ -89,39 +89,36 @@ export function EmergencyButton({
 const plural = (count: number, word: string): string =>
   `${count} ${count === 1 ? word : `${word}s`}`;
 
-/** MM-709, MM-710: the reach of one press, with the counts of the current map. */
-function reachText(reach: PauseReach): string {
-  const offline = reach.offline > 0 ? ` (${reach.offline} offline)` : "";
-  const stops = `Stops agents on ${plural(reach.machines, "machine")}${offline}.`;
-  if (reach.arrows === 0 && reach.mapRoles === 0) {
-    return `${stops} The map is already locked down, so no arrow or map role changes.`;
-  }
-  return `${stops} Drops ${plural(reach.arrows, "arrow")} and ${plural(reach.mapRoles, "map role")} to none.`;
+/**
+ * MM-709 to MM-712 in plain words, with the counts of the current map. Keep it true to the spec
+ * and to the pause in the Durable Object. While paused, the counts are gone, so the lines are plain.
+ */
+function pauseEffects(reach: PauseReach | null) {
+  const offline = reach && reach.offline > 0 ? ` (${reach.offline} offline)` : "";
+  const cut = [
+    reach && reach.arrows > 0 ? plural(reach.arrows, "arrow") : null,
+    reach && reach.mapRoles > 0 ? plural(reach.mapRoles, "map role") : null,
+  ].filter((part) => part !== null);
+  return [
+    {
+      label: "stop",
+      tone: "paused-sticker",
+      text: reach
+        ? `Agents on ${plural(reach.machines, "machine")}${offline}. Offline ones stop when they connect, for up to 7 days.`
+        : "Agents on every machine. Offline ones stop when they connect, for up to 7 days.",
+    },
+    {
+      label: "cut",
+      tone: "warn",
+      text:
+        reach && cut.length === 0
+          ? "Nothing. The map is already locked down."
+          : `To none: ${reach ? cut.join(" and ") : "every arrow and map role"}. Sessions between machines end.`,
+    },
+    { label: "freeze", tone: "info", text: "Agent tools and any raise of access are refused." },
+    { label: "keep", tone: "ok", text: "Your own login, settings, commands and lowering access." },
+  ] as const;
 }
-
-/** MM-709 to MM-712 in plain words. Keep it true to the spec and to the pause in the Durable Object. */
-const PAUSE_EFFECTS = [
-  {
-    label: "Stops",
-    text: 'Sends "stop all agents" to every machine. An offline machine gets it when it connects again, for up to 7 days.',
-  },
-  {
-    label: "Cuts",
-    text: 'Every arrow and every map role becomes none, as one "Emergency pause" revision. Machines end the sessions of the other machines at once.',
-  },
-  {
-    label: "Freezes",
-    text: "Agent tool calls and every change that raises access are refused until Resume.",
-  },
-  {
-    label: "Keeps",
-    text: "Your own access through Cloudflare Access. Settings, lowering access and commands still work.",
-  },
-  {
-    label: "Resume",
-    text: "Returns the arrows and map roles from before the pause. It does not start agents again.",
-  },
-] as const;
 
 /**
  * MM-708: the "i" button lists what one press does. The popover sits in the top layer and the
@@ -138,26 +135,37 @@ function PauseInfo() {
         i
       </button>
       <div id={id} popover="auto" className="card pause-info" role="dialog" aria-label={title}>
-        <div className="pause-info-head">
-          <h3>{pause ? "Everything is paused" : "One press does all of this"}</h3>
-          <button type="button" className="btn small" popoverTarget={id} popoverTargetAction="hide">
-            <CloseIcon />
-            Close
-          </button>
+        <div className="hazard" aria-hidden />
+        <div className="pause-info-body">
+          <div className="pause-info-head">
+            <h3>{pause ? "Paused" : "What it does"}</h3>
+            <button
+              type="button"
+              className="btn small"
+              popoverTarget={id}
+              popoverTargetAction="hide"
+              aria-label="Close"
+            >
+              <CloseIcon />
+            </button>
+          </div>
+          {pause && (
+            <p className="pause-info-now">
+              {actorText(pause.by, portal.map)} pressed it {timeAgo(pause.pausedAt, portal.now)}.
+            </p>
+          )}
+          <ul className="pause-info-effects">
+            {pauseEffects(pause ? null : pauseReach(portal.snapshot)).map((effect) => (
+              <li key={effect.label}>
+                <span className={`sticker ${effect.tone}`}>{effect.label}</span>
+                <span>{effect.text}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="pause-info-resume">
+            <b>Resume</b> puts arrows and map roles back. Agents stay stopped.
+          </p>
         </div>
-        <p className="pause-info-now">
-          {pause
-            ? `${actorText(pause.by, portal.map)} pressed it ${timeAgo(pause.pausedAt, portal.now)}.`
-            : reachText(pauseReach(portal.snapshot))}
-        </p>
-        <dl>
-          {PAUSE_EFFECTS.map((effect) => (
-            <div key={effect.label}>
-              <dt>{effect.label}</dt>
-              <dd>{effect.text}</dd>
-            </div>
-          ))}
-        </dl>
       </div>
     </>
   );
