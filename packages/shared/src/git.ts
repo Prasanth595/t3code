@@ -163,9 +163,10 @@ export function normalizeGitRemoteUrl(value: string): string {
     }
   }
 
-  const scpStyleHostAndPath = /^[a-zA-Z0-9._-]+@([^:/\s]+):([^/\s]+(?:\/[^/\s]+)+)$/i.exec(
-    normalized,
-  );
+  // The user and a leading path slash are optional (`host:/group/project`). A one-letter host
+  // is a Windows drive (`c:/repos/project`), not a remote.
+  const scpStyleHostAndPath =
+    /^(?:[a-zA-Z0-9._-]+@)?([^:/\s]{2,}):\/?([^/\s]+(?:\/[^/\s]+)+)$/i.exec(normalized);
   const scpHost = scpStyleHostAndPath?.[1];
   const scpPath = scpStyleHostAndPath?.[2];
   if (scpHost && scpPath) {
