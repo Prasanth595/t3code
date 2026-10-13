@@ -809,7 +809,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       yield* Deferred.await(handlerStarted);
       const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 137 });
       yield* Deferred.succeed(exited, exitError);
-      yield* TestClock.adjust(CodexProtocol.PROCESS_EXIT_INPUT_GRACE);
+      yield* TestClock.adjust("5 seconds");
 
       assert.strictEqual(yield* Deferred.await(termination), exitError);
       assert.strictEqual(yield* Fiber.join(pending), exitError);

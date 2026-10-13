@@ -19,11 +19,12 @@ const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
 const MAX_BUFFERED_RAW_MESSAGES = 32;
 
 /**
- * How long input may keep arriving after the process exits. The pipe can
- * still hold output the process wrote before it exited; past this, a reader
- * that has not reached the end of input is stuck and the exit ends the session.
+ * How long the reader may keep handling input after the process exits. The
+ * pipe can still hold output written before the exit. Past this, the exit ends
+ * the connection and any input not yet handled is dropped, so a reader that is
+ * stuck in a handler cannot hold the connection open forever.
  */
-export const PROCESS_EXIT_INPUT_GRACE = Duration.seconds(5);
+const PROCESS_EXIT_INPUT_GRACE = Duration.seconds(5);
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";

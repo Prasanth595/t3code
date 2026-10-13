@@ -3813,9 +3813,13 @@ describe("orchestrator MCP toolkit", () => {
         // The recorder stopped Codex after its last frame, but this test keeps
         // the parent turn running past the recording. Replaying that exit would
         // end the session and fail the parent run.
+        const lastEntry = workspaceTranscript.entries.at(-1);
         const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript({
           ...workspaceTranscript,
-          entries: workspaceTranscript.entries.filter((entry) => entry.type !== "runtime_exit"),
+          entries:
+            lastEntry?.type === "runtime_exit"
+              ? workspaceTranscript.entries.slice(0, -1)
+              : workspaceTranscript.entries,
         });
         const layerOrchestrator = ProviderReplayHarness.layerProviderReplay(
           {
