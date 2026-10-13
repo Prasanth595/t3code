@@ -3195,7 +3195,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
    * provider process, so it is marked interrupted. Only the stopped turn's run
    * and older runs are settled; a later run's work is its own. A subagent target
    * limits repair to that task and its runless child work, using a confirmed
-   * provider outcome. Older targeted commands without an outcome do not settle work.
+   * provider outcome.
    */
   Schema.Struct({
     type: Schema.Literal("thread.background-work.settle"),
@@ -3207,13 +3207,11 @@ const OrchestrationV2InternalCommand = Schema.Union([
       Schema.Struct({
         id: NodeId,
         stoppedAt: Schema.DateTimeUtc,
-        outcome: Schema.optional(
-          Schema.Struct({
-            status: Schema.Literals(["completed", "failed", "cancelled"]),
-            completedAt: Schema.DateTimeUtc,
-            result: Schema.NullOr(Schema.String),
-          }),
-        ),
+        outcome: Schema.Struct({
+          status: Schema.Literals(["completed", "failed", "cancelled"]),
+          completedAt: Schema.DateTimeUtc,
+          result: Schema.NullOr(Schema.String),
+        }),
       }),
     ),
   }),

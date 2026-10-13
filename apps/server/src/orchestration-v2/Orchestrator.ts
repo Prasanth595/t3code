@@ -8919,8 +8919,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       if (command.subagent !== undefined) {
         const outcome = command.subagent.outcome;
-        // Neither a stop request nor an elapsed timeout proves the task ended.
-        if (outcome === undefined) return;
         const subagent = projection.subagents.find((task) => task.id === command.subagent?.id);
         if (
           subagent?.origin !== "provider_native" ||

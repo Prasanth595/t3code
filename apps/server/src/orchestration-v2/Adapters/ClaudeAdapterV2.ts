@@ -3499,7 +3499,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         // idle, a running subagent's frames are projected through it at once
         // instead of waiting in the wake buffer for a continuation run.
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
-        const subagentStopOutcomes = new Map<string, Deferred.Deferred<void>>();
+        const subagentStopOutcomes = new Map<
+          string,
+          Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
+        >();
         // An idle outcome stays buffered for the parent's wake, but must not
         // settle the child again after that child resumes.
         const appliedSubagentOutcomes = new WeakSet<SDKMessage>();
@@ -5263,7 +5266,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
           if (input.nativeOutcome !== undefined && subagent.confirmedOutcome !== undefined) {
             const outcome = subagentStopOutcomes.get(input.taskId);
-            if (outcome !== undefined) yield* Deferred.succeed(outcome, undefined);
+            if (outcome !== undefined) yield* Deferred.succeed(outcome, subagent.confirmedOutcome);
           }
 
           // A completed subagent's result is normally its final assistant
@@ -9109,17 +9112,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               });
             }
             const outcome =
-              subagentStopOutcomes.get(input.nativeTaskId) ?? (yield* Deferred.make<void>());
+              subagentStopOutcomes.get(input.nativeTaskId) ??
+              (yield* Deferred.make<ProviderAdapter.ProviderAdapterV2SubagentOutcome>());
             subagentStopOutcomes.set(input.nativeTaskId, outcome);
-            yield* existing.query.stopTask(input.nativeTaskId).pipe(
+            const confirmedOutcome = yield* existing.query.stopTask(input.nativeTaskId).pipe(
               Effect.andThen(Deferred.await(outcome)),
               Effect.timeout("2 seconds"),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterProtocolError({
                     driver: CLAUDE_PROVIDER,
-                    detail:
-                      "Claude subagent Stop was not confirmed by a terminal task notification.",
+                    detail: "Claude subagent Stop was not confirmed by a native outcome.",
                     cause,
                   }),
               ),
@@ -9130,16 +9133,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 }),
               ),
             );
-            const terminal = (yield* Ref.get(sessionSubagentsByTaskId)).get(
-              input.nativeTaskId,
-            )?.confirmedOutcome;
-            if (terminal === undefined) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: CLAUDE_PROVIDER,
-                detail: "Claude subagent resumed before its Stop outcome could be confirmed.",
-              });
-            }
-            return terminal;
+            const current = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.nativeTaskId);
+            return current?.task.startedAt === subagent.task.startedAt
+              ? confirmedOutcome
+              : undefined;
           }),
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {

@@ -31,14 +31,6 @@ import { OrchestrationEffectRequestV2 } from "./EffectOutbox.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
-import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
-import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
-import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import * as RunFinalizationService from "./RunFinalizationService.ts";
-import * as ResourceCleanupService from "./ResourceCleanupService.ts";
-import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
-import * as RuntimeRequestService from "./RuntimeRequestService.ts";
-import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -603,14 +595,7 @@ it.effect("thread.stop marks a turn it cannot interrupt so a late agent watch is
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect.each([
-  "missing session",
-  "provider no-op",
-  "provider error",
-  "completed",
-  "failed",
-  "cancelled",
-] as const)(
+it.effect.each(["missing session", "completed", "failed", "cancelled"] as const)(
   "a native child Stop only settles a confirmed %s outcome and preserves its owner and sibling",
   (providerState) =>
     Effect.gen(function* () {
@@ -785,49 +770,14 @@ it.effect.each([
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
         yield* worker.drain();
       } else {
-        // A terminal registry entry or an already-stopped CLI task can return
-        // without reporting any outcome, while the projection is still running.
-        const outbox = yield* EffectOutbox.EffectOutboxV2;
-        const [stopEffect] = yield* outbox.listByCommandId(commandId);
-        assert.isDefined(stopEffect);
-        let stopCalls = 0;
-        const execution = yield* EffectWorker.OrchestrationEffectExecutorV2.use((executor) =>
-          executor.execute(stopEffect!),
-        ).pipe(
-          Effect.provide(
-            EffectWorker.layerExecutor.pipe(
-              Layer.fresh,
-              Layer.provide(
-                Layer.mergeAll(
-                  Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({
-                    interrupt: (input) => {
-                      assert.equal(input.subagent?.nativeTaskId, "claude-task");
-                      stopCalls++;
-                      return providerState === "provider error"
-                        ? new ProviderTurnControlService.ProviderTurnControlError({
-                            threadId,
-                            providerTurnId,
-                            operation: "interrupt",
-                            cause: "Task no longer exists",
-                          })
-                        : Effect.succeed(confirmedOutcome);
-                    },
-                  }),
-                  Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({}),
-                  Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
-                  Layer.mock(RunFinalizationService.RunFinalizationService)({}),
-                  Layer.mock(ResourceCleanupService.ResourceCleanupService)({}),
-                  Layer.mock(CheckpointRollbackService.CheckpointRollbackServiceV2)({}),
-                  Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
-                  Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
-                ),
-              ),
-            ),
-          ),
-          Effect.exit,
-        );
-        assert.equal(stopCalls, 1);
-        assert.equal(Exit.isFailure(execution), providerState === "provider error");
+        yield* orchestrator.dispatch({
+          type: "thread.background-work.settle",
+          commandId: CommandId.make("repair-native-child"),
+          threadId,
+          providerThreadId: providerThread.id,
+          providerTurnId,
+          subagent: { id: subagent.id, stoppedAt: now, outcome: confirmedOutcome! },
+        });
       }
       const settled = yield* orchestrator.getThreadProjection(threadId);
       const cancelled = settled.subagents.find((task) => task.id === subagent.id)!;
@@ -850,21 +800,6 @@ it.effect.each([
           "running",
         );
         assert.deepEqual(yield* threadState(threadId), stateBefore);
-        // Old targeted commands with no provider evidence must also remain harmless.
-        yield* orchestrator.dispatch({
-          type: "thread.background-work.settle",
-          commandId: CommandId.make("unconfirmed-legacy-stop"),
-          threadId,
-          providerThreadId: providerThread.id,
-          providerTurnId,
-          subagent: { id: subagent.id, stoppedAt: now },
-        });
-        assert.equal(
-          (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
-            (task) => task.id === subagent.id,
-          )?.status,
-          "running",
-        );
         return;
       }
 
