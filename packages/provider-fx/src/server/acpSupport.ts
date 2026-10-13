@@ -160,11 +160,11 @@ export function withFxSessionMode(
 /**
  * fx lists its backend `provider` before `model`, both with category `model`,
  * so the write goes to config id `model`. "Default" selects the model `fx
- * status` reports, which the provider snapshot carries; without one (the bare
- * adapter registry) the session keeps its model. A model the session does not
- * list (a custom model) is still sent: fx's gateway takes any id, and its
- * other backends refuse an unknown one with their own error, so a thread
- * never runs on a model it did not pick.
+ * status` reports, which the provider snapshot carries, when the session
+ * lists it; otherwise the session keeps its model. A model the thread picked
+ * is sent even when the session does not list it (a custom model): fx's
+ * gateway takes any id, and its other backends refuse an unknown one with
+ * their own error, so a thread never runs on a model it did not pick.
  */
 export const applyFxModelSelection = (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
@@ -177,11 +177,18 @@ export const applyFxModelSelection = (
     );
     const current = option?.type === "select" ? option.currentValue : undefined;
     const requested = modelSelection.model.trim();
-    const target =
-      requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG
-        ? defaultModel && (yield* defaultModel)
-        : requested;
+    const isDefault = requested.length === 0 || requested === FX_DEFAULT_MODEL_SLUG;
+    const target = isDefault ? defaultModel && (yield* defaultModel) : requested;
     if (target === undefined || target === current) return current;
+    // The status default can belong to another fx backend than the session's
+    // (after `fx provider`, or a loaded older session); then the session's
+    // own model stands.
+    if (
+      isDefault &&
+      (option === undefined || !collectSessionConfigOptionValues(option).includes(target))
+    ) {
+      return current;
+    }
     yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target, { allowUnlistedValue: true });
     return target;
   });

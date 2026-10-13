@@ -47,6 +47,7 @@ const ENABLED_FX_SETTINGS = Schema.decodeSync(FxSettings)({ enabled: true });
 const FX_DEFAULT_MODEL = "anthropic/claude-opus-5.5";
 const NAMED_MODEL = "anthropic/claude-sonnet-5.5";
 const CUSTOM_MODEL = "openai/gpt-6.1-sol";
+const CODEX_MODEL = "gpt-6.1-sol";
 const FX_0_0_13_MODES = ["code", "ask"];
 /** fx `main` after vercel-labs/fx#1189. */
 const FX_MAIN_MODES = ["auto", "ask", "full-access"];
@@ -86,9 +87,16 @@ const fxConfig = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
   readonly mode?: string;
+  /** The session's own model list, on a backend other than the gateway. */
+  readonly models?: ReadonlyArray<string>;
 }) => [
   select("provider", "model", "gateway", ["gateway", "codex", "grok"]),
-  select("model", "model", input.model, [NAMED_MODEL, FX_DEFAULT_MODEL, "openai/gpt-5.6-sol"]),
+  select(
+    "model",
+    "model",
+    input.model,
+    input.models ?? [NAMED_MODEL, FX_DEFAULT_MODEL, "openai/gpt-5.6-sol"],
+  ),
   select("mode", "mode", input.mode ?? "ask", input.modes),
   select("effort", "thought_level", "xhigh", ["auto", "low", "medium", "high", "xhigh", "max"]),
 ];
@@ -97,7 +105,11 @@ const fxConfig = (input: {
  * fx's reply to `session/new` or `session/load`. fx 0.0.13 reports `ask`
  * while it enforces its saved default until a client writes the mode.
  */
-const fxSession = (input: { readonly model: string; readonly modes: ReadonlyArray<string> }) => ({
+const fxSession = (input: {
+  readonly model: string;
+  readonly modes: ReadonlyArray<string>;
+  readonly models?: ReadonlyArray<string>;
+}) => ({
   sessionId: SESSION_ID,
   configOptions: fxConfig(input),
   modes: { currentModeId: "ask", availableModes: input.modes.map((id) => ({ id, name: id })) },
@@ -292,6 +304,31 @@ describe("FxAdapterV2", () => {
         ),
         // Written on load even though fx reports ask.
         ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+      ],
+    }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
+  // `fx status` names the gateway default, but this loaded session runs on
+  // Codex, whose catalog lacks it; fx would refuse the write and the thread
+  // could not start.
+  it.effect("keeps the session's model when its backend lacks fx's default", () =>
+    openFxSession({
+      scenario: "default-other-backend",
+      runtimeMode: "approval-required",
+      model: "default",
+      loadSessionId: SESSION_ID,
+      frames: [
+        ...initialize,
+        outbound("session/load"),
+        answer(
+          "session/load",
+          fxSession({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
+        ),
+        ...setConfig(
+          "mode",
+          "ask",
+          fxConfig({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
+        ),
       ],
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );
