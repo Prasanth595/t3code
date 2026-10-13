@@ -75,6 +75,7 @@ const successFor =
   (exit: Exit.Exit<unknown, unknown>): Duration.Input =>
     Exit.isSuccess(exit) ? ttl : Duration.zero;
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const github = yield* GitHubApi.GitHubApi;
 
