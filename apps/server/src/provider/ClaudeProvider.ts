@@ -265,7 +265,7 @@ type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   /**
    * The organization UUID reported by the configured CLI, with the login's
-   * `.claude.json` as a fallback for older CLIs.
+   * `.claude.json` as a fallback when the CLI cannot report its status.
    */
   readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
@@ -470,15 +470,9 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
 
 const ClaudeAuthStatus = Schema.fromJsonString(
   Schema.Struct({
-    loggedIn: Schema.Boolean,
     orgId: Schema.optional(Schema.NullOr(Schema.String)),
   }),
 );
-
-class ClaudeAuthStatusError extends Schema.TaggedError<ClaudeAuthStatusError>()(
-  "ClaudeAuthStatusError",
-  { exitCode: Schema.Number },
-) {}
 
 /** Read identity through the configured binary so account-selecting wrappers apply. */
 export const probeClaudeOrganizationId = Effect.fn("probeClaudeOrganizationId")(function* (
@@ -486,11 +480,8 @@ export const probeClaudeOrganizationId = Effect.fn("probeClaudeOrganizationId")(
   environment?: NodeJS.ProcessEnv,
 ) {
   const result = yield* runClaudeCommand(claudeSettings, ["auth", "status", "--json"], environment);
-  if (result.code !== 0) {
-    return yield* new ClaudeAuthStatusError({ exitCode: result.code });
-  }
   const status = yield* Schema.decodeUnknownEffect(ClaudeAuthStatus)(result.stdout);
-  return status.loggedIn ? status.orgId?.trim() || undefined : undefined;
+  return status.orgId?.trim() || undefined;
 });
 
 /** Read commands from the same cwd Claude uses for a workspace session. */

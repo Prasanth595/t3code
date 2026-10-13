@@ -415,6 +415,13 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         },
       };
 
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(fixtures.claudeHomePath, ".claude.json"),
+        '{"oauthAccount":{"organizationUuid":"file-org"}}',
+      );
+
       const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv | ClaudeDriverEnv>({
         drivers: [CodexDriver, ClaudeDriver],
         configMap,
@@ -433,6 +440,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         status: "ready",
         installed: true,
         version: "2.1.219",
+        auth: { workspaceId: "cli-org" },
       });
     }).pipe(Effect.provide(layerTest)),
   );

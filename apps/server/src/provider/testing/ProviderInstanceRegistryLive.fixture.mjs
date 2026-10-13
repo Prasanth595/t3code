@@ -5,6 +5,10 @@ if (process.argv.includes("--version")) {
   process.stdout.write("claude 2.1.219\n");
   process.exit(0);
 }
+if (process.argv.slice(2).join(" ") === "auth status --json") {
+  process.stdout.write('{"loggedIn":true,"orgId":"cli-org"}');
+  process.exit(0);
+}
 const lines = NodeReadline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const message = JSON.parse(line);
