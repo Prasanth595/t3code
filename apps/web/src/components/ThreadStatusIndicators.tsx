@@ -169,14 +169,18 @@ export interface ThreadPullRequestBadgePresentation {
   readonly text: string | number;
 }
 
+const MAX_BADGE_NUMBERS = 3;
+
 /** Resolve the complete badge appearance before rendering it in the sidebar or composer. */
 export function resolveThreadPullRequestBadgePresentation({
   badge,
+  pullRequests = [],
   number,
   url,
   status,
 }: {
   readonly badge: ThreadPullRequestBadge | null;
+  readonly pullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly number?: number | undefined;
   readonly url?: string | undefined;
   readonly status: PrStatusIndicator | null;
@@ -198,11 +202,17 @@ export function resolveThreadPullRequestBadgePresentation({
   if (badge?.kind === "pull-request" && badge.others > 0) {
     // Unrelated links fold into one state, so a count of merged PRs reads as merged.
     const aggregate = PULL_REQUEST_STATE_PRESENTATION[badge.state];
+    // The current PR leads, then the other links in their linked order.
+    const rest = visibleThreadPullRequests(pullRequests).map((link) => link.number);
+    const currentIndex = rest.indexOf(number);
+    if (currentIndex !== -1) rest.splice(currentIndex, 1);
+    const shown = [number, ...rest].slice(0, MAX_BADGE_NUMBERS);
+    const hidden = badge.others + 1 - shown.length;
     return {
       Icon: aggregate.Icon,
       toneClassName: aggregate.toneClassName,
       label: `${tooltip}, and ${badge.others} more linked; overall ${aggregate.label.toLowerCase()}`,
-      text: `+${badge.others + 1}`,
+      text: hidden > 0 ? `${shown.join(", ")} +${hidden}` : shown.join(", "),
     };
   }
   return {
@@ -239,7 +249,13 @@ export function ThreadPullRequestBadgeControl({
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
 }) {
-  const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status });
+  const presentation = resolveThreadPullRequestBadgePresentation({
+    badge,
+    pullRequests,
+    number,
+    url,
+    status,
+  });
   if (presentation === null) return null;
   return (
     <PullRequestBadge

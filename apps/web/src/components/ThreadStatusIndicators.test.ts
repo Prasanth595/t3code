@@ -1,5 +1,10 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import { ProjectId, type PullRequestSummary, type VcsStatusResult } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type PullRequestSummary,
+  type ThreadPullRequestLink,
+  type VcsStatusResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
@@ -20,6 +25,19 @@ import {
 } from "./ThreadStatusIndicators";
 import { newestPullRequestSummary } from "../state/pullRequests";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
+
+function linkedPullRequest(number: number): ThreadPullRequestLink {
+  return {
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number,
+    url: `https://github.com/pingdotgg/t3code/pull/${number}`,
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    snapshot: null,
+    stack: null,
+  };
+}
 
 describe("synchronizeTerminalPulse", () => {
   it("pins only the status pulse to the document clock", () => {
@@ -787,6 +805,11 @@ describe("resolveThreadPullRequestBadgePresentation", () => {
       expect(
         resolveThreadPullRequestBadgePresentation({
           badge: { kind: "pull-request", others: 2, state },
+          pullRequests: [
+            linkedPullRequest(7),
+            linkedPullRequest(fixture.number),
+            linkedPullRequest(8),
+          ],
           number: fixture.number,
           url: fixture.url,
           status: closedStatus,
@@ -795,10 +818,21 @@ describe("resolveThreadPullRequestBadgePresentation", () => {
         Icon: expectedIcon,
         toneClassName: expectedToneClassName,
         label: `PR #42 - Closed: PR branch, and 2 more linked; overall ${state}`,
-        text: "+3",
+        text: "42, 7, 8",
       });
     },
   );
+
+  it("shows up to three linked pull request numbers and counts the rest", () => {
+    const presentation = resolveThreadPullRequestBadgePresentation({
+      badge: { kind: "pull-request", others: 4, state: "open" },
+      pullRequests: [7, 8, 42, 9, 10].map(linkedPullRequest),
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      status: null,
+    });
+    expect(presentation?.text).toBe("42, 7, 8 +2");
+  });
 
   it("omits the control when neither a stack nor a linked identity can be shown", () => {
     expect(resolveThreadPullRequestBadgePresentation({ badge: null, status: null })).toBeNull();
