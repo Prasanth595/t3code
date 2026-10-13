@@ -2,6 +2,7 @@
 
 This fork ([Yarden-zamir/t3code](https://github.com/Yarden-zamir/t3code)) publishes its own desktop builds.
 The installed app updates itself from the fork releases through the built-in updater.
+Agents that operate the machines, the machine map or the deploys start with [fork-agents.md](fork-agents.md).
 
 ## How it works
 
@@ -193,6 +194,28 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 - Each entry is an Electron accelerator. The settings field rejects a key that Electron cannot name. The ISO section key `§` is one of them: map it to a function key, for example with Karabiner.
 - If another app or feature already holds a key, the desktop app logs a warning and skips it.
 
+## Repository owner filters
+
+The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is off by default. Turn it on in Settings > General > Repository owner filters.
+
+- The owner comes from the repository that groups the project in the sidebar. A fork checkout counts under the owner of the fork.
+- Pull request page: open Filters > Owner. Pick "Show only selected" or "Hide selected", then pick the owners.
+- In the pull request search, type `org:` or `owner:` to show only an owner, and `-org:` or `-owner:` to hide an owner. A typed owner replaces the menu choice.
+- Sidebar: click the building icon next to the project scope, pick "Show only" or "Hide", then pick the owners.
+- While the sidebar filter is on, a chip under the header names it and counts the hidden projects. Click "is" or "is not" on the chip to flip it. Click × to clear it.
+- The sidebar keeps a thread visible while it runs, waits for its subagents or monitors, or waits for you. This also applies when the filter hides its project.
+- A project without a remote has no owner. "Show only" hides it, and "Hide" keeps it. In the sidebar, pick "No repository owner" to filter these projects.
+
+## Pull request filter chips
+
+The client setting `pullRequestFilterChips` shows the active pull request filters as chips above the list. It is off by default. Turn it on in Settings > General > Pull request filter chips.
+
+- Each filter that the Filters menu, the provider menu or the project scope sets gets a chip, for example "State: Merged" or "Owner is not qlik-trial".
+- Click "is" or "is not" on a chip to flip it. Owners, drafts and labels can flip. A label flips into a typed `-label:`, because the menu cannot exclude labels.
+- Click × on a chip to remove that filter. Click "Clear all" to remove all of them.
+- Typed qualifiers stay in the search box, so they get no chip. A menu filter that a typed qualifier replaces gets no chip, because it does not apply.
+- When no pull request matches the menu filters, the empty list names them and offers "Clear filters". With search text, the empty list names the search instead.
+
 ## Pull request watch remark filter
 
 The server setting `pullRequestWatchRemarkFilter` selects which comments and reviews wake an agent that watches a pull request. It is off by default. Turn it on in Settings > Source control > Pull request watch.
@@ -218,6 +241,7 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
 
+- Agents use the machine map through the `machines_*` and `machine_tool_call` tools. See [fork-agents.md](fork-agents.md).
 - Join: in the portal, "Add machine" shows a one-time join code. On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
 - Settings > Machines shows the connection status, the last error, the portal link, this machine's name, and the machines that it can use with their levels. "Leave" forgets the token and turns `machineMap` off. Join and leave need the `settings:write` scope.
 - The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.

@@ -43,7 +43,16 @@ const joinCommand = Command.make("join", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Join this machine to the machine map with a one-time code."),
+  Command.withDescription(
+    "Join this machine to the machine map with a one-time code from Add machine in the portal. The T3 server must run. It saves the machine token, turns on the machineMap setting and connects.",
+  ),
+  Command.withExamples([
+    { command: "t3 machine-map join K7QM-2XPA", description: "Join the portal of the setting." },
+    {
+      command: "t3 machine-map join K7QM-2XPA --portal https://t3.yarden-zamir.com",
+      description: "Join a given portal.",
+    },
+  ]),
   Command.withHandler((flags) =>
     callOnServer(flags, (connection) =>
       Effect.gen(function* () {
@@ -72,6 +81,11 @@ const joinCommand = Command.make("join", {
 );
 
 export const machineMapCommand = Command.make("machine-map").pipe(
-  Command.withDescription("Fork: the machine map of T3 servers (apps/machine-map/SPEC.md)."),
+  Command.withDescription(
+    "Fork: the machine map of T3 servers. Agents use the machines_* MCP tools; see docs/fork-agents.md.",
+  ),
+  Command.withExamples([
+    { command: "t3 machine-map join K7QM-2XPA", description: "Join this machine to the map." },
+  ]),
   Command.withSubcommands([joinCommand]),
 );
