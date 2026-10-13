@@ -1,4 +1,4 @@
-// @effect-diagnostics globalTimers:off globalTimersInEffect:off - A host timer, not Effect.sleep, lets input and rendering run between row chunks.
+// @effect-diagnostics globalTimers:off globalTimersInEffect:off -- A host timer, not Effect.sleep, lets input and rendering run between row chunks.
 import { OrchestrationV2ThreadShellJson } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

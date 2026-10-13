@@ -1,4 +1,4 @@
-// @effect-diagnostics globalTimers:off - The tests spy on the host timer the encoder yields through.
+// @effect-diagnostics globalTimers:off -- The tests spy on the host timer the encoder yields through.
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
