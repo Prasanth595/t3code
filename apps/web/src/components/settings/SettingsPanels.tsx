@@ -184,6 +184,7 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
+import { ThreadCardLayoutSettingsSection } from "./ThreadCardLayoutSettings";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -1524,6 +1525,8 @@ export function AppearanceSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <ThreadCardLayoutSettingsSection />
 
       <SettingsSection id="motion" title="Motion">
         <SettingsRow

@@ -151,6 +151,10 @@
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
     },
+    "./slotLayout": {
+      "types": "./src/slotLayout.ts",
+      "import": "./src/slotLayout.ts"
+    },
     "./projectSettings": {
       "types": "./src/projectSettings.ts",
       "import": "./src/projectSettings.ts"

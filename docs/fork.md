@@ -142,6 +142,27 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 - The server reads GitHub with the GitHub credential of its machine, the same one that pull requests use (settings, `GH_TOKEN` or `gh auth login`). Without a credential, the changelog shows the GitHub error.
 - Starting Fork Sync needs the `source-control:write` scope on the connection.
 
+## Install the fork
+
+`scripts/fork-install/` installs the fork on a new machine. The join dialog of the machine map copies these commands with the join code (MM-211).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
+```
+
+- On macOS, `install.sh` downloads the newest nightly `.dmg`, copies the app to `/Applications` and opens it. It keeps an installed app, because the app updates itself. `--force` replaces it. The join code goes to the clipboard for Settings > Machines.
+- On Windows, `install.ps1` downloads and runs the newest nightly `.exe`. The join code goes to the clipboard.
+- Both read the release list of the GitHub API, because the nightlies are pre-releases and `releases/latest` skips them.
+- On Linux, `install.sh` does not use the Linux server archive of the release yet. It clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs `~/.local/bin/t3` and the systemd user service `t3code-fork.service` on `127.0.0.1:3773`. Then it runs `t3 machine-map join <code>`. Run it again to update. A restart stops the running agent turns of that server.
+- `--from-source` selects the source build on any system. Keep this path when Linux switches to the server archive. On macOS it installs no service.
+- The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
+- To keep the Linux server running after logout, run `loginctl enable-linger $(id -un)`. To reach it from other machines, publish it with a tunnel, like the VPS.
+- Run `install.sh --help` for the options.
+
 ## Deploy to the VPS
 
 The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
@@ -201,11 +222,12 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is off by default. Turn it on in Settings > General > Repository owner filters.
 
 - The owner comes from the repository that groups the project in the sidebar. A fork checkout counts under the owner of the fork.
+- The menus offer only owners whose projects have threads. The owner of a cloned repository without threads does not show.
 - Pull request page: open Filters > Owner. Pick "Show only selected" or "Hide selected", then pick the owners.
 - In the pull request search, type `org:` or `owner:` to show only an owner, and `-org:` or `-owner:` to hide an owner. A typed owner replaces the menu choice.
 - Sidebar: click the building icon next to the project scope, pick "Show only" or "Hide", then pick the owners.
 - While the sidebar filter is on, a chip under the header names it and counts the hidden projects. Click "is" or "is not" on the chip to flip it. Click × to clear it.
-- The sidebar keeps a thread visible while it runs, waits for its subagents or monitors, or waits for you. This also applies when the filter hides its project.
+- The filter hides every thread of a hidden project. When a hidden thread waits for an approval or an answer, the chip shows how many, for example "2 need you".
 - A project without a remote has no owner. "Show only" hides it, and "Hide" keeps it. In the sidebar, pick "No repository owner" to filter these projects.
 
 ## Pull request filter chips
@@ -227,6 +249,18 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 - A choice for today shows while its time is more than an hour away. A choice that lands on the same time as an earlier one does not show.
 - A blank label shows a label that names the choice, such as "In 3 hours" or "Tomorrow".
 - The setting applies to the snooze button, the thread menu and the menu for selected threads, on web and desktop. The mobile app keeps the built-in choices.
+
+## Thread card layouts
+
+The server setting `threadCardLayouts` holds a custom thread card layout for desktop and web (`desktop`) and for the mobile app (`mobile`). Each value is `null` by default, and the card then keeps its built-in look. Edit it in Settings > Appearance > Thread cards.
+
+- A layout is rows of elements. Each row has a left group that takes the free width and truncates, and a right group that keeps its size.
+- Drag an element between groups, or into the Hidden tray to hide it. The title and the status cannot be hidden, because the status holds the settle and snooze controls.
+- The setting is shared: a change goes to every connected server that supports shared settings, so the phone reads the same layout.
+- The mobile tab offers no terminal or diff element. The preview shows the mobile arrangement with web styles, because the phone draws its cards natively.
+- Every element of a custom layout carries `data-thread-card-element="<name>"`, so a theme CSS file can style one element, for example `[data-thread-card-element="terminal"] > *`.
+- The layout schema and its edit operations are generic (`packages/contracts/src/slotLayout.ts`, `packages/shared/src/slotLayout.ts`). Another surface can reuse them with its own element list.
+- Search results in the sidebar and the hosted app (app.t3.codes, which has no primary server) keep the built-in card.
 
 ## Pull request watch remark filter
 
@@ -254,7 +288,7 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
 
 - Agents use the machine map through the `machines_*` and `machine_tool_call` tools. See [fork-agents.md](fork-agents.md).
-- Join: in the portal, "Add machine" shows a one-time join code. On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
+- Join: in the portal, "Add machine" shows a one-time join code. A machine without the fork installs it first with the step 0 command of the dialog, see "Install the fork". On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
 - Settings > Machines shows the connection status, the last error, the portal link, this machine's name, and the machines that it can use with their levels. "Leave" forgets the token and turns `machineMap` off. Join and leave need the `settings:write` scope.
 - The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.
 - The desktop app reads the machine map state of its own server. It acts only while that server is joined, because only then does the server send it the token headers.

@@ -284,6 +284,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "thread-card-layout",
+    title: "Custom card layout",
+    to: "/settings/appearance",
+    searchTerms: ["thread card sidebar compact density rows builder layout mobile branch"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",

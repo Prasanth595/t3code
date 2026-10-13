@@ -103,7 +103,6 @@ import {
   projectsOfOwners,
   pullRequestMenuOwnerFilter,
   pullRequestOwnerRowFilter,
-  pullRequestProjectOwners,
 } from "../components/pullRequest/pullRequestOwnerFilter.logic";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
@@ -496,7 +495,6 @@ function PullRequestsRouteView() {
         : pullRequestOwnerRowFilter(projects, localOwners),
     [keepRequestOwnerRow, localOwners, projects, requestOwners],
   );
-  const ownerOptions = useMemo(() => pullRequestProjectOwners(projects), [projects]);
   const environmentLabels = useMemo(
     () =>
       new Map(
@@ -2260,7 +2258,7 @@ function PullRequestsRouteView() {
           ? {
               selected: menuOwners,
               operator: menuOwnerOperator,
-              options: ownerOptions,
+              projects,
               onChange: (owners) => updateMenuOwnerFilter(owners, menuOwnerOperator),
               onOperator: (operator) => updateMenuOwnerFilter(menuOwners, operator),
             }

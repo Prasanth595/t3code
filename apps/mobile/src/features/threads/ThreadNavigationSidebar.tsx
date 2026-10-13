@@ -32,7 +32,7 @@ import { useProjects, useNavigationThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { usePendingThreadOrder } from "../../state/thread-order";
-import { threadListEnvironmentsAtom } from "../../state/server";
+import { mobileThreadCardLayoutAtom, threadListEnvironmentsAtom } from "../../state/server";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import { useWorkspaceState } from "../../state/workspace";
@@ -316,6 +316,7 @@ function ThreadNavigationSidebarPane(
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
+  const cardLayout = useAtomValue(mobileThreadCardLayoutAtom);
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
@@ -607,6 +608,7 @@ function ThreadNavigationSidebarPane(
       projectByKey,
       projectTitleByProjectKey,
       savedConnectionsById,
+      cardLayout,
       listEnvironments,
       threadSearchMatchByKey,
       // Rows read it for their reorder menu items.
@@ -617,6 +619,7 @@ function ThreadNavigationSidebarPane(
       projectByKey,
       projectTitleByProjectKey,
       savedConnectionsById,
+      cardLayout,
       listEnvironments,
       threadSearchMatchByKey,
       workingShelfEnabled,
@@ -711,6 +714,7 @@ function ThreadNavigationSidebarPane(
                   : null
               }
               environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
+              cardLayout={cardLayout}
               searchMatch={threadSearchMatchByKey.get(
                 threadSearchMatchKey({
                   environmentId: thread.environmentId,
@@ -802,6 +806,7 @@ function ThreadNavigationSidebarPane(
       handleSelectThread,
       handleSwipeableClose,
       handleSwipeableWillOpen,
+      cardLayout,
       machineByEnvironmentId,
       moveThread,
       openPendingTask,

@@ -27,6 +27,7 @@ import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
 import IconBox from "@tabler/icons-react-native/IconBox";
 import IconBrain from "@tabler/icons-react-native/IconBrain";
+import IconCalendar from "@tabler/icons-react-native/IconCalendar";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
 import IconCar from "@tabler/icons-react-native/IconCar";
 import IconChartBar from "@tabler/icons-react-native/IconChartBar";
@@ -45,6 +46,7 @@ import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
 import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
+import IconCpu from "@tabler/icons-react-native/IconCpu";
 import IconDatabase from "@tabler/icons-react-native/IconDatabase";
 import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
 import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
@@ -77,12 +79,14 @@ import IconInfoCircle from "@tabler/icons-react-native/IconInfoCircle";
 import IconKeyboard from "@tabler/icons-react-native/IconKeyboard";
 import IconKeyboardHide from "@tabler/icons-react-native/IconKeyboardHide";
 import IconLock from "@tabler/icons-react-native/IconLock";
+import IconLockOpen from "@tabler/icons-react-native/IconLockOpen";
 import IconLayoutColumns from "@tabler/icons-react-native/IconLayoutColumns";
 import IconLayoutSidebar from "@tabler/icons-react-native/IconLayoutSidebar";
 import IconLayoutSidebarRight from "@tabler/icons-react-native/IconLayoutSidebarRight";
 import IconLetterSpacing from "@tabler/icons-react-native/IconLetterSpacing";
 import IconMicrophone from "@tabler/icons-react-native/IconMicrophone";
 import IconLink from "@tabler/icons-react-native/IconLink";
+import IconListCheck from "@tabler/icons-react-native/IconListCheck";
 import IconListNumbers from "@tabler/icons-react-native/IconListNumbers";
 import IconMenu2 from "@tabler/icons-react-native/IconMenu2";
 import IconMessageCircleQuestion from "@tabler/icons-react-native/IconMessageCircleQuestion";
@@ -168,7 +172,9 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "cable.connector": IconPlug,
   camera: IconCamera,
   car: IconCar,
+  calendar: IconCalendar,
   "chart.bar.xaxis": IconChartBar,
+  checklist: IconListCheck,
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,
   "checkmark.circle.fill": IconCircleCheck,
@@ -180,6 +186,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,
+  cpu: IconCpu,
   "chevron.down": IconChevronDown,
   "chevron.left": IconChevronLeft,
   "chevron.left.forwardslash.chevron.right": IconCode,
@@ -211,6 +218,8 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   keyboard: IconKeyboard,
   laptopcomputer: IconDeviceLaptop,
   link: IconLink,
+  lock: IconLock,
+  "lock.open": IconLockOpen,
   "list.number": IconListNumbers,
   "line.3.horizontal": IconMenu2,
   "line.3.horizontal.decrease": IconFilter,

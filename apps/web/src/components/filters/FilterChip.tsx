@@ -40,6 +40,7 @@ export function FilterChip({
   operator,
   value,
   detail,
+  alert,
   onFlip,
   onRemove,
 }: {
@@ -49,6 +50,8 @@ export function FilterChip({
   readonly value: string;
   /** Context after the value, such as "3 projects hidden". */
   readonly detail?: string | undefined;
+  /** Hidden items that need the user, such as "2 need you", shown in the warning color. */
+  readonly alert?: string | undefined;
   /** Present when the filter can flip between is and is not. */
   readonly onFlip?: (() => void) | undefined;
   readonly onRemove: () => void;
@@ -82,6 +85,12 @@ export function FilterChip({
         <TooltipPopup side="top">{filterSentence({ field, operator, value })}</TooltipPopup>
       </Tooltip>
       {detail ? <span className="shrink-0 text-muted-foreground">· {detail}</span> : null}
+      {alert ? (
+        <span className="inline-flex shrink-0 items-center gap-1 font-medium text-warning-foreground">
+          <span aria-hidden className="size-1.5 rounded-full bg-warning" />
+          {alert}
+        </span>
+      ) : null}
       <Button
         size="icon-micro"
         variant="ghost-muted"
