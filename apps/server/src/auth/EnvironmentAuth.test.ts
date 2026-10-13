@@ -744,6 +744,32 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
     }).pipe(Effect.provide(layerEnvironmentAuth({ mode: "web" }))),
   );
 
+  it.effect("accepts cookie sessions from configured trusted browser origins", () =>
+    Effect.gen(function* () {
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      const pairing = yield* serverAuth.issuePairingCredential();
+      const exchanged = yield* serverAuth.createBrowserSession(pairing.credential, requestMetadata);
+      const post = (origin: string) =>
+        serverAuth.authenticateHttpRequest({
+          cookies: { [sessions.cookieName]: exchanged.sessionToken },
+          headers: { host: "127.0.0.1:3773", origin, "sec-fetch-site": "same-site" },
+        } as never);
+
+      const direct = yield* serverAuth.authenticateHttpRequest(
+        makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
+      );
+      const trusted = yield* post("https://t3-vps.example.com");
+      expect(trusted.sessionId).toBe(direct.sessionId);
+      const untrusted = yield* Effect.flip(post("https://elsewhere.example.com"));
+      expect(untrusted._tag).toBe("ServerAuthInvalidCredentialError");
+    }).pipe(
+      Effect.provide(
+        layerEnvironmentAuth({ trustedBrowserOrigins: ["https://t3-vps.example.com"] }),
+      ),
+    ),
+  );
+
   it.effect("keeps bearer socket upgrades independent of the page origin", () =>
     Effect.gen(function* () {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
