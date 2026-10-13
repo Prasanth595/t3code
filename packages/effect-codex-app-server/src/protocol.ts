@@ -471,6 +471,18 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
+    // Closing the client fails the requests still waiting on a reply, which
+    // would otherwise wait forever.
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        const closed = new CodexError.CodexAppServerInputStreamEndedError({});
+        yield* Ref.update(terminationFailure, (current) =>
+          Option.isSome(current) ? current : Option.some(closed),
+        );
+        yield* failAllPending(closed);
+      }),
+    );
+
     const request = (method: string, payload?: unknown) =>
       Effect.gen(function* () {
         const requestId = yield* Ref.modify(

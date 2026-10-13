@@ -1,8 +1,10 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -860,6 +862,28 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
       assert.equal(error.message, "Codex App Server input stream ended.");
       assert.equal("cause" in error, false);
+    }),
+  );
+
+  it.effect("fails requests still waiting for a reply when the client closes", () =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const clientScope = yield* Scope.make();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({ stdio }).pipe(
+        Scope.provide(clientScope),
+      );
+      const response = yield* transport.request("thread/start", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      yield* Scope.close(clientScope, Exit.void);
+
+      const error = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the request to fail"),
+        }),
+      );
+      assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
     }),
   );
 });
