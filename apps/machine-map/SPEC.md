@@ -51,7 +51,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
   - `standard`: `AuthStandardClientScopes`.
   - `admin`: `AuthAdministrativeScopes`.
 - **MM-303** An arrow has the option "agent tools". With it on, agents on the source machine can call T3 tools on the target machine, within the scopes of the level.
-- **MM-304** An arrow can expire. "For 1 hour", "for 1 day" and "until a time" set an expiry. At expiry the arrow returns to its earlier level as a new revision made by the portal.
+- **MM-304** An arrow can expire. "For 1 hour", "for 1 day" and "until a time" set an expiry. At expiry the arrow returns to its earlier permanent level as a new revision made by the portal. A second temporary level keeps the first permanent level.
 - **MM-305** The target machine enforces an arrow. A lower level ends the sessions of the source machine on the target at once, including open connections. The source then connects again with the new level, or not at all for `none`.
 - **MM-306** The source machine uses an arrow. Its desktop app adds each machine it can reach, with its machine token as request headers. No pairing code is needed.
 - **MM-307** "Test" on an arrow makes the source machine connect to the target and report the result: reachable or not, the round trip time, and the scopes it got.
@@ -118,7 +118,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
   - `machine_tool_call`: call a T3 tool on another machine.
 - **MM-802** A tool works when the machine that runs the agent has the map role for it:
   - `read`: `machines_read`.
-  - `propose`: every change becomes a proposal for the owner.
+  - `propose`: every change becomes a proposal for the owner. A proposal holds only map changes, so `machines_command` and `machines_queue_cancel` need `edit`.
   - `edit`: changes apply at once.
   - `machine_tool_call` needs an arrow with "agent tools" to the target machine.
 - **MM-803** An agent can never raise access for its own machine. That change always becomes a proposal, whatever the map role.
