@@ -15,6 +15,7 @@ import {
   setRoutesInCatalog,
   replaceCatalogValue,
   Persistence,
+  makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
 import { TokenStore } from "@t3tools/client-runtime/authorization";
 import {
@@ -68,7 +69,6 @@ const ConnectionCatalogDocumentJson = Schema.fromJsonString(ConnectionCatalogDoc
 const decodeConnectionCatalogDocument = Schema.decodeUnknownEffect(ConnectionCatalogDocumentJson);
 const encodeConnectionCatalogDocument = Schema.encodeEffect(ConnectionCatalogDocumentJson);
 const decodeStoredShellSnapshot = Schema.decodeUnknownEffect(StoredShellSnapshotJson);
-const encodeStoredShellSnapshot = Schema.encodeEffect(StoredShellSnapshotJson);
 const decodeStoredThreadSnapshot = Schema.decodeUnknownEffect(StoredThreadSnapshotJson);
 const encodeStoredThreadSnapshot = Schema.encodeEffect(StoredThreadSnapshotJson);
 const decodeStoredServerConfig = Schema.decodeUnknownEffect(StoredServerConfigJson);
@@ -601,6 +601,24 @@ export function makeBrowserGitHubRoutingPermissions(
   });
 }
 
+// A message task lets input and rendering run between encoding chunks. Unlike a zero-delay
+// timer it is neither clamped to 4 ms after a few chained yields nor stretched to a second
+// or more per chunk in a background tab.
+const yieldToBrowserTask = Effect.callback<void>((resume) => {
+  const channel = new MessageChannel();
+  const onMessage = () => {
+    channel.port1.close();
+    resume(Effect.void);
+  };
+  channel.port1.addEventListener("message", onMessage, { once: true });
+  channel.port1.start();
+  channel.port2.postMessage(null);
+  return Effect.sync(() => {
+    channel.port1.removeEventListener("message", onMessage);
+    channel.port1.close();
+  });
+});
+
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const { handle: database } = yield* Effect.acquireRelease(
@@ -609,6 +627,10 @@ export const layer = Layer.effectContext(
     );
     const catalog = yield* makeCatalogStore(makeCatalogBackend(database));
     const githubRoutingPermissions = makeBrowserGitHubRoutingPermissions();
+    // Remembers each thread row's encoding, so a save only encodes rows that changed.
+    const encodeStoredShellSnapshot = makeStoredShellSnapshotEncoder({
+      yieldToHost: yieldToBrowserTask,
+    });
 
     const targetStore = Persistence.ConnectionTargetStore.of({
       list: catalog.read.pipe(
