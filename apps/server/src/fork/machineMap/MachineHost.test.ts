@@ -10,6 +10,7 @@ import {
   ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -78,6 +79,8 @@ const makeLayer = (input: {
   readonly revoked: Ref.Ref<ReadonlyArray<string>>;
 }) =>
   MachineHost.layer.pipe(
+    // An empty environment: CI runners run under systemd, and INVOCATION_ID would mark the host supervised.
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
     Layer.provideMerge(
       MachineMapState.layer.pipe(
         Layer.provide(ServerSettings.layerTest()),

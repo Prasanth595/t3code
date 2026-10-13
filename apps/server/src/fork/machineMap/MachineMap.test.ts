@@ -434,7 +434,8 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
             desired: null,
             connection: {
               status: "not-joined",
-              lastError: "The portal removed this machine from the map. Join again with a new code.",
+              lastError:
+                "The portal removed this machine from the map. Join again with a new code.",
             },
           });
           expect((yield* state.snapshot).token).toBeNull();
