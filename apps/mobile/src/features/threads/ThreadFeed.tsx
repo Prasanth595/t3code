@@ -31,6 +31,7 @@ import {
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
   collectComposerContextReferences,
@@ -93,7 +94,10 @@ import {
   useWindowDimensions,
   View,
 } from "react-native";
+import { Image as ExpoImage } from "expo-image";
+import { useResolveClassNames } from "uniwind";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/FilePreviewGallery";
+import { assetImageSource } from "../../lib/assetImageSource";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import { messageImageGallery } from "./messageImageGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
@@ -133,6 +137,8 @@ import {
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
 import { CopyTextButton } from "../../components/CopyTextButton";
+import { ControlPillMenu } from "../../components/ControlPill";
+import { copyPromptLink } from "../prompt-links/prompt-link-actions";
 import { parseReviewCommentMessageSegments } from "../review/reviewCommentSelection";
 import type { ReviewDiffTheme } from "../review/shikiReviewHighlighter";
 import {
@@ -319,6 +325,45 @@ async function waitForThreadShell(
   });
 }
 
+const USER_MESSAGE_COPY_MENU_ACTIONS = [
+  { id: "copy-prompt-link", title: "Copy prompt link", image: "link" },
+];
+
+/**
+ * The copy button under a sent user message. Long-press copies a link that opens a new task
+ * with this prompt, unless the prompt is longer than a link can carry.
+ */
+function UserMessageCopyButton(props: {
+  readonly text: string;
+  readonly onCopy: (() => Promise<void>) | undefined;
+  readonly tintColor: ColorValue;
+}) {
+  const button = (
+    <CopyTextButton
+      accessibilityLabel="Copy message"
+      text={props.text}
+      onCopy={props.onCopy}
+      tintColor={props.tintColor}
+      buttonSize={28}
+      iconSize={13}
+    />
+  );
+  // A link carries plain text, so context chips become their labels.
+  const linkText = replaceComposerContextReferences(props.text, (reference) => reference.label);
+  if (linkText.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return button;
+  return (
+    <ControlPillMenu
+      actions={USER_MESSAGE_COPY_MENU_ACTIONS}
+      onPressAction={({ nativeEvent }) => {
+        if (nativeEvent.event === "copy-prompt-link") void copyPromptLink(linkText);
+      }}
+      shouldOpenOnLongPress
+    >
+      {button}
+    </ControlPillMenu>
+  );
+}
+
 function AssistantForkButton(props: {
   readonly environmentId: EnvironmentId;
   readonly iconColor: ColorValue;
@@ -415,6 +460,7 @@ function MessageAttachmentImage(props: {
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
+  const imageStyle = useResolveClassNames(props.className);
 
   if (uri === null) {
     return (
@@ -448,10 +494,11 @@ function MessageAttachmentImage(props: {
           )
         }
       >
-        <Image
-          source={{ uri }}
-          className={props.className}
-          resizeMode="cover"
+        <ExpoImage
+          source={assetImageSource(props.environmentId, resource, uri)}
+          cachePolicy="memory-disk"
+          style={imageStyle}
+          contentFit="cover"
           onLoad={() => {
             retriedImage.current = false;
           }}
@@ -1310,8 +1357,7 @@ function renderFeedEntry(
               </Pressable>
             ) : null}
             {presentation.text.trim().length > 0 ? (
-              <CopyTextButton
-                accessibilityLabel="Copy message"
+              <UserMessageCopyButton
                 text={presentation.text}
                 onCopy={
                   message.context
@@ -1324,8 +1370,6 @@ function renderFeedEntry(
                     : undefined
                 }
                 tintColor={iconSubtleColor}
-                buttonSize={28}
-                iconSize={13}
               />
             ) : null}
           </View>
@@ -2758,7 +2802,7 @@ function ThreadFeedLoadEarlierControl(props: ThreadFeedHistoryControls) {
           accessibilityLabel="Load earlier activity"
           disabled={props.loading}
           onPress={props.onLoadEarlier}
-          className="min-h-9 flex-row items-center justify-center gap-2 rounded-full border border-border/60 bg-surface/80 px-4 py-2 disabled:opacity-50"
+          className="min-h-9 flex-row items-center justify-center gap-2 rounded-full border border-border/60 bg-card/80 px-4 py-2 disabled:opacity-50"
         >
           {props.loading ? (
             <AppActivityIndicator size="small" color={accentColor} />
