@@ -55,4 +55,42 @@ describe("discoverFxSkills", () => {
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+
+  // fx keeps both skills that share a name and refuses `$review` as
+  // ambiguous; it skips a SKILL.md whose frontmatter has no name.
+  it.effect("offers only skills fx can load and invoke by name", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fx-skills-home-" });
+      const workspace = path.join(home, "app");
+      const writeSkillFile = (folder: string, contents: string) =>
+        fileSystem
+          .makeDirectory(folder, { recursive: true })
+          .pipe(
+            Effect.andThen(fileSystem.writeFileString(path.join(folder, "SKILL.md"), contents)),
+          );
+      yield* writeSkillFile(
+        path.join(workspace, ".fx/skills/review"),
+        "---\nname: review\n---\nBody.\n",
+      );
+      yield* writeSkillFile(path.join(home, ".claude/skills/review"), "---\nname: review\n---\n");
+      yield* writeSkillFile(path.join(home, ".fx/skills/plain"), "No frontmatter.\n");
+      yield* writeSkillFile(
+        path.join(home, ".fx/skills/unnamed"),
+        "---\ndescription: Missing name\n---\n",
+      );
+
+      const skills = yield* discoverFxSkills({ cwd: workspace, environment: { HOME: home } });
+
+      assert.deepEqual(
+        skills.map((skill) => [skill.name, skill.userInvocable !== false]),
+        [
+          ["plain", true],
+          ["review", false],
+          ["review", false],
+        ],
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
 });
