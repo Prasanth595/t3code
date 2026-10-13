@@ -5223,9 +5223,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "brain":
       return <BrainIcon className={className} aria-hidden />;
     case "browser":
-      return <BrowserAppIcon className={className} />;
     case "computer":
-      return <MousePointerClickIcon className={className} aria-hidden />;
+      return <BrowserAppIcon className={className} />;
     case "code":
       return <Code2Icon className={className} aria-hidden />;
     case "device":
