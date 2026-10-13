@@ -23,7 +23,7 @@ import { NO_SELECTION } from "./route.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
-import { arrowEndWait, arrowEnds, machineQueue } from "./derive.ts";
+import { arrowEndWait, arrowEnds, connectMachines, machineQueue, pairShows } from "./derive.ts";
 import {
   LEVEL_LABEL,
   PRESENCE_STICKER,
@@ -62,7 +62,12 @@ interface Size {
 type DragSubject =
   | { readonly _tag: "machine"; readonly machine: MachineRecord }
   | { readonly _tag: "pair"; readonly a: MachineRecord; readonly b: MachineRecord }
-  | { readonly _tag: "note"; readonly note: MapNote };
+  | { readonly _tag: "note"; readonly note: MapNote }
+  /** MM-1104: a line from a handle of a machine. Dropping it on another machine connects them. */
+  | { readonly _tag: "connect"; readonly machine: MachineRecord };
+
+/** MM-1104: the edges of a machine card that hold a connection handle. */
+const HANDLE_SIDES = ["top", "right", "bottom", "left"] as const;
 
 /**
  * One drag in progress. Pointer moves change it in place and paint on the next frame, so a drag
@@ -83,7 +88,7 @@ interface Drag {
   clientY: number;
   at: Point;
   moved: boolean;
-  /** MM-1104: the machine under the pointer while a machine moves. Dropping here opens the arrow. */
+  /** MM-1104: the machine under the pointer while a connection line moves. Dropping here connects. */
   target: MachineId | null;
 }
 
@@ -133,6 +138,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   } | null>(null);
   /** The drop target, kept in state so the target card renders its look. */
   const [target, setTarget] = useState<MachineId | null>(null);
+  /** MM-1104: the source machine of the connection line that follows the pointer. */
+  const [linking, setLinking] = useState<MachineId | null>(null);
   /** MM-1110: the add menu, at a point on the map. */
   const [menu, setMenu] = useState<Point | null>(null);
   const [editing, setEditing] = useState<EditingNote | null>(null);
@@ -192,27 +199,16 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const selection = route.selection;
   const focus = selection._tag === "machine" ? selection.id : null;
   const focusMachine = machines.find((m) => m.id === focus);
-  /** No access either way and nothing special: the pair card takes one short row. */
-  const isQuiet = (a: MachineRecord, b: MachineRecord) => {
-    const ab = findArrow(map, a.id, b.id);
-    const ba = findArrow(map, b.id, a.id);
-    return [ab, ba].every(
-      (arrow) => arrow.level === "none" && !arrow.agentTools && !arrow.expiresAt,
-    );
-  };
-  // A phone map has no room for every card. Quiet pairs keep their dashed line and show their
-  // card only for the focused machine. The Table view lists every arrow.
+  // MM-1103: a pair with no access either way has no line and no card. The Table view and the
+  // command palette still list its arrows.
   const pairs: Array<[MachineRecord, MachineRecord]> = [];
   for (let i = 0; i < machines.length; i++) {
     for (let j = i + 1; j < machines.length; j++) {
       const a = machines[i];
       const b = machines[j];
-      if (a && b) pairs.push([a, b]);
+      if (a && b && pairShows(map, a.id, b.id)) pairs.push([a, b]);
     }
   }
-  const cardPairs = pairs.filter(
-    ([a, b]) => !compact || focus === a.id || focus === b.id || !isQuiet(a, b),
-  );
 
   const heldPlaces = settleHeld(
     heldPlaceState,
@@ -280,7 +276,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       machines.map((m, i) => [m.id, boxes[i] ?? nodeBox(m, toPixels(m.position))]),
     );
     const spots = placePairs(
-      cardPairs.map(([a, b]) => {
+      pairs.map(([a, b]) => {
         const pa = at.get(a.id) ?? toPixels(a.position);
         const pb = at.get(b.id) ?? toPixels(b.position);
         const offset = offsetOf(a, b);
@@ -313,6 +309,15 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const paint = (subject: DragSubject, p: Point, element: HTMLElement) => {
     const root = ref.current;
     if (!root) return;
+    if (subject._tag === "connect") {
+      const line = root.querySelector<SVGLineElement>("line.live");
+      const from = centerOf(subject.machine);
+      line?.setAttribute("x1", String(from.x));
+      line?.setAttribute("y1", String(from.y));
+      line?.setAttribute("x2", String(p.x));
+      line?.setAttribute("y2", String(p.y));
+      return;
+    }
     if (subject._tag !== "machine") {
       moveElement(element, p);
       return;
@@ -321,7 +326,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const { at, spots } = layout({ id, at: p });
     const q = at.get(id);
     if (q) moveElement(element, q);
-    const spotByPair = new Map(cardPairs.map((pair, i) => [pairKey(...pair), spots[i]]));
+    const spotByPair = new Map(pairs.map((pair, i) => [pairKey(...pair), spots[i]]));
     for (const [a, b] of pairs) {
       const pa = at.get(a.id);
       const pb = at.get(b.id);
@@ -349,7 +354,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       x: clamp(clientX - rect.left - current.grab.x, 0, rect.width),
       y: clamp(clientY - rect.top - current.grab.y, 0, rect.height),
     };
-    if (current.subject._tag === "machine") {
+    if (current.subject._tag === "connect") {
       const id = current.subject.machine.id;
       const under = document
         .elementsFromPoint(clientX, clientY)
@@ -381,6 +386,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const cancelLongPress = () => {
     if (longPress.current) clearTimeout(longPress.current.timer);
     longPress.current = null;
+  };
+
+  /** The pointer in map pixels. */
+  const pointerAt = (event: PointerEvent<HTMLElement>): Point => {
+    const rect = ref.current?.getBoundingClientRect();
+    return rect ? { x: event.clientX - rect.left, y: event.clientY - rect.top } : { x: 0, y: 0 };
   };
 
   const startDrag = (event: PointerEvent<HTMLElement>, subject: DragSubject, center: Point) => {
@@ -438,8 +449,9 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       current.moved = true;
       // Only a moving drag takes the pointer: a tap on a pair row stays a click on that row.
       current.element.setPointerCapture(current.pointerId);
-      // The dragged card rides above every other card, also above the drop target.
-      current.element.classList.add("dragging");
+      if (current.subject._tag === "connect") setLinking(current.subject.machine.id);
+      // The dragged card rides above every other card.
+      else current.element.classList.add("dragging");
     }
     frame.current ??= requestAnimationFrame(() => {
       frame.current = null;
@@ -459,6 +471,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     drag.current = null;
     current.element.classList.remove("dragging");
     setTarget(null);
+    setLinking(null);
     swallowClick.current = current.moved;
     return current;
   };
@@ -509,16 +522,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const { subject } = finished;
     if (!finished.moved) {
       if (subject._tag === "machine") toggle(subject.machine);
+      // A tap on a handle opens the machine, where "Connect to" works without a drag.
+      if (subject._tag === "connect") portal.select({ _tag: "machine", id: subject.machine.id });
       return;
     }
     switch (subject._tag) {
       case "machine": {
         const machine = subject.machine;
-        if (finished.target) {
-          paint(subject, finished.from, finished.element);
-          portal.select({ _tag: "arrow", from: machine.id, to: finished.target });
-          return;
-        }
         const settled = settle(machine.id, finished.at);
         paint(subject, toPixels(settled), finished.element);
         if (samePosition(settled, toPosition(finished.from))) return;
@@ -539,6 +549,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           b: b.id,
           offset,
         });
+        return;
+      }
+      case "connect": {
+        // A drop on empty map cancels.
+        const to = machines.find((m) => m.id === finished.target);
+        if (to) connectMachines(portal, subject.machine, to);
         return;
       }
       case "note": {
@@ -581,11 +597,11 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   };
 
   /** The wait of each arrow end in words, or null when both ends applied it (MM-602, MM-604). */
-  const waitOf = (from: MachineRecord, to: MachineRecord, queuedOnly: boolean): Array<string> => {
+  const waitOf = (from: MachineRecord, to: MachineRecord): Array<string> => {
     if (readOnly) return [];
     const ends = arrowEnds(snapshot, from.id, to.id);
     return [[ends.from, from] as const, [ends.to, to] as const].flatMap(([end, machine]) => {
-      const text = queuedOnly && end === "waitingToJoin" ? null : arrowEndWait(end, machine);
+      const text = arrowEndWait(end, machine);
       return text === null ? [] : [text];
     });
   };
@@ -621,36 +637,6 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     );
   };
 
-  /** A pair with no access either way and nothing special takes one short row. */
-  const quietRow = (a: MachineRecord, b: MachineRecord, waits: ReadonlyArray<string>) => {
-    // The left or top machine first, as the map shows them.
-    const toward = towardGlyph(centerOf(a), centerOf(b));
-    const [first, second] = toward === "→" || toward === "↓" ? [a, b] : [b, a];
-    const on =
-      selection._tag === "arrow" &&
-      ((selection.from === a.id && selection.to === b.id) ||
-        (selection.from === b.id && selection.to === a.id));
-    const wait = waits.map(sentence).join(". ");
-    return (
-      <button
-        type="button"
-        className={`dir${on ? " on" : ""}`}
-        aria-label={`${a.name} and ${b.name}: no access either way${wait ? `. ${wait}` : ""}`}
-        onClick={() => portal.select({ _tag: "arrow", from: a.id, to: b.id })}
-      >
-        <span className="who">
-          <span className="nm">{first.name}</span>
-          <span className="verb">and</span>
-          <span className="nm">{second.name}</span>
-        </span>
-        <span className="actions">
-          {wait && <ClockIcon label={wait} />}
-          <span className="sticker lvl-none flat">{LEVEL_LABEL.none}</span>
-        </span>
-      </button>
-    );
-  };
-
   const notes: ReadonlyArray<EditingNote> = [
     ...map.notes.map((note) => (editing?.note.id === note.id ? editing : { note, saved: true })),
     ...(editing && !editing.saved ? [editing] : []),
@@ -677,9 +663,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             </>
           ) : (
             <span className="muted">
-              Tap a machine to focus it. {compact ? "Hold" : "Double-click"} empty space to add a
-              machine or a note.
-              <span className="wide-only"> Drag a machine onto another to open their arrow.</span>
+              Tap a machine to focus it. Drag a dot on its edge onto another machine to connect
+              them. {compact ? "Hold" : "Double-click"} empty space to add a machine or a note.
             </span>
           )}
         </div>
@@ -721,6 +706,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
               />
             );
           })}
+          {linking !== null && <line className="live" />}
         </svg>
         {size.width > 0 &&
           notes.map(({ note, saved }) => (
@@ -742,14 +728,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             />
           ))}
         {size.width > 0 &&
-          cardPairs.map(([a, b], i) => {
+          pairs.map(([a, b], i) => {
             const spot = shown.spots[i] ?? { x: 0, y: 0 };
             const dim = focus !== null && focus !== a.id && focus !== b.id;
-            const quiet = isQuiet(a, b);
             const placed = offsetOf(a, b) !== null;
-            // A quiet pair skips "waiting to join": a machine that never joined has no access to lose.
-            const waitsAB = waitOf(a, b, quiet);
-            const waitsBA = waitOf(b, a, quiet);
+            const waitsAB = waitOf(a, b);
+            const waitsBA = waitOf(b, a);
             // Each machine that did not apply a direction, named once under the rows.
             const waits = [...new Set([...waitsAB, ...waitsBA])];
             return (
@@ -757,20 +741,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 key={`pair:${pairKey(a, b)}`}
                 data-pair={pairKey(a, b)}
                 data-size-key={`pair:${pairKey(a, b)}`}
-                className={`card pair${dim ? " dim" : ""}${quiet ? " quiet" : ""}${placed ? " placed" : ""}${readOnly ? " readonly" : ""}`}
+                className={`card pair${dim ? " dim" : ""}${placed ? " placed" : ""}${readOnly ? " readonly" : ""}`}
                 style={{ left: spot.x, top: spot.y }}
                 onPointerDown={(event) => startDrag(event, { _tag: "pair", a, b }, spot)}
               >
-                {quiet ? (
-                  quietRow(a, b, waits)
-                ) : (
-                  <>
-                    {dirRow(a, b, waitsAB)}
-                    {dirRow(b, a, waitsBA)}
-                    {waits.length > 0 && (
-                      <div className="pair-wait">{waits.map(sentence).join(" · ")}</div>
-                    )}
-                  </>
+                {dirRow(a, b, waitsAB)}
+                {dirRow(b, a, waitsBA)}
+                {waits.length > 0 && (
+                  <div className="pair-wait">{waits.map(sentence).join(" · ")}</div>
                 )}
               </div>
             );
@@ -803,7 +781,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 tabIndex={0}
                 aria-pressed={on}
                 aria-label={`${machine.name}, ${state}`}
-                className={`card node${on ? " on" : ""}${dropTarget ? " target" : ""}${readOnly ? " readonly" : ""}`}
+                className={`card node${on ? " on" : ""}${dropTarget ? " target" : ""}${linking === machine.id ? " linking" : ""}${readOnly ? " readonly" : ""}`}
                 style={{ left: p.x, top: p.y }}
                 onPointerDown={(event) =>
                   startDrag(event, { _tag: "machine", machine }, centerOf(machine))
@@ -814,6 +792,21 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 onKeyDown={onPressKey(() => toggle(machine))}
               >
                 <span className={`sticker state ${PRESENCE_STICKER[state]}`}>{state}</span>
+                {!readOnly &&
+                  HANDLE_SIDES.map((side) => (
+                    // Pointer only: the machine panel has "Connect to" for the keyboard.
+                    <span
+                      key={side}
+                      className={`handle tip ${side}`}
+                      aria-hidden
+                      data-tip="Drag onto a machine to connect"
+                      onPointerDown={(event) => {
+                        // The handle starts a line, not a move of its machine.
+                        event.stopPropagation();
+                        startDrag(event, { _tag: "connect", machine }, pointerAt(event));
+                      }}
+                    />
+                  ))}
                 <div className="name">
                   <span className="icon">
                     <KindIcon kind={machine.kind} />

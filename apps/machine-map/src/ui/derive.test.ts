@@ -11,7 +11,14 @@ import type {
 
 import { applyChanges, findArrow, findMachine } from "../rules/map.ts";
 import { MAC, threeMachines, VPS, WIN } from "../rules/testMap.ts";
-import { arrowEnds, arrowEndWait, machineQueue, pauseReach } from "./derive.ts";
+import {
+  arrowEnds,
+  arrowEndWait,
+  connectChange,
+  machineQueue,
+  pairShows,
+  pauseReach,
+} from "./derive.ts";
 
 describe("machineQueue (MM-602)", () => {
   const map = threeMachines();
@@ -169,5 +176,64 @@ describe("pauseReach (MM-708 to MM-710)", () => {
 
   it("drops nothing on a map that is already locked down", () => {
     expect(pauseReach(snapshot(start))).toMatchObject({ arrows: 0, mapRoles: 0 });
+  });
+});
+
+describe("pairShows (MM-1103)", () => {
+  const set = (map: MachineMapDocument, from: MachineId, to: MachineId, level: "none" | "read") =>
+    applyChanges(map, [{ _tag: "setArrow", arrow: { ...findArrow(map, from, to), level } }]).map;
+
+  it("hides a pair with no access either way", () => {
+    expect(pairShows(threeMachines(), MAC, VPS)).toBe(false);
+  });
+
+  it("shows a pair when either direction gives access", () => {
+    const map = set(threeMachines(), VPS, MAC, "read");
+    expect(pairShows(map, MAC, VPS)).toBe(true);
+    expect(pairShows(map, VPS, MAC)).toBe(true);
+    expect(pairShows(map, MAC, WIN)).toBe(false);
+  });
+
+  it("hides the pair again when both directions return to none", () => {
+    const map = set(set(threeMachines(), MAC, VPS, "read"), MAC, VPS, "none");
+    expect(pairShows(map, MAC, VPS)).toBe(false);
+  });
+
+  it("shows a temporary none that returns to access later", () => {
+    const map = applyChanges(threeMachines(), [
+      {
+        _tag: "setArrow",
+        arrow: {
+          ...findArrow(threeMachines(), MAC, VPS),
+          expiresAt: "2026-10-14T08:00:00.000Z",
+          revertLevel: "standard",
+        },
+      },
+    ]).map;
+    expect(pairShows(map, MAC, VPS)).toBe(true);
+  });
+});
+
+describe("connectChange (MM-1104)", () => {
+  it("raises an arrow with no access to standard, in one direction only", () => {
+    const map = threeMachines();
+    const change = connectChange(map, MAC, VPS, false);
+    expect(change).not.toBeNull();
+    const next = applyChanges(map, change ? [change] : []).map;
+    expect(findArrow(next, MAC, VPS)).toMatchObject({ level: "standard", expiresAt: null });
+    expect(findArrow(next, VPS, MAC).level).toBe("none");
+    expect(pairShows(next, MAC, VPS)).toBe(true);
+  });
+
+  it("keeps an arrow that already gives access", () => {
+    const map = applyChanges(threeMachines(), [
+      { _tag: "setArrow", arrow: { ...findArrow(threeMachines(), MAC, VPS), level: "admin" } },
+    ]).map;
+    expect(connectChange(map, MAC, VPS, false)).toBeNull();
+  });
+
+  it("raises nothing during a pause or onto the same machine", () => {
+    expect(connectChange(threeMachines(), MAC, VPS, true)).toBeNull();
+    expect(connectChange(threeMachines(), MAC, MAC, false)).toBeNull();
   });
 });

@@ -13,10 +13,11 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import type { PendingRotation } from "../api.ts";
-import { usesText } from "../rules/access.ts";
-import { changesPublicFacts, findMachine, findNote } from "../rules/map.ts";
+import { arrowChange, usesText } from "../rules/access.ts";
+import { changesPublicFacts, findArrow, findMachine, findNote } from "../rules/map.ts";
 import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
+import type { Portal } from "./context.ts";
 import { hasJoined, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
 export interface MachineQueue {
@@ -100,6 +101,38 @@ export function arrowEndWait(end: ArrowEnd, machine: MachineRecord): string | nu
     case "waitingToJoin":
       return `waiting for ${machine.name} to join`;
   }
+}
+
+/**
+ * MM-1103: the map shows a pair when one of its arrows differs from the default. The map stores
+ * only such arrows, so a pair with no access either way and nothing else has no line and no card.
+ */
+export const pairShows = (map: MachineMapDocument, a: MachineId, b: MachineId): boolean =>
+  map.arrows.some(
+    (arrow) => (arrow.from === a && arrow.to === b) || (arrow.from === b && arrow.to === a),
+  );
+
+/**
+ * MM-1104: the change that connecting `from` to `to` makes: the arrow becomes `standard`. An arrow
+ * that already gives access stays as it is, and a pause raises nothing (MM-711). The caller opens
+ * the arrow in every case, so the owner sees the result and picks another level there.
+ */
+export function connectChange(
+  map: MachineMapDocument,
+  from: MachineId,
+  to: MachineId,
+  paused: boolean,
+): MapChange | null {
+  if (from === to || paused || findArrow(map, from, to).level !== "none") return null;
+  return arrowChange(map, { from, to, level: "standard", expiresAt: null });
+}
+
+/** MM-1104: connects two machines (see `connectChange`) and opens their arrow. */
+export function connectMachines(portal: Portal, from: MachineRecord, to: MachineRecord): void {
+  const change = connectChange(portal.map, from.id, to.id, portal.pause !== null);
+  if (change)
+    void portal.submit(`${usesText(from.name, to.name)}: ${LEVEL_LABEL.standard}`, [change]);
+  portal.select({ _tag: "arrow", from: from.id, to: to.id });
 }
 
 /** One line for a change in history, proposals and drafts. */

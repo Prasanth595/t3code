@@ -28,7 +28,15 @@ import { callApi } from "./apiClient.ts";
 import { usePortalContext, type CommandOptions } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
-import { arrowEndWait, arrowEnds, describeChange, machineQueue, type ArrowEnd } from "./derive.ts";
+import {
+  arrowEndWait,
+  arrowEnds,
+  connectMachines,
+  describeChange,
+  machineQueue,
+  pairShows,
+  type ArrowEnd,
+} from "./derive.ts";
 import {
   actorText,
   COMMAND_LABEL,
@@ -323,7 +331,12 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
       {lastTest?.error && <p className="error-text">{lastTest.error}</p>}
 
       <Section>Card on the map</Section>
-      {pairOffset(map, source.id, target.id) ? (
+      {!pairShows(map, source.id, target.id) ? (
+        <p className="hint">
+          The map hides this pair: neither machine uses the other. A level above None shows it
+          again.
+        </p>
+      ) : pairOffset(map, source.id, target.id) ? (
         <div className="row callout">
           <div className="v">You placed this card. It follows its line when the machines move.</div>
           <button
@@ -421,6 +434,38 @@ function RenameForm({ machine, done }: { machine: MachineRecord; done: () => voi
       </button>
       <button type="button" className="btn small" onClick={done}>
         Cancel
+      </button>
+    </form>
+  );
+}
+
+/** MM-1104: the keyboard path to the map handles. */
+function ConnectForm({ machine }: { machine: MachineRecord }) {
+  const portal = usePortalContext();
+  const others = portal.map.machines.filter((m) => m.id !== machine.id);
+  const [targetId, setTargetId] = useState("");
+  if (others.length === 0) return <p className="hint">Add another machine to connect it.</p>;
+  const target = others.find((m) => m.id === targetId) ?? others[0];
+  return (
+    <form
+      className="actions"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (target) connectMachines(portal, machine, target);
+      }}
+    >
+      <label className="field inline">
+        Connect to
+        <select value={target?.id} onChange={(e) => setTargetId(e.target.value)}>
+          {others.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit" className="btn small">
+        Connect
       </button>
     </form>
   );
@@ -551,6 +596,13 @@ function MachinePanel({ id }: { id: string }) {
 
       <Section>Resources</Section>
       <ResourcesSection machine={machine} />
+
+      <Section>Connect</Section>
+      <p className="hint">
+        {machine.name} gets Standard access to the machine you pick. The arrow opens, so you can
+        pick another level.
+      </p>
+      <ConnectForm machine={machine} />
 
       <Section>Map role</Section>
       {portal.pause && <PausedNote />}
