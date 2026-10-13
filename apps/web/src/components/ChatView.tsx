@@ -7107,8 +7107,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
     composerReservedHeightRef.current = 0;
-    publishComposerOverlayHeight(composerOverlayElement.getBoundingClientRect().height);
-  }, [activeThreadKey, composerOverlayElement, publishComposerOverlayHeight]);
+  }, [activeThreadKey, composerOverlayElement]);
 
   useLayoutEffect(() => {
     if (!composerOverlayElement) return;
@@ -7125,7 +7124,13 @@ export default function ChatView(props: ChatViewProps) {
       stack ? [composerOverlayElement, stack] : composerOverlayElement,
       updateHeight,
     );
-  }, [composerOverlayElement, isDraftHeroState, publishComposerOverlayHeight, showScrollToBottom]);
+  }, [
+    activeThreadKey,
+    composerOverlayElement,
+    isDraftHeroState,
+    publishComposerOverlayHeight,
+    showScrollToBottom,
+  ]);
   // Swapping the composer for the status bar (or back) changes what the
   // overlay holds, so rebuild the reservation from the new content.
   useLayoutEffect(() => {
