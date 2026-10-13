@@ -1,6 +1,5 @@
 import {
   ProviderInstanceId,
-  ProviderThreadId,
   RunId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
@@ -75,20 +74,7 @@ describe("handoff endpoints shared by web and mobile", () => {
 });
 
 const projection = {
-  thread: {
-    activeProviderThreadId: "native-source",
-    modelSelection: { instanceId: from, model: "source" },
-  },
-  providerThreads: [
-    { id: "native-source", providerInstanceId: from, nativeThreadRef: { nativeId: "source" } },
-  ],
-  runs: [
-    {
-      ...run("source", 1, from, "source"),
-      providerThreadId: ProviderThreadId.make("native-source"),
-      startedAt: "2026-10-11T00:00:00Z",
-    },
-  ],
+  runs: [{ ...run("source", 1, from, "source"), startedAt: "2026-10-11T00:00:00Z" }],
 } as unknown as OrchestrationV2ThreadProjection;
 
 describe("pending context handoff", () => {

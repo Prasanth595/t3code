@@ -280,31 +280,6 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
-      const deliveredAttemptIds = new Set(
-        projection.providerTurns.map((turn) => turn.runAttemptId),
-      );
-      const readHandoffHistory = Effect.fn(function* (runIds?: ReadonlyArray<RunId>) {
-        const items = yield* projectionStore.getTurnStartHistory(input.threadId, runIds);
-        const maintenanceMessageIds = new Set(
-          items.flatMap((item) =>
-            item.type === "user_message" &&
-            item.attachments.length === 0 &&
-            ["/compact", "/logout"].includes(item.text.trim().toLowerCase())
-              ? [item.messageId]
-              : [],
-          ),
-        );
-        const excludedRunIds = new Set(
-          projection.runs
-            .filter(
-              (source) =>
-                maintenanceMessageIds.has(source.userMessageId) &&
-                !deliveredAttemptIds.has(source.activeAttemptId),
-            )
-            .map((source) => source.id),
-        );
-        return items.filter((item) => item.runId === null || !excludedRunIds.has(item.runId));
-      });
       // Settles a run that never reached the provider: one signal turn item plus
       // terminal run, attempt and root node, written only while the run is still
       // the current starting attempt.
@@ -313,6 +288,8 @@ export const layer: Layer.Layer<
           readonly signal: string;
           readonly status: "completed" | "failed";
           readonly now: DateTime.Utc;
+          /** Omitted when the run never started, so `startedAt` stays as projected. */
+          readonly startedAt?: DateTime.Utc;
           readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
           readonly itemProviderThreadId: OrchestrationV2ProviderThread["id"];
           readonly item:
@@ -328,6 +305,7 @@ export const layer: Layer.Layer<
           readonly providerThreadUpdate?: OrchestrationV2ProviderThread;
         }) {
           const { now, status } = input;
+          const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
           const item: OrchestrationV2TurnItem = {
             id: idAllocator.derive.runSignalTurnItem({ runId, signal: input.signal }),
             threadId: projection.thread.id,
@@ -352,14 +330,14 @@ export const layer: Layer.Layer<
           };
           const eventPayloads = [
             { type: "turn-item.updated", payload: item },
-            { type: "run.updated", payload: { ...run, status, completedAt: now } },
+            { type: "run.updated", payload: { ...run, status, ...started, completedAt: now } },
             {
               type: "run-attempt.updated",
-              payload: { ...attempt, status, completedAt: now },
+              payload: { ...attempt, status, ...started, completedAt: now },
             },
             {
               type: "node.updated",
-              payload: { ...rootNode, status, completedAt: now },
+              payload: { ...rootNode, status, ...started, completedAt: now },
             },
             ...(input.providerThreadUpdate === undefined
               ? []
@@ -407,7 +385,6 @@ export const layer: Layer.Layer<
         const previousNativeRun = projection.runs.reduce<OrchestrationV2Run | undefined>(
           (previous, candidate) =>
             candidate.ordinal < run.ordinal &&
-            candidate.startedAt !== null &&
             candidate.providerThreadId !== null &&
             nativeThreads.has(candidate.providerThreadId) &&
             (previous === undefined || candidate.ordinal > previous.ordinal)
@@ -451,6 +428,7 @@ export const layer: Layer.Layer<
             signal: isEmptyCompaction ? "empty-compaction" : "provider-sign-out",
             status,
             now,
+            startedAt: now,
             providerInstanceId: authInstanceId,
             itemProviderThreadId: nativeThread?.id ?? providerThread.id,
             item:
@@ -747,7 +725,7 @@ export const layer: Layer.Layer<
           coveredRunOrdinals: { from: 1, to: Math.max(1, run.ordinal - 1) },
           strategy: "full_thread_summary",
           runs: projection.runs,
-          items: (yield* readHandoffHistory()).filter(
+          items: (yield* projectionStore.getTurnStartHistory(input.threadId)).filter(
             (item) =>
               item.runId === null ||
               projection.runs.some(
@@ -859,36 +837,6 @@ export const layer: Layer.Layer<
         createdAt: providerThread.createdAt,
         updatedAt: now,
       };
-      const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
-      if (
-        message.attachments.length === 0 &&
-        message.text.trim().toLowerCase() === "/compact" &&
-        effectiveHandoffs.some(
-          (handoff) =>
-            nativeThreadId === undefined ||
-            handoff.delivery?.nativeThreadId !== nativeThreadId ||
-            handoff.delivery.status === "pending",
-        )
-      ) {
-        yield* settleRunBeforeStart({
-          signal: "handoff-replaces-compaction",
-          status: "failed",
-          now,
-          providerInstanceId: run.providerInstanceId,
-          itemProviderThreadId: providerThread.id,
-          item: {
-            type: "error",
-            title: "Context handoff replaces compaction",
-            failure: makeProviderFailure({
-              class: "validation_error",
-              message:
-                "Context handoff replaces compaction. Send a message to the selected provider, or switch back to compact the current conversation.",
-            }),
-          },
-          providerThreadUpdate: { ...runningProviderThread, status: "idle" },
-        });
-        return;
-      }
       const runningRun: OrchestrationV2Run = {
         ...run,
         status: "running",
@@ -1046,6 +994,9 @@ export const layer: Layer.Layer<
         ...deliveredItemIds,
         ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
       ]);
+      const deliveredAttemptIds = new Set(
+        projection.providerTurns.map((turn) => turn.runAttemptId),
+      );
       const acceptedAttempts = projection.attempts.filter(
         (source) =>
           source.providerThreadId === providerThread.id && deliveredAttemptIds.has(source.id),
@@ -1120,36 +1071,29 @@ export const layer: Layer.Layer<
         ...runningProviderThread,
         contextUsage: handoffUsage,
       };
-      const undeliveredRuns = projection.runs.filter(
+      const missedRuns = projection.runs.filter(
         (source) =>
           source.ordinal < run.ordinal &&
           source.providerThreadId === providerThread.id &&
           (source.status === "failed" || source.status === "interrupted") &&
           !deliveredAttemptIds.has(source.activeAttemptId),
       );
+      const missedRunIds = new Set(missedRuns.map((source) => source.id));
       const missedItems =
-        undeliveredRuns.length === 0
+        missedRunIds.size === 0
           ? []
-          : (yield* readHandoffHistory(undeliveredRuns.map((source) => source.id))).filter(
-              (item) => !coveredItemIds.has(item.id) && historicalMessage(item) !== null,
+          : (yield* projectionStore.getTurnStartHistory(input.threadId, [...missedRunIds])).filter(
+              (item) =>
+                item.runId !== null &&
+                missedRunIds.has(item.runId) &&
+                !coveredItemIds.has(item.id) &&
+                historicalMessage(item) !== null,
             );
-      const missedRunIds = new Set(missedItems.map((item) => item.runId));
-      const missedRuns = undeliveredRuns.filter((source) => missedRunIds.has(source.id));
       const startWithHandoffs = (
         turnInput: Parameters<typeof session.startTurn>[0],
         compact = false,
       ) =>
         Effect.gen(function* () {
-          if (compact && missedItems.length > 0) {
-            return yield* new ProviderAdapter.ProviderAdapterTurnStartError({
-              driver: session.driver,
-              threadId: projection.thread.id,
-              providerThreadId: providerThread.id,
-              runId: run.id,
-              cause:
-                "Context handoff replaces compaction. Send a message to the selected provider, or switch back to compact the current conversation.",
-            });
-          }
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =

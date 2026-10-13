@@ -7749,7 +7749,6 @@ export default function ChatView(props: ChatViewProps) {
     !activeProject ||
     !isServerThread ||
     !manualCompactionProviderAvailable ||
-    pendingHandoff !== null ||
     isWorking ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
@@ -7765,11 +7764,9 @@ export default function ChatView(props: ChatViewProps) {
       ? "This connection cannot change threads."
       : !activeProject
         ? "Choose a project before compacting"
-        : pendingHandoff !== null
-          ? "Context handoff replaces compaction"
-          : !manualCompactionProviderAvailable
-            ? "Compaction is unavailable for this provider"
-            : "Compacting is unavailable right now"
+        : !manualCompactionProviderAvailable
+          ? "Compaction is unavailable for this provider"
+          : "Compacting is unavailable right now"
     : null;
   // Tokens a stale Claude session would re-read on its next turn. While set,
   // the composer shows a Compact chip and Enter compacts first; turning the
@@ -9354,8 +9351,6 @@ export default function ChatView(props: ChatViewProps) {
     // rejected.
     const compactBeforeSend =
       resumeCompactionTokens !== null &&
-      resolvePendingHandoff(serverProjection, ctxSelectedModelSelection, providerStatuses) ===
-        null &&
       !keepFullHistory &&
       messageTextForSend.toLowerCase() !== "/compact";
     const turnDispatchMode = compactBeforeSend || sendQueuesBehindSetup ? "queue" : dispatchMode;

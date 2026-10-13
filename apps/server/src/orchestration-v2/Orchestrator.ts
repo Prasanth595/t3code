@@ -784,29 +784,18 @@ function rootProviderThreadsForProvider(
 }
 
 // Failed and interrupted turns still contain conversation the next provider needs.
-// Queued, cancelled, rolled-back and never-started maintenance runs add no conversation.
-function isHandoffSourceRun(
-  run: OrchestrationV2Run,
-  messages: OrchestrationV2ThreadProjection["messages"],
-): boolean {
-  return (
-    (run.status === "completed" || run.status === "failed" || run.status === "interrupted") &&
-    !(
-      run.startedAt === null &&
-      messages.some(
-        (message) => message.id === run.userMessageId && isNativeMaintenanceCommand(message),
-      )
-    )
-  );
+// Queued, cancelled, and rolled-back runs must not be replayed as conversation.
+function isHandoffSourceRun(run: OrchestrationV2Run): boolean {
+  return run.status === "completed" || run.status === "failed" || run.status === "interrupted";
 }
 
 function lastDeliveredRunForProviderThread(
-  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns" | "messages">,
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "providerTurns">,
   providerThreadId: OrchestrationV2ProviderThread["id"],
 ): OrchestrationV2Run | undefined {
   return projection.runs.findLast(
     (run) =>
-      isHandoffSourceRun(run, projection.messages) &&
+      isHandoffSourceRun(run) &&
       run.providerThreadId === providerThreadId &&
       (run.status === "completed" ||
         projection.providerTurns.some((turn) => turn.runAttemptId === run.activeAttemptId)),
@@ -1476,9 +1465,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
-      const latestHandoffRun = projection.runs.findLast((run) =>
-        isHandoffSourceRun(run, projection.messages),
-      );
+      const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
       const targetLastCompletedRun = lastDeliveredRunForProviderThread(
         projection,
         queuedProviderThread.id,
@@ -1490,7 +1477,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? []
           : projection.runs.filter(
               (run) =>
-                isHandoffSourceRun(run, projection.messages) &&
+                isHandoffSourceRun(run) &&
                 run.ordinal > (targetLastCompletedRun?.ordinal ?? 0) &&
                 run.ordinal <= latestHandoffRun.ordinal,
             );
@@ -4914,16 +4901,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
-      // A prepared destination has not replaced the source conversation until
-      // its run starts. Failed starts must still allow returning to the source.
-      const latestStartedProviderRun = projection.runs.findLast(
-        (run) =>
-          run.status !== "rolled_back" && run.startedAt !== null && run.providerThreadId !== null,
-      );
       const activeProviderThread = projection.providerThreads.find(
-        (candidate) =>
-          candidate.id ===
-          (latestStartedProviderRun?.providerThreadId ?? projection.thread.activeProviderThreadId),
+        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
       const activeRun = projection.runs.find(isBlockingRun);
       // A message queued during worktree setup can arrive after that setup failed
@@ -5263,9 +5242,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const ordinal = nextRunOrdinal(projection);
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const latestCompletedRun = projection.runs.findLast((run) => run.status === "completed");
-      const latestHandoffRun = projection.runs.findLast((run) =>
-        isHandoffSourceRun(run, projection.messages),
-      );
+      const latestHandoffRun = projection.runs.findLast(isHandoffSourceRun);
       const legacyImportItems =
         projection.thread.historyOrigin === "v1_import"
           ? yield* readHandoffItems(command.threadId, [null])
@@ -5851,7 +5828,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ? []
           : projection.runs.filter(
               (run) =>
-                isHandoffSourceRun(run, projection.messages) &&
+                isHandoffSourceRun(run) &&
                 run.ordinal >
                   (requiresFullProviderSwitchContext
                     ? 0

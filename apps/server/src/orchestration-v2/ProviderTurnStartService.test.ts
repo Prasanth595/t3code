@@ -76,7 +76,6 @@ it("does not commit running state when inherited background routing cannot be re
     nodes: [{ id: rootNodeId, checkpointScopeId }],
     attempts: [{ id: attemptId }],
     providerThreads: [{ id: providerThreadId, providerSessionId }],
-    providerTurns: [],
     messages: [{ id: messageId, text: "Continue", attachments: [] }],
     checkpointScopes: [{ id: checkpointScopeId }],
     contextHandoffs: [],
@@ -248,7 +247,6 @@ function makeLocalCommandHarness(input: {
               id: RunId.make("previous-native-run"),
               ordinal: 1,
               status: "completed" as const,
-              startedAt: now,
               providerInstanceId: oldInstanceId,
               providerThreadId: oldProviderThreadId,
             },
@@ -791,7 +789,7 @@ effectIt.effect(
       expect(harness.open).not.toHaveBeenCalled();
       expect(harness.startRootRun).not.toHaveBeenCalled();
       const projection = harness.projection();
-      expect(projection.runs.at(-1)).toMatchObject({ status: "completed", startedAt: null });
+      expect(projection.runs.at(-1)?.status).toBe("completed");
       expect(projection.attempts[0]?.status).toBe("completed");
       expect(projection.nodes[0]?.status).toBe("completed");
       expect(projection.turnItems).toMatchObject([
@@ -818,7 +816,7 @@ effectIt.effect("persists a failed sign-out without starting a provider turn", (
 
     expect(harness.open).not.toHaveBeenCalled();
     expect(harness.startRootRun).not.toHaveBeenCalled();
-    expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed", startedAt: null });
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
     expect(harness.projection().turnItems).toMatchObject([
       {
         type: "error",
@@ -844,10 +842,7 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
         expect(harness.open).not.toHaveBeenCalled();
         expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
         expect(harness.startRootRun).not.toHaveBeenCalled();
-        expect(harness.projection().runs.at(-1)).toMatchObject({
-          status: "failed",
-          startedAt: null,
-        });
+        expect(harness.projection().runs.at(-1)?.status).toBe("failed");
         expect(harness.projection().turnItems).toMatchObject([
           {
             type: "error",
