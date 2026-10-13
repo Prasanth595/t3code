@@ -1,6 +1,46 @@
 import { describe, expect, it } from "vite-plus/test";
-import { FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
-import { readFilePreviewResponse } from "./filePreview.ts";
+import {
+  FILE_TEXT_PREVIEW_MAX_BYTES,
+  FILE_OFFICE_PREVIEW_MAX_BYTES,
+} from "@t3tools/shared/filePreview";
+import { readFilePreviewResponse, readOfficePreviewResponse } from "./filePreview.ts";
+
+describe("Office binary downloads", () => {
+  it("preserves ZIP bytes instead of decoding binary data", async () => {
+    const bytes = new Uint8Array([0x50, 0x4b, 0, 255, 0, 1]);
+    expect(
+      await readOfficePreviewResponse(new Response(bytes), new AbortController().signal),
+    ).toEqual(bytes);
+  });
+  it("rejects oversized streams, cancels them, and never hands a partial archive to a renderer", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(FILE_OFFICE_PREVIEW_MAX_BYTES));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await expect(
+      readOfficePreviewResponse(new Response(body), new AbortController().signal),
+    ).rejects.toThrow("10 MB");
+    expect(cancelled).toBe(true);
+  });
+  it("cancels a pending binary download when the preview closes", async () => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const result = readOfficePreviewResponse(new Response(body), controller.signal);
+    controller.abort();
+    await expect(result).rejects.toThrow("cancelled");
+    expect(cancelled).toBe(true);
+  });
+});
 
 describe("readFilePreviewResponse", () => {
   it("cancels a pending read when its preview closes", async () => {

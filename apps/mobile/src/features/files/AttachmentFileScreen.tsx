@@ -49,7 +49,8 @@ type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 function nativeViewerKind(kind: ReturnType<typeof useAttachmentDocument>["kind"]) {
   if (kind === "image") return "image" as const;
   if (kind === "pdf") return "pdf" as const;
-  if (kind === "video" || kind === "unsupported") return "document" as const;
+  if (kind === "video" || kind === "unsupported" || kind === "docx" || kind === "xlsx")
+    return "document" as const;
   return null;
 }
 

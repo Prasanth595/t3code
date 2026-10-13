@@ -11,9 +11,27 @@ import {
   isWorkspacePreviewEntryPath,
   isWorkspaceVideoPreviewPath,
   mediaKindFromPath,
+  officeFilePreviewKind,
+  OFFICE_PREVIEW_MIME_TYPES,
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
+  it.each(["docx", "xlsx"] as const)(
+    "recognizes %s without treating it as text or a browser document",
+    (kind) => {
+      const path = `outputs#draft/report?final.${kind.toUpperCase()}`;
+      expect(officeFilePreviewKind(path)).toBe(kind);
+      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+      expect(isWorkspaceBrowserPreviewPath(path)).toBe(false);
+      expect(hostPreviewMimeTypeFromExtension(`.${kind}`)).toBe(OFFICE_PREVIEW_MIME_TYPES[kind]);
+      expect(filePreviewKind({ name: path, mimeType: "application/octet-stream" })).toBe(kind);
+      expect(filePreviewKind({ name: "upload", mimeType: OFFICE_PREVIEW_MIME_TYPES[kind] })).toBe(
+        kind,
+      );
+      expect(filePreviewKind({ name: path, mimeType: "application/zip" })).toBe("unsupported");
+      expect(officeFilePreviewKind(`${path}.exe`)).toBeNull();
+    },
+  );
   it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
     "recognizes browser preview path %s",
     (path) => {

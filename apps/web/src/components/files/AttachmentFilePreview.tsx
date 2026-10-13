@@ -19,6 +19,7 @@ import { cn } from "~/lib/utils";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
+import { OfficeFilePreview } from "./OfficeFilePreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
@@ -244,6 +245,15 @@ export function AttachmentFilePreview(props: {
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} />
     )
+  ) : kind === "docx" || kind === "xlsx" ? (
+    <OfficeFilePreview
+      key={`${url}:${revision}`}
+      src={url}
+      name={props.name}
+      kind={kind}
+      sizeBytes={props.sizeBytes}
+      onRetry={() => setRevision((value) => value + 1)}
+    />
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame
       src={url}

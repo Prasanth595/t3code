@@ -28,6 +28,8 @@ export type FilePreviewKind =
   | "pdf"
   | "html"
   | "markdown"
+  | "docx"
+  | "xlsx"
   | "text"
   | "unsupported";
 
@@ -43,10 +45,14 @@ export function filePreviewKind(file: {
   if (mime === "application/pdf") return "pdf";
   if (mime === "text/html") return "html";
   if (mime === "text/markdown" || mime === "text/x-markdown") return "markdown";
+  if (mime === OFFICE_PREVIEW_MIME_TYPES.docx) return "docx";
+  if (mime === OFFICE_PREVIEW_MIME_TYPES.xlsx) return "xlsx";
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("audio/")) return "audio";
   if (generic) {
+    const officeKind = officeFilePreviewKind(name);
+    if (officeKind !== null) return officeKind;
     if (extension === ".pdf") return "pdf";
     if (/^\.html?$/.test(extension)) return "html";
     if (/^\.(md|markdown|mdown|mkd|mdx)$/.test(extension)) return "markdown";
@@ -75,6 +81,19 @@ export function filePreviewKind(file: {
 }
 
 export const FILE_TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
+export const FILE_OFFICE_PREVIEW_MAX_BYTES = 10 * 1024 * 1024;
+
+export const OFFICE_PREVIEW_MIME_TYPES = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+} as const;
+
+/** A literal filesystem path, including filenames containing # or ?. */
+export function officeFilePreviewKind(path: string): "docx" | "xlsx" | null {
+  if (/\.docx$/i.test(path)) return "docx";
+  if (/\.xlsx$/i.test(path)) return "xlsx";
+  return null;
+}
 
 /** Reject binary data rather than displaying replacement characters as a document. */
 export function decodeFilePreviewText(bytes: Uint8Array, truncated = false) {
@@ -152,10 +171,12 @@ export function mediaMimeTypeFromExtension(extension: string): string | null {
 /** Files the server serves in place from anywhere on its host: media, audio and browser documents. */
 export function hostPreviewMimeTypeFromExtension(extension: string): string | null {
   if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
+  const officeKind = officeFilePreviewKind(extension);
   return (
     mediaMimeTypeFromExtension(extension) ??
     audioMimeTypeFromExtension(extension) ??
     BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
+    (officeKind === null ? null : OFFICE_PREVIEW_MIME_TYPES[officeKind]) ??
     null
   );
 }
@@ -215,5 +236,9 @@ export function isWorkspaceAudioPreviewPath(path: string): boolean {
 }
 
 export function isWorkspacePreviewEntryPath(path: string): boolean {
-  return isWorkspaceBrowserPreviewPath(path) || isWorkspaceImagePreviewPath(path);
+  return (
+    isWorkspaceBrowserPreviewPath(path) ||
+    isWorkspaceImagePreviewPath(path) ||
+    officeFilePreviewKind(path) !== null
+  );
 }

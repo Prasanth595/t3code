@@ -12,6 +12,7 @@ import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceImagePreviewPath,
   isWorkspaceVideoPreviewPath,
+  officeFilePreviewKind,
 } from "@t3tools/shared/filePreview";
 import {
   DEFAULT_TOKENIZE_MAX_LENGTH,
@@ -37,7 +38,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { DownloadIcon, FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -75,6 +76,7 @@ import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
+import { OfficeFilePreview } from "./OfficeFilePreview";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -265,6 +267,130 @@ function WorkspaceBrowserPreview(props: {
       title={props.title}
       pdf={isPdfPreviewFile(props.absolutePath)}
     />
+  );
+}
+
+function WorkspaceOfficePreview(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+  readonly kind: "docx" | "xlsx";
+  readonly workspaceMutationId: string | null;
+}) {
+  const insideWorkspace =
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
+  const resource = useMemo(
+    () =>
+      workspaceAssetResource({
+        kind: insideWorkspace ? "workspace-file" : "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [insideWorkspace, props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
+  );
+  const refresh = useAssetUrlRefresh(props.environmentId, resource);
+  const [revision, setRevision] = useState(0);
+  const [result, setResult] = useState<{ url: string | null; error: string | null }>({
+    url: null,
+    error: null,
+  });
+  useEffect(() => {
+    let cancelled = false;
+    // oxlint-disable-next-line react/set-state-in-effect -- Reauthorize after a file update or retry; never keep a stale preview URL.
+    setResult({ url: null, error: null });
+    void refresh()
+      .then((url) => {
+        if (!url) throw new Error("Reconnect to the environment and try again.");
+        if (!cancelled)
+          setResult({
+            url: `${url}${url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId ?? "")}&office-revision=${revision}`,
+            error: null,
+          });
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled)
+          setResult({
+            url: null,
+            error: cause instanceof Error ? cause.message : "Could not load this file.",
+          });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refresh, props.workspaceMutationId, revision]);
+  const retry = () => setRevision((value) => value + 1);
+  if (result.error) return <FileSurfaceFailure message={result.error} onRetry={retry} />;
+  if (!result.url) return <FileSurfaceLoading />;
+  return (
+    <OfficeFilePreview
+      key={result.url}
+      src={result.url}
+      name={props.name}
+      kind={props.kind}
+      onRetry={retry}
+    />
+  );
+}
+
+function WorkspaceOfficeDownload(props: {
+  readonly environmentId: EnvironmentId;
+  readonly threadRef: ScopedThreadRef;
+  readonly draft: boolean;
+  readonly absolutePath: string;
+  readonly workspaceRoot: string;
+  readonly name: string;
+}) {
+  const insideWorkspace =
+    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
+  const resource = useMemo(
+    () =>
+      workspaceAssetResource({
+        kind: insideWorkspace ? "workspace-file" : "media-file",
+        threadRef: props.threadRef,
+        draft: props.draft,
+        workspaceRoot: props.workspaceRoot,
+        absolutePath: props.absolutePath,
+      }),
+    [insideWorkspace, props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
+  );
+  const refresh = useAssetUrlRefresh(props.environmentId, resource);
+  const [saving, setSaving] = useState(false);
+  const save = () => {
+    setSaving(true);
+    void (async () => {
+      const src = await refresh();
+      if (!src) throw new Error("Reconnect to the environment and try again.");
+      const response = await fetch(src);
+      if (!response.ok) throw new Error("Could not save this file.");
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = props.name;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    })()
+      .catch((cause: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not save file",
+          description: cause instanceof Error ? cause.message : "Please try again.",
+        });
+      })
+      .finally(() => setSaving(false));
+  };
+  return (
+    <FileSurfaceAction
+      label={saving ? "Preparing file…" : "Save file"}
+      disabled={saving}
+      onPress={save}
+    >
+      <DownloadIcon className="size-3.5" />
+    </FileSurfaceAction>
   );
 }
 
@@ -1063,6 +1189,7 @@ export default function FilePreviewPanel({
   const isAudio = relativePath !== null && !isVideo && isWorkspaceAudioPreviewPath(relativePath);
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo || isAudio;
+  const officeKind = relativePath === null ? null : officeFilePreviewKind(relativePath);
   // PDFs have no text to show; HTML has, and can toggle between page and source.
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
@@ -1080,7 +1207,7 @@ export default function FilePreviewPanel({
     environmentId,
     cwd,
     relativePath,
-    attachment === undefined && relativePath !== null,
+    attachment === undefined && relativePath !== null && officeKind === null,
   );
   const attemptedPath = file.readError?.resolvedPath ?? file.readError?.operationPath;
   // A chat link cannot tell a folder from a file, so a folder arrives here as
@@ -1148,6 +1275,7 @@ export default function FilePreviewPanel({
     file.data !== null &&
     !(isMarkdown && renderMarkdown) &&
     !(tableDelimiter && renderTable) &&
+    officeKind === null &&
     !renderBrowserFile;
   const rendered = isMarkdown ? renderMarkdown : tableDelimiter ? renderTable : renderBrowserFile;
   const setRenderedPreferred = isMarkdown
@@ -1301,6 +1429,16 @@ export default function FilePreviewPanel({
               />
             </FileSurfaceAction>
           ) : null}
+          {officeKind !== null && absolutePath ? (
+            <WorkspaceOfficeDownload
+              environmentId={environmentId}
+              threadRef={threadRef}
+              draft={draft}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
+              name={relativePath.split(/[\\/]/).at(-1) ?? relativePath}
+            />
+          ) : null}
           {showsRawText ? (
             <FileSurfaceAction
               label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
@@ -1334,6 +1472,7 @@ export default function FilePreviewPanel({
       {previewPath &&
       attachment === undefined &&
       !isMedia &&
+      officeKind === null &&
       !renderBrowserFile &&
       file.data?.truncated ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
@@ -1352,6 +1491,18 @@ export default function FilePreviewPanel({
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
               htmlRender={attachment.htmlRender === true}
+            />
+          ) : relativePath && officeKind !== null && absolutePath ? (
+            <WorkspaceOfficePreview
+              key={`${environmentId}:${absolutePath}`}
+              environmentId={environmentId}
+              threadRef={threadRef}
+              draft={draft}
+              absolutePath={absolutePath}
+              workspaceRoot={cwd}
+              name={relativePath}
+              kind={officeKind}
+              workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview

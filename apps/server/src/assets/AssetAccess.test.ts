@@ -919,6 +919,46 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "serves Office workspace and host files through exact signed URLs without exposing siblings",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-office-preview-" });
+        const bytes = Uint8Array.from([0x50, 0x4b, 0, 255, 1]);
+        for (const [extension, mimeType] of [
+          ["docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+          ["xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        ]) {
+          const name = `report#final.${extension}`;
+          const filePath = path.join(root, name);
+          yield* fs.writeFile(filePath, bytes);
+          yield* fs.writeFileString(path.join(root, `sibling.${extension}`), "private sibling");
+          for (const resource of [
+            {
+              _tag: "workspace-file" as const,
+              threadId: ThreadId.make("thread-1"),
+              path: filePath,
+            },
+            { _tag: "media-file" as const, threadId: ThreadId.make("thread-1"), path: filePath },
+            { _tag: "draft-workspace-file" as const, cwd: root, path: filePath },
+          ]) {
+            const issued = yield* issueAssetUrl({ resource, workspaceRoot: root });
+            const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+            const separator = suffix.indexOf("/");
+            const token = suffix.slice(0, separator);
+            const resolved = yield* resolveAsset(token, suffix.slice(separator + 1));
+            expect(resolved).toMatchObject({ kind: "file", mimeType });
+            expect(Array.from(yield* fs.readFile(filePath))).toEqual(Array.from(bytes));
+            expect(yield* resolveAsset(token, `sibling.${extension}`)).toBeNull();
+            expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
+            expect(yield* resolveAsset(`${token}tampered`, name)).toBeNull();
+          }
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("previews workspace files with literal fragment characters in their paths", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

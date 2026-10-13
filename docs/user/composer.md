@@ -305,6 +305,18 @@ Follow an agent's file link to read a report or other file outside the workspace
 These files open read-only. An HTML file outside the workspace cannot load scripts,
 styles, or images from neighboring files.
 
+## Word and Excel previews
+
+On web and desktop, select a `.docx` or `.xlsx` file in Files, a chat link, or an
+attachment to open a read-only preview. Word documents show pages, text, tables,
+and images; their layout may differ from Word. Excel workbooks show formatted
+cell values and let you select a worksheet. Charts and workbook styling are not
+shown. Formulas use their saved results, or show the expression when no saved
+result is available; the preview does not recalculate them.
+
+Office previews support files up to 10 MB. Large worksheets show a limited
+preview. Save the original file to inspect its full content in another app.
+
 ## HTML and PDF files in the file viewer
 
 On web and desktop, HTML and PDF files open as rendered pages. Switch an HTML
