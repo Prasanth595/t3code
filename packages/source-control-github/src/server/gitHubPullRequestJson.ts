@@ -696,9 +696,9 @@ const RawRepositoryAccessSchema = Schema.Struct({
   squashMergeAllowed: Schema.Boolean,
   rebaseMergeAllowed: Schema.Boolean,
   /**
-   * ADMIN, MAINTAIN, WRITE, TRIAGE, READ or NONE. Optional rather than required, unlike the
-   * three above: an install that does not report it leaves the viewer's standing unknown, which
-   * is answered by granting rather than by failing the whole detail read.
+   * ADMIN, MAINTAIN, WRITE, TRIAGE, READ or NONE, or null for a GitHub App. Optional rather than
+   * required, unlike the three above: an install that does not report it still decodes rather
+   * than failing the whole detail read, and `toCanWrite` decides what that standing allows.
    */
   viewerPermission: Schema.optional(Schema.NullOr(Schema.String)),
 });
