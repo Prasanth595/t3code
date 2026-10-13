@@ -1851,10 +1851,22 @@ code {
 }
 
 /* The prompt has its own font and size, so a rem gutter clips markers drawn in
-   a monospace or larger composer font. `ch` follows the composer font: `1. ` is
-   at most 3ch. Wider markers widen it inline (ComposerListExtensions). */
+   a monospace or larger composer font. `ch` follows the composer font: a marker
+   and its space take at most (length + 1)ch, so `1. ` fits in 3ch. */
 .composer-tiptap ol {
   --list-gutter: max(1.25rem, 3ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="3"]) {
+  --list-gutter: max(1.25rem, 4ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="4"]) {
+  --list-gutter: max(1.25rem, 5ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="5"]) {
+  --list-gutter: max(1.25rem, 6ch);
 }
 
 .composer-tiptap ul {
