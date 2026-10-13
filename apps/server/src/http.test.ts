@@ -14,6 +14,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Tracer from "effect/Tracer";
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServerResponse } from "effect/http";
+import { hostPreviewMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
 import { ORCHESTRATION_PROTOCOL_HEADER } from "@t3tools/contracts";
@@ -312,6 +313,36 @@ it.layer(
 });
 
 describe("video asset byte ranges", () => {
+  it.effect("serves source previews literally at the final HTTP boundary", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-preview-" });
+      const contents = '<script>alert("source");</script>';
+      for (const extension of [".xml", ".js", ".json", ".tsx"]) {
+        const filePath = path.join(directory, `source${extension}`);
+        yield* fs.writeFileString(filePath, contents);
+        const canonicalPath = yield* fs.realPath(filePath);
+        const mimeType = hostPreviewMimeTypeFromExtension(extension);
+        expect(mimeType).toBe("text/plain");
+        for (const guarded of [true, false]) {
+          for (const method of ["GET", "HEAD"] as const) {
+            const file = guarded ? yield* openMediaFile(canonicalPath) : undefined;
+            if (guarded && !file) throw new Error("Expected an opened source file");
+            const asset = { path: canonicalPath, mimeType: mimeType!, ...(file ? { file } : {}) };
+            const response = HttpServerResponse.toWeb(
+              yield* assetFileResponse(asset, undefined, undefined, method),
+            );
+            expect(response.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+            expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+            if (method === "GET")
+              expect(yield* Effect.promise(() => response.text())).toBe(contents);
+          }
+        }
+      }
+    }).pipe(Effect.provide(layerFileResponse)),
+  );
+
   it.effect("uses current descriptor metadata after an in-place truncate or extension", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

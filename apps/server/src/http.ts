@@ -113,24 +113,26 @@ export function assetResponseHeaders(
               ? options.mimeType
               : "application/octet-stream",
         }
-      : inlineMimeType !== undefined && isSafeInlineMediaMimeType(inlineMimeType)
-        ? { "Content-Type": inlineMimeType }
-        : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
-          ? {
-              "Content-Type":
-                inlineMimeType.toLowerCase() === "text/html"
-                  ? "text/html; charset=utf-8"
-                  : "application/pdf",
-              ...(inlineMimeType.toLowerCase() === "text/html"
-                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
-                : {}),
-            }
-          : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+      : inlineMimeType?.toLowerCase() === "text/plain"
+        ? { "Content-Type": "text/plain; charset=utf-8" }
+        : inlineMimeType !== undefined && isSafeInlineMediaMimeType(inlineMimeType)
+          ? { "Content-Type": inlineMimeType }
+          : inlineMimeType !== undefined && isSafeInlineDocumentMimeType(inlineMimeType)
             ? {
-                "Content-Type": "text/html; charset=utf-8",
-                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+                "Content-Type":
+                  inlineMimeType.toLowerCase() === "text/html"
+                    ? "text/html; charset=utf-8"
+                    : "application/pdf",
+                ...(inlineMimeType.toLowerCase() === "text/html"
+                  ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
+                  : {}),
               }
-            : {}),
+            : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
+              ? {
+                  "Content-Type": "text/html; charset=utf-8",
+                  "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+                }
+              : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
       ? { "Content-Security-Policy": SVG_CONTENT_SECURITY_POLICY }
       : {}),
