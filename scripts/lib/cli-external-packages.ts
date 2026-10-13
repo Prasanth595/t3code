@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeModule from "node:module";
-
 /**
  * The single source of truth for packages the server CLI bundle must NOT inline.
  *
@@ -29,10 +26,15 @@ import * as NodeModule from "node:module";
  * enforced by a test, not by inspection.
  */
 export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
+  // Cursor ships computed Webpack imports and platform helper packages.
+  "@cursor/sdk",
+  // Playwright reads package.json and browsers.json beside its runtime modules.
+  "playwright-core",
   "node-pty",
   "ffi-rs",
   "@yuuang/",
   "@ff-labs/",
+  "@napi-rs/keyring",
   "@clerk/electron-passkeys",
   "node-gyp-build",
   "node-addon-api",
@@ -48,8 +50,25 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "utf-8-validate",
 ] as const;
 
+// These are Cursor's disk-backed dependency closure. Match package boundaries
+// so "zod" does not also externalize unrelated packages such as zod-to-json-schema.
+const CURSOR_RUNTIME_DEPENDENCIES = [
+  "@bufbuild/protobuf",
+  "@connectrpc/connect",
+  "@connectrpc/connect-node",
+  "@connectrpc/connect-web",
+  "@statsig/js-client",
+  "@statsig/client-core",
+  "zod",
+  "undici",
+  "@fastify/busboy",
+] as const;
+
 export function isRuntimeExternalCliDependency(id: string): boolean {
-  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return (
+    CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix)) ||
+    CURSOR_RUNTIME_DEPENDENCIES.some((name) => id === name || id.startsWith(`${name}/`))
+  );
 }
 
 /**
@@ -79,40 +98,6 @@ export function selectCliRuntimeExternalDependencies(
   return Object.fromEntries(
     Object.entries(dependencies).filter(([name]) => isRuntimeExternalCliDependency(name)),
   );
-}
-
-/**
- * Scan an emitted bundle chunk for ESM imports of packages that are not Node
- * built-ins.
- *
- * Inside a Node single-executable, `import` statements and `import()` can only
- * resolve built-in modules; any file-backed specifier throws at module
- * evaluation (static) or at first use (dynamic). External packages therefore
- * have to be reached through `createRequire`, which reads the real filesystem
- * in every runtime. The bundler cannot enforce this, so the check reads what it
- * produced.
- */
-export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<string> {
-  const specifiers = new Set<string>();
-  // `import x from`, `import "side-effect"`, `export ... from`, and `import()`
-  // all resolve through the module loader.
-  const patterns = [
-    /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
-    /^import\s+["']([^"']+)["']/gm,
-    /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
-    // Rolldown may leave a `/* @vite-ignore */` style comment before the specifier.
-    /\bimport\(\s*(?:\/\*[\s\S]*?\*\/\s*)*["']([^"']+)["']\s*[,)]/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const specifier = match[1];
-      if (specifier === undefined) continue;
-      if (NodeModule.isBuiltin(specifier)) continue;
-      if (specifier.startsWith("./") || specifier.startsWith("../")) continue;
-      specifiers.add(specifier);
-    }
-  }
-  return [...specifiers].sort();
 }
 
 /**
