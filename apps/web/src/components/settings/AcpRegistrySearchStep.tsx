@@ -1,4 +1,4 @@
-import { AuthProvidersManageScope } from "@t3tools/contracts";
+import { ACP_REGISTRY_MAX_AGENTS, AuthProvidersManageScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import {
   isAtomCommandInterrupted,
@@ -63,8 +63,8 @@ export function AcpRegistrySearchStep({
   onPreparingChange,
 }: AcpRegistrySearchStepProps) {
   const [query, setQuery] = useState("");
-  // An empty registry query is the compact compatible catalog. Start there so
-  // entering this step is useful before the user knows what to search for.
+  // Until the user types, list the whole compatible catalog so this step is
+  // useful before they know what to search for.
   const [submittedQuery, setSubmittedQuery] = useState("");
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const [preparingId, setPreparingId] = useState<string | null>(null);
@@ -74,7 +74,9 @@ export function AcpRegistrySearchStep({
   const search = useEnvironmentQuery(
     serverEnvironment.searchAcpRegistry({
       environmentId,
-      input: { query: submittedQuery },
+      input: submittedQuery
+        ? { query: submittedQuery }
+        : { query: "", limit: ACP_REGISTRY_MAX_AGENTS },
     }),
   );
   const prepareAgent = useAtomCommand(serverEnvironment.prepareAcpRegistryAgent, {
