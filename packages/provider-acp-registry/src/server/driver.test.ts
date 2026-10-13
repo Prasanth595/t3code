@@ -1,9 +1,13 @@
+import { sha256 } from "@noble/hashes/sha2";
 import { AcpRegistryOperationError, ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
@@ -30,6 +34,41 @@ const noSessionManagement = {
   canDelete: false,
   canConfigureProviders: false,
 } as const;
+
+/** Digests with the real SHA-256 so credential fingerprints are the ones production computes. */
+const testCrypto = Crypto.make({
+  randomBytes: (size) => new Uint8Array(size),
+  digest: (algorithm, data) =>
+    algorithm === "SHA-256" ? Effect.succeed(sha256(data)) : Effect.die(algorithm),
+});
+
+/** The live shape of a Lite GLM Coding Plan quota response. */
+const CREDIT_PLAN = {
+  success: true,
+  data: {
+    level: "lite",
+    limits: [
+      {
+        type: "CREDIT_LIMIT",
+        unit: 3,
+        number: 5,
+        usage: 2000,
+        currentValue: 1450,
+        percentage: 72,
+        nextResetTime: 1791920097643,
+      },
+      {
+        type: "CREDIT_LIMIT",
+        unit: 6,
+        number: 1,
+        usage: 10000,
+        currentValue: 5470,
+        percentage: 54,
+        nextResetTime: 1791983710979,
+      },
+    ],
+  },
+};
 
 function catalogWithInspection(
   inspection: AcpRegistrySupport.AcpRegistryInspection,
@@ -414,6 +453,11 @@ describe("acpRegistrySnapshotReadiness", () => {
             distribution: "npx",
           }),
         ),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("this instance has no Z.ai key")),
+        ),
+        Effect.provideService(Crypto.Crypto, testCrypto),
       );
 
       expect(receivedEnvironment).toBe(environment);
@@ -451,6 +495,74 @@ describe("acpRegistrySnapshotReadiness", () => {
         auth: { status: "unknown" },
         message: "Checking ACP authentication, models, and commands in the background...",
       });
+    }),
+  );
+
+  it.effect("publishes the Coding Plan quota an instance's own Z.ai key can read", () =>
+    Effect.gen(function* () {
+      const probe = () =>
+        Effect.succeed({
+          probe: {
+            instanceId: identity.instanceId,
+            ready: true as const,
+            icon: null,
+            authMethods: [],
+            models: [{ id: "glm-5.3", name: "GLM-5.3", description: null }],
+            currentModelId: "glm-5.3",
+            configOptions: [],
+            sessionManagement: noSessionManagement,
+          },
+          slashCommands: [],
+          skills: [],
+        });
+      const catalog = catalogWithInspection({
+        status: "ready",
+        agentId: "glm-acp-agent",
+        version: "1.14.1",
+        distribution: "npx",
+      });
+
+      const withKey = yield* checkAcpRegistryProviderStatus(
+        {
+          ...identity,
+          settings: decodeSettings({ agentId: "glm-acp-agent" }),
+          cwd: "/workspace",
+          environment: { Z_AI_API_KEY: "test-key" },
+        },
+        probe,
+      ).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) =>
+            Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(CREDIT_PLAN))),
+          ),
+        ),
+        Effect.provideService(Crypto.Crypto, testCrypto),
+      );
+      expect(withKey.usageLimits?.windows.map((window) => window.id)).toEqual([
+        "glm_session",
+        "glm_weekly",
+      ]);
+
+      // A keyless instance publishes nothing, and must not call the endpoint.
+      const keyless = yield* checkAcpRegistryProviderStatus(
+        {
+          ...identity,
+          settings: decodeSettings({ agentId: "glm-acp-agent" }),
+          cwd: "/workspace",
+          environment: {},
+        },
+        probe,
+      ).pipe(
+        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("a keyless instance must not call the quota endpoint")),
+        ),
+        Effect.provideService(Crypto.Crypto, testCrypto),
+      );
+      expect(keyless.usageLimits).toBeUndefined();
     }),
   );
 });

@@ -20,6 +20,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HttpClient from "effect/http/HttpClient";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { AcpRegistryAdapterV2Driver, type AcpRegistryAdapterV2DriverEnv } from "./adapter.ts";
@@ -56,6 +57,7 @@ import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistryAuth from "./auth.ts";
 import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
+import { readZaiUsageLimits } from "./zaiUsageLimits.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -367,7 +369,7 @@ export function buildCheckedAcpRegistrySnapshot(
   });
 }
 
-export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.checkProviderStatus")(
+const inspectAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.inspectProviderStatus")(
   function* <Requirements>(
     input: SnapshotIdentity & {
       readonly settings: AcpRegistrySettings;
@@ -423,6 +425,31 @@ export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.check
   },
 );
 
+/**
+ * An enabled, installed instance also reports the GLM Coding Plan quota its
+ * own environment's Z.ai key can read. A keyless instance publishes no limits
+ * rather than a row the pooled view would have to leave empty.
+ */
+export const checkAcpRegistryProviderStatus = Effect.fn("AcpRegistryDriver.checkProviderStatus")(
+  function* <Requirements>(
+    input: SnapshotIdentity & {
+      readonly settings: AcpRegistrySettings;
+      readonly cwd: string;
+      readonly environment: NodeJS.ProcessEnv;
+    },
+    probeConfiguration: AcpRegistryConfigurationProbe<Requirements>,
+  ): Effect.fn.Return<
+    ServerProvider,
+    never,
+    AcpRegistrySupport.AcpRegistryCatalog | Crypto.Crypto | HttpClient.HttpClient | Requirements
+  > {
+    const provider = yield* inspectAcpRegistryProviderStatus(input, probeConfiguration);
+    if (!provider.enabled || !provider.installed) return provider;
+    const usageLimits = yield* readZaiUsageLimits({ environment: input.environment });
+    return usageLimits === null ? provider : { ...provider, usageLimits };
+  },
+);
+
 /** Publishes local executable readiness without starting an ACP process. */
 export const checkAcpRegistryProviderReadiness = Effect.fn(
   "AcpRegistryDriver.checkProviderReadiness",
@@ -456,7 +483,10 @@ export const checkAcpRegistryProviderReadiness = Effect.fn(
     : snapshot;
 });
 
-export type AcpRegistryDriverEnv = AcpRegistryAdapterV2DriverEnv | ProviderHost.ProviderHost;
+export type AcpRegistryDriverEnv =
+  | AcpRegistryAdapterV2DriverEnv
+  | ProviderHost.ProviderHost
+  | HttpClient.HttpClient;
 
 /** Canonical provider-instance wrapper for ACP Registry orchestration adapters. */
 export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryDriverEnv> = {
@@ -485,6 +515,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       }
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const httpClient = yield* HttpClient.HttpClient;
       const hostEnvironment = yield* HostProcess.Environment;
       const host = yield* ProviderHost.ProviderHost;
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -579,6 +610,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(Crypto.Crypto, crypto),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       const enrichmentCache = yield* Ref.make<{
         readonly generation: number;
