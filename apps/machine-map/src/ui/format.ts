@@ -8,6 +8,7 @@ import type {
   MapActor,
   MapPosition,
 } from "@t3tools/contracts/machineMap";
+import type { HealthAlertKind } from "@t3tools/contracts/machineMapResources";
 
 export const LEVEL_LABEL: Record<MachineLevel, string> = {
   none: "None",
@@ -154,4 +155,55 @@ export function valueText(value: unknown): string {
   if (typeof value === "string") return value.length > 0 ? value : '""';
   const text = JSON.stringify(value);
   return text.length > 40 ? `${text.slice(0, 39)}…` : text;
+}
+
+/** MM-1505: one word per alert, as a sticker on the machine card. */
+export const ALERT_STICKER: Record<HealthAlertKind, string> = {
+  cpu: "hot",
+  memory: "full",
+  disk: "disk",
+  swap: "swap",
+  offline: "down",
+};
+
+export const ALERT_TEXT: Record<HealthAlertKind, string> = {
+  cpu: "CPU stays high",
+  memory: "Memory is almost full",
+  disk: "Disk is almost full",
+  swap: "Swap thrashing",
+  offline: "Offline",
+};
+
+/** The value of an alert with its unit, for example `97% (over 90%)`. */
+export function alertValue(kind: HealthAlertKind, value: number, threshold: number): string {
+  if (kind === "offline") return `${value} min (over ${threshold} min)`;
+  if (kind === "swap") return `${value} MB/s (over ${threshold} MB/s)`;
+  return `${Math.round(value)}% (over ${threshold}%)`;
+}
+
+const BYTE_UNITS = ["B", "KB", "MB", "GB", "TB"] as const;
+
+/** Bytes in binary units with up to 3 digits, for example `1.5 GB` or `640 MB`. */
+export function formatBytes(bytes: number | null): string {
+  if (bytes === null) return "—";
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < BYTE_UNITS.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  const digits = value >= 100 || unit === 0 ? 0 : 1;
+  return `${value.toFixed(digits)} ${BYTE_UNITS[unit]}`;
+}
+
+export const formatPercent = (value: number | null): string =>
+  value === null ? "—" : `${Math.round(value)}%`;
+
+/** A span of time between two moments, for example `12 min` or `3 h 5 min`. */
+export function duration(fromIso: string, toMs: number): string {
+  const minutes = Math.max(0, Math.round((toMs - Date.parse(fromIso)) / 60_000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return minutes % 60 === 0 ? `${hours} h` : `${hours} h ${minutes % 60} min`;
+  return `${Math.round(hours / 24)} days`;
 }

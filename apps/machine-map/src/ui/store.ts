@@ -10,24 +10,51 @@ import {
   type MapPosition,
   type PortalSnapshot,
 } from "@t3tools/contracts/machineMap";
+import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
-import { PauseEvent, type PauseState, type PendingRotation, type RotationsEvent } from "../api.ts";
+import {
+  HealthEvent,
+  PauseEvent,
+  ResourceSampleEvent,
+  type PauseState,
+  type PendingRotation,
+  type RotationsEvent,
+} from "../api.ts";
 
 export interface PortalState {
   readonly snapshot: PortalSnapshot | null;
   readonly rotations: ReadonlyArray<PendingRotation>;
   /** MM-713: null when nothing is paused. */
   readonly pause: PauseState | null;
+  /** MM-1506: the latest samples, thresholds and alerts. */
+  readonly health: ResourcesOverview;
 }
 
-export type PageEvent = PortalEvent | RotationsEvent | PauseEvent;
+export type PageEvent =
+  | PortalEvent
+  | RotationsEvent
+  | PauseEvent
+  | HealthEvent
+  | ResourceSampleEvent;
 
-export const INITIAL_STATE: PortalState = { snapshot: null, rotations: [], pause: null };
+export const EMPTY_HEALTH: ResourcesOverview = { latest: {}, alerts: [], thresholds: {} };
+
+export const INITIAL_STATE: PortalState = {
+  snapshot: null,
+  rotations: [],
+  pause: null,
+  health: EMPTY_HEALTH,
+};
 
 export function reduce(state: PortalState, event: PageEvent): PortalState {
   if (event._tag === "snapshot") return { ...state, snapshot: event.snapshot };
   if (event._tag === "rotations") return { ...state, rotations: event.rotations };
   if (event._tag === "pause") return { ...state, pause: event.pause };
+  if (event._tag === "health") return { ...state, health: event.health };
+  if (event._tag === "resourceSample") {
+    const latest = { ...state.health.latest, [event.machineId]: event.sample };
+    return { ...state, health: { ...state.health, latest } };
+  }
   const snapshot = state.snapshot;
   // Events before the first snapshot cannot happen: the portal sends the snapshot first.
   if (!snapshot) return state;
@@ -103,7 +130,7 @@ const RotationsEventSchema = Schema.TaggedStruct("rotations", {
   ),
 });
 const decodeEvent = Schema.decodeUnknownSync(
-  Schema.Union([PortalEvent, RotationsEventSchema, PauseEvent]),
+  Schema.Union([PortalEvent, RotationsEventSchema, PauseEvent, HealthEvent, ResourceSampleEvent]),
 );
 
 export type Connection = "connecting" | "live" | "offline";

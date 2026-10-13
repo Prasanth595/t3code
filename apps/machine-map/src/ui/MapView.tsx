@@ -20,6 +20,7 @@ import { usePortalContext } from "./context.ts";
 import { arrowEndWait, arrowEnds, machineQueue } from "./derive.ts";
 import { LEVEL_LABEL, PRESENCE_STICKER, presenceState, spatialArrow, timeAgo } from "./format.ts";
 import { ClockIcon, KindIcon } from "./icons.tsx";
+import { AlertStickers, CardMeters } from "./resources.tsx";
 import { placePairs, separate, type Box, type Point } from "./layout.ts";
 import { settleHeldPositions, type HeldPosition } from "./store.ts";
 
@@ -570,8 +571,10 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                     <span className="sub">{sub}</span>
                   </span>
                 </div>
+                {!readOnly && <CardMeters machineId={machine.id} />}
                 {!readOnly && (
                   <div className="tags">
+                    <AlertStickers machineId={machine.id} />
                     {status && status.runningTurns > 0 && (
                       <span className="sticker ok">{status.runningTurns} running</span>
                     )}

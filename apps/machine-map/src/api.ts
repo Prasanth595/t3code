@@ -18,6 +18,13 @@ import {
   type MapProposal,
   type MapRevision,
 } from "@t3tools/contracts/machineMap";
+import {
+  HealthThresholds,
+  ResourceSample,
+  ResourcesOverview,
+  type HealthAlert,
+  type ResourceHistory,
+} from "@t3tools/contracts/machineMapResources";
 
 const Text = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0));
@@ -184,6 +191,29 @@ export interface ResumeResponse {
   readonly revision: number | null;
 }
 
+/**
+ * MM-1506: page event with the whole health state, on connection and on each alert or threshold
+ * change. `alerts` holds the active alerts and the newest ended ones.
+ */
+export const HealthEvent = Schema.TaggedStruct("health", { health: ResourcesOverview });
+export type HealthEvent = typeof HealthEvent.Type;
+
+/** MM-1506: page event for each new sample of a machine. */
+export const ResourceSampleEvent = Schema.TaggedStruct("resourceSample", {
+  machineId: MachineId,
+  sample: ResourceSample,
+});
+export type ResourceSampleEvent = typeof ResourceSampleEvent.Type;
+
+/** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */
+export const ThresholdsRequest = Schema.Struct({ thresholds: Schema.NullOr(HealthThresholds) });
+export type ThresholdsRequest = typeof ThresholdsRequest.Type;
+
+/** POST /api/machines/:id/sample (MM-1501). False when the machine is offline or just sampled. */
+export interface SampleResponse {
+  readonly requested: boolean;
+}
+
 /** Every error response has this shape. */
 export interface ApiError {
   readonly error: string;
@@ -198,6 +228,14 @@ export type MapToolResult =
       readonly commands: ReadonlyArray<MachineCommand>;
       readonly history: ReadonlyArray<MapRevision>;
       readonly proposals: ReadonlyArray<MapProposal>;
+      /** MM-1507: the latest samples, the thresholds and the active alerts. */
+      readonly resources: ResourcesOverview;
+    }
+  | {
+      readonly _tag: "resources";
+      readonly history: ResourceHistory;
+      /** The alerts of the machine that started or ended within the range. */
+      readonly alerts: ReadonlyArray<HealthAlert>;
     }
   | WriteResult
   | { readonly _tag: "command"; readonly command: MachineCommand };

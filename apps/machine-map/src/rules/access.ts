@@ -99,6 +99,7 @@ export const raisesAnyAccess = (
 export const requiredRole = (tool: MapToolName): "read" | "propose" | "edit" => {
   switch (tool) {
     case "machines_read":
+    case "machines_resources":
       return "read";
     case "machines_command":
     case "machines_queue_cancel":
