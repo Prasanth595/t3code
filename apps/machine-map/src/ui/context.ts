@@ -61,11 +61,21 @@ export interface Portal {
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;
-  /** Applies changes as one revision, or adds them to the draft. */
-  submit(summary: string, changes: ReadonlyArray<MapChange>): Promise<SubmitOutcome>;
+  /**
+   * Applies changes as one revision, or adds them to the draft. An applied change shows a notice
+   * with Undo, except a `quiet` one, like a move that the map already shows.
+   */
+  submit(
+    summary: string,
+    changes: ReadonlyArray<MapChange>,
+    options?: { readonly quiet: boolean },
+  ): Promise<SubmitOutcome>;
   /** Sends a command. Dangerous commands ask first (MM-504). */
   command(machineId: MachineId, input: MachineCommandInput, options?: CommandOptions): void;
-  /** Runs an API call and shows its error, or `done` on success. */
+  /**
+   * Runs an API call and shows its error, or `done` on success. A result that is a string
+   * replaces `done`. An applied write gets Undo in the notice.
+   */
   call(work: () => Promise<unknown>, done?: string): void;
   select(selection: Selection, view?: View): void;
   open(dialog: Dialog): void;

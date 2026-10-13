@@ -12,6 +12,7 @@ import type {
   MachineMapRole,
   MachineRecord,
   MapChange,
+  MapPosition,
   MapPreset,
   ScopedSettingValues,
   SettingScope,
@@ -46,6 +47,27 @@ export const defaultArrow = (from: MachineId, to: MachineId): ArrowRecord => ({
   expiresAt: null,
   revertLevel: null,
 });
+
+/** Spots for new machines: a grid inside the edges of the map. */
+const SPOTS: ReadonlyArray<MapPosition> = [0.15, 0.38, 0.62, 0.85].flatMap((y) =>
+  [0.12, 0.31, 0.5, 0.69, 0.88].map((x) => ({ x, y })),
+);
+/** The map is wider than tall on a desktop, so a step across counts more than a step down. */
+const ACROSS = 1.6;
+
+/**
+ * MM-206: the place of a new machine. The first one goes to the middle. Each next one takes the
+ * spot farthest from every machine, so new cards do not land on old ones. The owner moves them
+ * later.
+ */
+export function freePosition(taken: ReadonlyArray<MapPosition>): MapPosition {
+  if (taken.length === 0) return { x: 0.5, y: 0.5 };
+  const room = (spot: MapPosition) =>
+    Math.min(...taken.map((p) => Math.hypot((spot.x - p.x) * ACROSS, spot.y - p.y)));
+  let best = SPOTS[0] ?? { x: 0.5, y: 0.5 };
+  for (const spot of SPOTS) if (room(spot) > room(best)) best = spot;
+  return best;
+}
 
 export const findMachine = (map: MachineMapDocument, id: MachineId): MachineRecord | undefined =>
   map.machines.find((machine) => machine.id === id);

@@ -18,8 +18,11 @@ import { describeChange, machineQueue } from "./derive.ts";
 import {
   actorText,
   COMMAND_LABEL,
+  COMMAND_STICKER,
   LEVEL_LABEL,
   machineName,
+  PRESENCE_STICKER,
+  presenceState,
   presenceText,
   shortTime,
   timeAgo,
@@ -48,115 +51,174 @@ function Empty({
   );
 }
 
+/**
+ * One row of a list. The whole row opens the item; buttons inside the row keep their own
+ * action. The main part is a real button, so Tab and Enter reach it.
+ */
+function Item({
+  on,
+  open,
+  label,
+  children,
+  side,
+}: {
+  on: boolean;
+  open: () => void;
+  label: string;
+  children: ReactNode;
+  side?: ReactNode;
+}) {
+  return (
+    <li className={`item${on ? " on" : ""}`}>
+      <button type="button" className="item-main" aria-label={label} onClick={open}>
+        {children}
+      </button>
+      {side}
+    </li>
+  );
+}
+
 /** MM-1102 Table: the arrow matrix and the machine list. */
 export function TableView() {
   const portal = usePortalContext();
   const { map, snapshot, route, now } = portal;
   const selected = route.selection;
+  if (map.machines.length === 0)
+    return (
+      <div className="card view">
+        <Empty title="No machines yet">Add a machine. Its arrows show here as a grid.</Empty>
+      </div>
+    );
   return (
     <div className="card view stack">
       <h2>Who can use whom</h2>
-      <table>
-        <thead>
-          <tr>
-            <th className="corner">Row can use column →</th>
-            {map.machines.map((m) => (
-              <th key={m.id}>{m.name}</th>
+      <p className="small muted">
+        Each cell is what the machine of the row can do on the machine of the column.
+      </p>
+      <div className="scroll">
+        <table className="matrix">
+          <thead>
+            <tr>
+              <th className="corner" scope="col">
+                Row → column
+              </th>
+              {map.machines.map((m) => (
+                <th key={m.id} scope="col">
+                  {m.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {map.machines.map((from) => (
+              <tr key={from.id}>
+                <th scope="row">{from.name}</th>
+                {map.machines.map((to) => {
+                  if (from.id === to.id)
+                    return <td key={to.id} className="self" aria-label="Same machine" />;
+                  const arrow = findArrow(map, from.id, to.id);
+                  const on =
+                    selected._tag === "arrow" && selected.from === from.id && selected.to === to.id;
+                  return (
+                    <td key={to.id} className={`cell${on ? " on" : ""}`}>
+                      <button
+                        type="button"
+                        className="cell-btn"
+                        aria-label={`${from.name} can use ${to.name}: ${LEVEL_LABEL[arrow.level]}`}
+                        onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
+                      >
+                        <span className={`sticker lvl-${arrow.level}`}>
+                          {LEVEL_LABEL[arrow.level]}
+                        </span>
+                        {(arrow.agentTools || arrow.expiresAt) && (
+                          <span className="stickers">
+                            {arrow.agentTools && <span className="sticker accent flat">tools</span>}
+                            {arrow.expiresAt && <span className="sticker warn flat">temp</span>}
+                          </span>
+                        )}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
             ))}
-          </tr>
-        </thead>
-        <tbody>
-          {map.machines.map((from) => (
-            <tr key={from.id}>
-              <th>{from.name}</th>
-              {map.machines.map((to) => {
-                if (from.id === to.id) return <td key={to.id} className="self" />;
-                const arrow = findArrow(map, from.id, to.id);
-                const on =
-                  selected._tag === "arrow" && selected.from === from.id && selected.to === to.id;
-                return (
-                  <td
-                    key={to.id}
-                    className={`cell${on ? " on" : ""}`}
-                    onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
-                  >
-                    <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
-                    {(arrow.agentTools || arrow.expiresAt) && (
-                      <div className="stickers">
-                        {arrow.agentTools && <span className="sticker accent flat">tools</span>}
-                        {arrow.expiresAt && <span className="sticker warn flat">temp</span>}
+          </tbody>
+        </table>
+      </div>
+      <h2>Machines</h2>
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th className="left" scope="col">
+                Machine
+              </th>
+              <th scope="col">State</th>
+              <th scope="col">Build</th>
+              <th scope="col">Applied</th>
+              <th scope="col">Map role</th>
+            </tr>
+          </thead>
+          <tbody>
+            {map.machines.map((machine) => {
+              const presence = snapshot.presence[machine.id];
+              const state = presenceState(presence);
+              const on = selected._tag === "machine" && selected.id === machine.id;
+              const applied = presence?.appliedRevision ?? null;
+              return (
+                <tr key={machine.id} className={on ? "on" : ""}>
+                  <td className="left cell">
+                    <button
+                      type="button"
+                      className="cell-btn left"
+                      onClick={() => portal.select({ _tag: "machine", id: machine.id })}
+                    >
+                      <b>{machine.name}</b>
+                    </button>
+                  </td>
+                  <td>
+                    <span className={`sticker ${PRESENCE_STICKER[state]}`}>{state}</span>
+                    {state === "offline" && (
+                      <div className="small muted">
+                        {timeAgo(presence?.lastSeenAt ?? null, now)}
                       </div>
                     )}
                   </td>
-                );
-              })}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="small muted">
-        Each cell is what the row machine can do on the column machine.
+                  <td className="mono">{presence?.status?.build ?? "—"}</td>
+                  <td className="mono">
+                    {applied === null ? "—" : `${applied} of ${map.revision}`}
+                  </td>
+                  <td>
+                    <select
+                      aria-label={`Map role of ${machine.name}`}
+                      value={machine.mapRole}
+                      onChange={(e) => {
+                        const role = MAP_ROLES.find((r) => r === e.target.value);
+                        if (role)
+                          portal.submit(`${machine.name} map role ${role}`, [
+                            { _tag: "putMachine", machine: { ...machine, mapRole: role } },
+                          ]);
+                      }}
+                    >
+                      {MAP_ROLES.map((role) => (
+                        <option
+                          key={role}
+                          value={role}
+                          disabled={
+                            portal.pause !== null && roleRank(role) > roleRank(machine.mapRole)
+                          }
+                        >
+                          {role}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
-      <h2>Machines</h2>
-      <table>
-        <thead>
-          <tr>
-            <th className="left">Machine</th>
-            <th>State</th>
-            <th>Build</th>
-            <th>Applied</th>
-            <th>Map role</th>
-          </tr>
-        </thead>
-        <tbody>
-          {map.machines.map((machine) => {
-            const presence = snapshot.presence[machine.id];
-            const on = selected._tag === "machine" && selected.id === machine.id;
-            return (
-              <tr key={machine.id} className={on ? "on" : ""}>
-                <td className="left">
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() => portal.select({ _tag: "machine", id: machine.id })}
-                  >
-                    {machine.name}
-                  </button>
-                </td>
-                <td>{presenceText(presence, now)}</td>
-                <td className="mono">{presence?.status?.build ?? "—"}</td>
-                <td className="mono">
-                  {presence?.appliedRevision ?? "—"} / {map.revision}
-                </td>
-                <td>
-                  <select
-                    value={machine.mapRole}
-                    onChange={(e) => {
-                      const role = MAP_ROLES.find((r) => r === e.target.value);
-                      if (role)
-                        portal.submit(`${machine.name} map role ${role}`, [
-                          { _tag: "putMachine", machine: { ...machine, mapRole: role } },
-                        ]);
-                    }}
-                  >
-                    {MAP_ROLES.map((role) => (
-                      <option
-                        key={role}
-                        value={role}
-                        disabled={
-                          portal.pause !== null && roleRank(role) > roleRank(machine.mapRole)
-                        }
-                      >
-                        {role}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -171,7 +233,11 @@ export function SettingsView() {
   const selected = route.selection;
   return (
     <div className="card view stack">
-      <div className="actions">
+      <div className="view-head">
+        <div>
+          <h2>Settings</h2>
+          <p className="small muted">The map manages only the settings that you add here.</p>
+        </div>
         <button
           type="button"
           className="btn primary"
@@ -179,79 +245,89 @@ export function SettingsView() {
         >
           Manage a setting
         </button>
-        <span className="small muted">The map manages only the settings that you add here.</span>
       </div>
       {managed.length === 0 ? (
         <Empty title="No managed settings yet">
           Pick a setting with "Manage a setting". Its value then syncs to every machine.
         </Empty>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th className="left">Setting</th>
-              <th>Shared</th>
-              {map.machines.map((m) => (
-                <th key={m.id}>{m.name}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {managed.map(({ scope, key }) => {
-              const shared = map.settings.shared[scope];
-              const hasShared = Object.hasOwn(shared, key);
-              const on =
-                selected._tag === "setting" && selected.scope === scope && selected.key === key;
-              return (
-                <tr key={`${scope}.${key}`} className={on ? "on" : ""}>
-                  <td
-                    className="left cell"
-                    onClick={() => portal.select({ _tag: "setting", scope, key })}
-                  >
-                    <b>{key}</b> <span className="small muted">{scope}</span>
-                  </td>
-                  <td
-                    className="cell"
-                    onClick={() => portal.select({ _tag: "setting", scope, key })}
-                  >
-                    {hasShared ? valueText(shared[key]) : "—"}
-                  </td>
-                  {map.machines.map((machine) => {
-                    const own = map.settings.overrides[machine.id]?.[scope];
-                    const hasOwn = own !== undefined && Object.hasOwn(own, key);
-                    const effective = effectiveSettings(map, machine.id)[scope][key];
-                    const reported = snapshot.reportedSettings[machine.id]?.[scope];
-                    const reportedValue =
-                      reported && Object.hasOwn(reported, key) ? reported[key] : undefined;
-                    const drift =
-                      hasOwn ||
-                      (reportedValue !== undefined &&
-                        hasShared &&
-                        !sameValue(reportedValue, shared[key]));
-                    const pending =
-                      reportedValue !== undefined && !sameValue(reportedValue, effective);
-                    return (
-                      <td
-                        key={machine.id}
-                        className="cell"
-                        onClick={() => portal.select({ _tag: "setting", scope, key })}
-                      >
-                        {valueText(reportedValue ?? effective)}
-                        {(drift || pending) && (
-                          <div className="stickers">
-                            {hasOwn && <span className="sticker warn flat">own</span>}
-                            {drift && !hasOwn && <span className="sticker flat">drift</span>}
-                            {pending && <span className="sticker wait flat">queued</span>}
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
+        <>
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th className="left" scope="col">
+                    Setting
+                  </th>
+                  <th scope="col">Shared</th>
+                  {map.machines.map((m) => (
+                    <th key={m.id} scope="col">
+                      {m.name}
+                    </th>
+                  ))}
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody>
+                {managed.map(({ scope, key }) => {
+                  const shared = map.settings.shared[scope];
+                  const hasShared = Object.hasOwn(shared, key);
+                  const on =
+                    selected._tag === "setting" && selected.scope === scope && selected.key === key;
+                  const open = () => portal.select({ _tag: "setting", scope, key });
+                  return (
+                    <tr key={`${scope}.${key}`} className={on ? "on" : ""}>
+                      <td className="left cell">
+                        <button type="button" className="cell-btn left" onClick={open}>
+                          <b className="mono-title">{key}</b>{" "}
+                          <span className="small muted">{scope}</span>
+                        </button>
+                      </td>
+                      <td>{hasShared ? valueText(shared[key]) : "—"}</td>
+                      {map.machines.map((machine) => {
+                        const own = map.settings.overrides[machine.id]?.[scope];
+                        const hasOwn = own !== undefined && Object.hasOwn(own, key);
+                        const effective = effectiveSettings(map, machine.id)[scope][key];
+                        const reported = snapshot.reportedSettings[machine.id]?.[scope];
+                        const reportedValue =
+                          reported && Object.hasOwn(reported, key) ? reported[key] : undefined;
+                        const drift =
+                          hasOwn ||
+                          (reportedValue !== undefined &&
+                            hasShared &&
+                            !sameValue(reportedValue, shared[key]));
+                        const pending =
+                          reportedValue !== undefined && !sameValue(reportedValue, effective);
+                        return (
+                          <td key={machine.id}>
+                            {valueText(reportedValue ?? effective)}
+                            {(drift || pending) && (
+                              <div className="stickers">
+                                {hasOwn && <span className="sticker warn flat">own</span>}
+                                {drift && !hasOwn && <span className="sticker flat">drift</span>}
+                                {pending && <span className="sticker wait flat">queued</span>}
+                              </div>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="legend small muted">
+            <span>
+              <span className="sticker warn flat">own</span> the machine keeps its own value
+            </span>
+            <span>
+              <span className="sticker flat">drift</span> the machine reports another value
+            </span>
+            <span>
+              <span className="sticker wait flat">queued</span> the new value waits for the machine
+            </span>
+          </p>
+        </>
       )}
     </div>
   );
@@ -307,6 +383,7 @@ export function QueueView() {
   items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const finished = snapshot.commands.filter((c) => c.status !== "queued").slice(0, 30);
   const selected = portal.route.selection;
+  const names = (ids: ReadonlyArray<string>) => ids.map((id) => machineName(map, id)).join(", ");
   return (
     <div className="card view stack">
       <h2>Waiting</h2>
@@ -320,10 +397,11 @@ export function QueueView() {
             switch (item._tag) {
               case "revision":
                 return (
-                  <li
+                  <Item
                     key={`r${item.revision.revision}`}
-                    className="item"
-                    onClick={() =>
+                    on={false}
+                    label={`Rev ${item.revision.revision}: ${item.revision.summary}`}
+                    open={() =>
                       portal.select(
                         { _tag: "revision", revision: item.revision.revision },
                         "history",
@@ -331,63 +409,67 @@ export function QueueView() {
                     }
                   >
                     <span className="rev">rev {item.revision.revision}</span>
-                    <span className="grow">{item.revision.summary}</span>
-                    {item.machineIds.map((machineId) => (
-                      <span key={machineId} className="sticker wait">
-                        for {machineName(map, machineId)}
-                      </span>
-                    ))}
-                    <span className="small muted">{timeAgo(item.at, now)}</span>
-                  </li>
-                );
-              case "command":
-                return (
-                  <li
-                    key={item.command.id}
-                    className={`item${selected._tag === "command" && selected.id === item.command.id ? " on" : ""}`}
-                    onClick={() => portal.select({ _tag: "command", id: item.command.id })}
-                  >
                     <span className="grow">
-                      <b>{COMMAND_LABEL[item.command.input._tag]}</b> on{" "}
-                      {machineName(map, item.command.machineId)}
+                      <b>{item.revision.summary}</b>
+                      <span className="sub">
+                        Change for {names(item.machineIds)} · {timeAgo(item.at, now)}
+                      </span>
                     </span>
-                    <span className="sticker wait">
-                      {item.command.delivery === "idle" ? "when idle" : "when online"}
-                    </span>
-                    <span className="small muted">
-                      expires {timeUntil(item.command.expiresAt, now)}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn small danger"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        portal.call(
-                          () =>
-                            callApi(
-                              "POST",
-                              `/api/commands/${encodeURIComponent(item.command.id)}/cancel`,
-                            ),
-                          "Cancelled.",
-                        );
-                      }}
-                    >
-                      Cancel
-                    </button>
-                  </li>
+                  </Item>
                 );
+              case "command": {
+                const command = item.command;
+                return (
+                  <Item
+                    key={command.id}
+                    on={selected._tag === "command" && selected.id === command.id}
+                    label={`${COMMAND_LABEL[command.input._tag]} on ${machineName(map, command.machineId)}`}
+                    open={() => portal.select({ _tag: "command", id: command.id })}
+                    side={
+                      <button
+                        type="button"
+                        className="btn small danger"
+                        onClick={() =>
+                          portal.call(
+                            () =>
+                              callApi(
+                                "POST",
+                                `/api/commands/${encodeURIComponent(command.id)}/cancel`,
+                              ),
+                            "Cancelled.",
+                          )
+                        }
+                      >
+                        Cancel
+                      </button>
+                    }
+                  >
+                    <span className="rev">cmd</span>
+                    <span className="grow">
+                      <b>{COMMAND_LABEL[command.input._tag]}</b> on{" "}
+                      {machineName(map, command.machineId)}
+                      <span className="sub">
+                        {command.delivery === "idle" ? "When online and idle" : "When online"} ·
+                        expires {timeUntil(command.expiresAt, now)}
+                      </span>
+                    </span>
+                  </Item>
+                );
+              }
               case "rotation":
                 return (
-                  <li
+                  <Item
                     key={`rot:${item.machineId}`}
-                    className="item"
-                    onClick={() => portal.select({ _tag: "machine", id: item.machineId })}
+                    on={false}
+                    label={`Token rotation for ${machineName(map, item.machineId)}`}
+                    open={() => portal.select({ _tag: "machine", id: item.machineId })}
                   >
+                    <span className="rev">key</span>
                     <span className="grow">
                       <b>Token rotation</b> for {machineName(map, item.machineId)}
+                      <span className="sub">expires {timeUntil(item.expiresAt, now)}</span>
                     </span>
-                    <span className="small muted">expires {timeUntil(item.expiresAt, now)}</span>
-                  </li>
+                  </Item>
                 );
             }
           })}
@@ -401,22 +483,22 @@ export function QueueView() {
       ) : (
         <ul className="list">
           {finished.map((command) => (
-            <li
+            <Item
               key={command.id}
-              className={`item${selected._tag === "command" && selected.id === command.id ? " on" : ""}`}
-              onClick={() => portal.select({ _tag: "command", id: command.id })}
+              on={selected._tag === "command" && selected.id === command.id}
+              label={`${COMMAND_LABEL[command.input._tag]} on ${machineName(map, command.machineId)}: ${command.status}`}
+              open={() => portal.select({ _tag: "command", id: command.id })}
             >
+              <span className="rev">cmd</span>
               <span className="grow">
                 <b>{COMMAND_LABEL[command.input._tag]}</b> on {machineName(map, command.machineId)}
-                {command.error && <span className="small muted"> · {command.error}</span>}
+                <span className="sub">
+                  {timeAgo(command.updatedAt, now)}
+                  {command.error && ` · ${command.error}`}
+                </span>
               </span>
-              <span
-                className={`sticker ${command.status === "succeeded" ? "ok" : command.status === "delivered" ? "wait" : ""}`}
-              >
-                {command.status}
-              </span>
-              <span className="small muted">{timeAgo(command.updatedAt, now)}</span>
-            </li>
+              <span className={`sticker ${COMMAND_STICKER[command.status]}`}>{command.status}</span>
+            </Item>
           ))}
         </ul>
       )}
@@ -460,47 +542,69 @@ export function HistoryView() {
   ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const selected = portal.route.selection;
   const oldest = history.at(-1)?.revision ?? 1;
+  const undo = (revision: number) =>
+    portal.call(
+      () => callApi<WriteResult>("POST", "/api/undo", { revision }),
+      `Undid rev ${revision}.`,
+    );
 
   return (
     <div className="stack">
       <div className="card view">
         <div className="slider">
-          <label className="field">
-            Map at revision {atRevision ?? map.revision}
-            <input
-              type="range"
-              min={0}
-              max={map.revision}
-              value={atRevision ?? map.revision}
-              onChange={(e) => setAtRevision(Number(e.target.value))}
-            />
+          <label className="field" htmlFor="time-travel">
+            <span>
+              Time travel{" "}
+              <span className="muted">
+                {viewing === null
+                  ? `now, rev ${map.revision}`
+                  : `rev ${viewing} of ${map.revision}`}
+              </span>
+            </span>
           </label>
+          <input
+            id="time-travel"
+            type="range"
+            min={0}
+            max={map.revision}
+            value={atRevision ?? map.revision}
+            onChange={(e) => setAtRevision(Number(e.target.value))}
+          />
         </div>
-        {shown && "error" in shown && (
-          <div className="small" style={{ color: "var(--error-fg)" }}>
-            {shown.error}
-          </div>
+        {viewing !== null && shown === null && (
+          <p className="small muted">Loading rev {viewing}…</p>
         )}
+        {shown && "error" in shown && <p className="error-text">{shown.error}</p>}
         {shown && "map" in shown && (
           <>
             <div className="readonly-banner">
               <span className="sticker wait">read only</span>
-              <span>The map at rev {shown.revision}.</span>
+              <span className="grow">The map at rev {shown.revision}.</span>
+              <button type="button" className="btn" onClick={() => setAtRevision(null)}>
+                Back to now
+              </button>
               <button
                 type="button"
                 className="btn primary"
                 onClick={() =>
-                  portal.call(
-                    () =>
-                      callApi<WriteResult>("POST", "/api/restore", { revision: shown.revision }),
-                    `Restored the map to rev ${shown.revision}.`,
-                  )
+                  portal.open({
+                    _tag: "confirm",
+                    title: `Restore the map to rev ${shown.revision}?`,
+                    body: "Every arrow, setting and machine fact returns to how it was then, as one new revision. Undo reverses it.",
+                    confirmLabel: "Restore",
+                    tone: "primary",
+                    action: () =>
+                      portal.call(
+                        () =>
+                          callApi<WriteResult>("POST", "/api/restore", {
+                            revision: shown.revision,
+                          }),
+                        `Restored the map to rev ${shown.revision}.`,
+                      ),
+                  })
                 }
               >
                 Restore
-              </button>
-              <button type="button" className="btn" onClick={() => setAtRevision(null)}>
-                Back to now
               </button>
             </div>
             <MapView map={shown.map} readOnly />
@@ -512,79 +616,72 @@ export function HistoryView() {
           <Empty title="No history yet">Every change of the map shows here.</Empty>
         ) : (
           <ul className="list">
-            {entries.map((entry) =>
-              entry.revision ? (
-                <li
-                  key={`rev${entry.revision.revision}`}
-                  className={`item${selected._tag === "revision" && selected.revision === entry.revision.revision ? " on" : ""}`}
-                  onClick={() =>
-                    entry.revision &&
-                    portal.select({ _tag: "revision", revision: entry.revision.revision })
-                  }
-                >
-                  <span className="rev">rev {entry.revision.revision}</span>
-                  <span className="grow">
-                    <b>{entry.revision.summary}</b>
-                    <div className="small muted">
-                      {actorText(entry.revision.actor, map)} · {timeAgo(entry.at, now)}
-                    </div>
-                    <div className="small muted">
-                      {entry.revision.changes
-                        .slice(0, 3)
-                        .map((c) => describeChange(c, map))
-                        .join(" · ")}
-                      {entry.revision.changes.length > 3 &&
-                        ` · ${entry.revision.changes.length - 3} more`}
-                    </div>
-                  </span>
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const revision = entry.revision?.revision;
-                      if (revision !== undefined) {
-                        portal.call(
-                          () => callApi<WriteResult>("POST", "/api/undo", { revision }),
-                          `Undid rev ${revision}.`,
-                        );
-                      }
-                    }}
+            {entries.map((entry) => {
+              const revision = entry.revision;
+              if (revision) {
+                return (
+                  <Item
+                    key={`rev${revision.revision}`}
+                    on={selected._tag === "revision" && selected.revision === revision.revision}
+                    label={`Rev ${revision.revision}: ${revision.summary}`}
+                    open={() => portal.select({ _tag: "revision", revision: revision.revision })}
+                    side={
+                      <button
+                        type="button"
+                        className="btn small"
+                        aria-label={`Undo rev ${revision.revision}`}
+                        onClick={() => undo(revision.revision)}
+                      >
+                        <UndoIcon />
+                        Undo
+                      </button>
+                    }
                   >
-                    <UndoIcon />
-                    Undo
-                  </button>
-                </li>
-              ) : entry.command ? (
-                <li
-                  key={entry.command.id}
-                  className={`item${selected._tag === "command" && selected.id === entry.command.id ? " on" : ""}`}
-                  onClick={() =>
-                    entry.command && portal.select({ _tag: "command", id: entry.command.id })
-                  }
+                    <span className="rev">rev {revision.revision}</span>
+                    <span className="grow">
+                      <b>{revision.summary}</b>
+                      <span className="sub">
+                        {actorText(revision.actor, map)} · {timeAgo(entry.at, now)}
+                      </span>
+                      <span className="sub">
+                        {revision.changes
+                          .slice(0, 3)
+                          .map((c) => describeChange(c, map))
+                          .join(" · ")}
+                        {revision.changes.length > 3 && ` · ${revision.changes.length - 3} more`}
+                      </span>
+                    </span>
+                  </Item>
+                );
+              }
+              const command = entry.command;
+              if (!command) return null;
+              return (
+                <Item
+                  key={command.id}
+                  on={selected._tag === "command" && selected.id === command.id}
+                  label={`${COMMAND_LABEL[command.input._tag]} on ${machineName(map, command.machineId)}: ${command.status}`}
+                  open={() => portal.select({ _tag: "command", id: command.id })}
                 >
                   <span className="rev">cmd</span>
                   <span className="grow">
                     <b>
-                      {COMMAND_LABEL[entry.command.input._tag]} on{" "}
-                      {machineName(map, entry.command.machineId)}
+                      {COMMAND_LABEL[command.input._tag]} on {machineName(map, command.machineId)}
                     </b>
-                    <div className="small muted">
-                      {actorText(entry.command.actor, map)} · {timeAgo(entry.at, now)}
-                    </div>
+                    <span className="sub">
+                      {actorText(command.actor, map)} · {timeAgo(entry.at, now)}
+                    </span>
                   </span>
-                  <span
-                    className={`sticker ${entry.command.status === "succeeded" ? "ok" : entry.command.status === "queued" || entry.command.status === "delivered" ? "wait" : ""}`}
-                  >
-                    {entry.command.status}
+                  <span className={`sticker ${COMMAND_STICKER[command.status]}`}>
+                    {command.status}
                   </span>
-                </li>
-              ) : null,
-            )}
+                </Item>
+              );
+            })}
           </ul>
         )}
         {oldest > 1 && (
-          <div className="actions" style={{ marginTop: 10 }}>
+          <div className="actions centered">
             <button type="button" className="btn" onClick={portal.loadOlderHistory}>
               Load older revisions
             </button>
@@ -600,8 +697,21 @@ export function InboxView() {
   const portal = usePortalContext();
   const { snapshot, map, now } = portal;
   const selected = portal.route.selection;
+  const decide = (id: string, verdict: "approve" | "reject") =>
+    portal.call(
+      async () => {
+        const result = await callApi<WriteResult | { rejected: string }>(
+          "POST",
+          `/api/proposals/${encodeURIComponent(id)}/${verdict}`,
+        );
+        if (selected._tag === "proposal" && selected.id === id) portal.select({ _tag: "none" });
+        return result;
+      },
+      verdict === "approve" ? "Approved." : "Rejected.",
+    );
   return (
-    <div className="card view">
+    <div className="card view stack">
+      <h2>Inbox</h2>
       {snapshot.proposals.length === 0 ? (
         <Empty title="Inbox zero" settled>
           Agents with the map role "propose" send their changes here for you to approve.
@@ -609,22 +719,41 @@ export function InboxView() {
       ) : (
         <ul className="list">
           {snapshot.proposals.map((proposal) => (
-            <li
+            <Item
               key={proposal.id}
-              className={`item${selected._tag === "proposal" && selected.id === proposal.id ? " on" : ""}`}
-              onClick={() => portal.select({ _tag: "proposal", id: proposal.id })}
+              on={selected._tag === "proposal" && selected.id === proposal.id}
+              label={proposal.summary}
+              open={() => portal.select({ _tag: "proposal", id: proposal.id })}
+              side={
+                <span className="actions">
+                  <button
+                    type="button"
+                    className="btn small primary"
+                    onClick={() => decide(proposal.id, "approve")}
+                  >
+                    Approve
+                  </button>
+                  <button
+                    type="button"
+                    className="btn small danger"
+                    onClick={() => decide(proposal.id, "reject")}
+                  >
+                    Reject
+                  </button>
+                </span>
+              }
             >
               <span className="grow">
                 <b>{proposal.summary}</b>
-                <div className="small muted">
+                <span className="sub">
                   {actorText(proposal.actor, map)} · {timeAgo(proposal.at, now)} · expires{" "}
                   {timeUntil(proposal.expiresAt, now)}
-                </div>
+                </span>
               </span>
               <span className={`sticker ${proposal.reason === "self-escalation" ? "" : "wait"}`}>
                 {proposal.reason === "self-escalation" ? "own access" : "proposal"}
               </span>
-            </li>
+            </Item>
           ))}
         </ul>
       )}
@@ -668,7 +797,7 @@ export function DevicesView() {
     portal.open({
       _tag: "confirm",
       title: "Sign out everywhere?",
-      body: "This ends every owner sign-in in Cloudflare Access and every owner T3 session. Offline machines get it as a queued command.",
+      body: "This ends every owner sign-in in Cloudflare Access and every owner T3 session. Offline machines get it as a queued command. This page signs out too.",
       confirmLabel: "Sign out everywhere",
       action: () =>
         portal.call(async () => {
@@ -682,97 +811,113 @@ export function DevicesView() {
 
   return (
     <div className="card view stack">
-      <div className="actions">
-        <button type="button" className="btn danger" onClick={signOutEverywhere}>
-          Sign out everywhere
-        </button>
-        <button type="button" className="btn" onClick={load} disabled={loading}>
-          {loading ? "Loading" : "Refresh"}
-        </button>
-      </div>
-      {error && (
-        <div className="small" style={{ color: "var(--error-fg)" }}>
-          {error}
+      <div className="view-head">
+        <div>
+          <h2>Devices</h2>
+          <p className="small muted">Where you are signed in, to the portal and to each machine.</p>
         </div>
-      )}
-      <h2>Portal sign-ins</h2>
-      {devices && devices.portalSignIns.length > 0 ? (
-        <table>
-          <thead>
-            <tr>
-              <th className="left">Device</th>
-              <th>Browser</th>
-              <th>Place</th>
-              <th>Last use</th>
-            </tr>
-          </thead>
-          <tbody>
-            {devices.portalSignIns.map((signIn) => (
-              <tr key={signIn.id}>
-                <td className="left">{signIn.device}</td>
-                <td>{signIn.browser}</td>
-                <td>{signIn.place}</td>
-                <td>{timeAgo(signIn.lastUsedAt, now)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="actions">
+          <button type="button" className="btn" onClick={load} disabled={loading}>
+            {loading ? "Loading…" : "Refresh"}
+          </button>
+          <button type="button" className="btn danger" onClick={signOutEverywhere}>
+            Sign out everywhere
+          </button>
+        </div>
+      </div>
+      {error && <p className="error-text">{error}</p>}
+      <h3>Portal sign-ins</h3>
+      {devices === null ? (
+        <p className="small muted">
+          {loading ? "Loading sign-ins…" : "No answer from the portal."}
+        </p>
+      ) : devices.portalSignIns.length === 0 ? (
+        <p className="small muted">No sign-ins recorded.</p>
       ) : (
-        <div className="small muted">{devices ? "No sign-ins recorded." : ""}</div>
-      )}
-      <h2>Cloudflare Access sessions</h2>
-      {devices?.access._tag === "unavailable" && (
-        <div className="small muted">{devices.access.message}</div>
-      )}
-      {devices?.access._tag === "available" &&
-        (devices.access.sessions.length === 0 ? (
-          <div className="small muted">No active sessions.</div>
-        ) : (
+        <div className="scroll">
           <table>
             <thead>
               <tr>
-                <th className="left">Session</th>
-                <th>Place</th>
-                <th>Address</th>
-                <th>Signed in</th>
-                <th>Expires</th>
+                <th className="left" scope="col">
+                  Device
+                </th>
+                <th scope="col">Browser</th>
+                <th scope="col">Place</th>
+                <th scope="col">Last use</th>
               </tr>
             </thead>
             <tbody>
-              {devices.access.sessions.map((session) => (
-                <tr key={`${session.name}:${session.signedInAt}:${session.ip}`}>
-                  <td className="left">{session.name}</td>
-                  <td>{session.country ?? "—"}</td>
-                  <td className="mono">{session.ip ?? "—"}</td>
-                  <td>{session.signedInAt ? timeAgo(session.signedInAt, now) : "—"}</td>
-                  <td>{session.expiresAt ? shortTime(session.expiresAt) : "—"}</td>
+              {devices.portalSignIns.map((signIn) => (
+                <tr key={signIn.id}>
+                  <td className="left">{signIn.device}</td>
+                  <td>{signIn.browser}</td>
+                  <td>{signIn.place}</td>
+                  <td>{timeAgo(signIn.lastUsedAt, now)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      <h3>Cloudflare Access sessions</h3>
+      {devices?.access._tag === "unavailable" && (
+        <p className="small muted">{devices.access.message}</p>
+      )}
+      {devices?.access._tag === "available" &&
+        (devices.access.sessions.length === 0 ? (
+          <p className="small muted">No active sessions.</p>
+        ) : (
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th className="left" scope="col">
+                    Session
+                  </th>
+                  <th scope="col">Place</th>
+                  <th scope="col">Address</th>
+                  <th scope="col">Signed in</th>
+                  <th scope="col">Expires</th>
+                </tr>
+              </thead>
+              <tbody>
+                {devices.access.sessions.map((session) => (
+                  <tr key={`${session.name}:${session.signedInAt}:${session.ip}`}>
+                    <td className="left">{session.name}</td>
+                    <td>{session.country ?? "—"}</td>
+                    <td className="mono">{session.ip ?? "—"}</td>
+                    <td>{session.signedInAt ? timeAgo(session.signedInAt, now) : "—"}</td>
+                    <td>{session.expiresAt ? shortTime(session.expiresAt) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ))}
-      <h2>T3 sessions on machines</h2>
+      <h3>T3 sessions on machines</h3>
+      {map.machines.length === 0 && <p className="small muted">No machines yet.</p>}
       {map.machines.map((machine) => {
         const presence = snapshot.presence[machine.id];
         const clients = presence?.status?.clients ?? [];
         return (
-          <div key={machine.id} className="stack">
+          <div key={machine.id} className="stack tight">
             <div className="section">
               {machine.name} · {presenceText(presence, now)}
             </div>
             {clients.length === 0 ? (
-              <div className="small muted">No sessions reported.</div>
+              <p className="small muted">No sessions reported.</p>
             ) : (
               <ul className="list">
                 {clients.map((client) => (
-                  <li key={client.sessionId} className="item">
+                  <li key={client.sessionId} className="item static">
                     <span className="grow">
                       <b>{client.label ?? client.deviceType ?? "Client"}</b>
-                      <div className="small muted">
+                      <span className="sub">
                         {[client.os, client.browser, client.subject].filter(Boolean).join(" · ")} ·{" "}
                         {client.connected ? "connected" : `seen ${timeAgo(client.lastSeenAt, now)}`}
-                      </div>
+                      </span>
                     </span>
+                    {client.connected && <span className="sticker ok">live</span>}
                     <button
                       type="button"
                       className="btn small danger"

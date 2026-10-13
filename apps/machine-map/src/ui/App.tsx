@@ -23,10 +23,19 @@ import { machineQueue } from "./derive.ts";
 import { DialogHost, Palette } from "./dialogs.tsx";
 import { EmergencyButton, PausedBanner } from "./emergency.tsx";
 import { COMMAND_LABEL, DANGEROUS_COMMANDS, machineName } from "./format.ts";
+import { CloseIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
 import { Panel } from "./panels.tsx";
-import { formatRoute, parseRoute, VIEWS, type Selection, type View } from "./route.ts";
-import { usePortal } from "./store.ts";
+import {
+  formatRoute,
+  NO_SELECTION,
+  parseRoute,
+  VIEW_LABEL,
+  VIEWS,
+  type Selection,
+  type View,
+} from "./route.ts";
+import { usePortal, type Connection } from "./store.ts";
 import {
   DevicesView,
   HistoryView,
@@ -36,27 +45,67 @@ import {
   TableView,
 } from "./views.tsx";
 
-const VIEW_LABEL: Record<View, string> = {
-  map: "Map",
-  table: "Table",
-  settings: "Settings",
-  queue: "Queue",
-  history: "History",
-  inbox: "Inbox",
-  devices: "Devices",
-};
-
 /** Relative times refresh on this clock, not on a continuous animation (MM-1107). */
 const CLOCK_MS = 30_000;
+/** A good notice leaves on its own. An error stays until the owner closes it. */
+const NOTICE_MS = 7000;
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+interface Notice {
+  readonly kind: "ok" | "error";
+  readonly text: string;
+  /** The revision that Undo reverses (MM-703). */
+  readonly undo?: number;
+}
+
+/** The revision of an applied write, so its notice can offer Undo. */
+const appliedRevision = (result: unknown): number | undefined =>
+  typeof result === "object" &&
+  result !== null &&
+  "_tag" in result &&
+  result._tag === "applied" &&
+  "revision" in result &&
+  typeof result.revision === "number"
+    ? result.revision
+    : undefined;
+
+/** Text fields keep Escape for themselves. */
+const isTextField = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+const SHORTCUT = /Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘K" : "Ctrl K";
+
+const CONNECTION_STICKER: Record<Connection, string> = {
+  live: "ok",
+  connecting: "wait",
+  offline: "",
+};
+
+function Brand({ connection, revision }: { connection: Connection; revision: number | null }) {
+  return (
+    <div className="brand">
+      <h1>
+        <span className="brand-mark" aria-hidden>
+          T3
+        </span>{" "}
+        Machines
+      </h1>
+      <span className="live">
+        <span className={`sticker ${CONNECTION_STICKER[connection]}`}>{connection}</span>
+        {revision !== null && <span className="mono muted">rev {revision}</span>}
+      </span>
+    </div>
+  );
+}
 
 export function App() {
   const { state, connection } = usePortal();
   const [route, setRoute] = useState(() => parseRoute(location.hash));
   const [now, setNow] = useState(() => Date.now());
   const [draft, setDraft] = useState<ReadonlyArray<DraftChange> | null>(null);
-  const [notice, setNotice] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [palette, setPalette] = useState(false);
   const [older, setOlder] = useState<ReadonlyArray<MapRevision>>([]);
@@ -64,14 +113,18 @@ export function App() {
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(location.hash));
     const clock = setInterval(() => setNow(Date.now()), CLOCK_MS);
-    // MM-1105: Cmd+K on a Mac, Ctrl+K elsewhere.
     const onKey = (event: KeyboardEvent) => {
+      // An open dialog handles its own keys: Escape closes it.
+      if (document.querySelector("dialog[open]")) return;
+      // MM-1105: Cmd+K on a Mac, Ctrl+K elsewhere.
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPalette((open) => !open);
-      } else if (event.key === "Escape") {
-        setPalette(false);
-        setDialog(null);
+        setPalette(true);
+      } else if (event.key === "Escape" && !isTextField(event.target)) {
+        // MM-1103: Escape ends the focus and closes the side panel.
+        const current = parseRoute(location.hash);
+        if (current.selection._tag !== "none")
+          location.hash = formatRoute({ view: current.view, selection: NO_SELECTION });
       }
     };
     addEventListener("hashchange", onHash);
@@ -83,7 +136,20 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (notice?.kind !== "ok") return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   const snapshot = state.snapshot;
+  const proposals = snapshot?.proposals.length ?? 0;
+  useEffect(() => {
+    const parts = [VIEW_LABEL[route.view], "T3 machines"];
+    if (state.pause) parts.unshift("Paused");
+    document.title = `${proposals > 0 ? `(${proposals}) ` : ""}${parts.join(" · ")}`;
+  }, [route.view, state.pause, proposals]);
+
   const draftView = useMemo(() => {
     if (!snapshot) return null;
     const changes = draft?.flatMap((d) => d.changes) ?? [];
@@ -105,13 +171,21 @@ export function App() {
   if (!snapshot || !draftView) {
     return (
       <div className="app">
-        <div className="card view empty">
+        <header className="top">
+          <Brand connection={connection} revision={null} />
+        </header>
+        <div className="card view empty" role="status">
           <h2>{connection === "offline" ? "The portal does not answer" : "Connecting"}</h2>
           <p>
             {connection === "offline"
-              ? "The page retries on its own."
-              : "The page opens a live connection to the portal."}
+              ? "The page tries again on its own. If this stays, the sign-in may have ended."
+              : "Opening a live connection to the portal."}
           </p>
+          {connection === "offline" && (
+            <button type="button" className="btn" onClick={() => location.reload()}>
+              Reload the page
+            </button>
+          )}
         </div>
       </div>
     );
@@ -123,7 +197,9 @@ export function App() {
     work()
       .then((result) => {
         const text = typeof result === "string" ? result : done;
-        setNotice(text ? { kind: "ok", text } : null);
+        if (!text) return setNotice(null);
+        const undo = appliedRevision(result);
+        setNotice(undo === undefined ? { kind: "ok", text } : { kind: "ok", text, undo });
       })
       .catch((error: unknown) => setNotice({ kind: "error", text: errorText(error) }));
   };
@@ -135,6 +211,7 @@ export function App() {
   const submit = async (
     summary: string,
     changes: ReadonlyArray<MapChange>,
+    options?: { readonly quiet: boolean },
   ): Promise<SubmitOutcome> => {
     if (draft) {
       try {
@@ -148,9 +225,10 @@ export function App() {
     }
     try {
       const result = await callApi<WriteResult>("POST", "/api/changes", { summary, changes });
-      setNotice(
-        result._tag === "applied" ? null : { kind: "ok", text: "The change waits in the Inbox." },
-      );
+      if (result._tag === "proposed")
+        setNotice({ kind: "ok", text: "The change waits in the Inbox." });
+      else if (!options?.quiet)
+        setNotice({ kind: "ok", text: `${summary}.`, undo: result.revision });
       return result;
     } catch (error) {
       setNotice({ kind: "error", text: errorText(error) });
@@ -170,7 +248,7 @@ export function App() {
           expiresInMinutes: options?.expiresInMinutes ?? DEFAULT_COMMAND_MINUTES,
         });
         return sent.status === "queued"
-          ? `${label} waits for ${name}.`
+          ? `${label} waits for ${name}. It runs when ${name} connects.`
           : `${label} sent to ${name}.`;
       });
     // MM-504.
@@ -178,7 +256,10 @@ export function App() {
       setDialog({
         _tag: "confirm",
         title: `${label} on ${name}?`,
-        body: "This interrupts work on the machine.",
+        body:
+          input._tag === "stopAllAgents"
+            ? `Every running turn on ${name} stops. Agents do not start again on their own.`
+            : `The T3 server on ${name} restarts. Open connections drop for a moment.`,
         confirmLabel: label,
         action: send,
       });
@@ -186,6 +267,9 @@ export function App() {
       send();
     }
   };
+
+  const undo = (revision: number) =>
+    call(() => callApi<WriteResult>("POST", "/api/undo", { revision }), `Undid rev ${revision}.`);
 
   const portal: Portal = {
     snapshot,
@@ -220,7 +304,7 @@ export function App() {
       setDialog({
         _tag: "confirm",
         title: "Discard the draft?",
-        body: `${draft.length} held changes will be lost.`,
+        body: `${draft.length} held ${draft.length === 1 ? "change" : "changes"} will be lost.`,
         confirmLabel: "Discard",
         action: () => setDraft(null),
       });
@@ -232,11 +316,12 @@ export function App() {
         ? (draft[0]?.summary ?? "Draft")
         : `${draft.length} changes: ${draft.map((d) => d.summary).join("; ")}`;
     call(async () => {
-      await callApi<WriteResult>("POST", "/api/changes", {
+      const result = await callApi<WriteResult>("POST", "/api/changes", {
         summary,
         changes: draft.flatMap((d) => d.changes),
       });
       setDraft(null);
+      return result;
     }, "The draft is applied.");
   };
 
@@ -244,7 +329,7 @@ export function App() {
     (sum, m) => sum + machineQueue(snapshot, state.rotations, m).count,
     0,
   );
-  const counts: Partial<Record<View, number>> = { queue: queued, inbox: snapshot.proposals.length };
+  const counts: Partial<Record<View, number>> = { queue: queued, inbox: proposals };
   const hasPanel = route.selection._tag !== "none";
   const lockdown = () =>
     setDialog({
@@ -280,34 +365,21 @@ export function App() {
       <div className={`app${state.pause ? " paused" : ""}`}>
         <header className="top">
           <div className="top-main">
-            <div className="brand">
-              <h1>
-                <span className="brand-mark">T3</span> Machines
-              </h1>
-              <span
-                className={`sticker live ${connection === "live" ? "ok" : connection === "connecting" ? "wait" : ""}`}
-              >
-                {connection === "live"
-                  ? `Live · rev ${snapshot.map.revision}`
-                  : connection === "connecting"
-                    ? "Connecting"
-                    : "Offline · retrying"}
-              </span>
-            </div>
-            <nav className="tabs" role="tablist" aria-label="Views">
+            <Brand connection={connection} revision={snapshot.map.revision} />
+            <nav className="tabs" aria-label="Views">
               {VIEWS.map((v) => (
-                <button
+                <a
                   key={v}
-                  type="button"
-                  role="tab"
-                  aria-selected={route.view === v}
-                  onClick={() => {
-                    location.hash = formatRoute({ view: v, selection: route.selection });
-                  }}
+                  href={formatRoute({ view: v, selection: route.selection })}
+                  aria-current={route.view === v ? "page" : undefined}
                 >
                   {VIEW_LABEL[v]}
-                  {counts[v] ? <span className="count">{counts[v]}</span> : null}
-                </button>
+                  {counts[v] ? (
+                    <span className="count" aria-label={`${counts[v]} waiting`}>
+                      {counts[v]}
+                    </span>
+                  ) : null}
+                </a>
               ))}
             </nav>
           </div>
@@ -315,6 +387,16 @@ export function App() {
         </header>
 
         <PausedBanner />
+
+        {connection !== "live" && (
+          <div className="card offline-note" role="status">
+            <span className="sticker">{connection}</span>
+            <span>
+              The live connection dropped. You see the last known map, and changes may fail until
+              the page reconnects on its own.
+            </span>
+          </div>
+        )}
 
         <div className="toolbar">
           <button
@@ -327,45 +409,46 @@ export function App() {
           <button type="button" className="btn" aria-pressed={draft !== null} onClick={toggleHold}>
             {draft === null ? "Hold changes" : "Stop holding"}
           </button>
-          <select
-            value=""
-            onChange={(e) => {
-              const name = e.target.value;
-              if (name) {
-                call(
-                  () =>
-                    callApi<WriteResult>("POST", `/api/presets/${encodeURIComponent(name)}/apply`),
-                  `Applied ${name}.`,
-                );
-              }
-            }}
-          >
-            <option value="">Apply preset…</option>
-            {map.presets.map((p) => (
-              <option key={p.name} value={p.name}>
-                {p.name}
+          <span className="group">
+            <select
+              value=""
+              aria-label="Apply a preset"
+              disabled={map.presets.length === 0}
+              onChange={(e) => {
+                const name = e.target.value;
+                if (name) {
+                  call(
+                    () =>
+                      callApi<WriteResult>(
+                        "POST",
+                        `/api/presets/${encodeURIComponent(name)}/apply`,
+                      ),
+                    `Applied ${name}.`,
+                  );
+                }
+              }}
+            >
+              <option value="">
+                {map.presets.length === 0 ? "No presets yet" : "Apply preset…"}
               </option>
-            ))}
-          </select>
-          <button type="button" className="btn" onClick={() => setDialog({ _tag: "savePreset" })}>
-            Save as preset
-          </button>
+              {map.presets.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <button type="button" className="btn" onClick={() => setDialog({ _tag: "savePreset" })}>
+              Save as preset
+            </button>
+          </span>
+          <span className="spacer" />
           <button type="button" className="btn danger" onClick={lockdown}>
             Lockdown
           </button>
           <button type="button" className="btn" onClick={() => setPalette(true)}>
-            Search <span className="mono">⌘K</span>
+            Search <kbd>{SHORTCUT}</kbd>
           </button>
         </div>
-
-        {notice && (
-          <div className={`card notice ${notice.kind}`}>
-            <span className="text">{notice.text}</span>
-            <button type="button" className="btn small" onClick={() => setNotice(null)}>
-              Dismiss
-            </button>
-          </div>
-        )}
 
         {draft !== null && (
           <div className="card draft">
@@ -374,12 +457,8 @@ export function App() {
               {draft.length === 0
                 ? "Holding changes. New changes wait here until you apply them."
                 : `${draft.length} held: ${draft.map((d) => d.summary).join("; ")}`}
+              {draftView.error && <span className="error-text"> {draftView.error}</span>}
             </span>
-            {draftView.error && (
-              <span className="small" style={{ color: "var(--error-fg)" }}>
-                {draftView.error}
-              </span>
-            )}
             <button
               type="button"
               className="btn primary"
@@ -396,8 +475,45 @@ export function App() {
 
         <div className={`layout${hasPanel ? " sheet-open" : " solo"}`}>
           <main>{view}</main>
-          {hasPanel && <Panel selection={route.selection} />}
+          {hasPanel && (
+            <Panel
+              key={formatRoute({ view: "map", selection: route.selection })}
+              selection={route.selection}
+            />
+          )}
         </div>
+
+        {notice && (
+          <div
+            className={`card toast ${notice.kind}`}
+            role={notice.kind === "error" ? "alert" : "status"}
+          >
+            {notice.kind === "error" && <span className="sticker">error</span>}
+            <span className="text">{notice.text}</span>
+            {notice.undo !== undefined && (
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => {
+                  const revision = notice.undo;
+                  setNotice(null);
+                  if (revision !== undefined) undo(revision);
+                }}
+              >
+                <UndoIcon />
+                Undo
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn small icon-only"
+              aria-label="Dismiss"
+              onClick={() => setNotice(null)}
+            >
+              <CloseIcon />
+            </button>
+          </div>
+        )}
 
         {palette && <Palette close={() => setPalette(false)} toggleHold={toggleHold} />}
         {dialog && <DialogHost dialog={dialog} close={() => setDialog(null)} />}

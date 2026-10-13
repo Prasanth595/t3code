@@ -3,6 +3,16 @@
 export const VIEWS = ["map", "table", "settings", "queue", "history", "inbox", "devices"] as const;
 export type View = (typeof VIEWS)[number];
 
+export const VIEW_LABEL: Record<View, string> = {
+  map: "Map",
+  table: "Table",
+  settings: "Settings",
+  queue: "Queue",
+  history: "History",
+  inbox: "Inbox",
+  devices: "Devices",
+};
+
 export type Selection =
   | { readonly _tag: "none" }
   | { readonly _tag: "machine"; readonly id: string }

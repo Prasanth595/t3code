@@ -60,6 +60,7 @@ import {
   desiredState,
   emptyMap,
   findMachine,
+  freePosition,
   machinesTouched,
   MapRuleError,
 } from "./rules/map.ts";
@@ -202,16 +203,6 @@ const randomHex = (bytes: number): string =>
   [...crypto.getRandomValues(new Uint8Array(bytes))]
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-
-/**
- * New machines go round a circle at the golden angle, so any count spreads out.
- * The owner moves them later (MM-206).
- */
-const nextPosition = (count: number) => {
-  const angle = -Math.PI / 2 + count * 2.39996;
-  const round = (value: number) => Math.round(Math.min(0.9, Math.max(0.1, value)) * 1000) / 1000;
-  return { x: round(0.5 + 0.38 * Math.cos(angle)), y: round(0.5 + 0.38 * Math.sin(angle)) };
-};
 
 const ownerActor = (owner: OwnerContext): MapActor => ({
   _tag: "owner",
@@ -1254,7 +1245,7 @@ export class MachineMapObject extends DurableObject<Env> {
         kind: request.kind,
         tokenClientId: token.clientId,
         hostname: null,
-        position: nextPosition(this.#map.machines.length),
+        position: freePosition(this.#map.machines.map((m) => m.position)),
         mapRole: "none",
         createdAt: nowIso(),
       };

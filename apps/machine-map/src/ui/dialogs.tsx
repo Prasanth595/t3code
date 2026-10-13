@@ -1,46 +1,118 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { MachineKind, SettingScope } from "@t3tools/contracts/machineMap";
 
 import type { JoinCodeResponse, WriteResult } from "../api.ts";
+import { findArrow } from "../rules/map.ts";
 import { savePresetChange } from "../rules/presets.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
-import { COMMAND_LABEL, LEVEL_LABEL, shortTime } from "./format.ts";
-import { findArrow } from "../rules/map.ts";
-import { VIEWS, type View } from "./route.ts";
+import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
+import { CopyIcon, KindIcon } from "./icons.tsx";
+import { VIEW_LABEL, VIEWS } from "./route.ts";
 import { knownKeys } from "./settingControls.ts";
 
+/**
+ * A native modal dialog: it keeps focus inside, closes on Escape and on a tap outside, and gives
+ * focus back to where it was. The element with `data-autofocus` gets focus first.
+ */
 function Modal({
   title,
   onClose,
+  className = "modal",
   children,
 }: {
   title: string;
   onClose: () => void;
+  className?: string;
   children: ReactNode;
 }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const downOutside = useRef(false);
+  const titleId = useId();
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const opener = document.activeElement;
+    dialog.showModal();
+    dialog.querySelector<HTMLElement>("[data-autofocus]")?.focus();
+    return () => {
+      dialog.close();
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, []);
   return (
-    <div className="overlay" onPointerDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="card modal" role="dialog" aria-label={title}>
-        <h2>{title}</h2>
+    <dialog
+      ref={ref}
+      className={`card ${className}`}
+      aria-labelledby={titleId}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      // The dialog box has no padding, so only the backdrop is the dialog element itself.
+      onPointerDown={(e) => {
+        downOutside.current = e.target === e.currentTarget;
+      }}
+      onClick={(e) => {
+        if (downOutside.current && e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="dialog-body">
+        <h2 id={titleId} className={className === "palette" ? "sr-only" : undefined}>
+          {title}
+        </h2>
         {children}
       </div>
-    </div>
+    </dialog>
   );
 }
 
+/** A dialog action in flight: the button waits, and an error shows in the dialog, not behind it. */
+function useAction() {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = (work: () => Promise<void>) => {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    work()
+      .catch((reason: unknown) =>
+        setError(reason instanceof Error ? reason.message : String(reason)),
+      )
+      .finally(() => setPending(false));
+  };
+  return { pending, error, run };
+}
+
+const ErrorLine = ({ error }: { error: string | null }) =>
+  error ? (
+    <p className="error-text" role="alert">
+      {error}
+    </p>
+  ) : null;
+
 export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => void }) {
   switch (dialog._tag) {
-    case "confirm":
+    case "confirm": {
+      const tone = dialog.tone ?? "danger";
       return (
         <Modal title={dialog.title} onClose={close}>
           <p className="muted">{dialog.body}</p>
-          <div className="actions">
+          <div className="actions end">
+            {/* A dangerous action never takes Enter by default. */}
             <button
               type="button"
-              className={`btn ${dialog.tone ?? "danger"}`}
-              autoFocus
+              className="btn"
+              onClick={close}
+              data-autofocus={tone === "danger" || undefined}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className={`btn ${tone}`}
+              data-autofocus={tone === "primary" || undefined}
               onClick={() => {
                 close();
                 dialog.action();
@@ -48,29 +120,20 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
             >
               {dialog.confirmLabel}
             </button>
-            <button type="button" className="btn" onClick={close}>
-              Cancel
-            </button>
           </div>
         </Modal>
       );
+    }
     case "addMachine":
       return <AddMachineDialog close={close} />;
     case "joinCode":
       return (
-        <Modal title={`Join code for ${dialog.machineName}`} onClose={close}>
-          <div className="code">{dialog.code}</div>
-          <p className="small muted">
-            It works once and expires at {shortTime(dialog.expiresAt)}. Use it on the machine in T3
-            Settings &gt; Machines, with <code>t3 machine-map join {dialog.code}</code>, or ask an
-            agent there to call <code>machines_join</code>.
-          </p>
-          <div className="actions">
-            <button type="button" className="btn primary" onClick={close}>
-              Done
-            </button>
-          </div>
-        </Modal>
+        <JoinCodeDialog
+          machineName={dialog.machineName}
+          code={dialog.code}
+          expiresAt={dialog.expiresAt}
+          close={close}
+        />
       );
     case "newJoinCode":
       return (
@@ -92,10 +155,21 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
             agent tool calls until you resume. Your own access stays.
           </p>
           <EmergencyButton size="dialog" onPressed={close} />
+          <div className="actions end">
+            <button type="button" className="btn" onClick={close} data-autofocus>
+              Cancel
+            </button>
+          </div>
         </Modal>
       );
   }
 }
+
+const KINDS: ReadonlyArray<{ kind: MachineKind; label: string }> = [
+  { kind: "laptop", label: "Laptop" },
+  { kind: "desktop", label: "Desktop" },
+  { kind: "server", label: "Server" },
+];
 
 /** MM-201, MM-210. */
 function AddMachineDialog({ close }: { close: () => void }) {
@@ -105,6 +179,8 @@ function AddMachineDialog({ close }: { close: () => void }) {
   const [existing, setExisting] = useState(false);
   const [clientId, setClientId] = useState("");
   const [secret, setSecret] = useState("");
+  const action = useAction();
+  const taken = portal.map.machines.some((m) => m.name.toLowerCase() === name.trim().toLowerCase());
   return (
     <Modal title="Add machine" onClose={close}>
       <form
@@ -116,7 +192,7 @@ function AddMachineDialog({ close }: { close: () => void }) {
           const body = existing
             ? { name: trimmed, kind, tokenClientId: clientId.trim(), tokenSecret: secret.trim() }
             : { name: trimmed, kind };
-          portal.call(async () => {
+          action.run(async () => {
             const result = await callApi<JoinCodeResponse>("POST", "/api/machines", body);
             portal.open({
               _tag: "joinCode",
@@ -132,30 +208,30 @@ function AddMachineDialog({ close }: { close: () => void }) {
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            autoFocus
+            data-autofocus
+            required
+            autoComplete="off"
             placeholder="Mac"
           />
+          {taken && <span className="hint">Another machine already has this name.</span>}
         </label>
-        <label className="field">
+        <div className="field" role="group" aria-label="Kind">
           Kind
-          <select
-            value={kind}
-            onChange={(e) =>
-              setKind(
-                e.target.value === "server"
-                  ? "server"
-                  : e.target.value === "desktop"
-                    ? "desktop"
-                    : "laptop",
-              )
-            }
-          >
-            <option value="laptop">Laptop</option>
-            <option value="desktop">Desktop</option>
-            <option value="server">Server</option>
-          </select>
-        </label>
-        <label className="actions small">
+          <div className="seg kinds">
+            {KINDS.map((k) => (
+              <button
+                key={k.kind}
+                type="button"
+                aria-pressed={kind === k.kind}
+                onClick={() => setKind(k.kind)}
+              >
+                <KindIcon kind={k.kind} />
+                {k.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <label className="toggle">
           <input
             type="checkbox"
             className="switch"
@@ -168,11 +244,23 @@ function AddMachineDialog({ close }: { close: () => void }) {
           <>
             <label className="field">
               Client id
-              <input value={clientId} onChange={(e) => setClientId(e.target.value)} />
+              <input
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                required
+                autoComplete="off"
+                spellCheck={false}
+              />
             </label>
             <label className="field">
               Client secret
-              <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+              <input
+                type="password"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                required
+                autoComplete="off"
+              />
             </label>
             <p className="small muted">
               The join code delivers this secret once. The portal never shows it again.
@@ -184,12 +272,13 @@ function AddMachineDialog({ close }: { close: () => void }) {
             to the Access policies of the machine hostnames and of <code>/connect</code>.
           </p>
         )}
-        <div className="actions">
-          <button type="submit" className="btn primary">
-            Add machine
-          </button>
+        <ErrorLine error={action.error} />
+        <div className="actions end">
           <button type="button" className="btn" onClick={close}>
             Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={action.pending}>
+            {action.pending ? "Adding…" : "Add machine"}
           </button>
         </div>
       </form>
@@ -197,9 +286,67 @@ function AddMachineDialog({ close }: { close: () => void }) {
   );
 }
 
+/** MM-202, MM-203: the code works once, so the dialog makes it easy to copy. */
+function JoinCodeDialog(props: {
+  machineName: string;
+  code: string;
+  expiresAt: string;
+  close: () => void;
+}) {
+  const portal = usePortalContext();
+  const [copied, setCopied] = useState<"code" | "command" | null>(null);
+  const command = `t3 machine-map join ${props.code}`;
+  const copy = (what: "code" | "command", text: string) =>
+    navigator.clipboard.writeText(text).then(
+      () => setCopied(what),
+      () => setCopied(null),
+    );
+  return (
+    <Modal title={`Join code for ${props.machineName}`} onClose={props.close}>
+      <div className="code-row">
+        <div className="code" aria-label="Join code">
+          {props.code}
+        </div>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => copy("code", props.code)}
+          data-autofocus
+        >
+          <CopyIcon />
+          {copied === "code" ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p className="small muted">
+        It works once and expires {timeUntil(props.expiresAt, portal.now)}. On {props.machineName},
+        use it in one of these ways:
+      </p>
+      <ol className="small steps">
+        <li>In T3, open Settings &gt; Machines and paste the code.</li>
+        <li>
+          In a terminal, run <code>{command}</code>{" "}
+          <button type="button" className="link" onClick={() => copy("command", command)}>
+            {copied === "command" ? "copied" : "copy"}
+          </button>
+        </li>
+        <li>
+          Ask an agent there to call <code>machines_join</code> with the code.
+        </li>
+      </ol>
+      <p className="small muted">The machine shows as waiting on the map until it connects.</p>
+      <div className="actions end">
+        <button type="button" className="btn primary" onClick={props.close}>
+          Done
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 function NewJoinCodeDialog(props: { machineId: string; machineName: string; close: () => void }) {
   const portal = usePortalContext();
   const [secret, setSecret] = useState("");
+  const action = useAction();
   return (
     <Modal title={`New join code for ${props.machineName}`} onClose={props.close}>
       <form
@@ -207,7 +354,7 @@ function NewJoinCodeDialog(props: { machineId: string; machineName: string; clos
         onSubmit={(e) => {
           e.preventDefault();
           const body = secret.trim() ? { tokenSecret: secret.trim() } : {};
-          portal.call(async () => {
+          action.run(async () => {
             const result = await callApi<JoinCodeResponse>(
               "POST",
               `/api/machines/${encodeURIComponent(props.machineId)}/join-code`,
@@ -228,14 +375,21 @@ function NewJoinCodeDialog(props: { machineId: string; machineName: string; clos
         </p>
         <label className="field">
           Token secret (optional)
-          <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} />
+          <input
+            type="password"
+            value={secret}
+            onChange={(e) => setSecret(e.target.value)}
+            autoComplete="off"
+            data-autofocus
+          />
         </label>
-        <div className="actions">
-          <button type="submit" className="btn primary">
-            Make join code
-          </button>
+        <ErrorLine error={action.error} />
+        <div className="actions end">
           <button type="button" className="btn" onClick={props.close}>
             Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={action.pending}>
+            {action.pending ? "Making…" : "Make join code"}
           </button>
         </div>
       </form>
@@ -247,6 +401,7 @@ function NewJoinCodeDialog(props: { machineId: string; machineName: string; clos
 function SavePresetDialog({ close }: { close: () => void }) {
   const portal = usePortalContext();
   const [name, setName] = useState("");
+  const replaces = portal.map.presets.some((p) => p.name === name.trim());
   return (
     <Modal title="Save arrows as a preset" onClose={close}>
       <form
@@ -261,21 +416,27 @@ function SavePresetDialog({ close }: { close: () => void }) {
           close();
         }}
       >
+        <p className="small muted">
+          A preset keeps every arrow as it is now. Apply it later in one step.
+        </p>
         <label className="field">
           Name
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            autoFocus
+            data-autofocus
+            required
+            autoComplete="off"
             placeholder="Work day"
           />
+          {replaces && <span className="hint">This replaces the preset with the same name.</span>}
         </label>
-        <div className="actions">
-          <button type="submit" className="btn primary">
-            Save
-          </button>
+        <div className="actions end">
           <button type="button" className="btn" onClick={close}>
             Cancel
+          </button>
+          <button type="submit" className="btn primary">
+            Save
           </button>
         </div>
       </form>
@@ -294,14 +455,15 @@ function ManageSettingDialog({ close }: { close: () => void }) {
   const keys = [...new Set([...knownKeys(scope), ...Object.keys(reported)])]
     .filter((k) => !map.settings.managed.some((s) => s.scope === scope && s.key === k))
     .sort();
-  const hasValue = Object.hasOwn(reported, key);
+  const trimmed = key.trim();
+  const hasValue = Object.hasOwn(reported, trimmed);
+  const listId = useId();
   return (
     <Modal title="Manage a setting" onClose={close}>
       <form
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          const trimmed = key.trim();
           if (!trimmed) return;
           portal.submit(`Manage ${scope}.${trimmed}`, [
             { _tag: "manageSetting", scope, key: trimmed, managed: true },
@@ -321,7 +483,7 @@ function ManageSettingDialog({ close }: { close: () => void }) {
           close();
         }}
       >
-        <div className="seg">
+        <div className="seg" role="group" aria-label="Scope">
           {(["server", "client"] as const).map((s) => (
             <button key={s} type="button" aria-pressed={scope === s} onClick={() => setScope(s)}>
               {s === "server" ? "Server setting" : "Client setting"}
@@ -329,7 +491,25 @@ function ManageSettingDialog({ close }: { close: () => void }) {
           ))}
         </div>
         <label className="field">
-          Take the value from
+          Setting
+          <input
+            list={listId}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            data-autofocus
+            required
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="Start typing a setting name"
+          />
+          <datalist id={listId}>
+            {keys.map((k) => (
+              <option key={k} value={k} />
+            ))}
+          </datalist>
+        </label>
+        <label className="field">
+          Take the shared value from
           <select value={machineId} onChange={(e) => setMachineId(e.target.value)}>
             {map.machines.map((m) => (
               <option key={m.id} value={m.id}>
@@ -337,33 +517,20 @@ function ManageSettingDialog({ close }: { close: () => void }) {
               </option>
             ))}
           </select>
+          <span className="hint">
+            {!trimmed
+              ? "The map copies the value that this machine reports."
+              : hasValue
+                ? `Shared value: ${JSON.stringify(reported[trimmed])}`
+                : "This machine did not report this setting. The shared value stays empty."}
+          </span>
         </label>
-        <label className="field">
-          Setting
-          <input
-            list="setting-keys"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-            autoFocus
-          />
-          <datalist id="setting-keys">
-            {keys.map((k) => (
-              <option key={k} value={k} />
-            ))}
-          </datalist>
-        </label>
-        <div className="small muted">
-          {key &&
-            (hasValue
-              ? `Shared value: ${JSON.stringify(reported[key])}`
-              : "This machine did not report this setting.")}
-        </div>
-        <div className="actions">
-          <button type="submit" className="btn primary">
-            Manage
-          </button>
+        <div className="actions end">
           <button type="button" className="btn" onClick={close}>
             Cancel
+          </button>
+          <button type="submit" className="btn primary" disabled={!trimmed}>
+            Manage
           </button>
         </div>
       </form>
@@ -377,16 +544,6 @@ interface PaletteItem {
   readonly run: () => void;
 }
 
-const VIEW_LABEL: Record<View, string> = {
-  map: "Map",
-  table: "Table",
-  settings: "Settings",
-  queue: "Queue",
-  history: "History",
-  inbox: "Inbox",
-  devices: "Devices",
-};
-
 /** MM-1105: every action and every machine. */
 export function Palette({ close, toggleHold }: { close: () => void; toggleHold: () => void }) {
   const portal = usePortalContext();
@@ -394,6 +551,7 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const list = useRef<HTMLUListElement>(null);
+  const listId = useId();
 
   const items = ((): Array<PaletteItem> => {
     const out: Array<PaletteItem> = [];
@@ -508,10 +666,22 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
     .toLowerCase()
     .split(" ")
     .filter((w) => w.length > 0);
-  const shown = items.filter((item) =>
-    words.every((w) => `${item.label} ${item.kind}`.toLowerCase().includes(w)),
-  );
+  // A whole word beats the start of a word, which beats a match inside a word: "mac" finds the
+  // machine Mac before "Add machine".
+  const score = (item: PaletteItem) => {
+    const parts = item.label.toLowerCase().split(" ");
+    return words.reduce(
+      (sum, w) => sum + (parts.includes(w) ? 2 : parts.some((p) => p.startsWith(w)) ? 1 : 0),
+      0,
+    );
+  };
+  const shown = items
+    .filter((item) => words.every((w) => `${item.label} ${item.kind}`.toLowerCase().includes(w)))
+    .map((item) => ({ item, score: score(item) }))
+    .sort((a, b) => b.score - a.score)
+    .map(({ item }) => item);
   const index = Math.min(active, Math.max(shown.length - 1, 0));
+  const optionId = (i: number) => `${listId}-${i}`;
 
   const move = (next: number) => {
     setActive(next);
@@ -525,45 +695,62 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
   };
 
   return (
-    <div className="overlay" onPointerDown={(e) => e.target === e.currentTarget && close()}>
-      <div className="card palette" role="dialog" aria-label="Command palette">
-        <input
-          autoFocus
-          placeholder="Find a machine or an action"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setActive(0);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              move(Math.min(index + 1, shown.length - 1));
-            } else if (e.key === "ArrowUp") {
-              e.preventDefault();
-              move(Math.max(index - 1, 0));
-            } else if (e.key === "Enter") {
-              e.preventDefault();
-              run(shown[index]);
-            }
-          }}
-        />
-        <ul ref={list} role="listbox">
-          {shown.map((item, i) => (
-            <li
-              key={`${item.kind}:${item.label}`}
-              role="option"
-              aria-selected={i === index}
-              onPointerEnter={() => setActive(i)}
-              onClick={() => run(item)}
-            >
-              <span>{item.label}</span>
-              <span className="kind">{item.kind}</span>
-            </li>
-          ))}
-          {shown.length === 0 && <li className="muted">Nothing matches.</li>}
-        </ul>
+    <Modal title="Command palette" onClose={close} className="palette">
+      <input
+        data-autofocus
+        role="combobox"
+        aria-expanded
+        aria-controls={listId}
+        aria-activedescendant={shown.length > 0 ? optionId(index) : undefined}
+        aria-label="Find a machine or an action"
+        placeholder="Find a machine or an action"
+        autoComplete="off"
+        spellCheck={false}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setActive(0);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            move(Math.min(index + 1, shown.length - 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            move(Math.max(index - 1, 0));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            run(shown[index]);
+          }
+        }}
+      />
+      <ul ref={list} id={listId} role="listbox" aria-label="Results">
+        {shown.map((item, i) => (
+          <li
+            key={`${item.kind}:${item.label}`}
+            id={optionId(i)}
+            role="option"
+            aria-selected={i === index}
+            onPointerMove={() => i !== index && setActive(i)}
+            onClick={() => run(item)}
+          >
+            <span>{item.label}</span>
+            <span className="kind">{item.kind}</span>
+          </li>
+        ))}
+        {shown.length === 0 && <li className="muted nothing">Nothing matches “{query}”.</li>}
+      </ul>
+      <div className="palette-keys small muted" aria-hidden>
+        <span>
+          <kbd>↑</kbd> <kbd>↓</kbd> move
+        </span>
+        <span>
+          <kbd>Enter</kbd> run
+        </span>
+        <span>
+          <kbd>Esc</kbd> close
+        </span>
       </div>
-    </div>
+    </Modal>
   );
 }

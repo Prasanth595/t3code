@@ -36,7 +36,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-203** A machine joins with the code in one of three ways: in T3 Settings > Machines, with `t3 machine-map join <code>`, or with the agent tool `machines_join`.
 - **MM-204** The join exchanges the code at `/enroll`, which a bypass Access app leaves open. The response holds the token id and secret. The machine keeps the secret in its server secret store and turns on `machineMap`.
 - **MM-205** A new machine shows on the map as "waiting" until its first connection. Then it shows as online.
-- **MM-206** The owner can rename a machine, change its kind and icon, and move it on the map. Positions are part of the map and sync to every page.
+- **MM-206** The owner can rename a machine, change its kind and icon, and move it on the map. Positions are part of the map and sync to every page. A new machine takes the free spot farthest from the other machines. The page shows cards that overlap apart, without saving it.
 - **MM-207** "Rotate token" makes a new secret for a machine token. An online machine gets the new secret on its connection, saves it, and confirms. Then the old secret stops working. An offline machine gets the rotation as a queued command.
 - **MM-208** "Remove machine" deletes the machine token, removes its arrows and its settings overrides, and drops its queue. A removed machine cannot connect again with its old secret.
 - **MM-209** Each machine reports its tunnel hostname. Arrows out of other machines use it to connect.
@@ -86,7 +86,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 6. Queue and offline machines
 
 - **MM-601** A machine that is not connected is offline. The portal shows the time since its last connection.
-- **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card, arrow or setting with a "queued" sticker and a count. A machine that never connected shows "waiting to join" instead. An arrow names each end that did not apply it: "queued for <machine>" for a machine that connected before, "waiting for <machine> to join" for a machine that never connected. The work of a machine that never connected does not count in the queued counts or the Queue tab badge.
+- **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card or setting with a "queued" sticker and a count. A machine that never connected shows "waiting to join" instead. An arrow shows a clock and names each end that did not apply it, in plain text: "queued for <machine>" for a machine that connected before, "waiting for <machine> to join" for a machine that never connected. The work of a machine that never connected does not count in the queued counts or the Queue tab badge.
 - **MM-603** Each machine reports the last revision that it applied. Its desired state is the current map. On connection, the machine applies the current desired state, not each queued revision one by one. A revision that does not change the desired state of a machine, for example a move on the map, queues nothing for it.
 - **MM-604** An arrow with an online target and an offline source shows "applied on <target>, queued for <source>".
 - **MM-605** A command for an offline machine waits in its queue. Each queued command has a delivery rule: "when online" or "when online and idle". It also has an expiry, by default 24 hours.
@@ -149,7 +149,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 - **MM-1101** The portal uses the tick3d style in light and dark mode, as in the `neo-brutalism` skill. It works on a phone and on a desktop.
 - **MM-1102** Views: Map, Table, Settings, Queue, History, Inbox, Devices. The selected item opens in a side panel, or in a bottom sheet on a phone.
-- **MM-1103** The Map view draws one line per pair of machines. A card on each line shows both directions in words, with arrows rounded to the four directions of the map. Tapping a machine focuses it and fades the lines that do not touch it.
+- **MM-1103** The Map view draws one line per pair of machines. A card on each line shows both directions in words, with arrows rounded to the four directions of the map. A pair with no access either way shows one short row; a phone shows its card only for the focused machine. Pair cards stay off machine cards. Tapping a machine focuses it and fades the lines that do not touch it. Tapping it again, tapping the empty map, "Show all" or Escape ends the focus.
 - **MM-1104** Dragging from a machine to another machine opens their arrow.
 - **MM-1105** The command palette, opened with Cmd+K or Ctrl+K, finds every action and every machine.
 - **MM-1106** Each view and each selected item has its own link, so a link opens the same state.
