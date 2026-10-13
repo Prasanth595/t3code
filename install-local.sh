@@ -1,0 +1,1 @@
+../_shared/install-local.sh

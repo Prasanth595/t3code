@@ -9,7 +9,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Cloudflare Access login:** the server accepts the Cloudflare Access JWT as the owner login (`cloudflareAccessTeamDomain`, `cloudflareAccessAud`, `cloudflareAccessSubjects`).
 - **Request headers per environment:** a saved environment sends its own headers, for example a Cloudflare Access service token. Edit them in Settings > Connections.
 - **Tunnel pairing:** a desktop server that listens on loopback makes pairing links with its tunnel URL (`tunnelPairingEnabled`, `tunnelPairingUrl`).
-- **Trusted sibling environments:** trusted browser origins get credentialed CORS and cookies, so one browser page pairs the other hosts (`trustedBrowserOrigins`).
+- **Trusted sibling environments:** trusted browser origins get credentialed CORS, and the server accepts its session cookie from them. One browser page pairs and reaches the other hosts (`trustedBrowserOrigins`).
 
 **Updates and releases**
 
