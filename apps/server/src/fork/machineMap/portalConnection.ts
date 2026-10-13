@@ -5,7 +5,12 @@
  * `CF-Access-Client-Secret`. Liveness uses the text frames `ping` and `pong`: the Durable Object
  * answers them with its auto response, so a ping does not wake it (MM-1001).
  */
-import { MachineToPortal, PortalToMachine } from "@t3tools/contracts";
+import {
+  MachineResourcesMessage,
+  MachineToPortal,
+  PortalResourcesRequest,
+  PortalToMachine,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -22,8 +27,14 @@ const PING_INTERVAL = Duration.seconds(30);
 /** No frame for this long means the connection is dead, even if TCP did not notice. */
 const SILENCE_LIMIT = Duration.seconds(75);
 
-const decodePortalMessage = Schema.decodeUnknownEffect(Schema.fromJsonString(PortalToMachine));
-const encodeMachineMessage = Schema.encodeEffect(Schema.fromJsonString(MachineToPortal));
+/** The resource messages (MM-1501) ride on the same socket, outside the base unions (MM-1502). */
+const PortalMessage = Schema.Union([PortalToMachine, PortalResourcesRequest]);
+export type PortalMessage = typeof PortalMessage.Type;
+const MachineMessage = Schema.Union([MachineToPortal, MachineResourcesMessage]);
+export type MachineMessage = typeof MachineMessage.Type;
+
+const decodePortalMessage = Schema.decodeUnknownEffect(Schema.fromJsonString(PortalMessage));
+const encodeMachineMessage = Schema.encodeEffect(Schema.fromJsonString(MachineMessage));
 
 export class PortalConnectionError extends Schema.TaggedError<PortalConnectionError>()(
   "PortalConnectionError",
@@ -83,7 +94,7 @@ const socketFailure =
       closeCode: error.reason._tag === "SocketCloseError" ? error.reason.code : null,
     });
 
-export type SendToPortal = (message: MachineToPortal) => Effect.Effect<void, Socket.SocketError>;
+export type SendToPortal = (message: MachineMessage) => Effect.Effect<void, Socket.SocketError>;
 
 /**
  * Opens one session and runs until it ends. It always ends with a `PortalConnectionError`.
@@ -95,7 +106,7 @@ export const runPortalSession = <R1, R2>(input: {
   readonly token: MachineToken;
   readonly onOpen: (send: SendToPortal) => Effect.Effect<void, never, R1>;
   readonly onMessage: (
-    message: PortalToMachine,
+    message: PortalMessage,
     send: SendToPortal,
   ) => Effect.Effect<void, never, R2>;
 }): Effect.Effect<

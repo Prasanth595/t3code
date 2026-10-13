@@ -168,6 +168,7 @@ import * as MachineHost from "./fork/machineMap/MachineHost.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
 import * as MachinePeers from "./fork/machineMap/MachinePeers.ts";
+import * as MachineResources from "./fork/machineMap/MachineResources.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -470,6 +471,7 @@ const layerMachineMapState = MachineMapState.layer.pipe(
 const layerMachineMap = MachineMap.layer.pipe(
   Layer.provideMerge(MachineHost.layer),
   Layer.provideMerge(MachinePeers.layer),
+  Layer.provide(MachineResources.layer),
   Layer.provide(ProcessRunner.layer),
   Layer.provide(NodeSocket.layerWebSocketConstructor),
 );

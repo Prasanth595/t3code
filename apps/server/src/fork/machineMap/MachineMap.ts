@@ -10,6 +10,7 @@
  * - MM-305, MM-1306: a level change of an arrow into this machine ends the sessions of its peer.
  * - MM-501, MM-1402: commands run here, or wait for the desktop app.
  * - MM-1001, MM-1002: status on connection and on change, at most once every 5 seconds.
+ * - MM-1501: a resource sample on connection, every minute, and when the portal asks.
  * - MM-801, MM-805: agent tools that run through the portal.
  * - The client stream for the desktop app and web Settings (`machineMapClient.ts`).
  */
@@ -25,7 +26,6 @@ import {
   type MachineToPortal,
   type MapToolName,
   type OrchestrationV2DomainEvent,
-  type PortalToMachine,
   ServerSettings as ServerSettingsSchema,
   ServerSettingsPatch,
   type SettingValues,
@@ -62,12 +62,21 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
-import { PORTAL_CLOSE_CODES, runPortalSession, type SendToPortal } from "./portalConnection.ts";
+import * as MachineResources from "./MachineResources.ts";
+import {
+  PORTAL_CLOSE_CODES,
+  type PortalMessage,
+  runPortalSession,
+  type SendToPortal,
+} from "./portalConnection.ts";
 
 /** MM-1001: the status goes out at most this often. */
 const STATUS_MIN_INTERVAL = Duration.seconds(5);
 /** Host load can change without any event, so the status is checked this often too. */
 const STATUS_IDLE_CHECK = Duration.minutes(1);
+/** MM-1501: one resource sample a minute, and one on request at most every 10 seconds. */
+const RESOURCE_INTERVAL = Duration.minutes(1);
+const RESOURCE_REQUEST_GAP_MS = 10_000;
 const TOOL_CALL_TIMEOUT = Duration.seconds(30);
 const ENROLL_TIMEOUT = Duration.seconds(20);
 const MAX_BACKOFF_MS = 60_000;
@@ -120,7 +129,7 @@ interface DesktopReportState {
   readonly clientSettings: SettingValues | null;
 }
 
-type ToolResult = Extract<PortalToMachine, { readonly _tag: "toolResult" }>;
+type ToolResult = Extract<PortalMessage, { readonly _tag: "toolResult" }>;
 
 export class MachineMap extends Context.Service<
   MachineMap,
@@ -155,6 +164,7 @@ export class MachineMap extends Context.Service<
 const make = Effect.gen(function* () {
   const state = yield* MachineMapState.MachineMapState;
   const host = yield* MachineHost.MachineHost;
+  const resources = yield* MachineResources.MachineResources;
   const settings = yield* ServerSettings.ServerSettingsService;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const sessionStore = yield* SessionStore.SessionStore;
@@ -184,6 +194,7 @@ const make = Effect.gen(function* () {
   const statusDirty = yield* Queue.sliding<void>(1);
   const markStatusDirty = Queue.offer(statusDirty, undefined).pipe(Effect.asVoid);
   const lastSentStatus = yield* Ref.make<string | null>(null);
+  const lastResourceSampleAt = yield* Ref.make(0);
   /** The encoded server settings that the last report saw, by key (MM-404). */
   const settingsBaseline = yield* Ref.make<Readonly<Record<string, unknown>>>({});
 
@@ -330,7 +341,25 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  const onPortalMessage = (send: SendToPortal) => (message: PortalToMachine) =>
+  // --- MM-1501: resource samples ------------------------------------------------------------
+
+  // A sample that does not go out is not queued: the next one comes within a minute.
+  const sendResources = (send: SendToPortal) =>
+    Effect.gen(function* () {
+      const sample = yield* resources.sample;
+      yield* Ref.set(lastResourceSampleAt, yield* Clock.currentTimeMillis);
+      yield* send({ _tag: "resources", sample }).pipe(Effect.ignore);
+    });
+
+  const resourceLoop = (send: SendToPortal) =>
+    Effect.gen(function* () {
+      while (true) {
+        yield* sendResources(send);
+        yield* Effect.sleep(RESOURCE_INTERVAL);
+      }
+    });
+
+  const onPortalMessage = (send: SendToPortal) => (message: PortalMessage) =>
     Effect.gen(function* () {
       switch (message._tag) {
         case "desired": {
@@ -353,6 +382,13 @@ const make = Effect.gen(function* () {
         case "toolResult": {
           const pending = pendingToolCalls.get(message.requestId);
           if (pending !== undefined) yield* Deferred.succeed(pending, message);
+          return;
+        }
+        case "sampleResources": {
+          const nowMs = yield* Clock.currentTimeMillis;
+          if (nowMs - (yield* Ref.get(lastResourceSampleAt)) < RESOURCE_REQUEST_GAP_MS) return;
+          // Sampling takes a moment; the connection keeps reading meanwhile.
+          yield* Effect.forkScoped(sendResources(send));
           return;
         }
         case "rotate": {
@@ -401,6 +437,7 @@ const make = Effect.gen(function* () {
       for (const message of queued) yield* sendOrQueue(message);
       // Status triggers live as long as this session, so a server off the map does no work.
       yield* Effect.forkScoped(statusTriggers);
+      yield* Effect.forkScoped(resourceLoop(send));
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Machine map could not greet the portal.", {

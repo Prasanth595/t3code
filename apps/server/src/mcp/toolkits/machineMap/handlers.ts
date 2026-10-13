@@ -47,6 +47,9 @@ const callThroughPortal = (tool: MapToolName, input: unknown) =>
 
 export const layer = McpToolAccess.toLayer(MachineMapToolkit, {
   machines_read: McpToolAccess.reads(() => callThroughPortal("machines_read", {})),
+  machines_resources: McpToolAccess.reads((input) =>
+    callThroughPortal("machines_resources", input),
+  ),
   machines_set_access: McpToolAccess.writes((input) =>
     callThroughPortal("machines_set_access", input),
   ),
