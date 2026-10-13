@@ -15,7 +15,7 @@ import {
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
-import { resolveSnoozePresets } from "../components/Sidebar.snooze";
+import { resolveSnoozePresets } from "../components/snoozeQuickOptions";
 import {
   buildThreadActionMenuItems,
   threadActionRequiresOperate,

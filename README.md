@@ -29,6 +29,10 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).
 - **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
 
+**Threads**
+
+- **Snooze quick options:** edit the choices of the snooze menus. Each choice snoozes for a time, or until a time of day, with an optional label (`snoozeQuickOptions`).
+
 **Filters**
 
 - **Repository owner filters:** filter the pull request page and the sidebar by the account or organization that owns each repository. Show only some owners, or hide them. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`).
