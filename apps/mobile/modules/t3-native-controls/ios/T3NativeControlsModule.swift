@@ -88,8 +88,7 @@ public final class T3NativeControlsModule: Module {
       try self.shareFile(url: url, title: title, sourceIdentifier: identifier, promise: promise)
     }.runOnQueue(.main)
 
-    Function("renderProjectIconImage") {
-      (text: String, fontSize: Double, size: Double, tint: UIColor?, backgroundAlpha: Double) -> String? in
+    Function("renderProjectIconImage") { (text: String, fontSize: Double, size: Double, tint: UIColor?, backgroundAlpha: Double) -> String? in
       T3ProjectIconImage.render(
         text: text,
         fontSize: fontSize,

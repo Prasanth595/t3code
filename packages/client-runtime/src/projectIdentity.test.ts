@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProjectIconColor } from "@t3tools/contracts";
-import { deriveProjectIdentity } from "./projectIdentity";
+import { deriveProjectIdentity } from "./projectIdentity.ts";
 
 describe("deriveProjectIdentity", () => {
   it.each([
