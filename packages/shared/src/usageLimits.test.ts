@@ -91,6 +91,9 @@ describe("pace", () => {
     expect(formatPaceHeadroom(24)).toBe("24% behind pace");
     expect(formatPaceHeadroom(-7)).toBe("7% ahead of pace");
     expect(formatPaceHeadroom(0)).toBe("On pace");
+    expect(formatPaceHeadroom(3)).toBe("On pace");
+    expect(formatPaceHeadroom(-3)).toBe("On pace");
+    expect(formatPaceHeadroom(4)).toBe("4% behind pace");
   });
 
   it("phrases the reset as a countdown", () => {
