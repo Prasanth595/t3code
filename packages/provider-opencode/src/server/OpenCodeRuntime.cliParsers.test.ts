@@ -298,6 +298,10 @@ describe("toOpenCodeFileParts", () => {
         // A ZIP file part makes OpenCode's Anthropic path throw before the
         // turn starts; it must ride only as the prompt's file path line.
         attachment("application/zip"),
+        // HTML file parts fail the same way ("'file part media type
+        // text/html' functionality not ..."), including with parameters.
+        attachment("text/html"),
+        attachment("text/html; charset=utf-8"),
         attachment("application/octet-stream"),
         // Image formats the model APIs reject stay on the fallback path too.
         attachment("image/bmp"),

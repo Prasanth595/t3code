@@ -454,7 +454,7 @@ export function openCodeQuestionId(
 
 /**
  * Attachments OpenCode can hand to a model as a native file part. Anything
- * else (ZIP, binaries, image formats like BMP/AVIF/SVG that model APIs
+ * else (ZIP, HTML, binaries, image formats like BMP/AVIF/SVG that model APIs
  * reject, or files over the direct-attachment size limit) would make the turn
  * fail before it starts, so those ride only as the file path ProviderService
  * puts in the prompt.
@@ -470,10 +470,17 @@ function isOpenCodeNativeFilePart(input: {
     return false;
   }
   const normalized = input.mimeType.trim().toLowerCase();
+  const baseMime = normalized.split(";", 1)[0]!.trim();
+  if (baseMime === "text/html") {
+    // OpenCode's Anthropic path rejects HTML file parts
+    // ("'file part media type text/html' functionality not ..."), so HTML
+    // rides only as the prompt's file path line like any other binary.
+    return false;
+  }
   return (
-    OPENCODE_NATIVE_IMAGE_MIMES.has(normalized) ||
-    normalized.startsWith("text/") ||
-    normalized === "application/pdf"
+    OPENCODE_NATIVE_IMAGE_MIMES.has(baseMime) ||
+    baseMime.startsWith("text/") ||
+    baseMime === "application/pdf"
   );
 }
 
