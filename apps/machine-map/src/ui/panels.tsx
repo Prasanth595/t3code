@@ -12,7 +12,7 @@ import {
 } from "@t3tools/contracts/machineMap";
 
 import type { WriteResult } from "../api.ts";
-import { arrowChange } from "../rules/access.ts";
+import { arrowChange, usesText } from "../rules/access.ts";
 import {
   effectiveSettings,
   findArrow,
@@ -20,11 +20,14 @@ import {
   LEVELS,
   levelRank,
   MAP_ROLES,
+  pairOffset,
   roleRank,
 } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type CommandOptions } from "./context.ts";
+import { buildStandings } from "./build.ts";
+import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import { arrowEndWait, arrowEnds, describeChange, machineQueue, type ArrowEnd } from "./derive.ts";
 import {
   actorText,
@@ -153,7 +156,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
       return;
     }
     const suffix = expiry === null ? "" : ` until ${shortTime(expiry)}`;
-    portal.submit(`${f} → ${t} set to ${LEVEL_LABEL[level]}${suffix}`, [
+    portal.submit(`${usesText(f, t)}: ${LEVEL_LABEL[level]}${suffix}`, [
       arrowChange(map, { from: source.id, to: target.id, level, expiresAt: expiry }),
     ]);
   };
@@ -174,7 +177,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   return (
     <>
       <h2>
-        {f} <span className="arrow-glyph">→</span> {t}
+        {f} <span className="verb">uses</span> {t}
       </h2>
       <p className="desc">
         What {f} can do on {t}.
@@ -184,7 +187,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
         className="link reverse"
         onClick={() => portal.select({ _tag: "arrow", from: target.id, to: source.id })}
       >
-        Other way: {t} → {f} is {LEVEL_LABEL[reverse.level]}
+        Other way: {usesText(t, f)}: {LEVEL_LABEL[reverse.level]}
       </button>
       {portal.pause && <PausedNote />}
 
@@ -247,7 +250,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
             type="button"
             className="btn small"
             onClick={() =>
-              portal.submit(`${f} → ${t} made permanent`, [
+              portal.submit(`${usesText(f, t)}: made permanent`, [
                 arrowChange(map, {
                   from: source.id,
                   to: target.id,
@@ -276,7 +279,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
           checked={arrow.agentTools}
           disabled={portal.pause !== null && !arrow.agentTools}
           onChange={(e) =>
-            portal.submit(`${f} → ${t} agent tools ${e.target.checked ? "on" : "off"}`, [
+            portal.submit(`${usesText(f, t)}: agent tools ${e.target.checked ? "on" : "off"}`, [
               arrowChange(map, {
                 from: source.id,
                 to: target.id,
@@ -318,6 +321,26 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
       </div>
       {lastTest?.result != null && <pre>{JSON.stringify(lastTest.result, null, 2)}</pre>}
       {lastTest?.error && <p className="error-text">{lastTest.error}</p>}
+
+      <Section>Card on the map</Section>
+      {pairOffset(map, source.id, target.id) ? (
+        <div className="row callout">
+          <div className="v">You placed this card. It follows its line when the machines move.</div>
+          <button
+            type="button"
+            className="btn small"
+            onClick={() =>
+              portal.submit(`Card of ${f} and ${t} back to its own place`, [
+                { _tag: "placePair", a: source.id, b: target.id, offset: null },
+              ])
+            }
+          >
+            Reset position
+          </button>
+        </div>
+      ) : (
+        <p className="hint">The map places this card. Drag it to put it somewhere else.</p>
+      )}
       <p className="desc footnote">
         {f} proves who it is with its own Cloudflare service token,{" "}
         <code>{source.tokenClientId}</code>. {t} applies a change in under a second and ends open
@@ -497,9 +520,10 @@ function MachinePanel({ id }: { id: string }) {
       <Section>Status</Section>
       {status ? (
         <dl className="facts small">
-          <dt>T3</dt>
+          <dt>Build</dt>
           <dd>
-            {status.t3Version} · <span className="mono">{status.build}</span>
+            <BuildLabel status={status} />{" "}
+            <BuildSticker standing={buildStandings(snapshot.presence).get(machine.id)} />
           </dd>
           {status.updateWaiting && (
             <>
@@ -831,7 +855,7 @@ function RevisionPanel({ revision }: { revision: number }) {
             portal.open({
               _tag: "confirm",
               title: `Restore the map to rev ${entry.revision}?`,
-              body: "Every arrow, setting and machine fact returns to how it was then, as one new revision. Undo reverses it.",
+              body: "Every arrow, setting, machine fact, card place and note returns to how it was then, as one new revision. Undo reverses it.",
               confirmLabel: "Restore",
               tone: "primary",
               action: () =>

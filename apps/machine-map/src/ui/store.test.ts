@@ -2,8 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { MachineId, type PortalSnapshot } from "@t3tools/contracts/machineMap";
 
 import { emptyMap } from "../rules/map.ts";
-import { machine, MAC } from "../rules/testMap.ts";
-import { INITIAL_STATE, reduce, settleHeldPositions, type HeldPosition } from "./store.ts";
+import { INITIAL_STATE, reduce, settleHeld, type Held } from "./store.ts";
 
 const snapshot: PortalSnapshot = {
   map: emptyMap(),
@@ -40,30 +39,30 @@ describe("reduce (MM-106)", () => {
   });
 });
 
-describe("settleHeldPositions", () => {
-  const map = { ...emptyMap(), revision: 4, machines: [machine(MAC)] };
-  const dropped = { x: 0.2, y: 0.7 };
-  const held = (revision: number | null): HeldPosition => ({
-    machineId: machine(MAC).id,
-    position: dropped,
+describe("settleHeld", () => {
+  const dropped = 7;
+  const held = (revision: number | null): Held<number> => ({
+    key: "card",
+    value: dropped,
     revision,
   });
+  const same = (a: number, b: number) => a === b;
+  const savedAs = (value: number | undefined) => () => value;
 
-  it("keeps a dropped position until the map has it", () => {
+  it("keeps a dropped place until the map has it", () => {
     const waiting = [held(null)];
-    expect(settleHeldPositions(waiting, map)).toBe(waiting);
-    const echoed = { ...map, machines: [{ ...machine(MAC), position: dropped }] };
-    expect(settleHeldPositions(waiting, echoed)).toEqual([]);
+    expect(settleHeld(waiting, 4, savedAs(1), same)).toBe(waiting);
+    expect(settleHeld(waiting, 4, savedAs(dropped), same)).toEqual([]);
   });
 
-  it("keeps a saved position until the map reaches its revision", () => {
+  it("keeps a saved place until the map reaches its revision", () => {
     const saved = [held(5)];
-    expect(settleHeldPositions(saved, map)).toBe(saved);
-    // From that revision on the map position wins, also when a later revision moved it again.
-    expect(settleHeldPositions(saved, { ...map, revision: 6 })).toEqual([]);
+    expect(settleHeld(saved, 4, savedAs(1), same)).toBe(saved);
+    // From that revision on the map place wins, also when a later revision moved it again.
+    expect(settleHeld(saved, 6, savedAs(1), same)).toEqual([]);
   });
 
-  it("drops the position of a removed machine", () => {
-    expect(settleHeldPositions([held(null)], { ...map, machines: [] })).toEqual([]);
+  it("drops the place of a card that is gone", () => {
+    expect(settleHeld([held(null)], 4, savedAs(undefined), same)).toEqual([]);
   });
 });

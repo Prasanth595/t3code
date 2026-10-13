@@ -13,7 +13,20 @@ import {
   type SettingScope,
 } from "@t3tools/contracts/machineMap";
 
-import { defaultArrow, findArrow, findMachine, isManaged, sameArrow } from "./map.ts";
+import {
+  defaultArrow,
+  findArrow,
+  findMachine,
+  findNote,
+  isManaged,
+  pairOffset,
+  sameArrow,
+} from "./map.ts";
+
+/** Summaries that the portal writes itself. The history reads them to tell what a revision did. */
+export const LOCKDOWN_SUMMARY = "Lockdown";
+export const PAUSE_SUMMARY = "Emergency pause";
+export const RESUME_SUMMARY = "Resume after emergency pause";
 
 const permanent = (arrow: ArrowRecord): ArrowRecord => ({
   ...arrow,
@@ -79,7 +92,7 @@ const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSO
 /**
  * MM-704: the changes that return `current` to `target`. Machines are not added or removed,
  * because that also needs a machine token: the restore keeps the current machines and restores
- * their names, kinds, places and map roles.
+ * their names, kinds, places and map roles. Pair cards and notes return too.
  */
 export function restoreChanges(
   current: MachineMapDocument,
@@ -135,6 +148,21 @@ export function restoreChanges(
     if (!target.presets.some((p) => p.name === preset.name)) {
       changes.push({ _tag: "removePreset", name: preset.name });
     }
+  }
+
+  for (const [i, a] of restoredMachines.entries()) {
+    for (const b of restoredMachines.slice(i + 1)) {
+      const offset = pairOffset(target, a.id, b.id);
+      if (!sameValue(offset, pairOffset(current, a.id, b.id))) {
+        changes.push({ _tag: "placePair", a: a.id, b: b.id, offset });
+      }
+    }
+  }
+  for (const note of target.notes) {
+    if (!sameValue(note, findNote(current, note.id))) changes.push({ _tag: "putNote", note });
+  }
+  for (const note of current.notes) {
+    if (!findNote(target, note.id)) changes.push({ _tag: "removeNote", id: note.id });
   }
   return changes;
 }

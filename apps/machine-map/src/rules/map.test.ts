@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
+import * as Schema from "effect/Schema";
 import {
   MachineId,
-  type MachineMapDocument,
+  MachineMapDocument,
+  type MapNote,
   type MapChange,
   type MapPosition,
 } from "@t3tools/contracts/machineMap";
@@ -12,8 +14,10 @@ import {
   desiredState,
   findArrow,
   freePosition,
+  emptyMap,
   machinesTouched,
   MapRuleError,
+  pairOffset,
 } from "./map.ts";
 import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
 
@@ -192,5 +196,77 @@ describe("freePosition (MM-206)", () => {
     for (const [i, a] of taken.entries())
       for (const b of taken.slice(i + 1))
         expect(Math.hypot((a.x - b.x) * 1.6, a.y - b.y)).toBeGreaterThan(0.3);
+  });
+});
+
+const decodeMap = Schema.decodeUnknownSync(MachineMapDocument);
+
+describe("display data (MM-1108, MM-1109)", () => {
+  const note: MapNote = {
+    id: "n1",
+    text: "Mac is the main box",
+    color: "yellow",
+    position: { x: 0.3, y: 0.4 },
+  };
+  const display: ReadonlyArray<MapChange> = [
+    { _tag: "placePair", a: WIN, b: MAC, offset: { along: 0.25, aside: 0.1 } },
+    { _tag: "putNote", note },
+    { _tag: "putNote", note: { ...note, position: { x: 0.6, y: 0.4 } } },
+  ];
+
+  it("stores a pair offset once, whichever end names it first", () => {
+    const map = applyChanges(threeMachines(), display).map;
+    expect(map.pairPlacements).toHaveLength(1);
+    expect(pairOffset(map, WIN, MAC)).toEqual({ along: 0.25, aside: 0.1 });
+    expect(pairOffset(map, MAC, WIN)).toEqual({ along: 0.75, aside: -0.1 });
+    const reset = applyChanges(map, [{ _tag: "placePair", a: MAC, b: WIN, offset: null }]).map;
+    expect(reset.pairPlacements).toEqual([]);
+    expect(pairOffset(reset, MAC, WIN)).toBeNull();
+  });
+
+  it("undoes pair placements and notes with their inverse", () => {
+    const before = threeMachines();
+    const applied = applyChanges(before, [...display, { _tag: "removeNote", id: "n1" }]);
+    expect(applied.map.notes).toEqual([]);
+    const undone = applyChanges(applied.map, applied.inverse).map;
+    expect(undone.pairPlacements).toEqual(before.pairPlacements);
+    expect(undone.notes).toEqual(before.notes);
+    const withNote = applyChanges(before, display);
+    expect(applyChanges(withNote.map, withNote.inverse).map).toEqual(before);
+  });
+
+  it("never changes what a machine applies, so it queues nothing (MM-603)", () => {
+    const before = threeMachines();
+    const applied = applyChanges(before, display);
+    const revision = { changes: display, inverse: applied.inverse };
+    expect(machinesTouched(revision)).toEqual(new Set());
+    for (const m of before.machines) {
+      expect(desiredState(applied.map, m.id)).toEqual(desiredState(before, m.id));
+    }
+  });
+
+  it("drops the card place of a removed machine, and the inverse brings it back", () => {
+    const map = applyChanges(threeMachines(), display).map;
+    const removed = applyChanges(map, [{ _tag: "removeMachine", machineId: WIN }]);
+    expect(removed.map.pairPlacements).toEqual([]);
+    expect(applyChanges(removed.map, removed.inverse).map.pairPlacements).toEqual(
+      map.pairPlacements,
+    );
+  });
+
+  it("refuses a pair of unknown machines and a note that is gone", () => {
+    const map = threeMachines();
+    const ghost = MachineId.make("ghost");
+    expect(() =>
+      applyChanges(map, [{ _tag: "placePair", a: MAC, b: ghost, offset: null }]),
+    ).toThrow(MapRuleError);
+    expect(() => applyChanges(map, [{ _tag: "removeNote", id: "nope" }])).toThrow(MapRuleError);
+  });
+
+  it("decodes a map saved before display data with no notes and no card places", () => {
+    const { pairPlacements: _p, notes: _n, ...old } = emptyMap();
+    const decoded = decodeMap(old);
+    expect(decoded.pairPlacements).toEqual([]);
+    expect(decoded.notes).toEqual([]);
   });
 });

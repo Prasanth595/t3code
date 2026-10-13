@@ -1,7 +1,8 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { MachineKind, SettingScope } from "@t3tools/contracts/machineMap";
+import type { MachineKind, MapPosition, SettingScope } from "@t3tools/contracts/machineMap";
 
-import type { JoinCodeResponse, WriteResult } from "../api.ts";
+import type { AddMachineRequest, JoinCodeResponse, WriteResult } from "../api.ts";
+import { usesText } from "../rules/access.ts";
 import { findArrow } from "../rules/map.ts";
 import { savePresetChange } from "../rules/presets.ts";
 import { callApi } from "./apiClient.ts";
@@ -125,7 +126,7 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
       );
     }
     case "addMachine":
-      return <AddMachineDialog close={close} />;
+      return <AddMachineDialog position={dialog.position} close={close} />;
     case "joinCode":
       return (
         <JoinCodeDialog
@@ -172,7 +173,13 @@ const KINDS: ReadonlyArray<{ kind: MachineKind; label: string }> = [
 ];
 
 /** MM-201, MM-210. */
-function AddMachineDialog({ close }: { close: () => void }) {
+function AddMachineDialog({
+  position,
+  close,
+}: {
+  position: MapPosition | undefined;
+  close: () => void;
+}) {
   const portal = usePortalContext();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<MachineKind>("laptop");
@@ -189,9 +196,12 @@ function AddMachineDialog({ close }: { close: () => void }) {
           e.preventDefault();
           const trimmed = name.trim();
           if (!trimmed) return;
-          const body = existing
-            ? { name: trimmed, kind, tokenClientId: clientId.trim(), tokenSecret: secret.trim() }
-            : { name: trimmed, kind };
+          const body: AddMachineRequest = {
+            name: trimmed,
+            kind,
+            ...(position ? { position } : {}),
+            ...(existing ? { tokenClientId: clientId.trim(), tokenSecret: secret.trim() } : {}),
+          };
           action.run(async () => {
             const result = await callApi<JoinCodeResponse>("POST", "/api/machines", body);
             portal.open({
@@ -653,7 +663,7 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
         if (other.id === machine.id) continue;
         const level = findArrow(map, machine.id, other.id).level;
         out.push({
-          label: `${machine.name} → ${other.name} (${LEVEL_LABEL[level]})`,
+          label: `${usesText(machine.name, other.name)}: ${LEVEL_LABEL[level]}`,
           kind: "arrow",
           run: () => portal.select({ _tag: "arrow", from: machine.id, to: other.id }),
         });

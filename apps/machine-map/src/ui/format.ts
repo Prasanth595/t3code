@@ -133,19 +133,24 @@ export function presenceText(presence: MachinePresence | undefined, now: number)
   }
 }
 
+export type Toward = "→" | "←" | "↓" | "↑";
+
+export const TOWARD_TEXT: Record<Toward, string> = {
+  "→": "to the right",
+  "←": "to the left",
+  "↓": "below",
+  "↑": "above",
+};
+
 /**
- * MM-1103: "from can use to", drawn the way the map shows it: the left or top machine first,
- * and an arrow toward `to`, rounded to the nearest of the four directions.
+ * MM-1103: where `to` sits on the map, seen from `from`, rounded to the nearest of the four
+ * directions. The text of a row always reads "from uses to"; this glyph only hints at the map.
  */
-export function spatialArrow(
-  from: MapPosition,
-  to: MapPosition,
-): { readonly first: "from" | "to"; readonly glyph: "→" | "←" | "↓" | "↑" } {
+export function towardGlyph(from: MapPosition, to: MapPosition): Toward {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
-  if (Math.abs(dx) >= Math.abs(dy))
-    return dx >= 0 ? { first: "from", glyph: "→" } : { first: "to", glyph: "←" };
-  return dy >= 0 ? { first: "from", glyph: "↓" } : { first: "to", glyph: "↑" };
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? "→" : "←";
+  return dy >= 0 ? "↓" : "↑";
 }
 
 /** A short text of any setting value for tables. */

@@ -67,7 +67,13 @@ import { configured } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
 import { CloudflareApi } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
-import { arrowChange, decideAgentWrite, gateTool, raisesAnyAccess } from "./rules/access.ts";
+import {
+  arrowChange,
+  decideAgentWrite,
+  gateTool,
+  raisesAnyAccess,
+  usesText,
+} from "./rules/access.ts";
 import {
   alertChanges,
   HOUR_MS,
@@ -95,10 +101,13 @@ import {
 } from "./rules/map.ts";
 import {
   applyPresetChanges,
+  LOCKDOWN_SUMMARY,
   lockdownChanges,
+  PAUSE_SUMMARY,
   PausedAccess,
   pausedAccess,
   restoreChanges,
+  RESUME_SUMMARY,
   resumeChanges,
   savePresetChange,
 } from "./rules/presets.ts";
@@ -998,7 +1007,7 @@ export class MachineMapObject extends DurableObject<Env> {
     if (action === "lockdown") {
       const changes = lockdownChanges(this.#map);
       if (changes.length === 0) throw new PortalError(409, "The map is already locked down.");
-      return { summary: "Lockdown", changes };
+      return { summary: LOCKDOWN_SUMMARY, changes };
     }
     if (!name) throw new PortalError(400, `The preset action ${action} needs a name.`);
     if (action === "save") {
@@ -1071,7 +1080,7 @@ export class MachineMapObject extends DurableObject<Env> {
         });
         return this.#agentWrite(
           actor,
-          `${name(args.from)} → ${name(args.to)} set to ${args.level}`,
+          `${usesText(name(args.from), name(args.to))}: ${args.level}`,
           [change],
         );
       }
@@ -1232,7 +1241,7 @@ export class MachineMapObject extends DurableObject<Env> {
       const to = findMachine(this.#map, arrow.to)?.name ?? arrow.to;
       this.#commit(
         { _tag: "portal", reason: "expiry" },
-        `${from} → ${to} returned to ${arrow.revertLevel}`,
+        `${usesText(from, to)}: back to ${arrow.revertLevel}`,
         [
           {
             _tag: "setArrow",
@@ -1461,7 +1470,7 @@ export class MachineMapObject extends DurableObject<Env> {
         kind: request.kind,
         tokenClientId: token.clientId,
         hostname: null,
-        position: freePosition(this.#map.machines.map((m) => m.position)),
+        position: request.position ?? freePosition(this.#map.machines.map((m) => m.position)),
         mapRole: "none",
         createdAt: nowIso(),
       };
@@ -1615,7 +1624,7 @@ export class MachineMapObject extends DurableObject<Env> {
       const before = pausedAccess(this.#map);
       const changes = lockdownChanges(this.#map);
       const revision =
-        changes.length > 0 ? this.#commit(actor, "Emergency pause", changes).revision : null;
+        changes.length > 0 ? this.#commit(actor, PAUSE_SUMMARY, changes).revision : null;
       const record: PauseRecord = { state: { pausedAt: nowIso(), by: actor, revision }, before };
       this.#savePause(record);
       // MM-709: every machine, also one that did not report the command yet (no MM-502 check).
@@ -1640,8 +1649,7 @@ export class MachineMapObject extends DurableObject<Env> {
       const changes = resumeChanges(this.#map, pause.before);
       const revision =
         changes.length > 0
-          ? this.#commit(ownerActor(owner), "Resume after emergency pause", changes, "resume")
-              .revision
+          ? this.#commit(ownerActor(owner), RESUME_SUMMARY, changes, "resume").revision
           : null;
       this.#savePause(null);
       return { revision };

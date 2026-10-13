@@ -13,6 +13,9 @@ import type {
 
 import { applyChanges, findArrow, findMachine, levelRank, roleRank } from "./map.ts";
 
+/** MM-1103: the one wording of an arrow everywhere: the source first, then the target. */
+export const usesText = (from: string, to: string): string => `${from} uses ${to}`;
+
 export interface ArrowInput {
   readonly from: MachineId;
   readonly to: MachineId;

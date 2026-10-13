@@ -64,6 +64,7 @@ import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
+import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
 import {
   canCheckForUpdate,
@@ -3378,6 +3379,8 @@ export function GeneralSettingsPanel() {
         <RepositoryOwnerFiltersSettingsRow />
 
         <PullRequestFilterChipsSettingsRow />
+
+        <SnoozeQuickOptionsSettingsRow />
 
         <SettingsRow
           {...searchableSetting("background-work-details")}
