@@ -6,10 +6,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import {
+  AuthEnvironmentMaintainScope,
+  AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
   AuthStandardClientScopes,
   EnvironmentId,
   MACHINE_LEVEL_SCOPES,
   type MachineDesiredState,
+  WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -18,12 +22,14 @@ import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as McpOAuth from "../../auth/McpOAuth.ts";
+import { requiredScopeForRpcMethod } from "../../auth/RpcAuthorization.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { isLocalDesktopSubject } from "./machineAccess.ts";
 import { PEER, PEER_TOKEN, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 
@@ -123,6 +129,21 @@ const pairAs = (claims: Record<string, unknown>) =>
     );
     return yield* auth.authenticateHttpRequest(bearerRequest(token.access_token));
   });
+
+it("the machine map RPCs need the scope of what they change, and the token is desktop-only", () => {
+  expect(requiredScopeForRpcMethod(WS_METHODS.machineMapSubscribe)).toBe(
+    AuthOrchestrationReadScope,
+  );
+  // Joining and leaving turn the machineMap setting on and off.
+  expect(requiredScopeForRpcMethod(WS_METHODS.machineMapJoin)).toBe(AuthSettingsWriteScope);
+  expect(requiredScopeForRpcMethod(WS_METHODS.machineMapLeave)).toBe(AuthSettingsWriteScope);
+  expect(requiredScopeForRpcMethod(WS_METHODS.machineMapReportDesktop)).toBe(
+    AuthEnvironmentMaintainScope,
+  );
+  expect(isLocalDesktopSubject("desktop-bootstrap")).toBe(true);
+  expect(isLocalDesktopSubject("one-time-token")).toBe(false);
+  expect(isLocalDesktopSubject(`machine:${PEER}`)).toBe(false);
+});
 
 it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
   it.effect("a machine token pairs with the scopes and subject of its arrow (MM-1305)", () =>

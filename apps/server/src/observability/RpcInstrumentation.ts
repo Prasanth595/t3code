@@ -213,6 +213,10 @@ const RPC_AGGREGATES = {
   [WS_METHODS.forkChangelogUpstreamPending]: "forkChangelog",
   [WS_METHODS.forkChangelogSyncStatus]: "forkChangelog",
   [WS_METHODS.forkChangelogStartSync]: "forkChangelog",
+  [WS_METHODS.machineMapSubscribe]: "machineMap",
+  [WS_METHODS.machineMapJoin]: "machineMap",
+  [WS_METHODS.machineMapLeave]: "machineMap",
+  [WS_METHODS.machineMapReportDesktop]: "machineMap",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

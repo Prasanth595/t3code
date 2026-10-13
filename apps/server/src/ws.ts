@@ -232,6 +232,8 @@ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReact
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
+import * as MachineMap from "./fork/machineMap/MachineMap.ts";
+import { isLocalDesktopSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -1310,6 +1312,9 @@ const layerWsRpc = (
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
       const forkChangelog = yield* ForkChangelog.ForkChangelog;
+      // Fork: machine map. Only the local desktop app gets the token (MM-306, MM-1401).
+      const machineMap = yield* MachineMap.MachineMap;
+      const machineMapClient = { desktop: isLocalDesktopSubject(currentSession.subject) };
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -2440,6 +2445,11 @@ const layerWsRpc = (
         [WS_METHODS.forkChangelogUpstreamPending]: (_input) => forkChangelog.upstreamPending,
         [WS_METHODS.forkChangelogSyncStatus]: (_input) => forkChangelog.syncStatus,
         [WS_METHODS.forkChangelogStartSync]: (_input) => forkChangelog.startSync,
+        [WS_METHODS.machineMapSubscribe]: (_input) => machineMap.clientStates(machineMapClient),
+        [WS_METHODS.machineMapJoin]: (input) => machineMap.join(input),
+        [WS_METHODS.machineMapLeave]: (_input) => machineMap.leave,
+        [WS_METHODS.machineMapReportDesktop]: (input) =>
+          machineMap.reportDesktop(input, machineMapClient).pipe(Effect.as({})),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {

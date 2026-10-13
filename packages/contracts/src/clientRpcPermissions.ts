@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { GitPreparePullRequestThreadInput } from "./git.ts";
 import {
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -49,6 +50,11 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [ORCHESTRATION_V2_WS_METHODS.stopWorkflow]: AuthOrchestrationOperateScope,
   // Fork: starts the Fork Sync workflow, which pushes to fork main on GitHub.
   [WS_METHODS.forkChangelogStartSync]: AuthSourceControlWriteScope,
+  // Fork: joining or leaving the machine map turns the `machineMap` setting on or off.
+  [WS_METHODS.machineMapJoin]: AuthSettingsWriteScope,
+  [WS_METHODS.machineMapLeave]: AuthSettingsWriteScope,
+  // Fork: the local desktop app reports desktop command results and its waiting update.
+  [WS_METHODS.machineMapReportDesktop]: AuthEnvironmentMaintainScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
