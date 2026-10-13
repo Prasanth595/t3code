@@ -198,7 +198,11 @@ function CloudEnvironmentRowsContent(
               key={environment.environment.environmentId}
               environment={environment}
               onConnect={() => handleConnectCloudEnvironment(environment)}
-              onDeregister={() => handleDeregisterCloudEnvironment(environment)}
+              onDeregister={
+                props.onOpenEnvironment
+                  ? () => handleDeregisterCloudEnvironment(environment)
+                  : undefined
+              }
               errorExpanded={expandedErrorId === environment.environment.environmentId}
               onToggleError={() => handleToggleCloudError(environment.environment.environmentId)}
             />
@@ -299,14 +303,14 @@ function ConnectedCloudEnvironmentRow(props: {
 
 /**
  * An environment on the signed-in account that is not saved on this device.
- * The switch adds it here; tapping or long-pressing the row offers to
- * deregister it from the account.
+ * The switch adds it here. Settings can also offer account deregistration;
+ * connection flows leave the row inactive so the switch stays the add action.
  */
 function CloudEnvironmentRow(props: {
   readonly environment: RelayEnvironmentView;
   readonly errorExpanded: boolean;
   readonly onConnect: () => void;
-  readonly onDeregister: () => void;
+  readonly onDeregister?: (() => void) | undefined;
   readonly onToggleError: () => void;
 }) {
   const presentation = availableCloudEnvironmentPresentation({
@@ -318,11 +322,13 @@ function CloudEnvironmentRow(props: {
 
   return (
     <CloudEnvironmentRowShell
-      accessibilityHint="Offers to deregister it from your T3 Connect account"
-      accessibilityLabel={props.environment.environment.label}
+      accessibilityHint={
+        props.onDeregister ? "Offers to deregister it from your T3 Connect account" : undefined
+      }
+      accessibilityLabel={props.onDeregister ? props.environment.environment.label : undefined}
       onPress={props.onDeregister}
       onLongPress={props.onDeregister}
-      showsChevron
+      showsChevron={props.onDeregister !== undefined}
       connectionError={presentation.connectionError}
       connectionErrorTraceId={presentation.connectionErrorTraceId}
       connectionState={presentation.connectionState}
