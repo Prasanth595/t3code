@@ -14,6 +14,9 @@ on:
       - apps/desktop/**
       - "!apps/desktop/**/*.test.ts"
       - assets/**
+      # The app shell reads and writes client settings with its own copy of this schema, and
+      # drops keys it does not know. A new client setting needs a new shell.
+      - packages/contracts/src/settings.ts
       - package.json
       - pnpm-lock.yaml
       - scripts/build-desktop-artifact.ts
