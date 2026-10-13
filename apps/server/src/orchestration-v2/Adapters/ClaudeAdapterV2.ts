@@ -2953,6 +2953,30 @@ interface ActiveClaudeTurnContext {
   readonly heldRootFrames: Array<SDKMessage>;
 }
 
+// The latest reset among the turn's limited windows, or null when any is unknown.
+function latestClaudeRateLimitResetAt(context: ActiveClaudeTurnContext): string | null {
+  const resetTimes = Array.from(context.rateLimitResetTimes.values());
+  return resetTimes.length > 0 && resetTimes.every((time) => time !== null)
+    ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
+    : null;
+}
+
+// Ends a turn stopped for extra usage, so limit recovery can resume it at the reset.
+function extraUsageStoppedFailure(
+  context: ActiveClaudeTurnContext,
+): OrchestrationV2ProviderFailure {
+  return {
+    ...makeProviderFailure({
+      class: "usage_limit",
+      code: "extra_usage_disabled",
+      message:
+        "Claude usage limit reached and extra usage is off. Send the message again once the limit resets.",
+      retryable: true,
+    }),
+    resetAt: latestClaudeRateLimitResetAt(context),
+  };
+}
+
 interface ActiveClaudeProviderRetry {
   readonly retry: OrchestrationV2ProviderRetry;
   readonly failure: OrchestrationV2ProviderFailure;
@@ -6102,10 +6126,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ...(interrupted
                 ? {}
                 : {
-                    failure: makeProviderFailure({
-                      cause: cause === undefined ? undefined : Cause.squash(cause),
-                      class: "transport_error",
-                    }),
+                    failure: context.extraUsageStopped
+                      ? extraUsageStoppedFailure(context)
+                      : makeProviderFailure({
+                          cause: cause === undefined ? undefined : Cause.squash(cause),
+                          class: "transport_error",
+                        }),
                   }),
             });
           } else {
@@ -6711,7 +6737,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // turn here; warnings keep running. Repeats need only one notice.
             if (stopForExtraUsage && !context.extraUsageStopped) {
               context.extraUsageStopped = true;
-              yield* input.query.interrupt.pipe(Effect.ignore, Effect.forkIn(sessionScope));
+              // A failed interrupt must not leave the turn billing; closing the
+              // query ends it the same way.
+              yield* input.query.interrupt.pipe(
+                Effect.catch(() => input.query.close),
+                Effect.ignore,
+                Effect.forkIn(sessionScope),
+              );
             }
             if (blocked) {
               const limitKey = `${limitType}:${rateLimitInfo.resetsAt ?? "unknown"}`;
@@ -7733,11 +7765,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               (usageLimited
                 ? "Claude usage limit reached. Send the message again once the limit resets."
                 : undefined);
-            const resetTimes = Array.from(context.rateLimitResetTimes.values());
-            const resetAt =
-              resetTimes.length > 0 && resetTimes.every((time) => time !== null)
-                ? resetTimes.reduce((latest, time) => (time! > latest ? time! : latest), "")
-                : null;
+            const resetAt = latestClaudeRateLimitResetAt(context);
             const resultStatus = terminalStatusFromResult(message, failureHint);
             // The extra-usage interrupt ends the turn at the limit, not as a
             // user stop. A turn that finished before it landed stays completed.
@@ -7746,13 +7774,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const resultFailure = interrupted
               ? null
               : extraUsageStopped
-                ? makeProviderFailure({
-                    class: "usage_limit",
-                    code: "extra_usage_disabled",
-                    message:
-                      "Claude usage limit reached and extra usage is off. Send the message again once the limit resets.",
-                    retryable: true,
-                  })
+                ? extraUsageStoppedFailure(context)
                 : providerFailureFromResult(message, completedAt, failureHint, usageLimited);
             const terminalFailure =
               resultFailure?.class === "usage_limit"
