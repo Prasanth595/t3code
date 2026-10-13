@@ -26,22 +26,23 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 - While the owner's emergency pause is on, the portal refuses every agent call. Only the owner can resume, in the portal.
 - The owner HTTP API (`apps/machine-map/src/worker.ts`, `/api/*`) needs the owner's Cloudflare Access login. Agents do not use it. Use the MCP tools.
 
-| Task                                   | Do this                                                                                                                                                          |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| See the machines and their state       | `machines_read`.                                                                                                                                                 |
-| Give machine X access to machine Y     | `machines_set_access` with `from` X, `to` Y, a `level`, and `agentTools: true` if agents on X must call tools on Y. Add `expiresInMinutes` for temporary access. |
-| Remove access                          | `machines_set_access` with `level: "none"`. The sessions of X on Y end at once.                                                                                  |
-| Run a tool on another machine          | `machine_tool_call` with `machine`, `tool` and `input`. It needs an arrow with agent tools from this machine to that machine.                                    |
-| Start work on another machine          | `machine_tool_call` with `t3_thread_launch`, or `machines_command` with `{"_tag":"startThread",...}`.                                                            |
-| Change a setting on every machine      | `machines_set_setting` without `machineId`. Only settings that the owner manages on the map work.                                                                |
-| Change a setting on one machine        | `machines_set_setting` with `machineId`. Pass `clear: true` to follow the shared value again.                                                                    |
-| Restart a server, collect diagnostics  | `machines_command` with `restartServer` or `collectDiagnostics`. Read the result later in `commands` of `machines_read`.                                         |
-| Stop the agents on one machine         | `machines_command` with `stopAllAgents`.                                                                                                                         |
-| Stop everything                        | Ask the owner to press the emergency pause in the portal. It stops all agents and sets all access to none. Agents cannot press it.                               |
-| Remove all machine access, keep agents | `machines_preset` with `action: "lockdown"`. Afterwards no agent can use the map tools.                                                                          |
-| Revert a map change                    | `machines_undo` with the revision number from `history`. Commands cannot be undone.                                                                              |
-| Cancel a queued command                | `machines_queue_cancel` with the command id.                                                                                                                     |
-| Join a new machine                     | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine.                                  |
+| Task                                   | Do this                                                                                                                                                                |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| See the machines and their state       | `machines_read`.                                                                                                                                                       |
+| Give machine X access to machine Y     | `machines_set_access` with `from` X, `to` Y, a `level`, and `agentTools: true` if agents on X must call tools on Y. Add `expiresInMinutes` for temporary access.       |
+| Remove access                          | `machines_set_access` with `level: "none"`. The sessions of X on Y end at once.                                                                                        |
+| Run a tool on another machine          | `machine_tool_call` with `machine`, `tool` and `input`. It needs an arrow with agent tools from this machine to that machine.                                          |
+| Start work on another machine          | `machine_tool_call` with `t3_thread_launch`, or `machines_command` with `{"_tag":"startThread",...}`.                                                                  |
+| Change a setting on every machine      | `machines_set_setting` without `machineId`. Only settings that the owner manages on the map work.                                                                      |
+| Change a setting on one machine        | `machines_set_setting` with `machineId`. Pass `clear: true` to follow the shared value again.                                                                          |
+| Restart a server, collect diagnostics  | `machines_command` with `restartServer` or `collectDiagnostics`. Read the result later in `commands` of `machines_read`.                                               |
+| Stop the agents on one machine         | `machines_command` with `stopAllAgents`.                                                                                                                               |
+| Stop everything                        | Ask the owner to press the emergency pause in the portal. It stops all agents and sets all access to none. Agents cannot press it.                                     |
+| Remove all machine access, keep agents | `machines_preset` with `action: "lockdown"`. Afterwards no agent can use the map tools.                                                                                |
+| Revert a map change                    | `machines_undo` with the revision number from `history`. Commands cannot be undone.                                                                                    |
+| Cancel a queued command                | `machines_queue_cancel` with the command id.                                                                                                                           |
+| Join a new machine                     | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine.                                        |
+| Install the fork on a new machine      | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork". |
 
 ## Updates and deploys
 
