@@ -151,6 +151,8 @@ function instanceModels(
 }
 
 // Each provider lists its models newest first, as the picker receives them.
+// Claude, Codex, and Antigravity mirror apps/server/src/provider/model-manifest.json;
+// Grok and OpenCode report their catalogs at runtime.
 const catalog: CatalogModel[] = [
   ...instanceModels("claudeAgent", "Claude", [
     "Claude Opus 5.5",
@@ -169,18 +171,27 @@ const catalog: CatalogModel[] = [
   ]),
   ...instanceModels("codex", "Codex", [
     "GPT-6.1 Sol",
-    "GPT-5.6-Sol",
-    "GPT-5.6-Terra",
+    "GPT-6 Astra",
+    "GPT-6 Luna",
+    "GPT-6 Sol",
+    "GPT-5.6 Sol",
+    "GPT-5.6 Terra",
+    "GPT-5.6 Luna",
     "GPT-5.5",
-    "GPT-5.4",
-    "GPT-5",
   ]),
   ...instanceModels("grok", "Grok", ["Grok 4.7", "Grok 4.6", "Grok 4.5"]),
   ...instanceModels("antigravity", "Antigravity", [
     "Gemini 3.8 Flash (High)",
     "Gemini 3.8 Flash (Medium)",
     "Gemini 3.8 Flash (Low)",
-    "Gemini 3.1 Pro",
+    "Gemini 3.7 Flash (High)",
+    "Gemini 3.7 Flash (Medium)",
+    "Gemini 3.7 Flash (Low)",
+    "Gemini 3.6 Flash (High)",
+    "Gemini 3.6 Flash (Medium)",
+    "Gemini 3.6 Flash (Low)",
+    "Gemini 3.1 Pro (High)",
+    "Gemini 3.1 Pro (Low)",
   ]),
   {
     driverKind: "opencode",
@@ -222,10 +233,36 @@ describe("rankModelPickerSearch", () => {
     ["sonnet", ["Claude Sonnet 5.5", "Claude Sonnet 5", "Claude Sonnet 4.6"]],
     ["fable", ["Claude Fable 5.1", "Claude Fable 5"]],
     ["haiku", ["Claude Haiku 5.5", "Claude Haiku 4.5"]],
-    ["gpt", ["GPT-6.1 Sol", "GPT-5.6-Sol", "GPT-5.6-Terra", "GPT-5.5", "GPT-5.4", "GPT-5"]],
-    ["sol", ["GPT-6.1 Sol", "GPT-5.6-Sol"]],
+    [
+      "gpt",
+      [
+        "GPT-6.1 Sol",
+        "GPT-6 Astra",
+        "GPT-6 Luna",
+        "GPT-6 Sol",
+        "GPT-5.6 Sol",
+        "GPT-5.6 Terra",
+        "GPT-5.6 Luna",
+        "GPT-5.5",
+      ],
+    ],
+    ["sol", ["GPT-6.1 Sol", "GPT-6 Sol", "GPT-5.6 Sol"]],
+    ["luna", ["GPT-6 Luna", "GPT-5.6 Luna"]],
     ["grok", ["Grok 4.7", "Grok 4.6", "Grok 4.5"]],
-    ["flash", ["Gemini 3.8 Flash (High)", "Gemini 3.8 Flash (Medium)", "Gemini 3.8 Flash (Low)"]],
+    [
+      "flash",
+      [
+        "Gemini 3.8 Flash (High)",
+        "Gemini 3.8 Flash (Medium)",
+        "Gemini 3.8 Flash (Low)",
+        "Gemini 3.7 Flash (High)",
+        "Gemini 3.7 Flash (Medium)",
+        "Gemini 3.7 Flash (Low)",
+        "Gemini 3.6 Flash (High)",
+        "Gemini 3.6 Flash (Medium)",
+        "Gemini 3.6 Flash (Low)",
+      ],
+    ],
     ["kimi", ["Kimi K3", "Kimi K2.5", "Kimi K2"]],
   ])("lists equally good matches for %j newest first", (query, expected) => {
     // Loose fuzzy matches from other families may follow; they rank last.
@@ -245,13 +282,7 @@ describe("rankModelPickerSearch", () => {
   });
 
   it("still ranks an exact name above newer models that extend it", () => {
-    expect(search("gpt-5")).toEqual([
-      "GPT-5",
-      "GPT-5.6-Sol",
-      "GPT-5.6-Terra",
-      "GPT-5.5",
-      "GPT-5.4",
-    ]);
+    expect(search("gpt-6 sol").slice(0, 2)).toEqual(["GPT-6 Sol", "GPT-6.1 Sol"]);
     expect(search("claude opus 5").slice(0, 2)).toEqual(["Claude Opus 5", "Claude Opus 5.5"]);
     expect(search("Grok 4.6")[0]).toBe("Grok 4.6");
   });
