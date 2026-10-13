@@ -22,7 +22,12 @@ directory must not share one T3 MCP entry.
 - **2.x** serves every directory from one
   [server per instance](../../packages/provider-opencode/src/server/v2/OpenCode2Server.ts). Each thread
   registers its own `t3-code-<thread>` MCP entry, and session permission rules deny every other
-  thread's entry. See the [2.x adapter](../../packages/provider-opencode/src/server/v2/adapter.ts).
+  thread's entry. OpenCode's Code Mode runs MCP tools inside one `execute` call and reports nested
+  calls without their results, so a page `html_render` published from there would never reach the
+  thread. Each thread therefore also registers a `t3-code-<digest>-html` entry with Code Mode off,
+  and its rules allow `html_render` only there. Every other T3 tool stays in Code Mode, because
+  exposing all of them directly would add every tool schema to every request.
+  See the [2.x adapter](../../packages/provider-opencode/src/server/v2/adapter.ts).
 
 External OpenCode servers remain externally owned and can require an external restart to pick up
 configuration changes. OpenCode stores "always" approval grants for the whole project. Automatic
