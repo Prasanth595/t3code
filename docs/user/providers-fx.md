@@ -19,7 +19,7 @@ Every fx instance on the same machine shares that machine's fx login. T3 Code do
 
 ## Models and effort
 
-The model picker lists **Default** first. That option runs the model fx is configured to use, as `fx status` reports it. The other entries come from `fx models`. A custom model you add in the provider settings goes to fx as is, and fx reports an error if its backend does not offer it.
+The model picker lists **Default** first. That option runs the model `fx status` reports on the server's machine. A model set only for one project in fx's settings is not picked up, so choose it from the list instead. If the thread's fx backend does not offer that model, the thread keeps its current one. The other entries come from `fx models`. A custom model you add in the provider settings goes to fx as is, and fx reports an error if its backend does not offer it.
 
 fx also has an **Effort** control. A new thread starts at Medium.
 
@@ -38,7 +38,7 @@ fx offers two composer modes.
 
 T3 Code does not offer **Full access** or **Auto-accept edits** for fx. A thread already set to one of those runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
 
-On fx versions after [vercel-labs/fx#1189](https://github.com/vercel-labs/fx/pull/1189), a mode written over ACP becomes fx's default permission mode. fx in the terminal then starts in that mode.
+On fx versions after [vercel-labs/fx#1189](https://github.com/vercel-labs/fx/pull/1189), fx saves the mode T3 Code sets as its default permission mode. T3 Code sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
 
 A message steered into a running turn stops that turn, and fx answers the new message in the same session.
 
