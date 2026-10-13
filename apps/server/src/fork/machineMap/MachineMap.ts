@@ -399,6 +399,8 @@ const make = Effect.gen(function* () {
       });
       const queued = yield* Ref.getAndSet(outbox, []);
       for (const message of queued) yield* sendOrQueue(message);
+      // Status triggers live as long as this session, so a server off the map does no work.
+      yield* Effect.forkScoped(statusTriggers);
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Machine map could not greet the portal.", {
@@ -856,7 +858,6 @@ const make = Effect.gen(function* () {
   yield* forkParked(superviseConnection);
   yield* forkParked(watchLocalSettings);
   yield* forkParked(statusLoop);
-  yield* forkParked(statusTriggers);
 
   return MachineMap.of({ join, leave, clientStates, reportDesktop, callMapTool });
 });

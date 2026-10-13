@@ -140,7 +140,8 @@ const make = Effect.gen(function* () {
     config.tunnelPairingUrl === undefined ? null : new URL(config.tunnelPairingUrl).hostname;
 
   // A server that runs from a git checkout (the VPS deploy, `vp run dev`) reports its commit.
-  const deployCommit = yield* path.fromFileUrl(new URL(import.meta.url)).pipe(
+  // It runs once, at the first status, so a server with the map off never spawns git.
+  const defaultBuild = yield* path.fromFileUrl(new URL(import.meta.url)).pipe(
     Effect.flatMap((modulePath) =>
       processRunner.run({
         command: "git",
@@ -151,9 +152,11 @@ const make = Effect.gen(function* () {
     ),
     Effect.map((output) => (output.code === 0 ? output.stdout.trim() : "")),
     Effect.orElseSucceed(() => ""),
+    Effect.map((commit) =>
+      commit.length > 0 ? `deploy ${commit}` : `release ${descriptor.serverVersion}`,
+    ),
+    Effect.cached,
   );
-  const defaultBuild =
-    deployCommit.length > 0 ? `deploy ${deployCommit}` : `release ${descriptor.serverVersion}`;
 
   const resourceSample = yield* Ref.make<{
     readonly atMs: number;
@@ -204,12 +207,13 @@ const make = Effect.gen(function* () {
 
   const status: MachineHost["Service"]["status"] = (input) =>
     Effect.gen(function* () {
-      const [shell, tasks, clients, resources, nowMs] = yield* Effect.all([
+      const [shell, tasks, clients, resources, nowMs, build] = yield* Effect.all([
         threads.getShellSnapshot().pipe(Effect.option),
         scheduledTasks.list().pipe(Effect.option),
         clientSessions,
         readResources,
         Clock.currentTimeMillis,
+        defaultBuild,
       ]);
       const activeThreads = Option.match(shell, {
         onNone: () => [],
@@ -217,7 +221,7 @@ const make = Effect.gen(function* () {
       });
       return {
         t3Version: descriptor.serverVersion,
-        build: input.desktopBuild ?? defaultBuild,
+        build: input.desktopBuild ?? build,
         hostname,
         uptimeSeconds: Math.floor((nowMs - startedAtMs) / 1000),
         runningTurns: activeThreads.filter((thread) => thread.activeRunId !== null).length,
@@ -332,7 +336,7 @@ const make = Effect.gen(function* () {
     return succeed({
       versions: {
         t3: descriptor.serverVersion,
-        build: defaultBuild,
+        build: yield* defaultBuild,
         node: process.version,
         platform: descriptor.platform,
       },

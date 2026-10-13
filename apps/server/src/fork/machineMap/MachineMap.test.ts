@@ -18,6 +18,7 @@ import {
   PortalToMachine,
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -26,6 +27,7 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
@@ -109,6 +111,16 @@ const startFakePortal = Effect.gen(function* () {
 });
 
 /** The next message of one kind; status messages come and go on their own. */
+/** The next status message; other messages are not expected meanwhile. */
+const nextStatus = (received: Queue.Queue<MachineToPortal>) =>
+  Queue.take(received).pipe(
+    Effect.flatMap((message) =>
+      message._tag === "status"
+        ? Effect.succeed(message.status)
+        : Effect.die(new Error(`Expected status, got ${message._tag}`)),
+    ),
+  );
+
 const nextOf = <Tag extends MachineToPortal["_tag"]>(
   received: Queue.Queue<MachineToPortal>,
   tag: Tag,
@@ -152,7 +164,13 @@ const layerMachineMap = (input: {
       Layer.mergeAll(
         Layer.mock(MachineHost.MachineHost)({
           supportedCommands: () => ["stopAllAgents"],
-          status: () => Effect.succeed(STATUS),
+          status: (status) =>
+            Effect.succeed({
+              ...STATUS,
+              commands: status.desktopConnected
+                ? [...STATUS.commands, "reloadWindows"]
+                : STATUS.commands,
+            }),
           run: (command: MachineCommand) =>
             Ref.update(input.ran, (ids) => [...ids, command.id]).pipe(
               Effect.as({ ok: true, result: { ran: command.id }, error: null }),
@@ -302,6 +320,18 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
             ok: true,
           });
           expect((yield* state.snapshot).saved.desktopCommands).toEqual([]);
+
+          // MM-1001, MM-502: a listening desktop app is a change, sent after the 5 second gap.
+          const listening = yield* Deferred.make<void>();
+          const desktop = yield* machineMap.clientStates({ desktop: true }).pipe(
+            Stream.tap(() => Deferred.succeed(listening, undefined)),
+            Stream.runDrain,
+            Effect.forkChild,
+          );
+          yield* Deferred.await(listening);
+          yield* TestClock.adjust("5 seconds");
+          expect((yield* nextStatus(portal.received)).commands).toContain("reloadWindows");
+          yield* Fiber.interrupt(desktop);
 
           // MM-805: a map tool goes to the portal and returns its answer or refusal.
           const call = yield* machineMap

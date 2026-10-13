@@ -10,13 +10,14 @@ import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Socket from "effect/socket/Socket";
 
 import { type MachineToken, tokenHeaders } from "./MachineMapState.ts";
 
 /** The portal must answer this text frame with `PORTAL_PONG` without waking (MM-1001). */
-export const PORTAL_PING = "ping";
-export const PORTAL_PONG = "pong";
+const PORTAL_PING = "ping";
+const PORTAL_PONG = "pong";
 const PING_INTERVAL = Duration.seconds(30);
 /** No frame for this long means the connection is dead, even if TCP did not notice. */
 const SILENCE_LIMIT = Duration.seconds(75);
@@ -38,7 +39,7 @@ export class PortalConnectionError extends Schema.TaggedError<PortalConnectionEr
 }
 
 /** `https://portal` to `wss://portal/connect`. */
-export const connectUrl = (portalUrl: string): string => {
+const connectUrl = (portalUrl: string): string => {
   const url = new URL("/connect", portalUrl);
   url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
   return url.toString();
@@ -62,6 +63,7 @@ export type SendToPortal = (message: MachineToPortal) => Effect.Effect<void, Soc
 /**
  * Opens one session and runs until it ends. It always ends with a `PortalConnectionError`.
  * `onOpen` runs once the socket is open; `onMessage` runs for each portal message, in order.
+ * Both run in the scope of the session, so a fiber that `onOpen` forks ends with the session.
  */
 export const runPortalSession = <R1, R2>(input: {
   readonly portalUrl: string;
@@ -71,7 +73,11 @@ export const runPortalSession = <R1, R2>(input: {
     message: PortalToMachine,
     send: SendToPortal,
   ) => Effect.Effect<void, never, R2>;
-}): Effect.Effect<never, PortalConnectionError, Socket.WebSocketConstructor | R1 | R2> =>
+}): Effect.Effect<
+  never,
+  PortalConnectionError,
+  Socket.WebSocketConstructor | Exclude<R1 | R2, Scope.Scope>
+> =>
   Effect.scoped(
     Effect.gen(function* () {
       const makeWebSocket = yield* Socket.WebSocketConstructor;

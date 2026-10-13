@@ -11,7 +11,7 @@ export const SELF = MachineId.make("mac");
 export const PEER = MachineId.make("vps");
 export const PEER_TOKEN = "vps-token.access";
 
-export const peer = (id: MachineId, overrides: Partial<PeerMachine> = {}): PeerMachine => ({
+const peer = (id: MachineId, overrides: Partial<PeerMachine> = {}): PeerMachine => ({
   id,
   name: id.toUpperCase(),
   kind: "server",

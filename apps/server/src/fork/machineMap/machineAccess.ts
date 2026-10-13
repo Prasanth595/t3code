@@ -55,10 +55,7 @@ export const machineGrantFor = (
 const MACHINE_SUBJECT_PREFIX = "machine:";
 
 /** The peer of a session subject `machine:<id>`, or undefined for any other subject. */
-export const peerOfSubject = (
-  desired: MachineDesiredState,
-  subject: string,
-): PeerMachine | undefined =>
+const peerOfSubject = (desired: MachineDesiredState, subject: string): PeerMachine | undefined =>
   subject.startsWith(MACHINE_SUBJECT_PREFIX)
     ? desired.peers.find(
         (peer) => machineSessionSubject(peer.id) === subject && peer.id !== desired.self.id,
