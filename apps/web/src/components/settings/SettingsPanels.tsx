@@ -63,6 +63,7 @@ import { IS_NIGHTLY_BUILD, NightlyMobileBetaRow } from "../NightlyMobileBeta";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
+import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
 import {
   canCheckForUpdate,
@@ -3375,6 +3376,8 @@ export function GeneralSettingsPanel() {
         {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
 
         <RepositoryOwnerFiltersSettingsRow />
+
+        <PullRequestFilterChipsSettingsRow />
 
         <SettingsRow
           {...searchableSetting("background-work-details")}

@@ -577,8 +577,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Repository owner filters",
     to: "/settings/general",
     searchTerms: [
-      "github organization org owner account filter pull requests sidebar usage work personal",
+      "github organization org owner account filter hide exclude pull requests sidebar work personal",
     ],
+  },
+  {
+    id: "pull-request-filter-chips",
+    title: "Pull request filter chips",
+    to: "/settings/general",
+    searchTerms: ["active filters chips exclude negative is not pull requests list empty"],
   },
   {
     id: "app-toggle-shortcuts",
