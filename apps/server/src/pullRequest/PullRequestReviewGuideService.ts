@@ -295,7 +295,7 @@ const make = Effect.gen(function* () {
         const sha = layer.headSha;
         if (sha === undefined) return Effect.succeed({ ...described, headSha: null });
         return fetchHead(layer.number, sha, layer.headBranch).pipe(
-          Effect.as({ ...described, headSha: sha }),
+          Effect.map(({ commitSha }) => ({ ...described, headSha: commitSha })),
           Effect.catch((error) =>
             Effect.logInfo("Review guide could not read a stack layer's head", {
               layer: layer.number,

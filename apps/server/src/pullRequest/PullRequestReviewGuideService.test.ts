@@ -145,7 +145,7 @@ const stack = (repositories: {
     {
       number: 8,
       title: "Upper",
-      headSha: repositories.upperSha,
+      headSha: repositories.upperSha.slice(0, 12),
       headBranch: "upper",
       state: "open",
     },
