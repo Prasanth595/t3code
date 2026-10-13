@@ -2885,8 +2885,13 @@ export interface GitHubRepositoryAccess {
  * need, and offering those to a reader who cannot use them wastes the press and reads as the app
  * being wrong. Everything softer — commenting, reviewing, resolving — keeps the granting default,
  * because being unable to say something is the worse failure there.
+ *
+ * A null permission is not that. GitHub answers null only to a GitHub App installation, and no
+ * API says what an installation may do, so null is granted and GitHub refuses whatever the app
+ * was not given. A person always gets a role, READ at the least.
  */
-function toCanWrite(viewerPermission: string | null | undefined): boolean {
+export function toCanWrite(viewerPermission: string | null | undefined): boolean {
+  if (viewerPermission === null) return true;
   switch (viewerPermission?.trim().toUpperCase()) {
     case "ADMIN":
     case "MAINTAIN":
