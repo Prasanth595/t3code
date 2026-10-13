@@ -13,7 +13,7 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import type { PendingRotation } from "../api.ts";
-import { findMachine } from "../rules/map.ts";
+import { changesPublicFacts, findMachine } from "../rules/map.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import { hasJoined, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
@@ -48,7 +48,10 @@ export function machineQueue(
   };
 }
 
-/** The newest revision that changed the arrow, or null when it is older than the loaded history. */
+/**
+ * The newest revision that changed the arrow, or null when it is older than the loaded history.
+ * A move or a map role change of an end does not change the arrow.
+ */
 function lastArrowRevision(
   history: ReadonlyArray<MapRevision>,
   from: MachineId,
@@ -58,23 +61,43 @@ function lastArrowRevision(
     const touched = revision.changes.some(
       (c) =>
         (c._tag === "setArrow" && c.arrow.from === from && c.arrow.to === to) ||
-        (c._tag === "putMachine" && (c.machine.id === from || c.machine.id === to)),
+        (c._tag === "putMachine" &&
+          (c.machine.id === from || c.machine.id === to) &&
+          changesPublicFacts(revision, c.machine)),
     );
     if (touched) return revision.revision;
   }
   return null;
 }
 
+/** MM-602: a machine that never connected waits to join. Its work is not queued. */
+export type ArrowEnd = "applied" | "queued" | "waitingToJoin";
+
 /** MM-604: for each end of the arrow, whether that machine applied its current state. */
-export function arrowApplied(
+export function arrowEnds(
   snapshot: PortalSnapshot,
   from: MachineId,
   to: MachineId,
-): { readonly from: boolean; readonly to: boolean } {
+): { readonly from: ArrowEnd; readonly to: ArrowEnd } {
   const revision = lastArrowRevision(snapshot.history, from, to);
-  const applied = (id: MachineId) =>
-    revision === null || (snapshot.presence[id]?.appliedRevision ?? -1) >= revision;
-  return { from: applied(from), to: applied(to) };
+  const end = (id: MachineId): ArrowEnd => {
+    const presence = snapshot.presence[id];
+    if (revision === null || (presence?.appliedRevision ?? -1) >= revision) return "applied";
+    return hasJoined(presence) ? "queued" : "waitingToJoin";
+  };
+  return { from: end(from), to: end(to) };
+}
+
+/** The wait of one arrow end in words, or null when it applied the arrow. */
+export function arrowEndWait(end: ArrowEnd, machine: MachineRecord): string | null {
+  switch (end) {
+    case "applied":
+      return null;
+    case "queued":
+      return `queued for ${machine.name}`;
+    case "waitingToJoin":
+      return `waiting for ${machine.name} to join`;
+  }
 }
 
 /** One line for a change in history, proposals and drafts. */

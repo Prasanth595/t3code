@@ -342,11 +342,29 @@ export function checkEditableChanges(
   }
 }
 
-/** The machines whose desired state a revision can change. `all` means every machine. */
-export function machinesTouched(revision: {
+type RevisionChanges = {
   readonly changes: ReadonlyArray<MapChange>;
   readonly inverse: ReadonlyArray<MapChange>;
-}): ReadonlySet<MachineId> | "all" {
+};
+
+/** The record of a machine before the revision. The inverse lists it; the last match is the oldest. */
+const previousMachine = (revision: RevisionChanges, id: MachineId): MachineRecord | undefined =>
+  revision.inverse.findLast(
+    (c): c is Extract<MapChange, { _tag: "putMachine" }> =>
+      c._tag === "putMachine" && c.machine.id === id,
+  )?.machine;
+
+/**
+ * Whether the revision adds the machine or changes the facts of it that other machines apply:
+ * name, kind, hostname and token. A move or a map role change returns false.
+ */
+export const changesPublicFacts = (revision: RevisionChanges, machine: MachineRecord): boolean => {
+  const previous = previousMachine(revision, machine.id);
+  return !previous || !samePublicFacts(previous, machine);
+};
+
+/** The machines whose desired state a revision can change. `all` means every machine. */
+export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineId> | "all" {
   const touched = new Set<MachineId>();
   for (const change of revision.changes) {
     switch (change._tag) {
@@ -362,11 +380,7 @@ export function machinesTouched(revision: {
       case "removeMachine":
         return "all";
       case "putMachine": {
-        // The inverse lists the record before the revision. The last match is the oldest one.
-        const previous = revision.inverse.findLast(
-          (c): c is Extract<MapChange, { _tag: "putMachine" }> =>
-            c._tag === "putMachine" && c.machine.id === change.machine.id,
-        )?.machine;
+        const previous = previousMachine(revision, change.machine.id);
         if (!previous || !samePublicFacts(previous, change.machine)) return "all";
         // A move changes only the place on the map, which no machine applies.
         if (previous.mapRole !== change.machine.mapRole) touched.add(change.machine.id);

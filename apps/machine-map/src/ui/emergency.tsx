@@ -5,6 +5,12 @@ import { callApi } from "./apiClient.ts";
 import { usePortalContext, type Portal } from "./context.ts";
 import { actorText, timeAgo } from "./format.ts";
 
+const HINTS = {
+  closed: "Lift the cover first",
+  open: "Press to stop everything",
+  paused: "Everything is paused",
+} as const;
+
 /**
  * MM-708: the big red button. Lifting the cover is the confirmation, so one press then pauses
  * everything. `onPressed` lets a dialog close itself after the press.
@@ -29,11 +35,7 @@ export function EmergencyButton({
     });
   };
 
-  const hint = paused
-    ? "Everything is paused"
-    : coverOpen
-      ? "Press to stop everything"
-      : "Lift the cover first";
+  const hint: keyof typeof HINTS = paused ? "paused" : coverOpen ? "open" : "closed";
 
   return (
     <div className={`panic ${size}${paused ? " is-paused" : ""}`}>
@@ -63,7 +65,18 @@ export function EmergencyButton({
         </div>
         <div className="panic-label">
           <b>BIG RED BUTTON</b>
-          <span>{hint}</span>
+          {/* Every hint takes the same cell, so the box keeps one size in every state. */}
+          <span className="panic-hint">
+            {Object.entries(HINTS).map(([key, text]) => (
+              <span
+                key={key}
+                className={key === hint ? "on" : undefined}
+                aria-hidden={key !== hint}
+              >
+                {text}
+              </span>
+            ))}
+          </span>
         </div>
       </div>
     </div>

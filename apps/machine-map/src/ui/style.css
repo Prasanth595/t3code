@@ -1150,15 +1150,24 @@ td .stickers {
   color: var(--muted);
   font-weight: 600;
 }
+.panic-hint {
+  display: grid;
+}
+.panic-hint > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+}
+.panic-hint > span.on {
+  visibility: visible;
+}
+/* The paused button keeps its place and changes colour only. */
 .panic.is-paused .mushroom {
-  transform: translateY(2px);
-  box-shadow: none;
   background: var(--panic-deep);
   font-size: 0.68rem;
 }
+/* Only the colour changes: a bolder hint is wider and would move the box. */
 .panic.is-paused .panic-label span {
   color: var(--error-fg);
-  font-weight: 800;
 }
 .panic.dialog {
   margin-top: 18px;
@@ -1230,11 +1239,9 @@ td .stickers {
   h1 {
     font-size: 1.8rem;
   }
+  /* The top padding also clears the paused frame, so the page does not move when it shows. */
   .app {
-    padding: 16px 14px 32px;
-  }
-  .app.paused {
-    padding-top: 22px;
+    padding: 22px 14px 32px;
   }
   /* Brand, then the big red button, then the tabs. */
   .top {
