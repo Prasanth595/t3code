@@ -56,8 +56,8 @@ describe("discoverFxSkills", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  // fx keeps both skills that share a name and refuses `$review` as
-  // ambiguous. It skips a SKILL.md whose frontmatter has no name or never
+  // fx keeps both skills that share a name, ignoring case, and refuses
+  // `$review` as ambiguous. It skips a SKILL.md whose frontmatter has no name or never
   // closes, and a symlinked folder in its managed ~/.fx/skills.
   it.effect("offers only skills fx can load and invoke by name", () =>
     Effect.gen(function* () {
@@ -75,7 +75,7 @@ describe("discoverFxSkills", () => {
         path.join(workspace, ".fx/skills/review"),
         "---\nname: review\n---\nBody.\n",
       );
-      yield* writeSkillFile(path.join(home, ".claude/skills/review"), "---\nname: review\n---\n");
+      yield* writeSkillFile(path.join(home, ".claude/skills/review"), "---\nname: Review\n---\n");
       yield* writeSkillFile(path.join(home, ".fx/skills/plain"), "No frontmatter.\n");
       yield* writeSkillFile(
         path.join(home, ".fx/skills/unnamed"),
@@ -95,7 +95,7 @@ describe("discoverFxSkills", () => {
         [
           ["plain", true],
           ["review", false],
-          ["review", false],
+          ["Review", false],
         ],
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),

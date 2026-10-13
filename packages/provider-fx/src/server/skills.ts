@@ -213,13 +213,15 @@ export const discoverFxSkills = Effect.fn("discoverFxSkills")(function* (input: 
       found.push({ skill, rank: root.rank });
     }
   }
+  // fx matches `$name` ignoring ASCII case.
+  const nameKey = (skill: ServerProviderSkill) => skill.name.toLowerCase();
   const nameCounts = new Map<string, number>();
   for (const { skill } of found) {
-    nameCounts.set(skill.name, (nameCounts.get(skill.name) ?? 0) + 1);
+    nameCounts.set(nameKey(skill), (nameCounts.get(nameKey(skill)) ?? 0) + 1);
   }
   return found
     .sort((left, right) => left.rank - right.rank)
     .map(({ skill }) =>
-      (nameCounts.get(skill.name) ?? 0) > 1 ? { ...skill, userInvocable: false } : skill,
+      (nameCounts.get(nameKey(skill)) ?? 0) > 1 ? { ...skill, userInvocable: false } : skill,
     );
 });
