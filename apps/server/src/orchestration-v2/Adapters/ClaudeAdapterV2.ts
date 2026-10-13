@@ -7814,7 +7814,36 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const notification = claudeTaskNotificationFromTranscript(rawInput.message);
-          const input = notification === null ? rawInput : { ...rawInput, message: notification };
+          let input = rawInput;
+          if (notification !== null) {
+            const liveQuery = yield* Ref.get(queryContext);
+            if (liveQuery?.query === rawInput.query) {
+              const registered = (yield* Ref.get(sessionSubagentsByTaskId)).has(
+                notification.task_id,
+              );
+              const hasBufferedStart =
+                (yield* Ref.get(wakeBuffers))
+                  .get(liveQuery.nativeThreadId)
+                  ?.messages.some(
+                    (message) =>
+                      message.type === "system" &&
+                      message.subtype === "task_started" &&
+                      message.task_id === notification.task_id,
+                  ) ?? false;
+              // Transcript history cannot end a task this process resumed. Keep
+              // tracked task and shell receipts as native user wake frames.
+              if (
+                !registered &&
+                !hasBufferedStart &&
+                !(yield* isKnownOpaqueBackgroundTaskOnNativeThread(
+                  liveQuery.nativeThreadId,
+                  notification.task_id,
+                ))
+              ) {
+                input = { ...rawInput, message: notification };
+              }
+            }
+          }
           // Progress or a notification can be the first frame naming a known
           // subagent's tool_use_id; its held frames must precede the result.
           if (input.message.type !== "system" || input.message.subtype !== "task_started") {

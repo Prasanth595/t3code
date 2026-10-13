@@ -6979,6 +6979,116 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       uuid: input.uuid,
       session_id: WAKE_NATIVE_SESSION,
     });
+  it.effect.each(["active", "idle"] as const)(
+    "keeps a resumed subagent running after a stale transcript receipt while %s",
+    (state) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const harness = yield* makeWakeHarness;
+          const taskId = "task-stale-transcript";
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-stale-transcript"),
+              text: "Resume the audit.",
+              attachments: [],
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId,
+              toolUseId: "toolu-original-audit",
+              uuid: "00000000-0000-4000-8000-000000000901",
+            }),
+          );
+          yield* Queue.take(harness.subagentReceipts);
+          yield* harness.offerAndWait(
+            makeSubagentNotificationFrame({
+              taskId,
+              toolUseId: "toolu-original-audit",
+              summary: "Original audit completed.",
+              uuid: "00000000-0000-4000-8000-000000000902",
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.subagentReceipts)).subagent.status, "completed");
+          yield* harness.offerAndWait(
+            makeSubagentTaskStartedFrame({
+              taskId,
+              toolUseId: "toolu-resumed-audit",
+              uuid: "00000000-0000-4000-8000-000000000903",
+            }),
+          );
+          assert.equal((yield* Queue.take(harness.subagentReceipts)).subagent.status, "running");
+          if (state === "idle") {
+            yield* harness.offerAndWait(turnOneResult);
+            yield* Queue.take(harness.terminalReceipts);
+          }
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "user",
+              isSynthetic: true,
+              parent_tool_use_id: null,
+              uuid: "00000000-0000-4000-8000-000000000904",
+              session_id: WAKE_NATIVE_SESSION,
+              message: {
+                role: "user",
+                content: `<task-notification><task-id>${taskId}</task-id><status>stopped</status><summary>Old task stopped.</summary></task-notification>`,
+              },
+            }),
+          );
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
+
+  it.effect("uses a known shell's transcript receipt as native wake evidence", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-shell-transcript-wake"),
+            text: "Run the build in the background.",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        yield* harness.offerAndWait(wakeNotification);
+        assert.lengthOf(harness.continuationRequests, 0);
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "user",
+            isSynthetic: true,
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000000905",
+            session_id: WAKE_NATIVE_SESSION,
+            message: {
+              role: "user",
+              content: `<task-notification><task-id>${WAKE_TASK_ID}</task-id><status>completed</status><summary>${WAKE_SUMMARY}</summary></task-notification>`,
+            },
+          }),
+        );
+        assert.lengthOf(harness.continuationRequests, 1);
+        assert.equal(harness.continuationRequests[0]?.threadId, harness.threadId);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   const subagentRouting = (
     events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>,
     nativeToolIds: ReadonlyArray<string>,

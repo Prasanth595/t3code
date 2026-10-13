@@ -443,7 +443,7 @@ export function routeProviderEvent(
       return [true, { ...state, workflowMemberParents }];
     }
     case "subagent.ended":
-      return [event.threadId === input.threadId, state];
+      return [event.threadId === input.threadId || ownsChildThread(event.threadId), state];
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {
