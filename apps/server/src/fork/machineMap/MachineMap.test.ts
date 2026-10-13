@@ -2,7 +2,8 @@
 /**
  * Fork: machine map. The portal connection against a fake portal: join (MM-204), hello, desired
  * state apply (MM-402, MM-603), no echo and local changes (MM-404), revocation on a level change
- * (MM-1306), commands (MM-501, MM-1402), map tools (MM-805) and token rotation (MM-207).
+ * (MM-1306), commands (MM-501, MM-1402), map tools (MM-805), token rotation (MM-207) and
+ * resource samples (MM-1501).
  */
 import * as NodeHttp from "node:http";
 
@@ -13,9 +14,12 @@ import { expect, it } from "@effect/vitest";
 import {
   MACHINE_LEVEL_SCOPES,
   type MachineCommand,
+  MachineResourcesMessage,
   type MachineStatus,
   MachineToPortal,
+  PortalResourcesRequest,
   PortalToMachine,
+  type ResourceSample,
   type ServerSettings as ServerSettingsValue,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -42,9 +46,14 @@ import * as MachineHost from "./MachineHost.ts";
 import * as MachineMap from "./MachineMap.ts";
 import { PEER, SELF, arrow, desiredState } from "./MachineMap.testkit.ts";
 import * as MachineMapState from "./MachineMapState.ts";
+import * as MachineResources from "./MachineResources.ts";
 
-const decodeMachineMessage = Schema.decodeUnknownSync(Schema.fromJsonString(MachineToPortal));
-const encodePortalMessage = Schema.encodeSync(Schema.fromJsonString(PortalToMachine));
+const decodeMachineMessage = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Union([MachineToPortal, MachineResourcesMessage])),
+);
+const encodePortalMessage = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Union([PortalToMachine, PortalResourcesRequest])),
+);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const STATUS: MachineStatus = {
@@ -62,9 +71,33 @@ const STATUS: MachineStatus = {
   clients: [],
 };
 
-/** A portal with `/enroll` and `/connect`. Each machine message lands in `received`. */
+const SAMPLE: ResourceSample = {
+  at: "2026-10-13T08:00:00.000Z",
+  cpuPercent: 12.5,
+  cpuCount: 8,
+  load: [1, 1, 1],
+  memoryUsedBytes: 4,
+  memoryTotalBytes: 8,
+  swapUsedBytes: null,
+  swapTotalBytes: null,
+  swapBytesPerSecond: null,
+  diskUsedBytes: 1,
+  diskTotalBytes: 2,
+  netInBytesPerSecond: null,
+  netOutBytesPerSecond: null,
+  t3: { cpuPercent: null, memoryBytes: 1 },
+  agents: null,
+  topCpu: null,
+  topMemory: null,
+};
+
+/**
+ * A portal with `/enroll` and `/connect`. Each machine message lands in `received`, except the
+ * resource samples (MM-1501), which land in `samples`.
+ */
 const startFakePortal = Effect.gen(function* () {
   const received = yield* Queue.unbounded<MachineToPortal>();
+  const samples = yield* Queue.unbounded<ResourceSample>();
   const sockets = yield* Queue.unbounded<{
     readonly socket: InstanceType<typeof NodeWS.WebSocket>;
     readonly headers: NodeHttp.IncomingHttpHeaders;
@@ -90,7 +123,9 @@ const startFakePortal = Effect.gen(function* () {
       const text = String(data);
       // MM-1001: the Durable Object answers this without waking.
       if (text === "ping") return socket.send("pong");
-      Queue.offerUnsafe(received, decodeMachineMessage(text));
+      const message = decodeMachineMessage(text);
+      if (message._tag === "resources") Queue.offerUnsafe(samples, message.sample);
+      else Queue.offerUnsafe(received, message);
     });
     Queue.offerUnsafe(sockets, { socket, headers: request.headers });
   });
@@ -107,7 +142,7 @@ const startFakePortal = Effect.gen(function* () {
   );
   const address = server.address();
   if (typeof address !== "object" || address === null) throw new Error("Missing portal port");
-  return { url: `http://127.0.0.1:${address.port}`, received, sockets };
+  return { url: `http://127.0.0.1:${address.port}`, received, samples, sockets };
 });
 
 /** The next message of one kind; status messages come and go on their own. */
@@ -154,6 +189,7 @@ const layerSettings = (portalUrl: string) =>
 const layerMachineMap = (input: {
   readonly portalUrl: string;
   readonly ran: Ref.Ref<ReadonlyArray<string>>;
+  readonly sampled?: Ref.Ref<number>;
 }) => {
   const settings = layerSettings(input.portalUrl);
   return MachineMap.layer.pipe(
@@ -176,6 +212,12 @@ const layerMachineMap = (input: {
               Effect.as({ ok: true, result: { ran: command.id }, error: null }),
             ),
           restartProcess: Effect.void,
+        }),
+        Layer.mock(MachineResources.MachineResources)({
+          sample: (input.sampled === undefined
+            ? Effect.void
+            : Ref.update(input.sampled, (count) => count + 1)
+          ).pipe(Effect.as(SAMPLE)),
         }),
         Layer.mock(ThreadManagement.ThreadManagementService)({ streamDomainEvents: Stream.never }),
         Layer.mock(ScheduledTasks.ScheduledTaskService)({ subscribeList: () => Stream.never }),
@@ -442,6 +484,33 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
           const sessionIds = (yield* auth.listSessions()).map((session) => session.sessionId);
           expect(sessionIds).not.toContain(peerSession.sessionId);
         }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
+      }),
+    ),
+  );
+
+  it.effect("sends a resource sample on connection, every minute and on request (MM-1501)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const portal = yield* startFakePortal;
+        const ran = yield* Ref.make<ReadonlyArray<string>>([]);
+        const sampled = yield* Ref.make(0);
+        yield* Effect.gen(function* () {
+          const machineMap = yield* MachineMap.MachineMap;
+          yield* machineMap.join({ code: "good" });
+          const { socket } = yield* Queue.take(portal.sockets);
+          yield* nextOf(portal.received, "hello");
+          expect(yield* Queue.take(portal.samples)).toEqual(SAMPLE);
+
+          // On request, once the 10 second gap passed.
+          yield* TestClock.adjust("11 seconds");
+          socket.send(encodePortalMessage({ _tag: "sampleResources" }));
+          expect(yield* Queue.take(portal.samples)).toEqual(SAMPLE);
+
+          // The minute loop goes on by itself.
+          yield* TestClock.adjust("1 minute");
+          expect(yield* Queue.take(portal.samples)).toEqual(SAMPLE);
+          expect(yield* Ref.get(sampled)).toBe(3);
+        }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran, sampled })));
       }),
     ),
   );

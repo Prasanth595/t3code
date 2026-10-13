@@ -337,6 +337,7 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   // Fork: machine map (apps/machine-map/SPEC.md, MM-801).
   machines_read: tool(["Read", "Reading", "Read", "the machine map"], "machine-map"),
+  machines_resources: tool(["Read", "Reading", "Read", "machine resources"], "machine-map"),
   machines_set_access: tool(["Set", "Setting", "Set", "machine access"], "machine-map"),
   machines_set_setting: tool(["Set", "Setting", "Set", "a machine setting"], "machine-map"),
   machines_command: tool(["Send", "Sending", "Sent", "a machine command"], "machine-map"),

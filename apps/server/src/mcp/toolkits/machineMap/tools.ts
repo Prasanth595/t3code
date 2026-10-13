@@ -34,7 +34,7 @@ const shared = {
 const MAP_ROLE_NOTE =
   "It runs through the machine map portal, which checks the map role of this machine. With the role `propose`, or when a change raises access for this machine, the change waits in the portal Inbox for the owner.";
 
-const mapTool = <const Name extends Exclude<MapToolName, "machines_read">>(
+const mapTool = <const Name extends Exclude<MapToolName, "machines_read" | "machines_resources">>(
   name: Name,
   description: string,
 ) =>
@@ -48,7 +48,17 @@ const mapTool = <const Name extends Exclude<MapToolName, "machines_read">>(
 // MCP needs an object root for parameters, so the tool without inputs declares none.
 const MachinesReadTool = Tool.make("machines_read", {
   ...shared,
-  description: `Read the machine map: machines, presence and status, arrows, settings, the queue and the history. ${MAP_ROLE_NOTE}`,
+  description: `Read the machine map: machines, presence and status, arrows, settings, the queue, the history, and resources: the latest resource sample of each machine, its health thresholds and the active alerts. ${MAP_ROLE_NOTE}`,
+  success: Schema.Unknown,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const MachinesResourcesTool = Tool.make("machines_resources", {
+  ...shared,
+  description:
+    "Read the resource history of one machine: CPU, memory, disk, swap and agent processes. Range `hour` and `day` give one point a minute, `month` one point an hour; the default is `hour`. It also returns the alerts of that machine. It runs through the machine map portal and needs the map role `read`.",
+  parameters: MapToolInputs.machines_resources,
   success: Schema.Unknown,
 })
   .annotate(Tool.Readonly, true)
@@ -106,6 +116,7 @@ const MachineToolCallTool = Tool.make("machine_tool_call", {
 
 export const MachineMapToolkit = Toolkit.make(
   MachinesReadTool,
+  MachinesResourcesTool,
   MachinesSetAccessTool,
   MachinesSetSettingTool,
   MachinesCommandTool,
