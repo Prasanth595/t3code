@@ -20,7 +20,10 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("./AsyncDebUpdater.ts", () => ({ AsyncDebUpdater: vi.fn() }));
+
 vi.mock("electron-updater", () => ({
+  DebUpdater: vi.fn(),
   autoUpdater: autoUpdaterMock,
 }));
 
