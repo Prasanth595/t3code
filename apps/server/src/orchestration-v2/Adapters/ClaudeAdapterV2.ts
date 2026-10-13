@@ -1223,6 +1223,45 @@ function nextClaudeGoal(
 
 const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
+/** Sends CLI-generated transcript receipts through the SDK task-outcome path. */
+function claudeTaskNotificationFromTranscript(
+  message: SDKMessage,
+): Extract<SDKMessage, { readonly subtype: "task_notification" }> | null {
+  if (
+    message.type !== "user" ||
+    message.isSynthetic !== true ||
+    message.parent_tool_use_id !== null ||
+    message.uuid === undefined ||
+    message.session_id === undefined
+  ) {
+    return null;
+  }
+  const content = message.message.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
+  const notification = /^\s*<task-notification>([\s\S]*?)<\/task-notification>\s*$/u.exec(
+    text,
+  )?.[1];
+  if (notification === undefined) return null;
+  const taskId = /<task-id>([^<]+)<\/task-id>/u.exec(notification)?.[1]?.trim();
+  const status = /<status>([^<]+)<\/status>/u.exec(notification)?.[1]?.trim();
+  if (!taskId || (status !== "completed" && status !== "failed" && status !== "stopped")) {
+    return null;
+  }
+  return {
+    type: "system",
+    subtype: "task_notification",
+    task_id: taskId,
+    status,
+    summary: /<summary>([\s\S]*?)<\/summary>/u.exec(notification)?.[1]?.trim() ?? "",
+    output_file: /<output-file>([\s\S]*?)<\/output-file>/u.exec(notification)?.[1]?.trim() ?? "",
+    uuid: message.uuid,
+    session_id: message.session_id,
+  };
+}
+
 /** Compares a subagent result with its routed text regardless of block joins. */
 function normalizeClaudeResultText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
@@ -4833,6 +4872,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               : new Map(current).set(nativeThreadId, { ...entry, messages });
           });
 
+        const emitUntrackedSubagentOutcome = Effect.fnUntraced(function* (
+          threadId: ThreadId,
+          message: Extract<SDKMessage, { readonly subtype: "task_notification" }>,
+        ) {
+          yield* emitProviderEvent({
+            type: "subagent.ended",
+            driver: CLAUDE_PROVIDER,
+            threadId,
+            subagentId: idAllocator.derive.nodeFromProviderItem({
+              driver: CLAUDE_PROVIDER,
+              nativeItemId: `task:${message.task_id}`,
+            }),
+            status: claudeTaskOutcome(message.status),
+            result: message.summary ?? null,
+          });
+        });
+
         const updateClaudeSubagentNode = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly taskId: string;
@@ -4877,14 +4933,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // A task an earlier process started (the replacement reports it
             // stopped on resume) is unknown here, so the server settles it.
             if (input.nativeOutcome !== undefined) {
-              yield* emitProviderEvent({
-                type: "subagent.ended",
-                driver: CLAUDE_PROVIDER,
-                threadId: input.context.input.threadId,
-                subagentId: claudeSubagentIds(input.context, input.taskId).nodeId,
-                status: input.status,
-                result: input.result ?? null,
-              });
+              yield* emitUntrackedSubagentOutcome(
+                input.context.input.threadId,
+                input.nativeOutcome,
+              );
             }
             return;
           }
@@ -6750,6 +6802,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // task_notification must buffer wake evidence while still tracked
             // on the roster; clearing first would drop the wake pin.
             if (message.type === "system" && message.subtype === "task_notification") {
+              const wasBackgroundTask = yield* isKnownOpaqueBackgroundTaskOnNativeThread(
+                liveQuery.nativeThreadId,
+                message.task_id,
+              );
               yield* bufferWakeMessage({ nativeThreadId: liveQuery.nativeThreadId, message });
               yield* applyBackgroundTaskRosterMessage({
                 nativeThreadId: liveQuery.nativeThreadId,
@@ -6769,6 +6825,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       entry.subtype === "task_started" &&
                       entry.task_id === message.task_id,
                   ) ?? false;
+              if (registered === undefined && !hasBufferedStart && !wasBackgroundTask) {
+                const route = (yield* Ref.get(lastTurnRouteByNativeThread)).get(
+                  liveQuery.nativeThreadId,
+                );
+                if (route !== undefined) {
+                  yield* emitUntrackedSubagentOutcome(route.threadId, message);
+                }
+              }
               // Starts and workflow transcripts still need the continuation's
               // context. A pending Stop must receive its native outcome now.
               const canApplyOutcome =
@@ -7745,10 +7809,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        const handleRoutedSdkMessage = Effect.fnUntraced(function* (input: {
+        const handleRoutedSdkMessage = Effect.fnUntraced(function* (rawInput: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
         }) {
+          const notification = claudeTaskNotificationFromTranscript(rawInput.message);
+          const input = notification === null ? rawInput : { ...rawInput, message: notification };
           // Progress or a notification can be the first frame naming a known
           // subagent's tool_use_id; its held frames must precede the result.
           if (input.message.type !== "system" || input.message.subtype !== "task_started") {

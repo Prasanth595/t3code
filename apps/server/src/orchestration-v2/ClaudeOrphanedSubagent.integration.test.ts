@@ -37,225 +37,298 @@ const modelSelection = {
 const sessionId = "orphaned-subagent-session";
 const decodeClaudeSettings = Schema.decodeEffect(ClaudeSettings);
 const frame = (value: unknown) => value as SDKMessage;
+const stoppedSummary = "Background agent didn't finish before the previous session ended";
+const transcriptReceipt = `<task-notification><task-id>old-task</task-id><status>stopped</status><summary>${stoppedSummary}</summary></task-notification>`;
+const successResult = (uuid: string) =>
+  frame({
+    type: "result",
+    subtype: "success",
+    uuid,
+    session_id: sessionId,
+    is_error: false,
+    num_turns: 1,
+    result: "The review continues in the background.",
+    stop_reason: "end_turn",
+    permission_denials: [],
+    duration_ms: 1,
+    duration_api_ms: 1,
+    total_cost_usd: 0,
+    usage: { input_tokens: 1, output_tokens: 1 },
+    modelUsage: {},
+  });
 
 // Only the SDK stream is replayed; adapter, session manager, ingestor,
 // orchestrator, and SQLite projections are the production ones.
-it.effect("settles a subagent the replacement Claude process reports stopped after resume", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("claude-orphaned-subagent");
-      const processes: Array<Queue.Queue<SDKMessage>> = [];
-      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
-        instanceId: modelSelection.instanceId,
-        settings: yield* decodeClaudeSettings({}),
-        environment: {},
-        attachmentsDir: cwd,
-        fileSystem: yield* FileSystem.FileSystem,
-        path: yield* Path.Path,
-        crypto: yield* Crypto.Crypto,
-        idAllocator: yield* IdAllocator.IdAllocatorV2,
-        queryRunner: {
-          allocateSessionId: Effect.succeed(sessionId),
-          assertComplete: Effect.void,
-          subagentLaunchToolUseId: () => Effect.succeed(null),
-          open: () =>
+it.effect.each([
+  ["sdk", "active"],
+  ["transcript", "active"],
+  ["sdk", "idle"],
+  ["transcript", "idle"],
+  ["transcript-blocks", "active"],
+  ["user-text", "active"],
+  ["invalid-transcript", "active"],
+] as const)(
+  "handles an orphaned %s receipt while the replacement process is %s",
+  ([receipt, state]) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("claude-orphaned-subagent");
+        const processes: Array<Queue.Queue<SDKMessage>> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: modelSelection.instanceId,
+          settings: yield* decodeClaudeSettings({}),
+          environment: {},
+          attachmentsDir: cwd,
+          fileSystem: yield* FileSystem.FileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          queryRunner: {
+            allocateSessionId: Effect.succeed(sessionId),
+            assertComplete: Effect.void,
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            open: () =>
+              Effect.gen(function* () {
+                const messages = yield* Queue.unbounded<SDKMessage>();
+                processes.push(messages);
+                return {
+                  messages: Stream.fromQueue(messages),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  stopTask: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(messages),
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+          },
+        });
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const threadId = ThreadId.make("thread:orphaned-subagent");
+          // Subscribe before offering the frame so a fast commit is not missed.
+          const awaitEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
             Effect.gen(function* () {
-              const messages = yield* Queue.unbounded<SDKMessage>();
-              processes.push(messages);
-              return {
-                messages: Stream.fromQueue(messages),
-                offer: () => Effect.void,
-                setModel: () => Effect.void,
-                setPermissionMode: () => Effect.void,
-                stopTask: () => Effect.void,
-                interrupt: Effect.void,
-                close: Queue.shutdown(messages),
-              };
-            }),
-          forkSession: () => Effect.die("unused forkSession"),
-        },
-      });
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const sink = yield* EventSink.EventSinkV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-        const threadId = ThreadId.make("thread:orphaned-subagent");
-        // Subscribe before offering the frame so a fast commit is not missed.
-        const awaitEvent = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
-          Effect.gen(function* () {
-            const afterSequence = yield* sink.latestSequence();
-            return yield* sink.stream({ afterSequence }).pipe(
-              Stream.filter((stored) => predicate(stored.event)),
-              Stream.take(1),
-              Stream.runDrain,
-              Effect.forkScoped,
-            );
-          });
-        const sendMessage = (id: string) =>
-          orchestrator.dispatch({
-            type: "message.dispatch",
-            commandId: CommandId.make(id),
+              const afterSequence = yield* sink.latestSequence();
+              return yield* sink.stream({ afterSequence }).pipe(
+                Stream.filter((stored) => predicate(stored.event)),
+                Stream.take(1),
+                Stream.runDrain,
+                Effect.forkScoped,
+              );
+            });
+          const sendMessage = (id: string) =>
+            orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(id),
+              threadId,
+              messageId: MessageId.make(id),
+              text: "Continue.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create"),
             threadId,
-            messageId: MessageId.make(id),
-            text: "Continue.",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
+            projectId: ProjectId.make("project:orphaned-subagent"),
+            title: "Orphaned subagent",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
             createdBy: "user",
             creationSource: "web",
           });
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("create"),
-          threadId,
-          projectId: ProjectId.make("project:orphaned-subagent"),
-          title: "Orphaned subagent",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* sendMessage("first");
-        yield* worker.drain();
-        const first = processes[0]!;
-        const started = yield* awaitEvent(
-          (event) =>
-            event.type === "subagent.updated" &&
-            event.payload.nativeTaskRef?.nativeId === "old-task",
-        );
-        yield* Queue.offer(
-          first,
-          frame({
-            type: "system",
-            subtype: "task_started",
-            task_id: "old-task",
-            tool_use_id: "old-tool",
-            description: "Review recent changes",
-            subagent_type: "general-purpose",
-            is_backgrounded: true,
-            task_type: "local_agent",
-            prompt: "Review recent changes.",
-            uuid: "old-task-started",
-            session_id: sessionId,
-          }),
-        );
-        yield* Fiber.join(started);
-        const firstTurnDone = yield* awaitEvent(
-          (event) => event.type === "provider-turn.updated" && event.payload.status === "completed",
-        );
-        yield* Queue.offer(
-          first,
-          frame({
-            type: "result",
-            subtype: "success",
-            uuid: "first-result",
-            session_id: sessionId,
-            is_error: false,
-            num_turns: 1,
-            result: "The review continues in the background.",
-            stop_reason: "end_turn",
-            permission_denials: [],
-            duration_ms: 1,
-            duration_api_ms: 1,
-            total_cost_usd: 0,
-            usage: { input_tokens: 1, output_tokens: 1 },
-            modelUsage: {},
-          }),
-        );
-        yield* Fiber.join(firstTurnDone);
-        yield* worker.drain();
-        const before = yield* orchestrator.getThreadProjection(threadId);
-        const task = before.subagents.find(
-          (entry) => entry.nativeTaskRef?.nativeId === "old-task",
-        )!;
-        assert.equal(task.status, "running");
+          yield* sendMessage("first");
+          yield* worker.drain();
+          const first = processes[0]!;
+          const started = yield* awaitEvent(
+            (event) =>
+              event.type === "subagent.updated" &&
+              event.payload.nativeTaskRef?.nativeId === "old-task",
+          );
+          yield* Queue.offer(
+            first,
+            frame({
+              type: "system",
+              subtype: "task_started",
+              task_id: "old-task",
+              tool_use_id: "old-tool",
+              description: "Review recent changes",
+              subagent_type: "general-purpose",
+              is_backgrounded: true,
+              task_type: "local_agent",
+              prompt: "Review recent changes.",
+              uuid: "old-task-started",
+              session_id: sessionId,
+            }),
+          );
+          yield* Fiber.join(started);
+          const firstTurnDone = yield* awaitEvent(
+            (event) =>
+              event.type === "provider-turn.updated" && event.payload.status === "completed",
+          );
+          yield* Queue.offer(first, successResult("first-result"));
+          yield* Fiber.join(firstTurnDone);
+          yield* worker.drain();
+          const before = yield* orchestrator.getThreadProjection(threadId);
+          const task = before.subagents.find(
+            (entry) => entry.nativeTaskRef?.nativeId === "old-task",
+          )!;
+          assert.equal(task.status, "running");
 
-        // The replacement process starts with no record of the old task.
-        yield* manager.release({
-          providerSessionId: before.providerSessions.at(-1)!.id,
-          reason: "runtime_error",
-          detail: "fixture process exited",
-        });
-        yield* sendMessage("second");
-        yield* worker.drain();
-        assert.lengthOf(processes, 2);
-        const second = processes[1]!;
-        // A later frame's persisted item marks the notification as consumed.
-        const consumed = yield* awaitEvent(
-          (event) =>
-            event.type === "turn-item.updated" &&
-            event.payload.nativeItemRef?.nativeId === "barrier-tool",
-        );
-        yield* Queue.offer(
-          second,
-          frame({
-            type: "system",
-            subtype: "task_notification",
-            task_id: "old-task",
-            status: "stopped",
-            reason: "worker_restart",
-            summary: "Background agent didn't finish before the previous session ended",
-            output_file: "",
-            uuid: "old-task-stopped",
-            session_id: sessionId,
-          }),
-        );
-        yield* Queue.offer(
-          second,
-          frame({
-            type: "assistant",
-            uuid: "barrier",
-            session_id: sessionId,
-            parent_tool_use_id: null,
-            message: {
-              id: "barrier-message",
-              role: "assistant",
-              type: "message",
-              model: modelSelection.model,
-              content: [
-                { type: "tool_use", id: "barrier-tool", name: "Bash", input: { command: "true" } },
-              ],
-              stop_reason: "tool_use",
-              stop_sequence: null,
-              usage: { input_tokens: 1, output_tokens: 1 },
-            },
-          }),
-        );
-        yield* Fiber.join(consumed);
+          // The replacement process starts with no record of the old task.
+          yield* manager.release({
+            providerSessionId: before.providerSessions.at(-1)!.id,
+            reason: "runtime_error",
+            detail: "fixture process exited",
+          });
+          yield* sendMessage("second");
+          yield* worker.drain();
+          assert.lengthOf(processes, 2);
+          const second = processes[1]!;
+          if (state === "idle") {
+            const secondTurnDone = yield* awaitEvent(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "completed",
+            );
+            yield* Queue.offer(second, successResult("second-result"));
+            yield* Fiber.join(secondTurnDone);
+            yield* worker.drain();
+          }
+          // A later frame's persisted item marks the notification as consumed.
+          const consumed = yield* awaitEvent((event) =>
+            state === "idle"
+              ? event.type === "provider-thread.updated" &&
+                event.payload.pendingBackgroundTasks?.some(
+                  (task) => task.taskId === "idle-barrier",
+                ) === true
+              : event.type === "turn-item.updated" &&
+                event.payload.nativeItemRef?.nativeId === "barrier-tool",
+          );
+          yield* Queue.offer(
+            second,
+            frame(
+              receipt !== "sdk"
+                ? {
+                    type: "user",
+                    isSynthetic: receipt !== "user-text",
+                    parent_tool_use_id: null,
+                    uuid: "old-task-stopped",
+                    session_id: sessionId,
+                    message: {
+                      role: "user",
+                      content:
+                        receipt === "transcript-blocks"
+                          ? [{ type: "text", text: transcriptReceipt }]
+                          : receipt === "invalid-transcript"
+                            ? transcriptReceipt.replace(
+                                "<status>stopped</status>",
+                                "<status>running</status>",
+                              )
+                            : transcriptReceipt,
+                    },
+                  }
+                : {
+                    type: "system",
+                    subtype: "task_notification",
+                    task_id: "old-task",
+                    status: "stopped",
+                    reason: "worker_restart",
+                    summary: stoppedSummary,
+                    output_file: "",
+                    uuid: "old-task-stopped",
+                    session_id: sessionId,
+                  },
+            ),
+          );
+          if (state === "idle") {
+            yield* Queue.offer(
+              second,
+              frame({
+                type: "system",
+                subtype: "background_tasks_changed",
+                tasks: [
+                  {
+                    task_id: "idle-barrier",
+                    task_type: "local_bash",
+                    description: "Receipt consumed",
+                  },
+                ],
+                uuid: "idle-barrier",
+                session_id: sessionId,
+              }),
+            );
+          } else {
+            yield* Queue.offer(
+              second,
+              frame({
+                type: "assistant",
+                uuid: "barrier",
+                session_id: sessionId,
+                parent_tool_use_id: null,
+                message: {
+                  id: "barrier-message",
+                  role: "assistant",
+                  type: "message",
+                  model: modelSelection.model,
+                  content: [
+                    {
+                      type: "tool_use",
+                      id: "barrier-tool",
+                      name: "Bash",
+                      input: { command: "true" },
+                    },
+                  ],
+                  stop_reason: "tool_use",
+                  stop_sequence: null,
+                  usage: { input_tokens: 1, output_tokens: 1 },
+                },
+              }),
+            );
+          }
+          yield* Fiber.join(consumed);
 
-        const after = yield* orchestrator.getThreadProjection(threadId);
-        const ended = after.subagents.find((entry) => entry.id === task.id)!;
-        assert.equal(ended.status, "cancelled");
-        assert.equal(ended.runId, task.runId);
-        assert.equal(
-          ended.result,
-          "Background agent didn't finish before the previous session ended",
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          const ended = after.subagents.find((entry) => entry.id === task.id)!;
+          if (receipt === "user-text" || receipt === "invalid-transcript") {
+            assert.deepEqual(ended, task);
+            return;
+          }
+          assert.equal(ended.status, "cancelled");
+          assert.equal(ended.runId, task.runId);
+          assert.equal(ended.providerInstanceId, task.providerInstanceId);
+          assert.equal(ended.result, stoppedSummary);
+          assert.equal(after.nodes.find((node) => node.id === task.id)?.status, "cancelled");
+          const item = after.turnItems.find(
+            (entry) => entry.type === "subagent" && entry.subagentId === task.id,
+          );
+          assert.equal(item?.status, "cancelled");
+          const child = yield* orchestrator.getThreadProjection(task.childThreadId!);
+          const childRoots = child.nodes.filter((node) => node.kind === "root_turn");
+          assert.isAbove(childRoots.length, 0);
+          assert.isTrue(childRoots.every((node) => node.status === "cancelled"));
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: "claude-orphaned-subagent" },
+              ProviderAdapterRegistry.layerSingle(adapter),
+              { runEffectWorker: false },
+            ),
+          ),
         );
-        assert.equal(after.nodes.find((node) => node.id === task.id)?.status, "cancelled");
-        const item = after.turnItems.find(
-          (entry) => entry.type === "subagent" && entry.subagentId === task.id,
-        );
-        assert.equal(item?.status, "cancelled");
-        const child = yield* orchestrator.getThreadProjection(task.childThreadId!);
-        const childRoots = child.nodes.filter((node) => node.kind === "root_turn");
-        assert.isAbove(childRoots.length, 0);
-        assert.isTrue(childRoots.every((node) => node.status === "cancelled"));
       }).pipe(
         Effect.provide(
-          ProviderReplayHarness.layerWithRegistry(
-            { name: "claude-orphaned-subagent" },
-            ProviderAdapterRegistry.layerSingle(adapter),
-            { runEffectWorker: false },
-          ),
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
-  ),
 );
