@@ -14,6 +14,8 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - The release carries `nightly-mac.yml` and `nightly.yml` for electron-updater. Until the Windows build adds `nightly.yml`, Windows apps find no update in the new release.
 - If a sync, a release or a Fork CI run fails, its `notify_agent` job runs `scripts/fork-notify-agent.sh`. The script posts the run to `T3_AGENT_WEBHOOK_URL`, a webhook scheduled task on a T3 server that starts a repair agent. A manual run with `notify_agent=false` does not post. A failure right after a failure of the same workflow does not post either, because the agent that the first failure started watches the next run.
 - `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
+- A newer push to main cancels the Fork CI run of the older push. The repair agent ignores a cancelled run.
+- Fork CI compares the push with the commit of the last green run. When only `docs`, `*.md` or `apps/machine-map` changed, only the Lint job runs, and it checks only the changed files. A manual run always runs every job.
 - To see all fork changes, run `git diff upstream/main...main`.
 - The top of `README.md` lists the fork features and fixes, up to the first `---` line. A pull request that adds, removes or changes a fork feature or fix updates its line in that list.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
