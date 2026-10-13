@@ -9,7 +9,7 @@ import type {
   PortalSnapshot,
 } from "@t3tools/contracts/machineMap";
 
-import type { PauseState, PendingRotation } from "../api.ts";
+import type { PauseState, PendingRotation, WriteResult } from "../api.ts";
 import type { Route, Selection, View } from "./route.ts";
 
 /** One held change of a draft (MM-707). */
@@ -17,6 +17,9 @@ export interface DraftChange {
   readonly summary: string;
   readonly changes: ReadonlyArray<MapChange>;
 }
+
+/** What `submit` did. It never rejects: a failure shows in the notice. */
+export type SubmitOutcome = WriteResult | { readonly _tag: "held" } | { readonly _tag: "failed" };
 
 export interface CommandOptions {
   readonly delivery: CommandDelivery;
@@ -59,7 +62,7 @@ export interface Portal {
   readonly now: number;
   readonly route: Route;
   /** Applies changes as one revision, or adds them to the draft. */
-  submit(summary: string, changes: ReadonlyArray<MapChange>): void;
+  submit(summary: string, changes: ReadonlyArray<MapChange>): Promise<SubmitOutcome>;
   /** Sends a command. Dangerous commands ask first (MM-504). */
   command(machineId: MachineId, input: MachineCommandInput, options?: CommandOptions): void;
   /** Runs an API call and shows its error, or `done` on success. */
