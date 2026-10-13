@@ -58,7 +58,7 @@ describe("draft rendering appearance", () => {
         },
       });
       vi.stubGlobal("requestAnimationFrame", (callback: () => void) => callback());
-      let subscribeToTheme: ((listener: () => void) => () => void) | undefined;
+      let subscribeToLastStore: ((listener: () => void) => () => void) | undefined;
       vi.doMock("react", () => ({
         useCallback: <A>(callback: A) => callback,
         useEffect: () => undefined,
@@ -66,7 +66,7 @@ describe("draft rendering appearance", () => {
           subscribe: (listener: () => void) => () => void,
           getSnapshot: () => unknown,
         ) => {
-          subscribeToTheme = subscribe;
+          subscribeToLastStore = subscribe;
           return getSnapshot();
         },
       }));
@@ -74,11 +74,13 @@ describe("draft rendering appearance", () => {
       const { applyThemeColorPreview, getStandardThemeColors } = await import("../themePalette");
       const original = useTheme();
       expect(original.resolvedTheme).toBe(savedAppearance);
+      // Capture the saved subscription before the rendering hook reads the
+      // preview store, which becomes the last subscription in this mock.
       const savedListener = vi.fn();
-      const unsubscribeSaved = subscribeToTheme?.(savedListener);
+      const unsubscribeSaved = subscribeToLastStore?.(savedListener);
       expect(useRenderedAppearance()).toBe(savedAppearance);
       const listener = vi.fn();
-      const unsubscribe = subscribeToTheme?.(listener);
+      const unsubscribe = subscribeToLastStore?.(listener);
       const draftAppearance = savedAppearance === "dark" ? "light" : "dark";
 
       applyThemeColorPreview(getStandardThemeColors(draftAppearance), draftAppearance);

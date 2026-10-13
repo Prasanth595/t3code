@@ -16,7 +16,7 @@ import {
 import { useClientSettings } from "./useSettings";
 import { useRenderedAppearance, useTheme } from "./useTheme";
 
-/** The palette `applyTheme` paints for a preference, or the stock look when no theme applies. */
+/** Saved palette colors for the rendered appearance, falling back to stock colors for a missing half. */
 function resolveActiveThemeColors(
   theme: ThemePreference,
   halves: ThemeHalves | null,
