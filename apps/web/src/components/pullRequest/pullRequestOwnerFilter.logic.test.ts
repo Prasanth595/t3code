@@ -138,6 +138,17 @@ describe("narrowing listed rows by repository owner", () => {
     expect(keep?.({ environmentId: laptop, projectId: app.id })).toBe(true);
     expect(keep?.({ environmentId: server, projectId: app.id })).toBe(false);
   });
+
+  it("keeps a row of an unknown project only while the filter hides owners", () => {
+    const row = { environmentId: server, projectId: ProjectId.make("not-loaded") };
+    const hide = pullRequestOwnerRowFilter(
+      [app],
+      pullRequestMenuOwnerFilter(["qlik-trial"], "is_not"),
+    );
+    const show = pullRequestOwnerRowFilter([app], pullRequestMenuOwnerFilter(["qlik-trial"], "is"));
+    expect(hide?.(row)).toBe(true);
+    expect(show?.(row)).toBe(false);
+  });
 });
 
 describe("remembered owner selection", () => {

@@ -162,20 +162,30 @@ describe("filterSidebarThreadsByOwner", () => {
 
   const threads = [
     thread("work", "work-mac"),
-    thread("idle-personal", "dotfiles"),
+    thread("ready-personal", "dotfiles"),
     thread("running-personal", "dotfiles", {
       runtime: { ...runtime, status: "running" },
+    }),
+    // Stopped, with subagents or monitors that wake it again.
+    thread("waiting-personal", "dotfiles", {
+      runtime: { ...runtime, status: "idle" },
     }),
     thread("approval-personal", "dotfiles", { hasPendingApprovals: true }),
     thread("question-personal", "dotfiles", { hasPendingUserInput: true }),
   ];
 
-  it("hides threads of hidden projects but keeps the ones that run or wait for the user", () => {
+  it("hides threads of hidden projects but keeps the ones that run or wait", () => {
     expect(
       filterSidebarThreadsByOwner(threads, visibleProjectKeys("is", ["qlik-trial"])).map(
         (candidate) => candidate.id,
       ),
-    ).toEqual(["work", "running-personal", "approval-personal", "question-personal"]);
+    ).toEqual([
+      "work",
+      "running-personal",
+      "waiting-personal",
+      "approval-personal",
+      "question-personal",
+    ]);
   });
 
   it("keeps the same threads when the filter hides the other owners instead", () => {
@@ -184,7 +194,13 @@ describe("filterSidebarThreadsByOwner", () => {
         threads,
         visibleProjectKeys("is_not", ["yarden-zamir", null]),
       ).map((candidate) => candidate.id),
-    ).toEqual(["work", "running-personal", "approval-personal", "question-personal"]);
+    ).toEqual([
+      "work",
+      "running-personal",
+      "waiting-personal",
+      "approval-personal",
+      "question-personal",
+    ]);
   });
 
   it("returns the same array without a filter", () => {

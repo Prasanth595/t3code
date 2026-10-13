@@ -131,11 +131,14 @@ export function pullRequestFilterChips(input: {
   return chips;
 }
 
-/** The change that removes every chip at once, the server scope included. */
+/**
+ * The change that removes every chip at once. It also clears the server scope, and a project
+ * scope that a typed owner hides, so that no filter comes back unseen.
+ */
 export function clearPullRequestFilterChips(
   chips: ReadonlyArray<PullRequestFilterChip>,
 ): PullRequestListPreferencePatch {
-  const patch: PullRequestListPreferencePatch = { environmentId: undefined };
+  const patch: PullRequestListPreferencePatch = { environmentId: undefined, projectId: undefined };
   for (const chip of chips) Object.assign(patch, chip.remove);
   return patch;
 }

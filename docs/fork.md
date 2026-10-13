@@ -202,7 +202,7 @@ The client setting `repositoryOwnerFilters` filters lists by the owner of each r
 - In the pull request search, type `org:` or `owner:` to show only an owner, and `-org:` or `-owner:` to hide an owner. A typed owner replaces the menu choice.
 - Sidebar: click the building icon next to the project scope, pick "Show only" or "Hide", then pick the owners.
 - While the sidebar filter is on, a chip under the header names it and counts the hidden projects. Click "is" or "is not" on the chip to flip it. Click × to clear it.
-- The sidebar keeps a thread visible while it runs or waits for you, also when the filter hides its project.
+- The sidebar keeps a thread visible while it runs, waits for its subagents or monitors, or waits for you. This also applies when the filter hides its project.
 - A project without a remote has no owner. "Show only" hides it, and "Hide" keeps it. In the sidebar, pick "No repository owner" to filter these projects.
 
 ## Pull request filter chips
@@ -213,7 +213,7 @@ The client setting `pullRequestFilterChips` shows the active pull request filter
 - Click "is" or "is not" on a chip to flip it. Owners, drafts and labels can flip. A label flips into a typed `-label:`, because the menu cannot exclude labels.
 - Click × on a chip to remove that filter. Click "Clear all" to remove all of them.
 - Typed qualifiers stay in the search box, so they get no chip. A menu filter that a typed qualifier replaces gets no chip, because it does not apply.
-- When no pull request matches, the empty list names the filters that hid the pull requests and offers "Clear filters".
+- When no pull request matches the menu filters, the empty list names them and offers "Clear filters". With search text, the empty list names the search instead.
 
 ## Pull request watch remark filter
 

@@ -126,7 +126,7 @@ import {
   pullRequestFilterChips,
   type PullRequestFilterChip,
 } from "../components/pullRequest/pullRequestFilterChips.logic";
-import { filterSentence } from "../components/filters/FilterChip";
+import { filterSentence, type FilterOperator } from "../components/filters/FilterChip";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
 import {
@@ -490,8 +490,11 @@ function PullRequestsRouteView() {
     [projects, requestOwners],
   );
   const keepLocalOwnerRow = useMemo(
-    () => pullRequestOwnerRowFilter(projects, localOwners),
-    [projects, localOwners],
+    () =>
+      localOwners === requestOwners
+        ? keepRequestOwnerRow
+        : pullRequestOwnerRowFilter(projects, localOwners),
+    [keepRequestOwnerRow, localOwners, projects, requestOwners],
   );
   const ownerOptions = useMemo(() => pullRequestProjectOwners(projects), [projects]);
   const environmentLabels = useMemo(
@@ -502,7 +505,9 @@ function PullRequestsRouteView() {
     [environments],
   );
   // The scope the URL asks for, once the environments have had their say about whether it exists.
-  // Fork: a project outside the selected owners drops out of the scope, like an unknown id does.
+  // Fork: a project outside the owner filter drops out of the scope, like an unknown id does. A
+  // menu owner change also clears that scope (`updateMenuOwnerFilter`), so it cannot come back
+  // unseen when the owner filter goes.
   const scopedProjectId = useMemo(
     () => resolveProjectScope(search.projectId, listProjects, projectsKnown),
     [listProjects, projectsKnown, search.projectId],
@@ -2194,6 +2199,23 @@ function PullRequestsRouteView() {
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
+  // Fork: an owner change that leaves the scoped project out drops the project scope too, the
+  // same way picking another server does.
+  const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) => {
+    const kept = projectsOfOwners(projects, pullRequestMenuOwnerFilter(owners, operator));
+    const keepsScope =
+      search.projectId === undefined ||
+      kept.some(
+        (project) =>
+          project.id === search.projectId &&
+          (search.environmentId === undefined || project.environmentId === search.environmentId),
+      );
+    updateListScope({
+      owners: owners.length === 0 ? undefined : owners,
+      ownerOperator: operator === "is_not" ? operator : undefined,
+      ...(keepsScope ? {} : { projectId: undefined }),
+    });
+  };
   const filtersMenu = (
     <PullRequestFiltersMenu
       onOpenChange={setFiltersOpen}
@@ -2239,10 +2261,8 @@ function PullRequestsRouteView() {
               selected: menuOwners,
               operator: menuOwnerOperator,
               options: ownerOptions,
-              onChange: (owners) =>
-                updateListScope({ owners: owners.length === 0 ? undefined : owners }),
-              onOperator: (operator) =>
-                updateListScope({ ownerOperator: operator === "is_not" ? operator : undefined }),
+              onChange: (owners) => updateMenuOwnerFilter(owners, menuOwnerOperator),
+              onOperator: (operator) => updateMenuOwnerFilter(menuOwners, operator),
             }
           : undefined
       }
@@ -2728,7 +2748,7 @@ function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
-  /** Fork: the active filter chips, null while the `pullRequestFilterChips` setting is off. */
+  /** Fork: the active filter chips. They render nothing while `pullRequestFilterChips` is off. */
   filterChips: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;

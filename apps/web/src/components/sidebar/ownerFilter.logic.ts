@@ -15,7 +15,7 @@ import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 export type SidebarOwner = string | null;
 
 /** The owner of a project group. All members share the grouping identity, so they share the owner. */
-export function sidebarProjectGroupOwner(
+function sidebarProjectGroupOwner(
   group: Pick<SidebarProjectSnapshot, "repositoryIdentity">,
 ): SidebarOwner {
   return group.repositoryIdentity ? repositoryOwnerOf(group.repositoryIdentity) : null;
@@ -101,12 +101,15 @@ type OwnerFilterThread = Pick<
 >;
 
 /**
- * A thread that runs or waits for an approval or an answer keeps its row while the filter hides
- * its project, so that work does not stop out of sight. When it finishes, the filter hides it.
+ * A thread that runs, waits for its own background work, or waits for an approval or an answer
+ * keeps its row while the filter hides its project, so that work does not stop out of sight.
+ * When it is done, the filter hides it.
  */
-export function keepsSidebarRowUnderOwnerFilter(thread: OwnerFilterThread): boolean {
+function keepsSidebarRowUnderOwnerFilter(thread: OwnerFilterThread): boolean {
   const status = resolveSidebarThreadStatus(thread);
-  return status === "approval" || status === "input" || status === "working";
+  return (
+    status === "approval" || status === "input" || status === "working" || status === "waiting"
+  );
 }
 
 /**

@@ -2,14 +2,20 @@
  * Fork: the repository owner filter of the pull request page. If upstream T3 Code ships an owner
  * or organization filter for pull requests, drop this fork version and use theirs.
  */
-import { repositoryOwnerOf, type RepositoryIdentity } from "@t3tools/contracts";
+import {
+  repositoryOwnerOf,
+  type EnvironmentId,
+  type ProjectId,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 
 import type { FilterOperator } from "../filters/FilterChip";
+import { pullRequestProjectKey } from "./PullRequestListFilters";
 
 /** Fork: the part of a project that the repository owner filter reads. */
 interface OwnedProject {
-  readonly id: string;
-  readonly environmentId: string;
+  readonly id: ProjectId;
+  readonly environmentId: EnvironmentId;
   readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
 }
 
@@ -81,12 +87,17 @@ export function projectsOfOwners<Project extends OwnedProject>(
 export function pullRequestOwnerRowFilter(
   projects: ReadonlyArray<OwnedProject>,
   filter: PullRequestOwnerFilter,
-): ((row: { readonly environmentId: string; readonly projectId: string }) => boolean) | null {
+):
+  | ((row: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId }) => boolean)
+  | null {
   if (isEmptyOwnerFilter(filter)) return null;
-  const keys = new Set(
-    projectsOfOwners(projects, filter).map((project) =>
-      JSON.stringify([project.environmentId, project.id]),
-    ),
-  );
-  return (row) => keys.has(JSON.stringify([row.environmentId, row.projectId]));
+  const known = new Set(projects.map(pullRequestProjectKey));
+  const kept = new Set(projectsOfOwners(projects, filter).map(pullRequestProjectKey));
+  // A row of a project that the page does not know yet has no known owner. Like a project
+  // without a repository, it stays while the filter only hides owners.
+  const keepsUnknown = filter.include.length === 0;
+  return (row) => {
+    const key = pullRequestProjectKey({ id: row.projectId, environmentId: row.environmentId });
+    return known.has(key) ? kept.has(key) : keepsUnknown;
+  };
 }

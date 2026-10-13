@@ -41,9 +41,9 @@ describe("pullRequestFilterChips", () => {
   it("flips the owner menu between show only and hide, and removes it", () => {
     const [owner] = chips({ owners: ["qlik-trial", "a"], ownerOperator: "is_not" });
     expect(owner).toMatchObject({ field: "Owner", operator: "is_not", value: "qlik-trial, a" });
-    expect(owner?.flip).toEqual({ ownerOperator: undefined });
-    expect(owner?.remove).toEqual({ owners: undefined });
-    expect(chips({ owners: ["a"] })[0]?.flip).toEqual({ ownerOperator: "is_not" });
+    expect(owner?.flip).toStrictEqual({ ownerOperator: undefined });
+    expect(owner?.remove).toStrictEqual({ owners: undefined });
+    expect(chips({ owners: ["a"] })[0]?.flip).toStrictEqual({ ownerOperator: "is_not" });
   });
 
   it("leaves out the owner menu while the owner setting is off or a typed owner replaces it", () => {
@@ -59,8 +59,33 @@ describe("pullRequestFilterChips", () => {
     expect(design?.flip).toEqual({ labels: ["bug"], q: 'fix -label:"needs design"' });
   });
 
-  it("offers no flip for a label that the search box cannot hold", () => {
+  it("quotes a label with a comma, and offers no flip that the search box cannot hold", () => {
+    expect(chips({ labels: ["a,b"] })[0]?.flip).toStrictEqual({
+      labels: undefined,
+      q: '-label:"a,b"',
+    });
     expect(chips({ labels: ['say "hi"'] })[0]?.flip).toBeUndefined();
+    expect(chips({ labels: ["bug"], q: "x".repeat(195) })[0]?.flip).toBeUndefined();
+  });
+
+  it("leaves out each menu filter that a typed qualifier replaces", () => {
+    const search = {
+      draft: "only",
+      author: "octocat",
+      review: "approved",
+      checks: "failing",
+    } as const;
+    const names = { review: "Approved", checks: "Failing" };
+    expect(chips(search, { names }).map((chip) => chip.key)).toEqual([
+      "draft",
+      "review",
+      "checks",
+      "author",
+    ]);
+    const typed = {
+      filters: { draft: "hide", author: "me", review: "none", checks: "passing" },
+    } as const;
+    expect(chips(search, { names, typed })).toEqual([]);
   });
 
   it("leaves out menu labels that typed labels replace, but not for typed exclusions", () => {
@@ -83,15 +108,15 @@ describe("pullRequestFilterChips", () => {
     });
   });
 
-  it("clears every chip and the server scope at once", () => {
+  it("clears every chip, the server scope and a hidden project scope at once", () => {
     const all = chips(
       { state: "merged", owners: ["a"], draft: "only" },
-      { names: { state: "Merged", project: "t3code" } },
+      { names: { state: "Merged" } },
     );
-    expect(clearPullRequestFilterChips(all)).toEqual({
+    expect(clearPullRequestFilterChips(all)).toStrictEqual({
       environmentId: undefined,
-      state: "open",
       projectId: undefined,
+      state: "open",
       draft: undefined,
       owners: undefined,
     });
