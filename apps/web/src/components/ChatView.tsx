@@ -39,7 +39,6 @@ import {
 import { feedbackBannerItem } from "./chat/ComposerFeedback";
 import { usageLimitsBannerItem } from "./chat/ComposerUsageLimits";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
-import * as Schema from "effect/Schema";
 import {
   questionAttachmentDraftId,
   questionAttachmentDraftPrefix,
@@ -496,7 +495,6 @@ import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import {
   hasAvailableCompactionProvider,
-  hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
 import {
@@ -4184,33 +4182,6 @@ export default function ChatView(props: ChatViewProps) {
       selectedProvider,
     ],
   );
-  const [resumeCompactionPermanentlyDismissed, setResumeCompactionPermanentlyDismissed] =
-    useLocalStorage(
-      `t3code:resume-compaction-dismissed:${environmentId}:${activeProviderInstanceId ?? "claudeAgent"}`,
-      false,
-      Schema.Boolean,
-    );
-  const nativeResumeCompactionDismissed = useMemo(
-    () =>
-      hasDismissedResumeCompaction(
-        (serverProjection?.runtimeRequests ?? [])
-          .filter((request) => request.kind === "user_input" && request.status === "resolved")
-          .map((request) => ({
-            kind: "user-input.resolved",
-            payload: { answers: request.answers },
-          })),
-      ),
-    [serverProjection?.runtimeRequests],
-  );
-  useEffect(() => {
-    if (nativeResumeCompactionDismissed && !resumeCompactionPermanentlyDismissed) {
-      setResumeCompactionPermanentlyDismissed(true);
-    }
-  }, [
-    nativeResumeCompactionDismissed,
-    resumeCompactionPermanentlyDismissed,
-    setResumeCompactionPermanentlyDismissed,
-  ]);
   const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
   const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
     string | null
@@ -7752,8 +7723,7 @@ export default function ChatView(props: ChatViewProps) {
   // multi-model sends never compact first, so the offer hides for them.
   const resumeCompactionTokens =
     activeContextWindow &&
-    !resumeCompactionPermanentlyDismissed &&
-    !nativeResumeCompactionDismissed &&
+    settings.compactOldClaudeThreads &&
     !compactDisabled &&
     !hasHeldQueuedRuns &&
     multipleModelSelections === null &&

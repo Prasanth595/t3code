@@ -466,6 +466,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "compact-old-claude-threads",
+    title: "Compact old Claude threads",
+    to: "/settings/general",
+    searchTerms: ["compaction summarize context prompt cache resume idle tokens"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

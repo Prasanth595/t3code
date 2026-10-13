@@ -4,7 +4,6 @@ import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
-  hasDismissedResumeCompaction,
   formatContextWindowCost,
   resolveContextWindowModelDisplayName,
   shouldOfferResumeCompaction,
@@ -194,60 +193,6 @@ describe("shouldOfferResumeCompaction", () => {
         updatedAt: "2026-08-24T09:00:00.000Z",
         now,
       }),
-    ).toBe(false);
-  });
-});
-
-describe("hasDismissedResumeCompaction", () => {
-  it("recognizes the native resume dialog's permanent dismissal", () => {
-    expect(
-      hasDismissedResumeCompaction([
-        {
-          kind: "user-input.resolved",
-          payload: {
-            answers: {
-              "This session is 2h 0m old and uses 250,000 tokens. Compact it before continuing?":
-                "Don't ask again",
-            },
-          },
-        },
-      ]),
-    ).toBe(true);
-  });
-
-  it("ignores the same answer on an unrelated question", () => {
-    expect(
-      hasDismissedResumeCompaction([
-        {
-          kind: "user-input.resolved",
-          payload: { answers: { "Show this setup reminder?": "Don't ask again" } },
-        },
-      ]),
-    ).toBe(false);
-  });
-
-  it("ignores unrelated questions that end with Claude's compaction prompt", () => {
-    expect(
-      hasDismissedResumeCompaction([
-        {
-          kind: "user-input.resolved",
-          payload: {
-            answers: {
-              "The build cache is large. Compact it before continuing?": "Don't ask again",
-            },
-          },
-        },
-      ]),
-    ).toBe(false);
-  });
-
-  it("ignores pending questions and malformed resolved payloads", () => {
-    expect(
-      hasDismissedResumeCompaction([
-        { kind: "user-input.requested", payload: { answers: { question: "Don't ask again" } } },
-        { kind: "user-input.resolved", payload: null },
-        { kind: "user-input.resolved", payload: { answers: ["Don't ask again"] } },
-      ]),
     ).toBe(false);
   });
 });

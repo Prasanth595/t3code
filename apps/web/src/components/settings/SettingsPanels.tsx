@@ -620,6 +620,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
         ? ["Follow-up behavior"]
         : []),
+      ...(settings.compactOldClaudeThreads !== DEFAULT_UNIFIED_SETTINGS.compactOldClaudeThreads
+        ? ["Compact old Claude threads"]
+        : []),
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
@@ -684,6 +687,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.composerRichTextEnabled,
       settings.sendShortcut,
       settings.followUpBehavior,
+      settings.compactOldClaudeThreads,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -806,6 +810,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+      compactOldClaudeThreads: DEFAULT_UNIFIED_SETTINGS.compactOldClaudeThreads,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -2882,6 +2887,33 @@ export function GeneralSettingsPanel() {
                 <SelectItem value="steer">Steer</SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("compact-old-claude-threads")}
+          description="Summarize a Claude thread over 100K tokens before your next message once its prompt cache has expired. Click the Compact chip to keep full history for one message."
+          resetAction={
+            settings.compactOldClaudeThreads !==
+            DEFAULT_UNIFIED_SETTINGS.compactOldClaudeThreads ? (
+              <SettingResetButton
+                label="compact old Claude threads"
+                onClick={() =>
+                  updateSettings({
+                    compactOldClaudeThreads: DEFAULT_UNIFIED_SETTINGS.compactOldClaudeThreads,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.compactOldClaudeThreads}
+              onCheckedChange={(checked) =>
+                updateSettings({ compactOldClaudeThreads: Boolean(checked) })
+              }
+              aria-label="Compact old Claude threads before sending"
+            />
           }
         />
 

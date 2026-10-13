@@ -688,6 +688,18 @@ describe("ClientSettings follow-up behavior", () => {
   });
 });
 
+describe("ClientSettings old Claude thread compaction", () => {
+  it("stays on for existing settings and accepts opting out", () => {
+    expect(decodeClientSettings({}).compactOldClaudeThreads).toBe(true);
+    expect(decodeClientSettings({ compactOldClaudeThreads: false }).compactOldClaudeThreads).toBe(
+      false,
+    );
+    expect(
+      decodeClientSettingsPatch({ compactOldClaudeThreads: false }).compactOldClaudeThreads,
+    ).toBe(false);
+  });
+});
+
 describe("ClientSettings composer collapse", () => {
   it("collapses on scroll by default and accepts opting out", () => {
     expect(decodeClientSettings({}).composerCollapseOnScroll).toBe(true);
