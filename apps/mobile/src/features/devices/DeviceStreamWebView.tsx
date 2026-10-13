@@ -27,6 +27,7 @@ export interface DeviceStreamRef {
   back: () => void;
   appSwitcher: () => void;
   rotate: () => void;
+  toggleKeyboard: () => void;
 }
 
 type NativeStreamBridge = {
@@ -121,7 +122,7 @@ function DeviceStreamDocumentView({
     }),
     [configuration],
   );
-  const command = (button: keyof DeviceStreamRef) => {
+  const command = (button: keyof DeviceStreamRef | "keyboard") => {
     webView.current?.injectJavaScript(
       `window.T3DeviceStream?.command(${JSON.stringify(button)}); true;`,
     );
@@ -131,6 +132,7 @@ function DeviceStreamDocumentView({
     back: () => command("back"),
     appSwitcher: () => command("appSwitcher"),
     rotate: () => command("rotate"),
+    toggleKeyboard: () => command("keyboard"),
   }));
   const resetInput = useEffectEvent(() => void onInputConnected(false));
   useLayoutEffect(() => {

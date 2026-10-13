@@ -231,6 +231,13 @@ function DevicePreviewScreen({
             disabled: !inputConnected,
             onPress: () => streamRef.current?.rotate(),
           },
+          {
+            id: "keyboard",
+            title: "Toggle keyboard",
+            icon: "keyboard" as const,
+            disabled: !inputConnected,
+            onPress: () => streamRef.current?.toggleKeyboard(),
+          },
         ]
       : []),
     {

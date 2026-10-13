@@ -116,6 +116,7 @@ describe("native device stream transport", () => {
     socket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
     client.setOrientation("landscape_right");
     client.pressButton("home");
+    client.toggleSoftwareKeyboard();
     client.sendTouch("begin", 0.25, 0.75);
     const messages = socket.send.mock.calls.map(([bytes]) => {
       const packet = bytes as Uint8Array;
@@ -127,6 +128,7 @@ describe("native device stream transport", () => {
     expect(messages).toEqual([
       { tag: 0x07, body: { orientation: "landscape_right" } },
       { tag: 0x04, body: { button: "home" } },
+      { tag: 0x0c, body: {} },
       { tag: 0x03, body: { type: "begin", x: 0.25, y: 0.75 } },
     ]);
     client.stop();

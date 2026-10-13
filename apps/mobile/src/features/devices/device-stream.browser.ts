@@ -18,8 +18,9 @@ export function stop() {
   activeClient = null;
 }
 
-export function command(button: "home" | "back" | "appSwitcher" | "rotate") {
+export function command(button: "home" | "back" | "appSwitcher" | "rotate" | "keyboard") {
   if (button === "rotate") activeClient?.rotate();
+  else if (button === "keyboard") activeClient?.toggleSoftwareKeyboard();
   else activeClient?.pressButton(button);
 }
 

@@ -128,6 +128,7 @@ const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
 const IOS_MSG_KEY = 0x06;
 const IOS_MSG_ORIENTATION = 0x07;
+const IOS_MSG_SOFTWARE_KEYBOARD = 0x0c;
 // helper -> browser.
 const IOS_TAG_SCREEN_CONFIG = 0x82;
 const IOS_TAG_INPUT_ADMITTED = 0x83;
@@ -276,6 +277,8 @@ export interface DeviceStreamClient {
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
+  /** iOS only: serve-sim exposes a toggle, not the current state. */
+  readonly toggleSoftwareKeyboard: () => void;
   readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
   readonly controlDuo: (command: DuoCommand) => void;
   /** Switch between one active feed and two fixed-panel feeds without replacing HID. */
@@ -1123,6 +1126,9 @@ export function createDeviceStreamClient(
         rotationCursor = next;
         duoControl.enqueue({ control: "orientation", value: next });
       } else send(taggedJson(IOS_MSG_ORIENTATION, { orientation: next }));
+    },
+    toggleSoftwareKeyboard: () => {
+      if (platform === "ios") send(taggedJson(IOS_MSG_SOFTWARE_KEYBOARD, {}));
     },
     setOrientation: (orientation) => {
       if (platform === "ios") send(taggedJson(IOS_MSG_ORIENTATION, { orientation }));
