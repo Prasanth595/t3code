@@ -104,10 +104,10 @@ describe("pull request summary cache", () => {
         syncedAt: "2026-09-12T00:00:00Z",
       },
     };
-    const saved = threadPullRequestLinkToSummary(link, stale);
+    const saved = threadPullRequestLinkToSummary(link, stale.projectId);
     expect(newestPullRequestSummary(stale, saved)?.state).toBe("closed");
     const fresh = summary({ isDraft: true, updatedAt: "2026-09-13T00:00:00Z" });
     expect(newestPullRequestSummary(fresh, saved)).toBe(fresh);
-    expect(threadPullRequestLinkToSummary({ ...link, snapshot: null }, stale)).toBeNull();
+    expect(threadPullRequestLinkToSummary({ ...link, snapshot: null }, stale.projectId)).toBeNull();
   });
 });
