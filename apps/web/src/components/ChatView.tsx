@@ -299,7 +299,7 @@ import {
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
-import { resolveProjectScriptTerminal } from "../lib/projectScriptTerminal";
+import { findReusableProjectScriptTerminal } from "../lib/projectScriptTerminal";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -1540,9 +1540,6 @@ export default function ChatView(props: ChatViewProps) {
   const activeServerOrderedTerminalIds = activeThreadKnownSessions.map(
     (session) => session.target.terminalId,
   );
-  const activeKnownTerminalIds = [
-    ...new Set([...activeServerOrderedTerminalIds, ...terminalUiState.terminalIds]),
-  ];
   const activeTerminalLabelsById = (() => {
     const labels = new Map<string, string>();
     for (const session of activeThreadKnownSessions) {
@@ -3420,18 +3417,17 @@ export default function ChatView(props: ChatViewProps) {
       });
     }
     const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
-    const projectScriptTerminal = resolveProjectScriptTerminal({
-      drawerTerminalIds: terminalUiState.terminalIds,
-      activeTerminalId: terminalUiState.activeTerminalId,
-      panelTerminalIds,
-      allocatableTerminalIds: activeKnownTerminalIds,
-      runningTerminalIds,
-      preferNewTerminal: Boolean(options?.preferNewTerminal),
-    });
-    const shouldCreateNewTerminal =
-      projectScriptTerminal.isNew ||
+    const reusableTerminalId =
+      options?.preferNewTerminal ||
       !canReuseTerminal ||
-      !readEnvironmentScope(environmentId, AuthTerminalReadScope);
+      !readEnvironmentScope(environmentId, AuthTerminalReadScope)
+        ? null
+        : findReusableProjectScriptTerminal({
+            drawerTerminalIds: terminalUiState.terminalIds,
+            activeTerminalId: terminalUiState.activeTerminalId,
+            panelTerminalIds,
+            runningTerminalIds,
+          });
     const targetWorktreePath = options?.worktreePath ?? activeThread.worktreePath ?? null;
 
     setTerminalUiLaunchContext({
@@ -3448,16 +3444,16 @@ export default function ChatView(props: ChatViewProps) {
       // Apply the target before opening: opening an empty drawer would otherwise claim
       // DEFAULT_THREAD_TERMINAL_ID, which a right-panel terminal may already own.
       place: (terminalId) => {
-        if (shouldCreateNewTerminal) {
+        if (reusableTerminalId === null) {
           storeNewTerminal(activeThreadRef, terminalId);
           return;
         }
         storeSetActiveTerminal(activeThreadRef, terminalId);
         setTerminalOpen(true);
       },
-      ...(shouldCreateNewTerminal
+      ...(reusableTerminalId === null
         ? { size: { cols: SCRIPT_TERMINAL_COLS, rows: SCRIPT_TERMINAL_ROWS } }
-        : { terminalId: projectScriptTerminal.terminalId }),
+        : { terminalId: reusableTerminalId }),
       location: { cwd: targetCwd, worktreePath: targetWorktreePath },
       ...(options?.env ? { extraEnv: options.env } : {}),
     });
