@@ -88,9 +88,16 @@ export const MachineMapClientState = Schema.Struct({
 export type MachineMapClientState = typeof MachineMapClientState.Type;
 
 export const MachineMapJoinInput = Schema.Struct({
-  code: TrimmedNonEmptyString,
-  /** Omit to keep the portal URL of the `machineMap` setting. */
-  portalUrl: Schema.optionalKey(TrimmedNonEmptyString),
+  code: TrimmedNonEmptyString.annotate({
+    description:
+      "One-time join code from Add machine in the portal, for example K7QM-2XPA. It works once.",
+  }),
+  portalUrl: Schema.optionalKey(
+    TrimmedNonEmptyString.annotate({
+      description:
+        "Portal origin, for example https://t3.yarden-zamir.com. Omit to keep the portal of the machineMap setting.",
+    }),
+  ),
 });
 export type MachineMapJoinInput = typeof MachineMapJoinInput.Type;
 

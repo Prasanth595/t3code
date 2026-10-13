@@ -149,7 +149,12 @@ export const callOnServer = Effect.fn("callToolOnServer")(function* (
 });
 
 const toolListCommand = Command.make("list").pipe(
-  Command.withDescription("List the MCP tools as JSON."),
+  Command.withDescription(
+    "List the MCP tools as JSON: the name and description of each. Works without a running server.",
+  ),
+  Command.withExamples([
+    { command: "t3 tool list", description: "Print every tool name and description." },
+  ]),
   Command.withHandler(() =>
     printJson(listMcpTools().map(({ name, description }) => ({ name, description }))),
   ),
@@ -158,7 +163,12 @@ const toolListCommand = Command.make("list").pipe(
 const toolDescribeCommand = Command.make("describe", {
   name: Argument.String("name").pipe(Argument.withDescription("Tool name.")),
 }).pipe(
-  Command.withDescription("Print a tool's description and input JSON schema."),
+  Command.withDescription(
+    "Print a tool's description and input JSON schema. Works without a running server.",
+  ),
+  Command.withExamples([
+    { command: "t3 tool describe machines_command", description: "Show the input of one tool." },
+  ]),
   Command.withHandler(({ name }) => findMcpTool(name).pipe(Effect.flatMap(printJson))),
 );
 
@@ -181,8 +191,19 @@ const toolCallCommand = Command.make("call", {
   ),
 }).pipe(
   Command.withDescription(
-    "Call a tool on the running T3 Code server and print its result as JSON.",
+    "Call a tool on the running T3 Code server and print its result as JSON. The tool has its normal side effects. Inside a T3 Code terminal the call acts as that thread; elsewhere it uses a short full-access session that ends after the call.",
   ),
+  Command.withExamples([
+    { command: "t3 tool call t3_thread_list", description: "Call a tool without input." },
+    {
+      command: `t3 tool call machine_tool_call --input '{"machine":"VPS","tool":"t3_thread_list"}'`,
+      description: "Call a tool on another machine of the machine map.",
+    },
+    {
+      command: "t3 tool call t3_thread_read --thread <threadId>",
+      description: "Call a thread-bound tool outside a T3 Code terminal.",
+    },
+  ]),
   Command.withHandler(
     Effect.fn("toolCallCommand")(function* (flags) {
       const tool = yield* findMcpTool(flags.name);
@@ -221,6 +242,13 @@ const toolCallCommand = Command.make("call", {
 );
 
 export const toolCommand = Command.make("tool").pipe(
-  Command.withDescription("List, describe, and call T3 Code MCP tools."),
+  Command.withDescription(
+    "List, describe, and call T3 Code MCP tools: the same tools that agents get over MCP.",
+  ),
+  Command.withExamples([
+    { command: "t3 tool list", description: "List the tools." },
+    { command: "t3 tool describe machines_read", description: "Show one tool." },
+    { command: "t3 tool call machines_read", description: "Call one tool." },
+  ]),
   Command.withSubcommands([toolListCommand, toolDescribeCommand, toolCallCommand]),
 );
