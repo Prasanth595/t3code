@@ -607,6 +607,8 @@ function OpenCommandPaletteDialog(props: {
   const deferredQuery = useDeferredValue(query);
   const isActionsOnly = deferredQuery.startsWith(">");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
+  // Whether the mouse, rather than the keyboard, put the highlight where it is.
+  const [isPointerHighlight, setIsPointerHighlight] = useState(false);
   const resultListRef = useRef<LegendListRef | null>(null);
   // Typing or entering a submenu clears the highlight. Base UI keeps its own on the
   // first row, but the palette shows none until the user navigates, and the first
@@ -2838,6 +2840,10 @@ function OpenCommandPaletteDialog(props: {
   const newProjectPathPreview =
     newProjectsRoot === null ? null : getNewProjectPathPreview(newProjectsRoot, newProjectName);
   const newProjectPublishToggleValue = "new-project:publish";
+  // The rows under the name are options for the project, so Enter creates it.
+  // Only a row reached with the arrow keys takes Enter over; one under the
+  // mouse, such as the option just clicked, does not.
+  const newProjectEnterItemValue = isPointerHighlight ? null : highlightedItemValue;
   // The name step's way out to folders and clones, for the selected machine.
   // It replaces the name step (and a sources view for another machine under
   // it), so Back returns to wherever New project was opened from.
@@ -3164,16 +3170,16 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
 
-    // Enter creates the project unless an item below the name is
-    // highlighted, in which case it runs that item.
     if (
       newProjectFlow !== null &&
       event.key === "Enter" &&
-      highlightedItemValue === null &&
+      newProjectEnterItemValue === null &&
       // Enter that confirms an IME composition is part of typing the name.
       !event.nativeEvent.isComposing &&
       event.keyCode !== 229
     ) {
+      // Base UI would otherwise click the row under the mouse.
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
       event.preventDefault();
       void submitNewProject();
       return;
@@ -3214,6 +3220,7 @@ function OpenCommandPaletteDialog(props: {
       event.preventDefault();
       highlightClearedRef.current = false;
       setHighlightedItemValue(firstItemValue);
+      setIsPointerHighlight(false);
       scrollCommandPaletteRowIntoView(
         resultListRef.current,
         resultRows.rowIndexByItemIndex[0] ?? 0,
@@ -3479,9 +3486,9 @@ function OpenCommandPaletteDialog(props: {
 
   const footerActionLabel =
     newProjectFlow !== null
-      ? highlightedItemValue === null
+      ? newProjectEnterItemValue === null
         ? "Create"
-        : highlightedItemValue === newProjectPublishToggleValue
+        : newProjectEnterItemValue === newProjectPublishToggleValue
           ? "Toggle"
           : "Select"
       : addProjectCloneFlow?.step === "repository"
@@ -3547,6 +3554,7 @@ function OpenCommandPaletteDialog(props: {
         if (eventDetails.reason === "none" && highlightClearedRef.current) return;
         highlightClearedRef.current = false;
         setHighlightedItemValue(typeof value === "string" ? value : null);
+        setIsPointerHighlight(eventDetails.reason === "pointer");
         const rowIndex = resultRows.rowIndexByItemIndex[eventDetails.index];
         if (eventDetails.reason === "keyboard" && rowIndex !== undefined) {
           scrollCommandPaletteRowIntoView(resultListRef.current, rowIndex);
