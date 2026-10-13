@@ -19,7 +19,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useCallback, useState } from "react";
-import { Pressable, type TextLayoutEvent, View } from "react-native";
+import { Pressable, type AccessibilityActionEvent, type TextLayoutEvent, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -396,6 +396,9 @@ function CloudEnvironmentRowShell(props: {
   const isErrorExpanded = errorCanExpand && props.errorExpanded;
   const StatusContainer = errorCanExpand ? Pressable : View;
   const PressArea = props.onPress || props.onLongPress ? Pressable : View;
+  const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
+    if (event.nativeEvent.actionName === "toggleError") props.onToggleError();
+  };
   const pressProps =
     props.onPress || props.onLongPress
       ? {
@@ -407,6 +410,17 @@ function CloudEnvironmentRowShell(props: {
           accessibilityRole: props.onPress ? ("button" as const) : undefined,
           onPress: props.onPress,
           onLongPress: props.onLongPress,
+          ...(errorCanExpand
+            ? {
+                accessibilityActions: [
+                  {
+                    name: "toggleError",
+                    label: isErrorExpanded ? "Collapse error details" : "Expand error details",
+                  },
+                ],
+                onAccessibilityAction: handleAccessibilityAction,
+              }
+            : {}),
         }
       : {};
   const onMeasuredErrorTextLayout = useCallback(
