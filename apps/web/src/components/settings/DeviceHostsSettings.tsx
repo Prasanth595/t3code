@@ -309,7 +309,9 @@ function DeviceHostList({
                     size="icon-sm"
                     variant="ghost-muted"
                     disabled={busy}
-                    aria-label={host.label + " options"}
+                    aria-label={
+                      isSshNetworkAddress(host.label) ? "Host options" : host.label + " options"
+                    }
                   />
                 }
               >

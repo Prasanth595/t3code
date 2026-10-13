@@ -170,11 +170,9 @@ function clientMetadata() {
 
 function sshPreparationError(target: DesktopSshEnvironmentTarget) {
   return (cause: unknown) => {
-    const message = redactSshAddresses(
-      cause instanceof Error ? cause.message : String(cause),
-      target,
-    );
-    if (message.toLowerCase().includes("cancel")) {
+    const original = cause instanceof Error ? cause.message : String(cause);
+    const message = redactSshAddresses(original, target);
+    if (original.toLowerCase().includes("cancel")) {
       return new ConnectionBlockedError({
         reason: "authentication",
         detail: message,

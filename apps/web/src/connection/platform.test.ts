@@ -135,6 +135,21 @@ describe("desktop SSH pairing", () => {
       });
     }),
   );
+
+  it.effect("classifies a failure by the ssh error, not the alias substituted into it", () =>
+    Effect.gen(function* () {
+      const error = yield* provisionDesktopSshEnvironment(
+        makeBridge([], { ensureError: "ssh: connect to host 203.0.113.42: Connection timed out" }),
+        { ...TARGET, alias: "cancel-box", hostname: "203.0.113.42" },
+      ).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "ConnectionTransientError",
+        detail:
+          "Could not prepare the SSH environment: ssh: connect to host cancel-box: Connection timed out",
+      });
+    }),
+  );
 });
 
 describe("desktop-local bearer cache", () => {

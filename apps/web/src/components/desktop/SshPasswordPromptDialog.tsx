@@ -147,8 +147,6 @@ function ActiveSshPasswordPrompt({
     void respond(null);
   };
 
-  const target = describeSshTarget(request);
-
   return (
     <Dialog
       open
@@ -163,16 +161,16 @@ function ActiveSshPasswordPrompt({
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
             T3 needs your SSH password to connect to{" "}
-            {isSshNetworkAddress(target) ? (
+            {isSshNetworkAddress(request.destination) ? (
               <RedactedSensitiveText
-                value={target}
+                value={describeSshTarget(request)}
                 ariaLabel="Toggle SSH address visibility"
                 revealTooltip="Click to reveal address"
                 hideTooltip="Click to hide address"
                 className="text-sm"
               />
             ) : (
-              <code>{target}</code>
+              <code>{request.destination}</code>
             )}
             . The password is passed to the local SSH process for this connection attempt and is not
             saved by T3 Code.
