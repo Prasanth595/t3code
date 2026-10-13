@@ -101,7 +101,7 @@ Most fork changes are server and web code. They reach the Mac without a new app 
 - The setting `T3CODE_DESKTOP_LIVE_SERVER_DIR` names a live server folder. It is off when unset.
 - With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a`, `<folder>/b` or `<folder>/c`, three worktrees of this repository.
 - `scripts/fork-live/build.sh` runs every minute, from the copy `<folder>/build.sh`. Each successful build replaces that copy, so a builder fix applies at once. When fork main has a new commit, it builds it in the folder that neither runs nor is on offer. Then it writes `<folder>/ready.json` with the path, commit, subject and build time. Thus a build on offer stays complete until you install it or a newer build replaces it.
-- The update button offers the ready build as `live <commit>`. A full app update always comes first.
+- The update button offers the ready build as `live <commit>`. A full app update always comes first. The upstream "update everything" pass comes after the live build, and other servers do not follow a live build.
 - Install moves the `current` link, restarts the server and reloads the windows. If the new server does not start, the link goes back and the previous server starts again.
 - A failed build shows a macOS notification. The app keeps its current server.
 - A full app update is still needed when the app shell changes: `apps/desktop`, Electron or the native dependencies.
@@ -166,7 +166,7 @@ Every agent runs as a child process of the T3 server. An update, a crash or a qu
 - A thread gets the message when the restart stopped its turn, or when its turn was finished but background work of that turn was still open. Background work is a native subagent, a monitor or a background shell.
 - A native subagent, for example a Claude Code Task subagent, lives inside the process of its parent agent. It is not a T3 thread and gets no message. The message to its parent thread covers it, together with a note that names the stopped work.
 - A thread that another thread delegated work to gets the delegated thread message.
-- No message goes to a thread that the user stopped, to a turn that ended on its own, to a turn that waited for an answer or an approval, to a turn that did not start, to a thread without a saved provider session, or to a thread with newer work. Held queued messages stay held.
+- No message goes to a thread that the user stopped, snoozed or settled, to a turn that ended on its own, to a turn that waited for an answer, an approval or a secret, to a turn that did not start, to a thread without a saved provider session, or to a thread with newer work. Held queued messages stay held.
 - Each stopped turn gets one message at most. A recovery turn that a restart stops before it answers gets no second message, so a restart loop does not repeat it.
 - The thread shows the message as a "T3 Code restarted" notice. The agent receives the message text.
 - The code is in `apps/server/src/orchestration-v2/RecoverInterruptedTurns.ts`.
