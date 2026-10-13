@@ -19,6 +19,7 @@ import {
   type ServerSettings,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
@@ -28,12 +29,26 @@ import {
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
+import { restartContinuationBlocked } from "./RestartContinuation.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const MESSAGE_ID_PREFIX = "message:recover-interrupted:";
 
 const isOpenStatus = (status: string) =>
   status === "pending" || status === "running" || status === "waiting";
+
+/** The user put the thread away, so a restart leaves it asleep, as upstream does. */
+const isThreadPutAway = (
+  thread: Pick<
+    ProjectionRuntimeRecoveryState["thread"],
+    "archivedAt" | "deletedAt" | "settledOverride" | "snoozedUntil"
+  >,
+  now: DateTime.Utc,
+) =>
+  thread.archivedAt !== null ||
+  thread.deletedAt !== null ||
+  thread.settledOverride === "settled" ||
+  (thread.snoozedUntil != null && DateTime.isGreaterThan(thread.snoozedUntil, now));
 
 /**
  * The thread's latest run when its turn had finished but its own provider
@@ -45,8 +60,9 @@ export function settledRunWithOpenBackgroundWork(
     ProjectionRuntimeRecoveryState,
     "thread" | "runs" | "providerThreads" | "turnItems"
   >,
+  now: DateTime.Utc,
 ): OrchestrationV2Run | undefined {
-  if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+  if (isThreadPutAway(projection.thread, now)) return;
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
       candidate.status !== "queued" && (!latest || runRanAfter(candidate, latest))
@@ -101,19 +117,25 @@ export const recoverInterruptedThread = Effect.fn(
   const messageId = MessageId.make(`${MESSAGE_ID_PREFIX}${input.sourceRunId}`);
   const projection = yield* threads.getThreadRecords(
     input.threadId,
-    ["messages", "runs", "providerTurns", "attempts"],
-    { messageIds: [messageId] },
+    ["messages", "runs", "providerTurns", "attempts", "runtimeRequests", "turnItems"],
+    { messageIds: [messageId], turnItemTypes: ["secret_request"] },
   );
-  if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) return;
+  const now = yield* DateTime.now;
+  if (isThreadPutAway(projection.thread, now)) return;
   // One message per cut run, so one per thread for each server start.
   if (projection.messages.some((message) => message.id === messageId)) return;
   const source = projection.runs.find((run) => run.id === input.sourceRunId);
   if (!source) return;
   // A finished turn whose background work the restart killed.
   const settled = isRestartNoteSource(source, projection.providerTurns);
-  // Otherwise only a turn that recovery cancelled mid-way. A completed,
-  // failed, or interrupted turn ended on its own.
-  if (!settled && source.status !== "cancelled") return;
+  // Otherwise only a turn that recovery cancelled mid-way, and only when
+  // upstream would continue it too: its provider turn did not end on its own
+  // and the user owes no answer.
+  if (
+    !settled &&
+    (source.status !== "cancelled" || restartContinuationBlocked(projection, source, now))
+  )
+    return;
   // Work started after the restart, such as a new user message, comes first.
   if (
     projection.runs.some(
@@ -155,10 +177,24 @@ export const recoverInterruptedThread = Effect.fn(
       ? settings.recoverInterruptedTurnsSubagentMessage
       : settings.recoverInterruptedTurnsMessage;
   const commandId = CommandId.make(`command:recover-interrupted:${input.sourceRunId}`);
+  // The project turned this instance off since the restart. No turn resumes,
+  // and the caller still recovers a delegated child, as upstream does.
+  const dispatch = (command: Parameters<typeof threads.dispatch>[0]) =>
+    threads.dispatch(command).pipe(
+      Effect.catchTags({
+        ThreadManagementProviderInstanceDisabledError: (error) =>
+          Effect.logInfo("orchestration-v2.recover-interrupted.instance-disabled", {
+            threadId: input.threadId,
+            sourceRunId: input.sourceRunId,
+            projectId: error.projectId,
+            instanceId: error.instanceId,
+          }),
+      }),
+    );
   if (settled) {
     // A new turn on the same provider thread. Turn start puts the note about
     // the killed background work in front of this text.
-    yield* threads.dispatch({
+    yield* dispatch({
       type: "message.dispatch",
       commandId,
       threadId: input.threadId,
@@ -189,7 +225,7 @@ export const recoverInterruptedThread = Effect.fn(
     note.work.length === 0
       ? message
       : `${restartCancelledBackgroundWorkNote(note.work)}\n\n${message}`;
-  yield* threads.dispatch({
+  yield* dispatch({
     type: "message.dispatch",
     commandId,
     threadId: input.threadId,

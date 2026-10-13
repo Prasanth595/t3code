@@ -14,8 +14,8 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 **Updates and releases**
 
 - **Fork releases:** signed nightly desktop builds with a self-made certificate. A release builds when the app shell changes, and once a day.
-- **Live server updates:** the desktop app runs its server and web client from a live folder. The update button offers a new main commit in blue, and only the server restarts (`T3CODE_DESKTOP_LIVE_SERVER_DIR`).
-- **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
+- **Live server updates:** the desktop app runs its server and web client from a live folder. The update button offers a new main commit in blue, before "update everything", and only the server restarts (`T3CODE_DESKTOP_LIVE_SERVER_DIR`).
+- **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
 - **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.
@@ -23,7 +23,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Agents**
 
-- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message. Subagents get their own message (`recoverInterruptedTurns`).
+- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message. Subagents get their own message. Snoozed and settled threads stay asleep (`recoverInterruptedTurns`).
 - **Background work details:** background work notifications name their tasks and output files, and a popover shows the details with links (`backgroundWorkDetails`).
 - **Pull requests from origin:** a fork checkout lists, reads and watches the pull requests of its fork, not of upstream (`preferOriginRemote`).
 - **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).

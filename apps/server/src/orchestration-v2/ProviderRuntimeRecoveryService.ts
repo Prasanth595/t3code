@@ -564,7 +564,9 @@ export const make = Effect.gen(function* () {
       const continuationRun =
         continueAfterRestart && trigger === "startup"
           ? (restartContinuationRun(projection, now) ??
-            (recoverInterruptedTurns ? settledRunWithOpenBackgroundWork(projection) : undefined))
+            (recoverInterruptedTurns
+              ? settledRunWithOpenBackgroundWork(projection, now)
+              : undefined))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -708,10 +710,11 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
+        const now = yield* DateTime.now;
         const run =
-          restartContinuationRun(projection, yield* DateTime.now) ??
+          restartContinuationRun(projection, now) ??
           (enabled.recoverInterruptedTurns
-            ? settledRunWithOpenBackgroundWork(projection)
+            ? settledRunWithOpenBackgroundWork(projection, now)
             : undefined);
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);

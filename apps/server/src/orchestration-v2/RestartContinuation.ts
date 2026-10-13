@@ -32,7 +32,7 @@ const MAX_CONTINUATION_CHAIN = 3;
  * the provider turn already ended, or the user owes an answer. Checked when
  * intent is recorded and again when the continuation is delivered.
  */
-function restartContinuationBlocked(
+export function restartContinuationBlocked(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
     "thread" | "runtimeRequests" | "providerTurns" | "turnItems"

@@ -23,6 +23,17 @@ export function isLiveServerUpdate(state: DesktopUpdateState | null): boolean {
   return state !== null && isLiveServerUpdateVersion(state.downloadedVersion);
 }
 
+/**
+ * The version this app installs in an "update everything" pass, which other
+ * servers then follow. Null when this app has no update, and for a fork live
+ * server update: that is a commit, not a version, and it keeps its own offer.
+ */
+export function getUpdateEverythingLocalVersion(state: DesktopUpdateState | null): string | null {
+  if (state === null || resolveDesktopUpdateButtonAction(state) === "none") return null;
+  const version = getDesktopUpdateDownloadedVersion(state);
+  return isLiveServerUpdateVersion(version) ? null : version;
+}
+
 /** Release notes for an exact downloaded build; nightly suffixes are part of the tag. */
 export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
   const normalizedVersion = version?.trim();

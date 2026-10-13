@@ -9,6 +9,7 @@ import {
   getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
+  getUpdateEverythingLocalVersion,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
@@ -345,5 +346,30 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
+  });
+});
+
+describe("update everything local version", () => {
+  it("lets other servers follow a downloaded app version", () => {
+    expect(
+      getUpdateEverythingLocalVersion({
+        ...baseState,
+        status: "downloaded",
+        availableVersion: "1.1.0",
+        downloadedVersion: "1.1.0",
+      }),
+    ).toBe("1.1.0");
+    expect(getUpdateEverythingLocalVersion(baseState)).toBeNull();
+  });
+
+  it("keeps a fork live server update out of the pass", () => {
+    expect(
+      getUpdateEverythingLocalVersion({
+        ...baseState,
+        status: "downloaded",
+        availableVersion: "live 0123456789ab",
+        downloadedVersion: "live 0123456789ab",
+      }),
+    ).toBeNull();
   });
 });
