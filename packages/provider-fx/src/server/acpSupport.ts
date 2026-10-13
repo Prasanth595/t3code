@@ -143,15 +143,18 @@ export function withFxSessionMode(
           });
         }
         const sessionId = pendingSessionId;
-        pendingSessionId = undefined;
         if (sessionId === undefined || state?.currentModeId !== target) {
-          return yield* runtime.setMode(target);
+          const response = yield* runtime.setMode(target);
+          pendingSessionId = undefined;
+          return response;
         }
         yield* runtime.request("session/set_config_option", {
           sessionId,
           configId: FX_MODE_CONFIG_ID,
           value: target,
         });
+        // Only a write fx took counts, so a retried setup sends it again.
+        pendingSessionId = undefined;
         return {};
       }),
   };
