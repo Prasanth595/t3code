@@ -7,7 +7,9 @@ import {
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
 import {
+  NO_PULL_REQUEST_OWNER_FILTER,
   projectsOfOwners,
+  pullRequestMenuOwnerFilter,
   pullRequestOwnerRowFilter,
   pullRequestProjectOwners,
 } from "./pullRequestOwnerFilter.logic";
@@ -52,20 +54,26 @@ describe("owner qualifiers typed as a search", () => {
 
   it("reads org and owner as repository owners, lowercase, and keeps the rest", () => {
     const parsed = parsePullRequestQuery("org:Qlik-Trial owner:yarden-zamir label:bug fix", owners);
-    expect(parsed.owners).toEqual(["qlik-trial", "yarden-zamir"]);
+    expect(parsed.owners).toEqual({ include: ["qlik-trial", "yarden-zamir"], exclude: [] });
     expect(parsed.filters).toEqual({ labels: [["bug"]] });
     expect(parsed.text).toBe("fix");
   });
 
   it("reads a comma list as more owners, once each", () => {
-    expect(parsePullRequestQuery("owner:a,B org:b", owners).owners).toEqual(["a", "b"]);
+    expect(parsePullRequestQuery("owner:a,B org:b", owners).owners?.include).toEqual(["a", "b"]);
   });
 
-  it("keeps a negated or empty owner qualifier as text", () => {
-    const parsed = parsePullRequestQuery("-owner:a owner:", owners);
+  it("reads a negated owner qualifier as an owner to drop", () => {
+    const parsed = parsePullRequestQuery("-org:Qlik-Trial,a org:b", owners);
+    expect(parsed.owners).toEqual({ include: ["b"], exclude: ["qlik-trial", "a"] });
+    expect(parsed.text).toBe("");
+  });
+
+  it("keeps an empty owner qualifier as text", () => {
+    const parsed = parsePullRequestQuery("owner: -org:", owners);
     expect(parsed.owners).toBeUndefined();
     expect(parsed.filters).toEqual({});
-    expect(parsed.text).toBe("-owner:a owner:");
+    expect(parsed.text).toBe("owner: -org:");
   });
 
   it("leaves owners out when nothing names one", () => {
@@ -91,36 +99,49 @@ describe("narrowing projects by repository owner", () => {
     ).toEqual(["qlik-trial", "yarden-zamir"]);
   });
 
+  const ids = (owners: ReadonlyArray<string>, operator: "is" | "is_not") =>
+    projectsOfOwners(projects, pullRequestMenuOwnerFilter(owners, operator)).map(({ id }) => id);
+
   it("keeps every project, as the same array, when no owner is selected", () => {
-    expect(projectsOfOwners(projects, [])).toBe(projects);
+    expect(projectsOfOwners(projects, NO_PULL_REQUEST_OWNER_FILTER)).toBe(projects);
+    expect(projectsOfOwners(projects, pullRequestMenuOwnerFilter([], "is_not"))).toBe(projects);
   });
 
   it("keeps the projects of the selected owners without case, and drops one without a repository", () => {
-    expect(projectsOfOwners(projects, ["Yarden-Zamir"]).map(({ id }) => id)).toEqual([
-      "dotfiles",
-      "t3code",
-    ]);
-    expect(projectsOfOwners(projects, ["qlik-trial", "nobody"]).map(({ id }) => id)).toEqual([
-      "app",
-    ]);
+    expect(ids(["Yarden-Zamir"], "is")).toEqual(["dotfiles", "t3code"]);
+    expect(ids(["qlik-trial", "nobody"], "is")).toEqual(["app"]);
+  });
+
+  it("hides the projects of the selected owners, and keeps one without a repository", () => {
+    expect(ids(["Qlik-Trial"], "is_not")).toEqual(["dotfiles", "t3code", "scratch"]);
+  });
+
+  it("applies typed owners to keep and owners to drop together", () => {
+    const keep = (include: string[], exclude: string[]) =>
+      projectsOfOwners(projects, { include, exclude }).map(({ id }) => id);
+    expect(keep(["yarden-zamir", "qlik-trial"], ["qlik-trial"])).toEqual(["dotfiles", "t3code"]);
+    expect(keep(["qlik-trial"], ["qlik-trial"])).toEqual([]);
   });
 });
 
 describe("narrowing listed rows by repository owner", () => {
   it("skips the pass when no owner is selected", () => {
-    expect(pullRequestOwnerRowFilter([app], [])).toBeNull();
+    expect(pullRequestOwnerRowFilter([app], NO_PULL_REQUEST_OWNER_FILTER)).toBeNull();
   });
 
   it("matches a row by its server and project, so a shared project id stays apart", () => {
     const sameIdOnServer = project("app", "github.com/someone-else/app", server);
-    const keep = pullRequestOwnerRowFilter([app, sameIdOnServer], ["qlik-trial"]);
+    const keep = pullRequestOwnerRowFilter(
+      [app, sameIdOnServer],
+      pullRequestMenuOwnerFilter(["qlik-trial"], "is"),
+    );
     expect(keep?.({ environmentId: laptop, projectId: app.id })).toBe(true);
     expect(keep?.({ environmentId: server, projectId: app.id })).toBe(false);
   });
 });
 
 describe("remembered owner selection", () => {
-  it("restores the selected owners", () => {
+  it("restores the selected owners and the hide operator", () => {
     const held = new Map<string, string>();
     const storage = {
       getItem: (key: string) => held.get(key) ?? null,
@@ -130,6 +151,7 @@ describe("remembered owner selection", () => {
       involvement: "all",
       state: "open",
       owners: ["qlik-trial", "yarden-zamir"],
+      ownerOperator: "is_not",
     } as const;
 
     writePullRequestListPreferences(preferences, storage);

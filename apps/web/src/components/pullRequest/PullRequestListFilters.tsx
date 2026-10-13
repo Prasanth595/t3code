@@ -13,6 +13,7 @@ import {
   CircleDashedIcon,
   CircleSlashIcon,
   CircleXIcon,
+  EyeIcon,
   EyeOffIcon,
   FolderGit2Icon,
   LayersIcon,
@@ -49,6 +50,7 @@ import {
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
+import type { FilterOperator } from "../filters/FilterChip";
 import { MAX_PULL_REQUEST_LIST_OWNERS } from "./pullRequestListPreferences";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
@@ -154,7 +156,8 @@ const DRAFT_OPTIONS = [
   { value: "hide", label: "Hide drafts", Icon: EyeOffIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
-const REVIEW_OPTIONS = [
+/** Fork: exported for the filter chips. */
+export const REVIEW_OPTIONS = [
   { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
   { value: "approved", label: "Approved", Icon: CircleCheckIcon },
   { value: "changes-requested", label: "Changes requested", Icon: CircleXIcon },
@@ -162,7 +165,8 @@ const REVIEW_OPTIONS = [
   { value: "none", label: "No reviews", Icon: CircleSlashIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
-const CHECKS_OPTIONS = [
+/** Fork: exported for the filter chips. */
+export const CHECKS_OPTIONS = [
   { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
   { value: "passing", label: "Passing", Icon: CircleCheckIcon },
   { value: "failing", label: "Failing", Icon: CircleXIcon },
@@ -393,16 +397,35 @@ function PullRequestLabelFilter({
   );
 }
 
-/** Fork: the repository owner filter, shown only while `repositoryOwnerFilters` is on. */
+/**
+ * Fork: the repository owner filter, shown only while `repositoryOwnerFilters` is on. If upstream
+ * T3 Code ships an owner or organization filter, drop this fork version and use theirs.
+ */
 export interface PullRequestOwnerFilterProps {
   /** Lowercase owners, as `repositoryOwnerOf` gives them. Empty means every owner. */
   readonly selected: ReadonlyArray<string>;
+  /** "is" shows only the selected owners, "is_not" hides them. */
+  readonly operator: FilterOperator;
   /** The owners of the projects that feed the list. */
   readonly options: ReadonlyArray<string>;
   readonly onChange: (owners: ReadonlyArray<string>) => void;
+  readonly onOperator: (operator: FilterOperator) => void;
 }
 
-function PullRequestOwnerFilter({ selected, options, onChange }: PullRequestOwnerFilterProps) {
+function ownerFilterSummary(selected: ReadonlyArray<string>, operator: FilterOperator): string {
+  const [first] = selected;
+  if (first === undefined) return "All";
+  if (operator === "is") return selected.length === 1 ? first : `${selected.length} selected`;
+  return selected.length === 1 ? `Not ${first}` : `Hiding ${selected.length}`;
+}
+
+function PullRequestOwnerFilter({
+  selected,
+  operator,
+  options,
+  onChange,
+  onOperator,
+}: PullRequestOwnerFilterProps) {
   // A selected owner with no project here stays in the list, so that the reader can clear it.
   const visible = [...selected.filter((owner) => !options.includes(owner)), ...options];
   const full = selected.length >= MAX_PULL_REQUEST_LIST_OWNERS;
@@ -412,14 +435,34 @@ function PullRequestOwnerFilter({ selected, options, onChange }: PullRequestOwne
         <Building2Icon aria-hidden className="size-3.5" />
         <span className="flex-1">Owner</span>
         <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
-          {selected.length === 0
-            ? "All"
-            : selected.length === 1
-              ? selected[0]
-              : `${selected.length} selected`}
+          {ownerFilterSummary(selected, operator)}
         </span>
       </MenuSubTrigger>
       <MenuSubPopup>
+        {/* One operator for all owners: a pull request has one owner, so "only A" and "not B"
+            are never needed together. */}
+        <MenuRadioGroup
+          value={operator}
+          onValueChange={(next) => {
+            if (next === "is" || next === "is_not") onOperator(next);
+          }}
+        >
+          <MenuRadioItem value="is">
+            <span className="flex min-w-0 items-center gap-2">
+              <EyeIcon aria-hidden className="size-3.5" />
+              <span className="min-w-0 flex-1 truncate">Show only selected</span>
+              <MenuRadioItemIndicator />
+            </span>
+          </MenuRadioItem>
+          <MenuRadioItem value="is_not">
+            <span className="flex min-w-0 items-center gap-2">
+              <EyeOffIcon aria-hidden className="size-3.5" />
+              <span className="min-w-0 flex-1 truncate">Hide selected</span>
+              <MenuRadioItemIndicator />
+            </span>
+          </MenuRadioItem>
+        </MenuRadioGroup>
+        <MenuSeparator />
         <MenuItem disabled={selected.length === 0} onClick={() => onChange([])}>
           <LayersIcon aria-hidden className="size-3.5" />
           All owners

@@ -22,6 +22,7 @@ import type {
 
 import { toSortableTimestamp } from "../../lib/threadSort";
 import type { PullRequestListSort } from "./pullRequestListPreferences";
+import type { PullRequestOwnerFilter } from "./pullRequestOwnerFilter.logic";
 
 /**
  * A listed change request with the environment that read it. Nothing on a row says which machine
@@ -230,7 +231,8 @@ function boundedNames(names: ReadonlyArray<string>): string[] {
  *
  * Fork: with `ownerQualifiers`, `org:` and `owner:` name repository owners instead of labels. The
  * names are lowercase, and all owner qualifiers together are one OR, because a project has one
- * owner. A negated owner qualifier is text. `owners` is absent when no owner is named.
+ * owner. A negated owner qualifier, `-org:`, drops that owner. `owners` is absent when no owner
+ * is named.
  */
 export function parsePullRequestQuery(
   raw: string,
@@ -238,12 +240,13 @@ export function parsePullRequestQuery(
 ): {
   readonly text: string;
   readonly filters: PullRequestListFilters;
-  readonly owners?: ReadonlyArray<string>;
+  readonly owners?: PullRequestOwnerFilter;
 } {
   const text: string[] = [];
   const labels: string[][] = [];
   const excludedLabels: string[] = [];
-  const owners = new Set<string>();
+  const includedOwners = new Set<string>();
+  const excludedOwners = new Set<string>();
   let author: string | undefined;
   let draft: PullRequestListFilters["draft"];
   let review: PullRequestListFilters["review"];
@@ -254,9 +257,9 @@ export function parsePullRequestQuery(
     const negated = qualifier?.[1] === "-";
     const key = value.length === 0 ? "" : (qualifier?.[2]?.toLowerCase() ?? "");
     if (options.ownerQualifiers === true && (key === "org" || key === "owner")) {
-      const names = negated ? [] : boundedNames(splitQualifierList(qualifier?.[3] ?? ""));
+      const names = boundedNames(splitQualifierList(qualifier?.[3] ?? ""));
       if (names.length === 0) text.push(token);
-      for (const name of names) owners.add(name.toLowerCase());
+      for (const name of names) (negated ? excludedOwners : includedOwners).add(name.toLowerCase());
       continue;
     }
     switch (key) {
@@ -324,7 +327,9 @@ export function parsePullRequestQuery(
       ...(review === undefined ? {} : { review }),
       ...(checks === undefined ? {} : { checks }),
     },
-    ...(owners.size === 0 ? {} : { owners: [...owners] }),
+    ...(includedOwners.size === 0 && excludedOwners.size === 0
+      ? {}
+      : { owners: { include: [...includedOwners], exclude: [...excludedOwners] } }),
   };
 }
 

@@ -78,6 +78,8 @@ export function PullRequestListEmptyState({
   onLoadMore,
   onRefresh,
   onShowAllOwners,
+  filterCauses = [],
+  onClearFilters,
 }: {
   /** The text being searched for, so the reader is told what was searched rather than guessing. */
   query: string;
@@ -99,6 +101,12 @@ export function PullRequestListEmptyState({
   onRefresh: () => void;
   /** Fork: present while the menu narrows the list to some repository owners. */
   onShowAllOwners?: (() => void) | undefined;
+  /**
+   * Fork: the menu filters as sentences, such as "Owner is not qlik-trial", while the
+   * `pullRequestFilterChips` setting is on. Empty otherwise.
+   */
+  filterCauses?: ReadonlyArray<string>;
+  onClearFilters?: (() => void) | undefined;
 }) {
   // Ahead of the search and the filters, because neither can produce a row until a project does.
   if (!hasProjects) {
@@ -165,15 +173,25 @@ export function PullRequestListEmptyState({
     <Empty>
       <BranchMark joined={false} />
       <EmptyHeader>
-        <EmptyTitle>{filtered ? "Nothing under these filters" : "No pull requests"}</EmptyTitle>
+        <EmptyTitle>
+          {filtered || filterCauses.length > 0 ? "Nothing under these filters" : "No pull requests"}
+        </EmptyTitle>
         <EmptyDescription>
-          {filtered
-            ? "Widen the state, involvement or project filter to see more."
-            : "Pull requests from every project in this workspace appear here."}
+          {filterCauses.length > 0
+            ? `Hidden by ${filterCauses.join(" · ")}.`
+            : filtered
+              ? "Widen the state, involvement or project filter to see more."
+              : "Pull requests from every project in this workspace appear here."}
         </EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
-        {onShowAllOwners ? (
+        {filterCauses.length > 0 && onClearFilters ? (
+          <Button size="sm" variant="outline" onClick={onClearFilters}>
+            Clear filters
+          </Button>
+        ) : null}
+        {/* "Clear filters" already clears the owners. */}
+        {onShowAllOwners && filterCauses.length === 0 ? (
           <Button size="sm" variant="outline" onClick={onShowAllOwners}>
             Show all owners
           </Button>

@@ -101,6 +101,7 @@ import {
 } from "../components/pullRequest/pullRequestListPreferences";
 import {
   projectsOfOwners,
+  pullRequestMenuOwnerFilter,
   pullRequestOwnerRowFilter,
   pullRequestProjectOwners,
 } from "../components/pullRequest/pullRequestOwnerFilter.logic";
@@ -109,14 +110,23 @@ import { pullRequestFilterProjects } from "../components/pullRequest/pullRequest
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
+  CHECKS_OPTIONS,
   PullRequestFiltersMenu,
   PullRequestFilterOptionIcon,
   PullRequestSearchInput,
+  REVIEW_OPTIONS,
   pullRequestHostLabel,
   pullRequestProjectKey,
   type PullRequestExpectedHost,
   type PullRequestFilterOption,
 } from "../components/pullRequest/PullRequestListFilters";
+import { PullRequestFilterChips } from "../components/pullRequest/PullRequestFilterChips";
+import {
+  clearPullRequestFilterChips,
+  pullRequestFilterChips,
+  type PullRequestFilterChip,
+} from "../components/pullRequest/pullRequestFilterChips.logic";
+import { filterSentence } from "../components/filters/FilterChip";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
 import {
@@ -319,6 +329,8 @@ function pullRequestSearchOwners(raw: unknown): Partial<Pick<PullRequestsSearch,
 
 const selectRepositoryOwnerFilters = (settings: ClientSettings) => settings.repositoryOwnerFilters;
 const NO_OWNERS: ReadonlyArray<string> = [];
+const selectPullRequestFilterChips = (settings: ClientSettings) => settings.pullRequestFilterChips;
+const NO_FILTER_CHIPS: ReadonlyArray<PullRequestFilterChip> = [];
 
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
@@ -367,6 +379,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       : {}),
     ...pullRequestSearchLabels(raw.labels),
     ...pullRequestSearchOwners(raw.owners),
+    ...(raw.ownerOperator === "is_not" ? { ownerOperator: "is_not" as const } : {}),
   }),
   component: PullRequestsRouteView,
 });
@@ -443,6 +456,7 @@ function PullRequestsRouteView() {
   const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
   const querySettled = typedQuery === sentQuery;
   const ownerFiltersEnabled = useClientSettings(selectRepositoryOwnerFilters);
+  const filterChipsEnabled = useClientSettings(selectPullRequestFilterChips);
   // What was typed, split into the qualifiers the hosts can act on and the words that are left.
   // The URL keeps the line as it was written; only the request sees the two halves.
   const typedParsed = useMemo(
@@ -453,12 +467,17 @@ function PullRequestsRouteView() {
     () => parsePullRequestQuery(sentQuery, { ownerQualifiers: ownerFiltersEnabled }),
     [ownerFiltersEnabled, sentQuery],
   );
-  // Fork: the repository owners that narrow the list. A typed `org:` or `owner:` wins over the
+  // Fork: the repository owners that narrow the list. A typed `org:` or `-org:` wins over the
   // menu, the same way the other typed qualifiers win. The request reads the sent text, and the
   // rows on screen read the typed text at once.
   const menuOwners = ownerFiltersEnabled ? (search.owners ?? NO_OWNERS) : NO_OWNERS;
-  const requestOwners = sentParsed.owners ?? menuOwners;
-  const localOwners = typedParsed.owners ?? menuOwners;
+  const menuOwnerOperator = search.ownerOperator ?? "is";
+  const menuOwnerFilter = useMemo(
+    () => pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator),
+    [menuOwnerOperator, menuOwners],
+  );
+  const requestOwners = sentParsed.owners ?? menuOwnerFilter;
+  const localOwners = typedParsed.owners ?? menuOwnerFilter;
   // Fork: the projects that the list asks about. The project scope, the project menu and the
   // per-server split below read these. The selection reads every project, because a link can
   // open a pull request from any owner.
@@ -617,6 +636,7 @@ function PullRequestsRouteView() {
             ...(next.author ? { author: next.author } : {}),
             ...(next.labels && next.labels.length > 0 ? { labels: next.labels } : {}),
             ...(next.owners && next.owners.length > 0 ? { owners: next.owners } : {}),
+            ...(next.ownerOperator === "is_not" ? { ownerOperator: next.ownerOperator } : {}),
           };
         },
         replace: true,
@@ -1975,6 +1995,43 @@ function PullRequestsRouteView() {
   // in its own words and is left to.
   const carriedToNothing =
     showingCarried && listQuery.isPending && shownCount === 0 && typedQuery.length === 0;
+  // Fork: `pullRequestFilterChips`. The active menu filters show as chips above the list, and
+  // the empty list names the filters that emptied it.
+  const filterChipHosts = hosts.length > 0 ? hosts : expectedHosts;
+  const filterChipHost = filterChipHosts.find((entry) => entry.host === search.host);
+  const filterChips = filterChipsEnabled
+    ? pullRequestFilterChips({
+        search,
+        typed: typedParsed,
+        ownerFilters: ownerFiltersEnabled,
+        names: {
+          state: STATE_TABS.find((tab) => tab.value === search.state)?.label ?? search.state,
+          involvement:
+            INVOLVEMENT_TABS.find((tab) => tab.value === search.involvement)?.label ??
+            search.involvement,
+          project:
+            scopedProject === undefined
+              ? null
+              : (scopedProjects.find(
+                  (project) =>
+                    project.id === scopedProject.id &&
+                    project.environmentId === scopedProject.environmentId,
+                )?.title ?? scopedProject.title),
+          server:
+            scopedEnvironmentId === null
+              ? null
+              : (environmentLabels.get(scopedEnvironmentId) ?? scopedEnvironmentId),
+          host:
+            search.host === undefined
+              ? null
+              : filterChipHost
+                ? pullRequestHostLabel(filterChipHosts, filterChipHost)
+                : search.host,
+          review: REVIEW_OPTIONS.find((option) => option.value === search.review)?.label ?? null,
+          checks: CHECKS_OPTIONS.find((option) => option.value === search.checks)?.label ?? null,
+        },
+      })
+    : NO_FILTER_CHIPS;
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -2011,6 +2068,8 @@ function PullRequestsRouteView() {
           onShowAllOwners={
             menuOwners.length > 0 ? () => updateListScope({ owners: undefined }) : undefined
           }
+          filterCauses={filterChips.map(filterSentence)}
+          onClearFilters={() => updateListScope(clearPullRequestFilterChips(filterChips))}
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
           canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
           loadingMore={loadingMore}
@@ -2178,9 +2237,12 @@ function PullRequestsRouteView() {
         ownerFiltersEnabled
           ? {
               selected: menuOwners,
+              operator: menuOwnerOperator,
               options: ownerOptions,
               onChange: (owners) =>
                 updateListScope({ owners: owners.length === 0 ? undefined : owners }),
+              onOperator: (operator) =>
+                updateListScope({ ownerOperator: operator === "is_not" ? operator : undefined }),
             }
           : undefined
       }
@@ -2200,6 +2262,7 @@ function PullRequestsRouteView() {
     searchInput,
     sortMenu,
     filtersMenu,
+    filterChips: <PullRequestFilterChips chips={filterChips} onChange={updateListScope} />,
     rightPanelControl:
       // Footprint reserve while the panel is closed: the toggle itself stays
       // mounted at the fixed titlebar inset in both states so it cannot move
@@ -2644,6 +2707,7 @@ function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  filterChips,
   rightPanelControl,
   titlebarControls,
   rightPanelOpen,
@@ -2664,6 +2728,8 @@ function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  /** Fork: the active filter chips, null while the `pullRequestFilterChips` setting is off. */
+  filterChips: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
   rightPanelOpen: boolean;
@@ -2836,6 +2902,7 @@ function PullRequestsColumn({
                 <PullRequestRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               ) : null}
             </div>
+            {filterChips}
             {/* Scrolled past this marker, the controls are gone and the title takes over. */}
             <div ref={markerRef} aria-hidden className="-mt-3 h-px w-full" />
           </div>

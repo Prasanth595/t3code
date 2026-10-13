@@ -33,6 +33,8 @@ export interface PullRequestListPreferences {
   readonly labels?: ReadonlyArray<string>;
   /** Fork: repository owners, lowercase. Only read while `repositoryOwnerFilters` is on. */
   readonly owners?: ReadonlyArray<string>;
+  /** Fork: present when the menu hides `owners` instead of showing only them. */
+  readonly ownerOperator?: "is_not";
   readonly sort?: PullRequestListSort;
 }
 
@@ -63,6 +65,7 @@ const PullRequestListPreferencesSchema = Schema.Struct({
   owners: Schema.optional(
     Schema.Array(BoundedPreference).check(Schema.isMaxLength(MAX_PULL_REQUEST_LIST_OWNERS)),
   ),
+  ownerOperator: Schema.optional(Schema.Literal("is_not")),
   sort: Schema.optional(PullRequestListSort),
 });
 
@@ -95,6 +98,7 @@ export function pullRequestListPreferences(
     ...(search.author ? { author: search.author } : {}),
     ...(search.labels && search.labels.length > 0 ? { labels: search.labels } : {}),
     ...(search.owners && search.owners.length > 0 ? { owners: search.owners } : {}),
+    ...(search.ownerOperator === "is_not" ? { ownerOperator: search.ownerOperator } : {}),
     ...(search.sort && search.sort !== "ready" ? { sort: search.sort } : {}),
   };
 }
