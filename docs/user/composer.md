@@ -329,8 +329,10 @@ cell values and let you select a worksheet. Charts and workbook styling are not
 shown. Formulas use their saved results, or show the expression when no saved
 result is available; the preview does not recalculate them.
 
-Office previews support files up to 10 MB. Large worksheets show a limited
-preview. Save the original file to inspect its full content in another app.
+Office previews support files up to 10 MB. Excel shows 100-row pages from the
+first 500 rows and 50 columns of a worksheet's content. Long cells and large
+amounts of text are shortened to keep the preview responsive. Save the original
+file to inspect its full content in another app.
 Complex Word documents may need another app to keep the conversation responsive.
 On mobile, Word and Excel files from Files or chat links open in the device's
 document viewer. If no compatible viewer is installed, use **Save or share**.

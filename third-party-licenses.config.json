@@ -151,6 +151,27 @@
   ],
   "packageOverrides": [
     {
+      "name": "saxes",
+      "version": "6.0.0",
+      "sourceUrl": "https://github.com/lddubeau/saxes/blob/v6.0.0/LICENSE",
+      "generatedNotices": [
+        {
+          "licenseId": "ISC",
+          "copyrights": [
+            "Copyright (c) Contributors",
+            "Copyright (c) Isaac Z. Schlueter and Contributors"
+          ]
+        },
+        {
+          "licenseId": "MIT",
+          "copyrights": ["Copyright Mathias Bynens <https://mathiasbynens.be/>"],
+          "preamble": [
+            "Retained from the upstream notice for the historical String.fromCodePoint implementation."
+          ]
+        }
+      ]
+    },
+    {
       "name": "@bufbuild/protobuf",
       "version": "1.10.0",
       "generatedNotices": [

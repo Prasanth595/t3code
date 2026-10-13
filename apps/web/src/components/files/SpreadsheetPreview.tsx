@@ -1,10 +1,12 @@
 /* oxlint-disable react/no-array-index-key -- Spreadsheet coordinates are stable, including blank cells. */
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { Button } from "~/components/ui/button";
 import { FileSurfaceFailure, FileSurfaceLoading, FileSurfaceNotice } from "./fileSurfaceChrome";
 import {
   SPREADSHEET_PREVIEW_COLUMNS,
   SPREADSHEET_PREVIEW_ROWS,
   SPREADSHEET_PREVIEW_CELL_CHARACTERS,
+  SPREADSHEET_PREVIEW_TIMEOUT_MS,
   type SpreadsheetRequest,
   type SpreadsheetResponse,
   type SpreadsheetTable,
@@ -16,12 +18,35 @@ export default function SpreadsheetPreview(props: {
   readonly onRetry: () => void;
 }) {
   const workerRef = useRef<Worker | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
   const worksheetId = useId();
-  const selectedRef = useRef<string | null>(null);
+  const requestId = useRef(0);
+  const watchdog = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [sheets, setSheets] = useState<string[]>([]);
   const [table, setTable] = useState<SpreadsheetTable | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(true);
+  const startWatchdog = useCallback(() => {
+    clearTimeout(watchdog.current);
+    watchdog.current = setTimeout(() => {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      requestId.current++;
+      setPending(false);
+      setError("This worksheet took too long to preview. Save it to open it in another app.");
+    }, SPREADSHEET_PREVIEW_TIMEOUT_MS);
+  }, []);
+  const request = (
+    message: { type: "sheet"; name: string } | { type: "page"; name: string; page: number },
+  ) => {
+    setPending(true);
+    startWatchdog();
+    workerRef.current?.postMessage({
+      ...message,
+      id: ++requestId.current,
+    } satisfies SpreadsheetRequest);
+  };
   useEffect(() => {
     // Parsing stays off the chat renderer's main thread. A private copy also survives StrictMode's remount.
     const worker = new Worker(new URL("./spreadsheetPreview.worker.ts", import.meta.url), {
@@ -29,28 +54,41 @@ export default function SpreadsheetPreview(props: {
     });
     workerRef.current = worker;
     worker.addEventListener("message", (event: MessageEvent<SpreadsheetResponse>) => {
+      if (event.data.id !== requestId.current) return;
+      clearTimeout(watchdog.current);
+      setPending(false);
       if ("error" in event.data) {
         setError(event.data.error);
         return;
       }
       const response = event.data;
-      if (selectedRef.current !== null && response.table.name !== selectedRef.current) return;
-      selectedRef.current = response.table.name;
+      setError(null);
       setSheets(response.sheets);
       setSelected(response.table.name);
       setTable(response.table);
+      scrollRef.current?.scrollTo({ top: 0 });
     });
-    worker.addEventListener("error", () =>
-      setError("Could not render this workbook. Save it to open it in another app."),
-    );
-    const bytes = props.bytes.slice();
-    worker.postMessage({ type: "load", bytes } satisfies SpreadsheetRequest, [bytes.buffer]);
-    return () => {
+    worker.addEventListener("error", () => {
+      if (workerRef.current !== worker) return;
+      clearTimeout(watchdog.current);
       worker.terminate();
       workerRef.current = null;
-      selectedRef.current = null;
+      setPending(false);
+      setError("Could not render this workbook. Save it to open it in another app.");
+    });
+    const bytes = props.bytes.slice();
+    startWatchdog();
+    worker.postMessage(
+      { type: "load", id: ++requestId.current, bytes } satisfies SpreadsheetRequest,
+      [bytes.buffer],
+    );
+    return () => {
+      clearTimeout(watchdog.current);
+      worker.terminate();
+      workerRef.current = null;
+      requestId.current++;
     };
-  }, [props.bytes]);
+  }, [props.bytes, startWatchdog]);
   if (error !== null) return <FileSurfaceFailure message={error} onRetry={props.onRetry} />;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -64,10 +102,9 @@ export default function SpreadsheetPreview(props: {
             className="min-w-0 flex-1 rounded border bg-background px-2 py-1"
             onChange={(event) => {
               const name = event.target.value;
-              selectedRef.current = name;
               setSelected(name);
               setTable(null);
-              workerRef.current?.postMessage({ type: "sheet", name } satisfies SpreadsheetRequest);
+              request({ type: "sheet", name });
             }}
           >
             {sheets.map((name) => (
@@ -89,9 +126,13 @@ export default function SpreadsheetPreview(props: {
               Preview limited to {SPREADSHEET_PREVIEW_ROWS} rows and {SPREADSHEET_PREVIEW_COLUMNS}{" "}
               columns, with {SPREADSHEET_PREVIEW_CELL_CHARACTERS.toLocaleString()} characters per
               cell. Save the workbook to view the rest.
+              {table.contentLimited ? " The preview's total content budget was reached." : ""}
             </FileSurfaceNotice>
           ) : null}
-          <div className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable_both-edges]">
+          <div
+            ref={scrollRef}
+            className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable_both-edges]"
+          >
             <table
               className="min-w-full border-separate border-spacing-0 text-xs"
               aria-label={`${props.name}: ${table.name}`}
@@ -128,6 +169,30 @@ export default function SpreadsheetPreview(props: {
               </tbody>
             </table>
           </div>
+          {table.pageCount > 1 ? (
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t px-3 py-2 text-xs">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending || table.page === 0}
+                onClick={() => request({ type: "page", name: table.name, page: table.page - 1 })}
+              >
+                Previous page
+              </Button>
+              <span role="status">
+                Page {table.page + 1} of {table.pageCount} · Rows {table.rows[0]?.number}–
+                {table.rows.at(-1)?.number}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={pending || table.page + 1 >= table.pageCount}
+                onClick={() => request({ type: "page", name: table.name, page: table.page + 1 })}
+              >
+                Next page
+              </Button>
+            </div>
+          ) : null}
         </>
       )}
     </div>
