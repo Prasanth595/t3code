@@ -2562,7 +2562,7 @@ export const make = Effect.gen(function* () {
     // is looked up on the fork. Verify against the remote the lookup used.
     const identityRemoteName = (headContext: BranchHeadContext) =>
       headContext.remoteName ?? remoteName ?? undefined;
-    let currentIdentity = yield* resolvePrLookupRepositoryIdentity(
+    const currentIdentity = yield* resolvePrLookupRepositoryIdentity(
       cacheCwd,
       branch,
       identityRemoteName(cached.headContext),
@@ -2576,22 +2576,6 @@ export const make = Effect.gen(function* () {
     const hasSameIdentity = (headContext: BranchHeadContext, identity: typeof currentIdentity) =>
       headContext.headRemoteUrlKey === identity.headRemoteUrlKey &&
       headContext.targetRemoteUrlKey === identity.targetRemoteUrlKey;
-    // A remembered URL can be older than the cached answer; ask git before
-    // treating the difference as real.
-    if (
-      !options.freshGitState &&
-      !(
-        canVerifyIdentity(cached.headContext, currentIdentity) &&
-        hasSameIdentity(cached.headContext, currentIdentity)
-      )
-    ) {
-      currentIdentity = yield* resolvePrLookupRepositoryIdentity(
-        cacheCwd,
-        branch,
-        identityRemoteName(cached.headContext),
-        true,
-      );
-    }
     if (!canVerifyIdentity(cached.headContext, currentIdentity)) {
       return yield* new GitManagerError({
         operation: "branchPullRequest",
