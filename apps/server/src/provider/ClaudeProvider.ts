@@ -474,8 +474,8 @@ const ClaudeAuthStatus = Schema.fromJsonString(
   }),
 );
 
-/** Read identity through the configured binary so account-selecting wrappers apply. */
-export const readClaudeAccountOrganizationId = Effect.fn("readClaudeAccountOrganizationId")(function* (
+/** Read the signed-in account's organization ID through the configured Claude binary. */
+export const probeClaudeOrganizationId = Effect.fn("probeClaudeOrganizationId")(function* (
   claudeSettings: ClaudeSettings,
   environment?: NodeJS.ProcessEnv,
 ) {
