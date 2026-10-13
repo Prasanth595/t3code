@@ -777,7 +777,7 @@ export function BranchToolbarBranchSelector({
           <ComboboxTrigger
             render={
               displayMode === "panel" ? (
-                <ThreadDetailsControl part="select" />
+                <ThreadDetailsControl part="split-select" />
               ) : (
                 <ComposerControl size="xs" />
               )

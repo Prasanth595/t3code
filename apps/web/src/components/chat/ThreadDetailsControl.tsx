@@ -12,12 +12,15 @@ import {
   THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
   THREAD_DETAILS_PANEL_META_ACTION_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
+  THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS,
+  THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
 } from "./threadDetailsPanelStyles";
 import { ChevronDownIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
   select: THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
+  "split-select": cn(THREAD_DETAILS_PANEL_SELECT_ROW_CLASS, "gap-0 ps-0"),
   primary: THREAD_DETAILS_PANEL_SPLIT_PRIMARY_CLASS,
   secondary: THREAD_DETAILS_PANEL_SPLIT_SECONDARY_CLASS,
   icon: THREAD_DETAILS_PANEL_ICON_ACTION_CLASS,
@@ -62,10 +65,30 @@ export function ThreadDetailsControl({
       props,
       {
         children:
-          part === "select" ? (
+          part === "select" || part === "split-select" ? (
             <>
-              {children}
-              <span data-slot="select-icon">
+              {part === "split-select" ? (
+                <span
+                  data-slot="select-label"
+                  className={cn(
+                    "inline-flex h-full min-w-0 flex-1 items-center rounded-s-lg",
+                    THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
+                    THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS,
+                  )}
+                >
+                  {children}
+                </span>
+              ) : (
+                children
+              )}
+              <span
+                data-slot="select-icon"
+                className={
+                  part === "split-select"
+                    ? cn("rounded-e-lg", THREAD_DETAILS_PANEL_HOVER_SURFACE_CLASS)
+                    : undefined
+                }
+              >
                 <ChevronDownIcon className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} />
               </span>
             </>
