@@ -2,8 +2,8 @@ name: Fork Sync
 
 # Merges pingdotgg/t3code main into fork main once a day. Main only moves
 # forward: no rebase and no force-push, so checkouts and tags stay valid.
-# A merge conflict or a failed typecheck stops the sync, reports it in an
-# issue and calls the repair agent. See docs/fork.md.
+# A merge conflict, a failed typecheck or a failed fork test stops the sync,
+# reports it in an issue and calls the repair agent. See docs/fork.md.
 
 on:
   schedule:
@@ -81,6 +81,21 @@ jobs:
         name: Typecheck
         run: vp run typecheck
 
+      # A merge without conflicts can still break a fork feature. The fork tests
+      # are the test files that differ from upstream main after the merge.
+      - id: fork_tests
+        if: steps.merge.outputs.merged == 'true'
+        name: Fork tests
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git diff --name-only --diff-filter=AMR upstream/main HEAD -- '*.test.ts' '*.test.tsx')
+          if (( ${#files[@]} == 0 )); then
+            echo "No fork test files."
+            exit 0
+          fi
+          printf '%s\n' "${files[@]}"
+          vp test run "${files[@]}"
+
       # A fast-forward push. If main moved during the run, merge the new main
       # into the sync commit and push again. Main is never force-pushed.
       - name: Push to main
@@ -103,7 +118,7 @@ jobs:
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
-          REASON: ${{ steps.merge.outputs.reason || (steps.checks.outcome == 'failure' && 'typecheck failed') || 'workflow step failed' }}
+          REASON: ${{ steps.merge.outputs.reason || (steps.checks.outcome == 'failure' && 'typecheck failed') || (steps.fork_tests.outcome == 'failure' && 'fork tests failed') || 'workflow step failed' }}
         run: |
           set -euo pipefail
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
