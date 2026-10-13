@@ -134,8 +134,8 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 ## 10. Presence and status
 
-- **MM-1001** Each machine reports its status on connection and on each change, at most once every 5 seconds. Liveness uses WebSocket ping and pong that does not wake the Durable Object.
-- **MM-1002** The status holds: T3 version, build (live commit or release), uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands.
+- **MM-1001** Each machine reports its status on connection and on each change, at most once every 5 seconds. Liveness uses the text messages `ping` and `pong`. The Durable Object answers `ping` with its auto response, so a ping does not wake it.
+- **MM-1002** The status holds: T3 version, build (live commit, deploy commit or release), uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands.
 - **MM-1003** A machine card shows online or offline, the build, and stickers for running agents, threads that wait for the owner, a waiting update, and queued items.
 - **MM-1004** "Open" on a machine opens its T3 web app at its tunnel hostname.
 
