@@ -4,6 +4,7 @@ import type {
   MachineMapDocument,
   MapRevision,
 } from "@t3tools/contracts/machineMap";
+import type { HealthAlert } from "@t3tools/contracts/machineMapResources";
 
 import type {
   DevicesResponse,
@@ -17,6 +18,8 @@ import { usePortalContext } from "./context.ts";
 import { describeChange, machineQueue } from "./derive.ts";
 import {
   actorText,
+  ALERT_STICKER,
+  ALERT_TEXT,
   COMMAND_LABEL,
   COMMAND_STICKER,
   LEVEL_LABEL,
@@ -536,9 +539,19 @@ export function HistoryView() {
   }, [viewing]);
   const shown = past !== null && past.revision === viewing ? past : null;
 
-  const entries: Array<{ at: string; revision?: MapRevision; command?: MachineCommand }> = [
+  // MM-1505: alert starts and ends are portal events in the history, not map revisions.
+  const entries: Array<{
+    at: string;
+    revision?: MapRevision;
+    command?: MachineCommand;
+    alert?: { alert: HealthAlert; ended: boolean };
+  }> = [
     ...history.map((revision) => ({ at: revision.at, revision })),
     ...portal.snapshot.commands.map((command) => ({ at: command.createdAt, command })),
+    ...portal.health.alerts.flatMap((alert) => [
+      { at: alert.startedAt, alert: { alert, ended: false } },
+      ...(alert.endedAt === null ? [] : [{ at: alert.endedAt, alert: { alert, ended: true } }]),
+    ]),
   ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
   const selected = portal.route.selection;
   const oldest = history.at(-1)?.revision ?? 1;
@@ -650,6 +663,27 @@ export function HistoryView() {
                           .join(" · ")}
                         {revision.changes.length > 3 && ` · ${revision.changes.length - 3} more`}
                       </span>
+                    </span>
+                  </Item>
+                );
+              }
+              if (entry.alert) {
+                const { alert, ended } = entry.alert;
+                const title = `${ALERT_TEXT[alert.kind]} on ${machineName(map, alert.machineId)}${ended ? ": ended" : ""}`;
+                return (
+                  <Item
+                    key={`${alert.id}${ended ? "-end" : "-start"}`}
+                    on={false}
+                    label={title}
+                    open={() => portal.select({ _tag: "machine", id: alert.machineId })}
+                  >
+                    <span className="rev">alert</span>
+                    <span className="grow">
+                      <b>{title}</b>
+                      <span className="sub">portal · {timeAgo(entry.at, now)}</span>
+                    </span>
+                    <span className={`sticker ${ended ? "ok" : "warn"}`}>
+                      {ended ? "ended" : ALERT_STICKER[alert.kind]}
                     </span>
                   </Item>
                 );
