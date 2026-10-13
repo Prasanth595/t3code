@@ -6901,8 +6901,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     messageId: message.message.id,
                     itemId,
                     text: finalText,
-                    followsThinking:
-                      previous !== null && previous.messageId === message.message.id,
+                    followsThinking: previous !== null && previous.messageId === message.message.id,
                   }
                 : null;
             }
