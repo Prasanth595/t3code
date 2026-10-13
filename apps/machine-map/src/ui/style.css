@@ -2025,3 +2025,7 @@ dialog.palette .dialog-body {
     transition-duration: 0ms !important;
   }
 }
+/* The card subline is already mono and small. */
+.node .sub .build {
+  font-size: inherit;
+}

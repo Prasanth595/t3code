@@ -25,6 +25,8 @@ import {
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type CommandOptions } from "./context.ts";
+import { buildStandings } from "./build.ts";
+import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import { arrowEndWait, arrowEnds, describeChange, machineQueue, type ArrowEnd } from "./derive.ts";
 import {
   actorText,
@@ -495,9 +497,10 @@ function MachinePanel({ id }: { id: string }) {
       <Section>Status</Section>
       {status ? (
         <dl className="facts small">
-          <dt>T3</dt>
+          <dt>Build</dt>
           <dd>
-            {status.t3Version} · <span className="mono">{status.build}</span>
+            <BuildLabel status={status} />{" "}
+            <BuildSticker standing={buildStandings(snapshot.presence).get(machine.id)} />
           </dd>
           {status.updateWaiting && (
             <>
