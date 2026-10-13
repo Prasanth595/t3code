@@ -54,8 +54,6 @@ export const ThreadPullRequestSnapshot = Schema.Struct({
   isDraft: Schema.Boolean,
   updatedAt: Schema.NullOr(IsoDateTime),
   syncedAt: IsoDateTime,
-  /** Provider read-start time, preserved when a cached summary is synced later. */
-  observedAt: Schema.optional(Schema.Finite),
   closedAt: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
   author: Schema.optional(Schema.NullOr(PullRequestActor)),

@@ -790,11 +790,10 @@ function PullRequestSurfaceIcon({
   const reference = useMemo(
     () => ({
       projectId: surface.projectId as ProjectId,
-      ...(host === null ? {} : { host }),
       repository: surface.repository,
       number: surface.number,
     }),
-    [surface.projectId, host, surface.repository, surface.number],
+    [surface.projectId, surface.repository, surface.number],
   );
   const sharedSummary = useSharedPullRequestSummary(resolvedEnvironmentId, reference, null);
   // The compact tab intentionally shows lifecycle and draft state only. Conflict warnings have

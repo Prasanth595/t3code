@@ -5128,7 +5128,7 @@ it.effect("reuses an observed merged state for strict settlement reads", () =>
   }),
 );
 
-it.effect("announces changed overview fields a detail read sees", () =>
+it.effect("announces state, edits, and conflicts a detail read sees", () =>
   Effect.gen(function* () {
     let detail = {
       ...hostedChangeRequest("body"),
@@ -5164,15 +5164,12 @@ it.effect("announces changed overview fields a detail read sees", () =>
     yield* readDetail;
     assert.deepStrictEqual(announced, ["github.com/acme/web#1"]);
 
-    // Draft and title changes announce even when lifecycle and host update time stay equal.
-    detail = { ...detail, isDraft: true };
+    // An edit bumps the host update time; a new conflict does not, and announces anyway.
+    detail = { ...detail, title: "Updated title", updatedAt: "2026-07-02T12:00:00Z" };
     yield* readDetail;
     assert.strictEqual(announced.length, 2);
+    detail = { ...detail, mergeability: "conflicting" };
     yield* readDetail;
-    assert.strictEqual(announced.length, 2);
-    detail = { ...detail, title: "Updated title" };
-    yield* readDetail;
-    assert.strictEqual(announced.length, 3);
     yield* readDetail;
     assert.strictEqual(announced.length, 3);
 

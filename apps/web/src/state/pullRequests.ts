@@ -14,10 +14,7 @@ import type {
   PullRequestSummary,
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import {
-  threadPullRequestKeyOf,
-  visibleThreadPullRequests,
-} from "@t3tools/shared/threadPullRequests";
+import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { useCallback, useLayoutEffect, useMemo } from "react";
@@ -174,41 +171,29 @@ export function threadPullRequestLinkToSummary(
   };
 }
 
-// Index once per shell update, rather than scanning every thread for each PR control.
-const linkedPullRequestSnapshotsAtom = Atom.make((get) => {
-  const links = new Map<string, ThreadPullRequestLink>();
+// Saved thread snapshots by summary key, indexed once per shell update rather than per control.
+const savedPullRequestSummariesAtom = Atom.make((get) => {
+  const summaries = new Map<string, PullRequestSummary>();
   for (const thread of get(environmentThreadShells.threadShellsAtom)) {
     for (const link of visibleThreadPullRequests(thread.pullRequests)) {
-      if (link.snapshot === null) continue;
-      const key = `${thread.environmentId}:${threadPullRequestKeyOf(link)}`;
-      const previous = links.get(key);
-      if (previous === undefined || link.snapshot.syncedAt > (previous.snapshot?.syncedAt ?? "")) {
-        links.set(key, link);
-      }
+      const reference = {
+        projectId: thread.projectId,
+        repository: link.repository,
+        number: link.number,
+      };
+      const summary = threadPullRequestLinkToSummary(link, reference);
+      if (summary === null) continue;
+      const key = pullRequestSummaryKey(thread.environmentId, reference);
+      summaries.set(key, newestPullRequestSummary(summaries.get(key) ?? null, summary) ?? summary);
     }
   }
-  return links;
+  return summaries;
 });
 
-const linkedPullRequestSummaryAtom = Atom.family((key: string) =>
-  Atom.make((get) => {
-    const target = JSON.parse(key) as {
-      environmentId: EnvironmentId;
-      reference: PullRequestRef;
-    } | null;
-    if (target === null) return null;
-    const { environmentId, reference } = target;
-    const host = reference.host;
-    if (host === undefined) return null;
-    const link = get(linkedPullRequestSnapshotsAtom).get(
-      `${environmentId}:${threadPullRequestKeyOf({ ...reference, host })}`,
-    );
-    return link === undefined ? null : threadPullRequestLinkToSummary(link, reference);
-  }).pipe(
+const savedPullRequestSummaryAtom = Atom.family((key: string) =>
+  Atom.make((get) => get(savedPullRequestSummariesAtom).get(key) ?? null).pipe(
     // Shell updates also resend unchanged links; keep their subscribers quiet.
-    Atom.withEquality((previous, next) =>
-      previous === next || JSON.stringify(previous) === JSON.stringify(next),
-    ),
+    Atom.withEquality((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
     Atom.setIdleTTL(5 * 60_000),
   ),
 );
@@ -225,13 +210,7 @@ export function useSharedPullRequestSummary(
       : pullRequestSummaryKey(environmentId, reference);
   const atom = observedPullRequestSummaryAtom(key);
   const observed = useAtomValue(atom);
-  const linked = useAtomValue(
-    linkedPullRequestSummaryAtom(
-      JSON.stringify(
-        environmentId === null || reference === null ? null : { environmentId, reference },
-      ),
-    ),
-  );
+  const saved = useAtomValue(savedPullRequestSummaryAtom(key));
   useLayoutEffect(() => {
     if (environmentId === null || reference === null || current === null || observedAt === null)
       return;
@@ -242,7 +221,7 @@ export function useSharedPullRequestSummary(
       observed,
       current === null || observedAt === null ? null : { summary: current, observedAt },
     )?.summary ?? current;
-  return newestPullRequestSummary(summary, linked);
+  return newestPullRequestSummary(summary, saved);
 }
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,

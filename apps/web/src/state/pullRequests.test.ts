@@ -110,35 +110,4 @@ describe("pull request summary cache", () => {
     expect(newestPullRequestSummary(fresh, saved)).toBe(fresh);
     expect(threadPullRequestLinkToSummary({ ...link, snapshot: null }, stale)).toBeNull();
   });
-
-  it("uses the saved provider read time for same-dated overview changes", () => {
-    const stale = summary({ observedAt: 100 });
-    const link = {
-      host: "github.com",
-      repository: stale.repository,
-      number: stale.number,
-      url: stale.url,
-      source: "manual" as const,
-      linkedAt: stale.updatedAt,
-      stack: null,
-      snapshot: {
-        ...stale,
-        title: "Updated widget",
-        isDraft: true,
-        mergeability: "conflicting" as const,
-        observedAt: 200,
-        syncedAt: "2026-09-12T00:00:00Z",
-      },
-    };
-    const saved = threadPullRequestLinkToSummary(link, stale);
-    expect(newestPullRequestSummary(stale, saved)).toMatchObject({
-      title: "Updated widget",
-      isDraft: true,
-      mergeability: "conflicting",
-      observedAt: 200,
-    });
-    // A later sync of an older cached provider read must not replace newer detail.
-    const fresh = summary({ observedAt: 300 });
-    expect(newestPullRequestSummary(fresh, saved)).toBe(fresh);
-  });
 });
