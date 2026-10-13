@@ -1,9 +1,26 @@
 // @vitest-environment jsdom
 import JSZip from "jszip";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { renderDocxDocument } from "./docxDocument";
 
 describe("Word document rendering", () => {
+  it("does not parse or create document nodes after cancellation", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const create = vi.spyOn(document, "createElement");
+    await expect(renderDocxDocument(new Uint8Array(), controller.signal)).rejects.toThrow();
+    expect(create).not.toHaveBeenCalled();
+    create.mockRestore();
+  });
+  it("cancels a queued render before its first DOM phase", async () => {
+    const controller = new AbortController();
+    const create = vi.spyOn(document, "createElement");
+    const rendering = renderDocxDocument(new Uint8Array(), controller.signal);
+    controller.abort();
+    await expect(rendering).rejects.toThrow();
+    expect(create).not.toHaveBeenCalled();
+    create.mockRestore();
+  });
   it("renders actual OOXML text and tables with document styles in a standalone inert page", async () => {
     const zip = new JSZip();
     zip.file(

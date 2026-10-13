@@ -12,20 +12,20 @@ export default function DocxPreview(props: {
     error: null,
   });
   useEffect(() => {
-    let cancelled = false;
-    void renderDocxDocument(props.bytes)
+    const controller = new AbortController();
+    void renderDocxDocument(props.bytes, controller.signal)
       .then((html) => {
-        if (!cancelled) setResult({ html, error: null });
+        if (!controller.signal.aborted) setResult({ html, error: null });
       })
       .catch((cause: unknown) => {
-        if (!cancelled)
+        if (!controller.signal.aborted)
           setResult({
             html: null,
             error: cause instanceof Error ? cause.message : "Could not render this Word document.",
           });
       });
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [props.bytes]);
   if (result.error !== null)

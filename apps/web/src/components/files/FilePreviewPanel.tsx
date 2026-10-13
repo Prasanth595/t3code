@@ -76,7 +76,8 @@ import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
-import { OfficeFilePreview } from "./OfficeFilePreview";
+import { WorkspaceOfficePreview, useWorkspaceOfficeResource } from "./WorkspaceOfficePreview";
+import { downloadFile } from "./downloadFile";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -270,73 +271,6 @@ function WorkspaceBrowserPreview(props: {
   );
 }
 
-function WorkspaceOfficePreview(props: {
-  readonly environmentId: EnvironmentId;
-  readonly threadRef: ScopedThreadRef;
-  readonly draft: boolean;
-  readonly absolutePath: string;
-  readonly workspaceRoot: string;
-  readonly name: string;
-  readonly kind: "docx" | "xlsx";
-  readonly workspaceMutationId: string | null;
-}) {
-  const insideWorkspace =
-    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
-  const resource = useMemo(
-    () =>
-      workspaceAssetResource({
-        kind: insideWorkspace ? "workspace-file" : "media-file",
-        threadRef: props.threadRef,
-        draft: props.draft,
-        workspaceRoot: props.workspaceRoot,
-        absolutePath: props.absolutePath,
-      }),
-    [insideWorkspace, props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
-  );
-  const refresh = useAssetUrlRefresh(props.environmentId, resource);
-  const [revision, setRevision] = useState(0);
-  const [result, setResult] = useState<{ url: string | null; error: string | null }>({
-    url: null,
-    error: null,
-  });
-  useEffect(() => {
-    let cancelled = false;
-    // oxlint-disable-next-line react/set-state-in-effect -- Reauthorize after a file update or retry; never keep a stale preview URL.
-    setResult({ url: null, error: null });
-    void refresh()
-      .then((url) => {
-        if (!url) throw new Error("Reconnect to the environment and try again.");
-        if (!cancelled)
-          setResult({
-            url: `${url}${url.includes("?") ? "&" : "?"}workspace-revision=${encodeURIComponent(props.workspaceMutationId ?? "")}&office-revision=${revision}`,
-            error: null,
-          });
-      })
-      .catch((cause: unknown) => {
-        if (!cancelled)
-          setResult({
-            url: null,
-            error: cause instanceof Error ? cause.message : "Could not load this file.",
-          });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [refresh, props.workspaceMutationId, revision]);
-  const retry = () => setRevision((value) => value + 1);
-  if (result.error) return <FileSurfaceFailure message={result.error} onRetry={retry} />;
-  if (!result.url) return <FileSurfaceLoading />;
-  return (
-    <OfficeFilePreview
-      key={result.url}
-      src={result.url}
-      name={props.name}
-      kind={props.kind}
-      onRetry={retry}
-    />
-  );
-}
-
 function WorkspaceOfficeDownload(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
@@ -345,34 +279,22 @@ function WorkspaceOfficeDownload(props: {
   readonly workspaceRoot: string;
   readonly name: string;
 }) {
-  const insideWorkspace =
-    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
-  const resource = useMemo(
-    () =>
-      workspaceAssetResource({
-        kind: insideWorkspace ? "workspace-file" : "media-file",
-        threadRef: props.threadRef,
-        draft: props.draft,
-        workspaceRoot: props.workspaceRoot,
-        absolutePath: props.absolutePath,
-      }),
-    [insideWorkspace, props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
-  );
+  const original = useWorkspaceOfficeResource(props);
+  const resource = useMemo(() => ({ ...original, disposition: "attachment" as const }), [original]);
   const refresh = useAssetUrlRefresh(props.environmentId, resource);
   const [saving, setSaving] = useState(false);
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
   const save = () => {
+    if (controller.current) return;
+    const request = new AbortController();
+    controller.current = request;
     setSaving(true);
     void (async () => {
       const src = await refresh();
+      if (request.signal.aborted) return;
       if (!src) throw new Error("Reconnect to the environment and try again.");
-      const response = await fetch(src);
-      if (!response.ok) throw new Error("Could not save this file.");
-      const url = URL.createObjectURL(await response.blob());
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = props.name;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      await downloadFile(src, props.name);
     })()
       .catch((cause: unknown) => {
         toastManager.add({
@@ -381,7 +303,10 @@ function WorkspaceOfficeDownload(props: {
           description: cause instanceof Error ? cause.message : "Please try again.",
         });
       })
-      .finally(() => setSaving(false));
+      .finally(() => {
+        if (controller.current === request) controller.current = null;
+        if (!request.signal.aborted) setSaving(false);
+      });
   };
   return (
     <FileSurfaceAction
@@ -1190,6 +1115,7 @@ export default function FilePreviewPanel({
   const isImage = relativePath !== null && !isVideo && isWorkspaceImagePreviewPath(relativePath);
   const isMedia = isImage || isVideo || isAudio;
   const officeKind = relativePath === null ? null : officeFilePreviewKind(relativePath);
+  const [officeRefreshRevision, setOfficeRefreshRevision] = useState(0);
   // PDFs have no text to show; HTML has, and can toggle between page and source.
   const isPdf = relativePath !== null && isPdfPreviewFile(relativePath);
   const isHtml = relativePath !== null && !isPdf && isBrowserPreviewFile(relativePath);
@@ -1503,6 +1429,7 @@ export default function FilePreviewPanel({
               workspaceRoot={cwd}
               name={relativePath}
               kind={officeKind}
+              refreshRevision={officeRefreshRevision}
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && isVideo && absolutePath ? (
@@ -1648,7 +1575,12 @@ export default function FilePreviewPanel({
               onOpenFile={onOpenFile}
               workspaceMutationId={workspaceMutationId}
               {...(previewPath && !isMedia && !isPdf
-                ? { onRefreshSelectedFile: file.refresh }
+                ? {
+                    onRefreshSelectedFile:
+                      officeKind === null
+                        ? file.refresh
+                        : () => setOfficeRefreshRevision((value) => value + 1),
+                  }
                 : {})}
             />
           </aside>

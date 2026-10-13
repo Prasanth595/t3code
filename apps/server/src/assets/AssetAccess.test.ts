@@ -293,6 +293,46 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("versions Office files without reading contents and streams exact-file downloads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-office-version-" });
+      const filePath = path.join(root, "report.xlsx");
+      yield* fs.writeFileString(filePath, "first");
+      const resource = {
+        _tag: "workspace-file" as const,
+        threadId: ThreadId.make("thread-1"),
+        path: filePath,
+      };
+      const first = yield* issueAssetUrl({ resource, workspaceRoot: root });
+      const unchanged = yield* issueAssetUrl({ resource, workspaceRoot: root });
+      expect(first.byteLength).toBe(5);
+      expect(first.fileVersion).toBeDefined();
+      expect(unchanged.fileVersion).toBe(first.fileVersion);
+      yield* fs.writeFileString(filePath, "other");
+      const changed = yield* issueAssetUrl({ resource, workspaceRoot: root });
+      expect(changed.byteLength).toBe(5);
+      expect(changed.fileVersion).not.toBe(first.fileVersion);
+      const download = yield* issueAssetUrl({
+        resource: { ...resource, disposition: "attachment" },
+        workspaceRoot: root,
+      });
+      const suffix = download.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      expect(
+        yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+      ).toMatchObject({ download: true, fileName: "report.xlsx" });
+      expect(yield* resolveAsset(suffix.slice(0, separator), "sibling.xlsx")).toBeNull();
+      const outside = yield* issueAssetUrl({
+        resource: { ...resource, _tag: "media-file" },
+        workspaceRoot: root,
+      });
+      expect(outside.fileVersion).toBe(changed.fileVersion);
+      expect(outside.byteLength).toBe(5);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("reports pixel dimensions from an image header and nothing for other files", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

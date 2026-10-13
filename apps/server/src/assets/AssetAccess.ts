@@ -109,6 +109,7 @@ const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("workspace-file-exact"),
+    download: Schema.optionalKey(Schema.Boolean),
     workspaceRoot: Schema.String,
     relativePath: Schema.String,
     expiresAt: Schema.Number,
@@ -116,6 +117,7 @@ const AssetClaimsSchema = Schema.Union([
   Schema.Struct({
     version: Schema.Literal(1),
     kind: Schema.Literal("media-file-exact"),
+    download: Schema.optionalKey(Schema.Boolean),
     filePath: Schema.String,
     device: Schema.String,
     inode: Schema.String,
@@ -365,6 +367,17 @@ const readImageDimensionsFromHeader = (filePath: string) =>
     Effect.orElseSucceed((): ImageDimensions | null => null),
   );
 
+const officeFileMetadata = (file: OpenMediaFile) => ({
+  fileVersion: [
+    file.info.dev,
+    file.info.ino,
+    file.info.size,
+    file.info.mtimeNs,
+    file.info.ctimeNs,
+  ].join(":"),
+  byteLength: Number(file.info.size),
+});
+
 const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMediaFileAsset")(
   function* (input: {
     readonly requestedPath: string;
@@ -395,6 +408,8 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
               (dimensions) => ({
                 identity: { device: file.info.dev.toString(), inode: file.info.ino.toString() },
                 dimensions,
+                fileMetadata:
+                  officeFilePreviewKind(canonicalFile) === null ? null : officeFileMetadata(file),
               }),
             ),
       ),
@@ -416,6 +431,7 @@ const finalizeAbsoluteMediaFileAsset = Effect.fn("AssetAccess.finalizeAbsoluteMe
       },
       fileName: path.basename(canonicalFile),
       imageDimensions: opened.dimensions,
+      fileMetadata: opened.fileMetadata,
     };
   },
 );
@@ -480,10 +496,22 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
+    const fileMetadata =
+      officeFilePreviewKind(resolved.relativePath) === null
+        ? null
+        : yield* openMediaFile(canonicalFile).pipe(
+            Effect.map((file) => (file === null ? null : officeFileMetadata(file))),
+            Effect.scoped,
+            Effect.mapError(
+              (cause) =>
+                new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+            ),
+          );
     return {
       claims:
         isWorkspaceImagePreviewPath(resolved.relativePath) ||
-        officeFilePreviewKind(resolved.relativePath) !== null
+        officeFilePreviewKind(resolved.relativePath) !== null ||
+        ("disposition" in input.resource && input.resource.disposition === "attachment")
           ? {
               version: 1 as const,
               kind: "workspace-file-exact" as const,
@@ -500,6 +528,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             },
       fileName: path.basename(resolved.relativePath),
       imageDimensions,
+      fileMetadata,
     };
   },
 );
@@ -519,6 +548,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   let fileName: string;
   let sourcePath: string | undefined;
   let imageDimensions: ImageDimensions | null = null;
+  let fileMetadata: ReturnType<typeof officeFileMetadata> | null = null;
 
   switch (input.resource._tag) {
     case "media-file": {
@@ -545,6 +575,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileMetadata = finalized.fileMetadata;
       break;
     }
     case "workspace-file": {
@@ -571,6 +602,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileMetadata = finalized.fileMetadata;
       break;
     }
     case "draft-workspace-file": {
@@ -607,6 +639,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       claims = finalized.claims;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
+      fileMetadata = finalized.fileMetadata;
       break;
     }
     case "attachment": {
@@ -829,6 +862,12 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       PROJECT_FAVICON_TOKEN_BUCKET_MS;
     claims = { ...claims, expiresAt };
   }
+  if (
+    (claims.kind === "workspace-file-exact" || claims.kind === "media-file-exact") &&
+    "disposition" in input.resource &&
+    input.resource.disposition === "attachment"
+  )
+    claims = { ...claims, download: true };
   const encodedPayload = base64UrlEncode(encodeAssetClaims(claims));
   const token = `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`;
   return {
@@ -836,6 +875,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
     expiresAt,
     ...(sourcePath !== undefined ? { sourcePath } : {}),
     ...(imageDimensions !== null ? { imageDimensions } : {}),
+    ...fileMetadata,
   };
 });
 
@@ -962,7 +1002,13 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       Effect.orElseSucceed(() => null),
     );
     return file
-      ? ({ kind: "file", path: canonicalFile, mimeType, file } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: canonicalFile,
+          mimeType,
+          file,
+          ...(claims.download ? { download: true, fileName: path.basename(claims.filePath) } : {}),
+        } satisfies ResolvedAsset)
       : null;
   }
   if (claims.kind === "workspace-file-exact") {
@@ -977,6 +1023,9 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       ? ({
           kind: "file",
           path: exactWorkspaceFile,
+          ...(claims.download
+            ? { download: true, fileName: path.basename(claims.relativePath) }
+            : {}),
           ...(officeKind === null ? {} : { mimeType: OFFICE_PREVIEW_MIME_TYPES[officeKind] }),
         } satisfies ResolvedAsset)
       : null;

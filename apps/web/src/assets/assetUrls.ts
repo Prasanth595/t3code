@@ -44,6 +44,15 @@ export function useAssetUrlRefresh(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
 ): () => Promise<string | null> {
+  const refreshAsset = useAssetRefresh(environmentId, resource);
+  return useCallback(async () => (await refreshAsset())?.url ?? null, [refreshAsset]);
+}
+
+/** Reauthorization returns metadata too, without downloading the mutable file. */
+export function useAssetRefresh(
+  environmentId: EnvironmentId | null,
+  resource: AssetResource | null,
+) {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
   const refresh = useAtomQueryRunner(assetEnvironment.createUrl, {
@@ -54,7 +63,8 @@ export function useAssetUrlRefresh(
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
     const result = await refresh({ environmentId, input: { resource } });
     if (result._tag === "Failure") throw squashAtomCommandFailure(result);
-    return resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+    const url = resolveAssetUrl(httpBaseUrl, result.value.relativeUrl);
+    return url === null ? null : { ...result.value, url };
   }, [environmentId, resource, refresh, httpBaseUrl]);
 }
 

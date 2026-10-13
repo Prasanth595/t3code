@@ -331,6 +331,9 @@ result is available; the preview does not recalculate them.
 
 Office previews support files up to 10 MB. Large worksheets show a limited
 preview. Save the original file to inspect its full content in another app.
+Complex Word documents may need another app to keep the conversation responsive.
+On mobile, Word and Excel files from Files or chat links open in the device's
+document viewer. If no compatible viewer is installed, use **Save or share**.
 
 ## HTML and PDF files in the file viewer
 

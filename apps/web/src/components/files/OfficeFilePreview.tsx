@@ -3,7 +3,8 @@ import { FILE_OFFICE_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
 import { lazy, Suspense, useEffect, useState } from "react";
 
 import { FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
-import { validateOfficeArchive, type OfficePreviewKind } from "./officeArchive";
+import { type OfficePreviewKind } from "./officeArchive";
+import { checkOfficeArchive } from "./checkOfficeArchive";
 
 const DocxPreview = lazy(() => import("./DocxPreview"));
 const SpreadsheetPreview = lazy(() => import("./SpreadsheetPreview"));
@@ -34,8 +35,8 @@ export function OfficeFilePreview(props: {
         signal: controller.signal,
         cache: revision > 0 ? "reload" : "default",
       });
-      const bytes = await readOfficePreviewResponse(response, controller.signal);
-      validateOfficeArchive(bytes, props.kind);
+      const fetched = await readOfficePreviewResponse(response, controller.signal);
+      const bytes = await checkOfficeArchive(fetched, props.kind, controller.signal);
       if (!controller.signal.aborted) setResult({ bytes, error: null });
     })().catch((cause: unknown) => {
       if (!controller.signal.aborted)

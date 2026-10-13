@@ -20,6 +20,7 @@ import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { OfficeFilePreview } from "./OfficeFilePreview";
+import { downloadFile } from "./downloadFile";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
@@ -198,9 +199,8 @@ export function AttachmentFilePreview(props: {
         if (!file) {
           const target = await prepareDownload();
           if (!target) throw new Error("Reconnect to the environment and try again.");
-          const response = await fetch(target);
-          if (!response.ok) throw new Error("The file could not be loaded. Try again.");
-          file = await response.blob();
+          await downloadFile(target, props.name);
+          return;
         }
         // A Blob keeps cross-origin downloads inside the desktop client instead of
         // navigating its custom app scheme to an external browser.

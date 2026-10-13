@@ -15,6 +15,7 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
   }),
   // One file served in place from anywhere the environment host can read:
   // images, videos, HTML, and PDF. An absolute path may lie outside the
@@ -22,12 +23,14 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
   }),
   // A workspace file named by a draft that has no thread yet. The draft names
   // its workspace root explicitly instead of resolving one from a thread.
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(Schema.Literals(["inline", "attachment"])),
   }),
   Schema.TaggedStruct("attachment", {
     attachmentId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
@@ -88,6 +91,9 @@ export const AssetCreateUrlResult = Schema.Struct({
   ),
   /** Pixel size read from the image header, so a client can reserve the exact box before the bytes arrive. */
   imageDimensions: Schema.optional(AssetImageDimensions),
+  /** Cheap mutable-file identity for clients checking whether an Office preview changed. */
+  fileVersion: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(256))),
+  byteLength: Schema.optional(NonNegativeInt),
 });
 export type AssetCreateUrlResult = typeof AssetCreateUrlResult.Type;
 

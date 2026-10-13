@@ -5,6 +5,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import {
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
+  officeFilePreviewKind,
 } from "@t3tools/shared/filePreview";
 
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -35,6 +36,7 @@ export function preloadWorkspaceFileContents(input: {
     !readEnvironmentScope(input.environmentId, AuthFilesystemReadScope) ||
     isWorkspaceBrowserPreviewPath(input.relativePath) ||
     isWorkspaceImagePreviewPath(input.relativePath) ||
+    officeFilePreviewKind(input.relativePath) !== null ||
     isVideoPreviewFile(input.relativePath)
   ) {
     return;

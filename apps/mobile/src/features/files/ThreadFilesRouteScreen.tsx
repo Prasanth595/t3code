@@ -12,6 +12,8 @@ import {
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
   mediaMimeTypeFromExtension,
+  officeFilePreviewKind,
+  OFFICE_PREVIEW_MIME_TYPES,
 } from "@t3tools/shared/filePreview";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 
@@ -55,6 +57,7 @@ import { WorkspaceFileImagePreview } from "./WorkspaceFileImagePreview";
 import { WorkspaceFilePreviewError } from "./WorkspaceFilePreviewError";
 import { WorkspaceFileVideoPreview } from "./WorkspaceFileVideoPreview";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
+import { WorkspaceOfficeDocument } from "./WorkspaceOfficeDocument";
 import {
   basename,
   fileHeaderSubtitle,
@@ -227,6 +230,7 @@ function FileContent(props: {
   readonly initialLine: number | null;
   readonly truncated: boolean;
   readonly onRefresh?: () => Promise<void> | void;
+  readonly onDocumentClose: () => void;
 }) {
   // Reopening a mutable host file must not reuse a poster from an earlier visit.
   const thumbnailInstanceId = useId();
@@ -239,8 +243,10 @@ function FileContent(props: {
   const isImageFile = isWorkspaceImagePreviewPath(props.relativePath);
   const isVideoFile = isVideoPreviewFile(props.relativePath);
   const isAudioFile = isAudioPreviewFile(props.relativePath);
+  const officeKind = officeFilePreviewKind(props.relativePath);
   // Only the surfaces that wait on a signed asset URL can be blocked by one.
   const needsAssetUrl =
+    officeKind !== null ||
     isVideoFile ||
     isAudioFile ||
     (props.activeMode === "preview" && (isImageFile || isBrowserFile));
@@ -264,6 +270,14 @@ function FileContent(props: {
         source={props.videoSource}
         resolvePlaybackUri={props.resolveVideoUri}
       />
+    );
+  }
+
+  if (officeKind !== null) {
+    return props.previewUri === null || props.mediaSource === undefined ? (
+      <FilePreviewLoading message="Loading document..." />
+    ) : (
+      <WorkspaceOfficeDocument source={props.mediaSource} onClose={props.onDocumentClose} />
     );
   }
 
@@ -608,6 +622,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const [fullScreenPreview, setFullScreenPreview] = useState<FilePreviewSource | null>(null);
   const isVideoFile = relativePath !== null && isVideoPreviewFile(relativePath);
   const isAudioFile = relativePath !== null && !isVideoFile && isAudioPreviewFile(relativePath);
+  const officeKind = relativePath === null ? null : officeFilePreviewKind(relativePath);
   const isBrowserFile =
     relativePath !== null && !isVideoFile && isWorkspaceBrowserPreviewPath(relativePath);
   const isImageFile =
@@ -626,7 +641,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const resolvedActiveMode =
     isVideoFile || isAudioFile ? "preview" : canPreview ? activeMode : "source";
   const assetPreviewPath =
-    isBrowserFile || isImageFile || isVideoFile || isAudioFile ? relativePath : null;
+    isBrowserFile || isImageFile || isVideoFile || isAudioFile || officeKind !== null
+      ? relativePath
+      : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
     cwd,
     environmentId,
@@ -643,19 +660,29 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       assetPreview.resource !== null &&
       "path" in assetPreview.resource &&
       typeof assetPreview.resource.path === "string" &&
-      (isImageFile || isVideoFile)
+      (isImageFile || isVideoFile || officeKind !== null)
         ? {
             reference: mediaFileReference(assetPreview.resource.path, cwd),
             name: basename(relativePath),
             mimeType:
-              mediaMimeTypeFromExtension(relativePath.slice(relativePath.lastIndexOf("."))) ??
-              "application/octet-stream",
+              (officeKind === null
+                ? mediaMimeTypeFromExtension(relativePath.slice(relativePath.lastIndexOf(".")))
+                : OFFICE_PREVIEW_MIME_TYPES[officeKind]) ?? "application/octet-stream",
             environmentId,
             ...(threadId === null ? {} : { threadId }),
             resource: assetPreview.resource,
           }
         : undefined,
-    [assetPreview.resource, cwd, environmentId, isImageFile, isVideoFile, relativePath, threadId],
+    [
+      assetPreview.resource,
+      cwd,
+      environmentId,
+      isImageFile,
+      isVideoFile,
+      officeKind,
+      relativePath,
+      threadId,
+    ],
   );
   const mediaActions = useMediaActions(mediaSource);
   const videoSource = useMemo<MediaVideoPreviewSource | null>(
@@ -685,6 +712,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   };
   const needsFileContents =
     relativePath !== null &&
+    officeKind === null &&
     !isVideoFile &&
     !isAudioFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
@@ -793,7 +821,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           } as const)
         : null,
       // Only the source body wraps; a rendered preview lays itself out.
-      resolvedActiveMode === "source"
+      resolvedActiveMode === "source" && officeKind === null
         ? ({
             id: "word-wrap",
             title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
@@ -847,6 +875,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
               }),
           } as const)
         : null,
+      officeKind !== null && mediaSource !== undefined
+        ? ({
+            id: "open-document",
+            title: "Open in file viewer",
+            icon: "arrow.up.left.and.arrow.down.right",
+            inline: false,
+            onPress: () => setFullScreenPreview({ ...mediaSource, kind: "document" }),
+          } as const)
+        : null,
       isBrowserFile && typeof assetPreviewUri === "string"
         ? ({
             id: "open-browser",
@@ -885,6 +922,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     resolvedActiveMode,
     mediaSource,
     mediaActions.actions,
+    officeKind,
     fileData?.contents,
     fileData?.truncated,
   ]);
@@ -968,6 +1006,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
           onRefresh={() => fileQuery.refresh()}
+          onDocumentClose={handleBack}
         />
       </MaterialScreenContent>
       <FilePreviewModal
