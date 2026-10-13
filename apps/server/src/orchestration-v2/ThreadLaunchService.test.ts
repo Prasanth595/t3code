@@ -1242,6 +1242,31 @@ it.effect("keeps an explicit branch name instead of generating one", () =>
   }),
 );
 
+// Fork: worktreePathTemplate.
+it.effect("names the branch from the message before creating a templated worktree", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness({
+      serverSettings: { worktreePathTemplate: "{repoDir}/{branchLeaf}" },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:template-branch",
+          thread: "thread:launch:template-branch",
+          message: "Fix the sidebar flicker",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.createWorktree.mock.calls.length === 1));
+      const [input, options] = harness.createWorktree.mock.calls[0] ?? [];
+      assert.equal(input?.newRefName, "t3/fix-the-sidebar-flicker");
+      assert.equal(options?.pickFreeName, true);
+      assert.equal(harness.generateBranchName.mock.calls.length, 0);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("keeps the temporary branch when branch generation fails", () =>
   Effect.gen(function* () {
     const harness = makeHarness({

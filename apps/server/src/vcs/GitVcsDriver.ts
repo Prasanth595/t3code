@@ -158,6 +158,10 @@ export interface CreateWorktreeOptions {
   readonly submodules?: WorktreeSubmodules | null;
   /** The `worktreesDirectory` setting, used when the input has no explicit path. */
   readonly worktreesDirectory?: string;
+  /** Fork: the `worktreePathTemplate` setting. Empty or omitted uses `worktreesDirectory`. */
+  readonly worktreePathTemplate?: string;
+  /** With a template, suffix a taken `newRefName` instead of failing. */
+  readonly pickFreeName?: boolean;
 }
 
 export interface GitCommitProgress {

@@ -38,6 +38,7 @@ import { resolveProjectFileBackedSetting } from "@t3tools/shared/projectSettings
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import { resolveWorktreesDirectory } from "../worktreesDirectory.ts";
+import { markT3CreatedWorktree, placeTemplateWorktree } from "../worktreePathTemplate.ts";
 import {
   parseRemoteNames,
   parseRemoteNamesInGitOrder,
@@ -3435,16 +3436,19 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input, options) {
-    const targetBranch = input.newRefName ?? input.refName;
+    let newRefName = input.newRefName;
+    let targetBranch = newRefName ?? input.refName;
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     let worktreePath = input.path;
+    const template = input.path == null ? (options?.worktreePathTemplate ?? "") : "";
     if (worktreePath == null) {
+      const home = yield* HostProcess.HomeDirectory;
       const parentDir = resolveWorktreesDirectory(
         options?.worktreesDirectory ?? "",
         worktreesDir,
         path,
-        yield* HostProcess.HomeDirectory,
+        home,
       );
       if (parentDir === null) {
         return yield* new GitCommandError({
@@ -3454,10 +3458,33 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Storage.`,
         });
       }
-      worktreePath = path.join(parentDir, repoName, sanitizedBranch);
+      if (template === "") {
+        worktreePath = path.join(parentDir, repoName, sanitizedBranch);
+      } else {
+        const repositoryPaths = yield* resolveRepositoryPaths(input.cwd);
+        const placed = yield* placeTemplateWorktree({
+          cwd: input.cwd,
+          template,
+          worktreesDirectory: parentDir,
+          gitCommonDir: repositoryPaths?.gitCommonDir ?? path.join(input.cwd, ".git"),
+          checkoutRoot: repositoryPaths?.worktreeRoot ?? input.cwd,
+          branch: targetBranch,
+          pickFreeName: newRefName !== undefined && options?.pickFreeName === true,
+          isTaken: (candidate) =>
+            Effect.all([
+              branchExists(input.cwd, candidate.branch),
+              fileSystem.exists(candidate.path).pipe(Effect.orElseSucceed(() => true)),
+            ]).pipe(Effect.map(([branchTaken, pathTaken]) => branchTaken || pathTaken)),
+          path,
+          home,
+        });
+        worktreePath = placed.path;
+        if (newRefName !== undefined) newRefName = placed.branch;
+        targetBranch = placed.branch;
+      }
     }
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, worktreePath, input.refName]
+    const args = newRefName
+      ? ["worktree", "add", "-b", newRefName, worktreePath, input.refName]
       : ["worktree", "add", worktreePath, input.refName];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
@@ -3489,6 +3516,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
     }
+    if (template !== "") yield* markT3CreatedWorktree(fileSystem, path, input.cwd, worktreePath);
 
     // `git worktree add` leaves submodules empty, so a repo that keeps agent
     // skills, tooling or source in one gets a worktree that is quietly missing
@@ -3562,13 +3590,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
     }
 
-    if (input.newRefName && input.baseRefName) {
+    if (newRefName && input.baseRefName) {
       // A checkout can start at a commit or tag, but a PR must target a branch.
       const baseBranch = yield* resolveBranchName(input.cwd, input.baseRefName);
       if (baseBranch) {
         yield* runGit("GitVcsDriver.createWorktree.configureBaseRef", input.cwd, [
           "config",
-          `branch.${input.newRefName}.gh-merge-base`,
+          `branch.${newRefName}.gh-merge-base`,
           baseBranch,
         ]);
       }

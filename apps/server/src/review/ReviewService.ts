@@ -21,6 +21,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
+import { isT3CreatedWorktree } from "../worktreePathTemplate.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 export class ReviewService extends Context.Service<
@@ -110,6 +111,12 @@ export const make = Effect.gen(function* () {
       if (root !== null && isWithinRoot(candidate, root)) {
         return;
       }
+    }
+
+    // Fork: a worktree path template can place worktrees outside every root above.
+    for (let directory = candidate; ; directory = path.dirname(directory)) {
+      if (yield* isT3CreatedWorktree(fileSystem, path, directory)) return;
+      if (path.dirname(directory) === directory) break;
     }
 
     return yield* new VcsRepositoryDetectionError({
