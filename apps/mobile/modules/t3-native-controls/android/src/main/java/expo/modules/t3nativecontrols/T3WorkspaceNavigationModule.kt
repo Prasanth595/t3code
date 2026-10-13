@@ -2,17 +2,24 @@ package expo.modules.t3nativecontrols
 
 import android.content.Context
 import android.view.ViewGroup
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
@@ -20,11 +27,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.modules.Module
@@ -59,7 +70,7 @@ class T3WorkspaceNavigationModule : Module() {
   }
 }
 
-/** One Material3 selection surface moves from below the list to its leading edge. */
+/** Compact windows use an icon pill; expanded windows retain the Material navigation rail. */
 class T3WorkspaceNavigationView(
   context: Context,
   appContext: AppContext
@@ -100,8 +111,12 @@ class T3WorkspaceNavigationView(
   }
 
   init {
+    clipChildren = false
+    clipToPadding = false
     addView(
       ComposeView(context).apply {
+        clipChildren = false
+        clipToPadding = false
         setViewCompositionStrategy(
           ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool
         )
@@ -136,29 +151,39 @@ class T3WorkspaceNavigationView(
                 Spacer(Modifier.weight(1f))
               }
             } else {
-              NavigationBar(
+              Surface(
                 modifier = Modifier.fillMaxSize(),
-                containerColor = Color(containerColor),
-                tonalElevation = androidx.compose.ui.unit.Dp(0f),
-                windowInsets = WindowInsets(0),
+                shape = CircleShape,
+                color = Color(containerColor),
+                // Match the resting elevation of the Compose New thread FAB.
+                shadowElevation = 6.dp,
               ) {
-                tabs.forEach { tab ->
-                  NavigationBarItem(
-                    selected = selectedTab == tab,
-                    onClick = { onTabSelected(mapOf("tab" to tab)) },
-                    icon = { tabIcon(tab) },
-                    label = {
-                      val title = if (tab == "threads") "Chats" else "Pull requests"
-                      Text(title, fontSize = (12 * textScale).sp)
-                    },
-                    colors = NavigationBarItemDefaults.colors(
-                      selectedIconColor = Color(selectedColor),
-                      selectedTextColor = Color(selectedColor),
-                      indicatorColor = Color(indicatorColor),
-                      unselectedIconColor = Color(unselectedColor),
-                      unselectedTextColor = Color(unselectedColor),
-                    ),
-                  )
+                Row(
+                  modifier = Modifier.fillMaxSize().selectableGroup(),
+                  verticalAlignment = Alignment.CenterVertically,
+                ) {
+                  tabs.forEach { tab ->
+                    val selected = selectedTab == tab
+                    Box(
+                      modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .clip(CircleShape)
+                        .selectable(
+                          selected = selected,
+                          role = Role.Tab,
+                          onClick = { onTabSelected(mapOf("tab" to tab)) },
+                        )
+                        .padding(4.dp)
+                        .background(
+                          if (selected) Color(indicatorColor) else Color.Transparent,
+                          CircleShape,
+                        ),
+                      contentAlignment = Alignment.Center,
+                    ) {
+                      tabIcon(tab, Color(if (selected) selectedColor else unselectedColor))
+                    }
+                  }
                 }
               }
             }
@@ -170,7 +195,7 @@ class T3WorkspaceNavigationView(
   }
 
   @Composable
-  private fun tabIcon(tab: String) {
+  private fun tabIcon(tab: String, tint: Color = LocalContentColor.current) {
     val drawable = if (tab == "threads") {
       R.drawable.t3_chats
     } else {
@@ -179,6 +204,7 @@ class T3WorkspaceNavigationView(
     Icon(
       painter = painterResource(drawable),
       contentDescription = if (tab == "threads") "Chats" else "Pull requests",
+      tint = tint,
     )
   }
 }

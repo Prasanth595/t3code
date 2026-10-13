@@ -9,6 +9,7 @@ export function MaterialNewThreadButton(props: {
   readonly onPress: () => void;
   readonly extended?: boolean;
   readonly expanded?: boolean;
+  readonly maxWidth?: number;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
 }) {

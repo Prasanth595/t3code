@@ -942,7 +942,10 @@ export function HomeScreen(props: HomeScreenProps) {
             Platform.OS === "android" && "overflow-hidden rounded-t-[28px]",
           )}
           style={{
-            paddingBottom: Platform.OS === "ios" ? iosBottomClearance : Math.max(insets.bottom, 24),
+            paddingBottom:
+              Platform.OS === "ios"
+                ? iosBottomClearance
+                : Math.max(insets.bottom, workspace?.bottomClearance ?? 0, 24),
             paddingTop: NATIVE_LIQUID_GLASS_SUPPORTED ? insets.top + 72 : 0,
             paddingLeft: 32 + (contentSideInsets?.left ?? 0),
             paddingRight: 32 + (contentSideInsets?.right ?? 0),
@@ -1030,7 +1033,7 @@ export function HomeScreen(props: HomeScreenProps) {
       <View className="flex-1 bg-header">
         <View
           className="flex-1 items-center justify-center overflow-hidden rounded-t-[28px] bg-screen px-4"
-          style={{ paddingBottom: insets.bottom }}
+          style={{ paddingBottom: Math.max(insets.bottom, workspace?.bottomClearance ?? 0) }}
         >
           {v2ListEmpty}
         </View>

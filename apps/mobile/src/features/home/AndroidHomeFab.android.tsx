@@ -7,16 +7,21 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialNewThreadButton } from "../../components/MaterialNewThreadButton";
+import { useAndroidControlSizing } from "../../components/useAndroidControlSizing";
 import type { AndroidHomeFabLayout as SharedAndroidHomeFabLayout } from "./AndroidHomeFab.shared";
 import { useWorkspaceState } from "../../state/workspace";
 import { MaterialFabScrollContext } from "./MaterialFabScrollContext";
 import { updateMaterialFabScroll } from "./material-fab-scroll";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
+import { ANDROID_WORKSPACE_DOCK } from "../workspace/workspace-tabs-state";
 
 export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidHomeFabLayout>) {
   const insets = useSafeAreaInsets();
   const { appearance } = useAppearancePreferences();
   const { fontScale } = useWindowDimensions();
+  const { scale } = useAndroidControlSizing();
+  const workspace = useWorkspaceTabs();
   const [layoutWidth, setLayoutWidth] = useState<number | null>(null);
   const { state } = useWorkspaceState();
   const [expanded, setExpanded] = useState(true);
@@ -41,6 +46,15 @@ export function AndroidHomeFabLayout(props: ComponentProps<typeof SharedAndroidH
           key={`${appearance.baseFontSize}:${fontScale}:${layoutWidth}`}
           extended
           expanded={expanded}
+          maxWidth={
+            workspace && !props.sidebar
+              ? layoutWidth -
+                Math.max(insets.left, ANDROID_WORKSPACE_DOCK.edge) -
+                ANDROID_WORKSPACE_DOCK.tabsWidth * Math.max(1, scale) -
+                ANDROID_WORKSPACE_DOCK.gap -
+                20
+              : undefined
+          }
           onPress={props.onStartNewTask}
           className="absolute right-5"
           style={{

@@ -15,7 +15,7 @@ import { useAndroidControlSizing } from "../../components/useAndroidControlSizin
 import { androidWorkspaceNavigationColors } from "./android-workspace-navigation-colors";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
-import type { WorkspaceTab } from "./workspace-tabs-state";
+import { ANDROID_WORKSPACE_DOCK, type WorkspaceTab } from "./workspace-tabs-state";
 
 export const ANDROID_WORKSPACE_RAIL_WIDTH = 80;
 
@@ -47,7 +47,7 @@ export function AndroidWorkspaceNavigation(props: {
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
-  const { scale } = useAndroidControlSizing();
+  const { scale, fabSize } = useAndroidControlSizing();
   const rail = Boolean(props.rail);
   const { containerColor, indicatorColor, selectedColor, unselectedColor } =
     androidWorkspaceNavigationColors(colors, rail);
@@ -64,7 +64,7 @@ export function AndroidWorkspaceNavigation(props: {
               paddingTop: insets.top,
               paddingBottom: insets.bottom,
             }
-          : { paddingBottom: insets.bottom }),
+          : { borderRadius: 999 }),
       }}
     >
       <NativeNavigation
@@ -87,7 +87,14 @@ export function AndroidWorkspaceNavigation(props: {
           }
           props.onSelect?.();
         }}
-        style={rail ? { flex: 1 } : { height: 80 * Math.max(1, scale) }}
+        style={
+          rail
+            ? { flex: 1 }
+            : {
+                width: ANDROID_WORKSPACE_DOCK.tabsWidth * Math.max(1, scale),
+                height: fabSize,
+              }
+        }
       />
     </View>
   );

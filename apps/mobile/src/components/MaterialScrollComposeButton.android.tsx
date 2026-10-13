@@ -2,7 +2,6 @@ import { Box, ExtendedFloatingActionButton, Host, Icon, Text } from "@expo/ui/je
 import {
   defaultMinSize,
   fillMaxWidth,
-  graphicsLayer,
   height,
   onSizeChanged,
   size,
@@ -16,6 +15,7 @@ import { resolveScaledTextRole } from "../lib/appearancePreferences";
 /** Keep the animated width and icon positioning entirely inside Compose, not Yoga. */
 export function MaterialScrollComposeButton(props: {
   readonly expanded: boolean;
+  readonly maxWidth?: number;
   readonly onPress: () => void;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
@@ -23,11 +23,9 @@ export function MaterialScrollComposeButton(props: {
   const { appearance, themeAppearance, themeVariables: colors } = useAppearancePreferences();
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
   const { iconSize, fabSize } = useAndroidControlSizing();
-  // Scale the native 56dp minimum; keep text and icons at their requested sizes.
-  const nativeSize = Math.max(56, fabSize);
-  const scale = fabSize / nativeSize;
-  const nativeIconSize = Math.round(iconSize / scale);
-  const [buttonWidth, setButtonWidth] = useState(nativeSize);
+  const [buttonWidth, setButtonWidth] = useState(fabSize);
+  const expanded =
+    props.expanded && (props.maxWidth === undefined || buttonWidth <= props.maxWidth);
   const rememberWidth = useCallback(({ width }: { width: number }) => {
     setButtonWidth((previous) => Math.max(previous, width));
   }, []);
@@ -46,25 +44,19 @@ export function MaterialScrollComposeButton(props: {
         >
           <Box modifiers={[fillMaxWidth()]} contentAlignment="centerEnd">
             <ExtendedFloatingActionButton
-              expanded={props.expanded}
+              expanded={expanded}
               containerColor={colors["--color-primary"]}
               modifiers={[
-                defaultMinSize({ minWidth: nativeSize }),
-                height(nativeSize),
-                graphicsLayer({
-                  scaleX: scale,
-                  scaleY: scale,
-                  transformOriginX: 1,
-                  transformOriginY: 0,
-                }),
+                defaultMinSize({ minWidth: fabSize }),
+                height(fabSize),
                 onSizeChanged(rememberWidth),
               ]}
             >
               <ExtendedFloatingActionButton.Icon>
-                <Box modifiers={[size(nativeIconSize, nativeIconSize)]}>
+                <Box modifiers={[size(iconSize, iconSize)]}>
                   <Icon
                     source={require("../../assets/icons/compose.xml")}
-                    size={nativeIconSize}
+                    size={iconSize}
                     tint={colors["--color-primary-foreground"]}
                   />
                 </Box>
@@ -73,8 +65,8 @@ export function MaterialScrollComposeButton(props: {
                 <Text
                   color={colors["--color-primary-foreground"]}
                   style={{
-                    fontSize: typography.fontSize / scale,
-                    lineHeight: typography.lineHeight / scale,
+                    fontSize: typography.fontSize,
+                    lineHeight: typography.lineHeight,
                     fontWeight: "500",
                   }}
                 >
@@ -97,8 +89,8 @@ export function MaterialScrollComposeButton(props: {
           top: 0,
           bottom: 0,
           // Release the label area as soon as collapse starts, before native measurements arrive.
-          width: props.expanded ? buttonWidth * scale : fabSize,
-          borderRadius: 16 * scale,
+          width: expanded ? buttonWidth : fabSize,
+          borderRadius: 16,
           overflow: "hidden",
         }}
       />

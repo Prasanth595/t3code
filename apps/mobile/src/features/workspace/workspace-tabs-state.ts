@@ -84,6 +84,7 @@ export function workspaceTabsReducer(
 
 export const WORKSPACE_TOOLBAR = { height: 48, expandedGap: 10, edge: 16, gap: 8 };
 export const WORKSPACE_DOCK = { height: 48, tabsWidth: 176, gap: 12, bottomGap: 6 };
+export const ANDROID_WORKSPACE_DOCK = { tabsWidth: 128, edge: 20, gap: 12 };
 
 export function workspaceToolbarHeight(mode: WorkspaceSearchMode): number {
   return mode === "expanded"
