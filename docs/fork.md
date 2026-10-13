@@ -212,8 +212,13 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
 
-- Join: in the portal, "Add machine" shows a one-time join code. On the machine, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
+- Join: in the portal, "Add machine" shows a one-time join code. On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
+- Settings > Machines shows the connection status, the last error, the portal link, this machine's name, and the machines that it can use with their levels. "Leave" forgets the token and turns `machineMap` off. Join and leave need the `settings:write` scope.
 - The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.
+- The desktop app reads the machine map state of its own server. It acts only while that server is joined, because only then does the server send it the token headers.
+  - It saves one environment for each machine that it can use, with the machine token as request headers for that origin only, and pairs it through `/api/auth/cloudflare-access/pairing-credential`. When the machine leaves the list, the app removes the environment and its headers. It pairs again once when the target ends the session after a level change. Environments that the user saved by hand stay as they are.
+  - It applies the desired client settings and reports its current client settings. The server leaves out values that equal the desired ones, so the map does not see its own writes as local changes.
+  - It runs `reloadWindows` and `installUpdate` and reports each result before it acts. `installUpdate` with "when idle" uses the install-when-idle wait. It also reports the version of a waiting update.
 - Another machine signs in with its Cloudflare Access service token. The server gives it the scopes of the arrow from that machine, with the session subject `machine:<id>`. A level change ends that machine's sessions at once.
 - Deploy the portal: `vp run deploy` in `apps/machine-map`. It needs the Worker secrets `SECRET_KEY` and `CF_API_TOKEN`.
 
