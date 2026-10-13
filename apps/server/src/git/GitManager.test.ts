@@ -763,8 +763,12 @@ function makeManager(input?: {
         Effect.gen(function* () {
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           return ChildProcessSpawner.make((command) => {
+            // On Windows the driver starts git by its full path to git.exe.
             const args =
-              command._tag === "StandardCommand" && command.command === "git" ? command.args : null;
+              command._tag === "StandardCommand" &&
+              NodePath.parse(command.command).name.toLowerCase() === "git"
+                ? command.args
+                : null;
             if (args !== null) gitCommands?.push(args.join(" "));
             if (args === null || gitSpawnGate === undefined || !gitSpawnGate.matches(args)) {
               return spawner.spawn(command);
