@@ -1,4 +1,5 @@
 import type {
+  CommandStatus,
   MachineCommandInput,
   MachineLevel,
   MachineMapDocument,
@@ -73,15 +74,19 @@ export function timeUntil(iso: string, now: number): string {
 export const shortTime = (iso: string): string =>
   new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-/** MM-702, MM-806. */
+/** MM-702, MM-806. Parts that the portal could not tell, like "Unknown browser", stay out. */
 export function actorText(actor: MapActor, map: MachineMapDocument): string {
   switch (actor._tag) {
-    case "owner":
-      return actor.device ? `${actor.email} · ${actor.device}` : actor.email;
+    case "owner": {
+      const known = actor.device
+        .split(" · ")
+        .filter((part) => part.length > 0 && !part.startsWith("Unknown"));
+      return [actor.email, ...known].join(" · ");
+    }
     case "agent":
       return actor.threadTitle
         ? `Agent on ${machineName(map, actor.machineId)} · ${actor.threadTitle}`
-        : `${machineName(map, actor.machineId)}`;
+        : `Agent on ${machineName(map, actor.machineId)}`;
     case "portal":
       return `Portal · ${actor.reason}`;
   }
@@ -92,11 +97,39 @@ export function hasJoined(presence: MachinePresence | undefined): boolean {
   return presence !== undefined && (presence.online || presence.lastSeenAt !== null);
 }
 
-/** MM-601, MM-205. */
-export function presenceText(presence: MachinePresence | undefined, now: number): string {
+/** MM-205, MM-601: the one word of the presence sticker. */
+export type PresenceState = "online" | "offline" | "waiting";
+
+export function presenceState(presence: MachinePresence | undefined): PresenceState {
   if (!presence || !hasJoined(presence)) return "waiting";
-  if (presence.online) return "online";
-  return `offline ${timeAgo(presence.lastSeenAt, now).replace(" ago", "")}`;
+  return presence.online ? "online" : "offline";
+}
+
+/** The sticker look of each presence state and command status. */
+export const PRESENCE_STICKER: Record<PresenceState, string> = {
+  online: "ok",
+  offline: "",
+  waiting: "wait",
+};
+export const COMMAND_STICKER: Record<CommandStatus, string> = {
+  queued: "wait",
+  delivered: "wait",
+  succeeded: "ok",
+  failed: "",
+  expired: "none",
+  cancelled: "none",
+};
+
+/** MM-205, MM-601: presence as plain text, with the time since the last connection. */
+export function presenceText(presence: MachinePresence | undefined, now: number): string {
+  switch (presenceState(presence)) {
+    case "waiting":
+      return "Waiting to join";
+    case "online":
+      return "Online";
+    case "offline":
+      return `Offline, seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`;
+  }
 }
 
 /**

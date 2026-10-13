@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   MACHINE_LEVEL_SCOPES,
   type CommandDelivery,
   type MachineCommandInput,
   type MachineId,
+  type MachineKind,
   type MachineLevel,
   type MachineMapRole,
   type MachineRecord,
@@ -28,10 +29,13 @@ import { arrowEndWait, arrowEnds, describeChange, machineQueue, type ArrowEnd } 
 import {
   actorText,
   COMMAND_LABEL,
+  COMMAND_STICKER,
   DANGEROUS_COMMANDS,
   LEVEL_LABEL,
   LEVEL_TEXT,
   machineName,
+  PRESENCE_STICKER,
+  presenceState,
   presenceText,
   ROLE_TEXT,
   shortTime,
@@ -39,16 +43,25 @@ import {
   timeUntil,
   valueText,
 } from "./format.ts";
-import { KindIcon } from "./icons.tsx";
+import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
 import { NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
 
+const PANEL_LABEL: Record<Exclude<Selection["_tag"], "none">, string> = {
+  arrow: "Arrow",
+  machine: "Machine",
+  revision: "Revision",
+  proposal: "Proposal",
+  setting: "Setting",
+  command: "Command",
+};
+
+/** MM-1102: the selected item, in a side panel or a bottom sheet on a phone. */
 export function Panel({ selection }: { selection: Selection }) {
   const portal = usePortalContext();
+  if (selection._tag === "none") return null;
   const body = (() => {
     switch (selection._tag) {
-      case "none":
-        return null;
       case "arrow":
         return <ArrowPanel from={selection.from} to={selection.to} />;
       case "machine":
@@ -63,16 +76,17 @@ export function Panel({ selection }: { selection: Selection }) {
         return <CommandPanel id={selection.id} />;
     }
   })();
-  if (!body) return null;
   return (
-    <aside className="card panel">
+    <aside className="card panel" aria-label={PANEL_LABEL[selection._tag]}>
       <div className="head">
-        <div />
+        <span className="section">{PANEL_LABEL[selection._tag]}</span>
         <button
           type="button"
-          className="btn small close"
+          className="btn small"
+          aria-keyshortcuts="Escape"
           onClick={() => portal.select(NO_SELECTION)}
         >
+          <CloseIcon />
           Close
         </button>
       </div>
@@ -82,8 +96,13 @@ export function Panel({ selection }: { selection: Selection }) {
 }
 
 const Missing = ({ what }: { what: string }) => (
-  <div className="muted">This {what} is no longer here.</div>
+  <div className="empty compact-empty">
+    <h3>This {what} is gone</h3>
+    <p>Another page or an agent removed it. Close the panel to go on.</p>
+  </div>
 );
+
+const Section = ({ children }: { children: ReactNode }) => <h3 className="section">{children}</h3>;
 
 /** MM-711: while paused, access only goes down, so raising controls are off. */
 const PausedNote = () => (
@@ -93,6 +112,13 @@ const PausedNote = () => (
 );
 
 type Duration = "permanent" | "hour" | "day" | "until";
+
+const DURATION_LABEL: Record<Duration, string> = {
+  permanent: "Always",
+  hour: "1 hour",
+  day: "1 day",
+  until: "Until…",
+};
 
 /** MM-304: null for a permanent level, undefined for a time that is not in the future. */
 function durationExpiry(duration: Duration, until: string, now: number): string | null | undefined {
@@ -113,8 +139,10 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   const target = map.machines.find((m) => m.id === to);
   if (!source || !target || source.id === target.id) return <Missing what="arrow" />;
   const arrow = findArrow(map, source.id, target.id);
+  const reverse = findArrow(map, target.id, source.id);
   const f = source.name;
   const t = target.name;
+  const permanent = arrow.revertLevel ?? arrow.level;
 
   const setLevel = (level: MachineLevel) => {
     // oxlint-disable-next-line react/purity -- This runs in a click handler, not during render.
@@ -135,22 +163,32 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
     if (wait === null) return `applied on ${machine.name}`;
     return end === "queued" && !snapshot.presence[machine.id]?.online ? `${wait} (offline)` : wait;
   };
+  const applied = ends.from === "applied" && ends.to === "applied";
   const appliedText = [endText(ends.to, target), endText(ends.from, source)].join(", ");
   const lastTest = snapshot.commands.find(
     (c) => c.machineId === source.id && c.input._tag === "testArrow" && c.input.to === target.id,
   );
+  const scopes = arrow.level === "none" ? [] : MACHINE_LEVEL_SCOPES[arrow.level];
 
   return (
     <>
       <h2>
-        {f} → {t}
+        {f} <span className="arrow-glyph">→</span> {t}
       </h2>
-      <div className="desc">
+      <p className="desc">
         What {f} can do on {t}.
-      </div>
+      </p>
+      <button
+        type="button"
+        className="link reverse"
+        onClick={() => portal.select({ _tag: "arrow", from: target.id, to: source.id })}
+      >
+        Other way: {t} → {f} is {LEVEL_LABEL[reverse.level]}
+      </button>
       {portal.pause && <PausedNote />}
-      <div className="section">Duration</div>
-      <div className="seg wide">
+
+      <Section>How long</Section>
+      <div className="seg wide" role="group" aria-label="How long">
         {(["permanent", "hour", "day", "until"] as const).map((d) => (
           <button
             key={d}
@@ -158,20 +196,27 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
             aria-pressed={duration === d}
             onClick={() => setDuration(d)}
           >
-            {{ permanent: "Always", hour: "1 hour", day: "1 day", until: "Until…" }[d]}
+            {DURATION_LABEL[d]}
           </button>
         ))}
       </div>
       {duration === "until" && (
         <input
           type="datetime-local"
+          aria-label="Until"
+          className="full"
           value={until}
           onChange={(e) => setUntil(e.target.value)}
-          style={{ marginTop: 6 }}
         />
       )}
-      <div className="section">Level</div>
-      <div className="seg wide">
+      <p className="hint">
+        {duration === "permanent"
+          ? "The level you pick stays until you change it."
+          : `Pick a level below. It returns to ${LEVEL_LABEL[permanent]} ${duration === "until" ? "at that time" : `after ${DURATION_LABEL[duration]}`}.`}
+      </p>
+
+      <Section>Level</Section>
+      <div className="seg wide" role="group" aria-label="Level">
         {LEVELS.map((level) => (
           <button
             key={level}
@@ -184,14 +229,18 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
           </button>
         ))}
       </div>
-      <div className="desc">{LEVEL_TEXT[arrow.level]}</div>
-      {arrow.level !== "none" && (
-        <div className="small muted mono">{MACHINE_LEVEL_SCOPES[arrow.level].join(", ")}</div>
+      <p className="desc">{LEVEL_TEXT[arrow.level]}</p>
+      {scopes.length > 0 && (
+        <details className="more">
+          <summary>{scopes.length} T3 scopes</summary>
+          <p className="small mono scopes">{scopes.join(", ")}</p>
+        </details>
       )}
       {arrow.expiresAt && arrow.revertLevel && (
-        <div className="row">
+        <div className="row callout">
           <div className="v">
-            Returns to {LEVEL_LABEL[arrow.revertLevel]} {timeUntil(arrow.expiresAt, now)}.
+            <span className="sticker warn flat">temp</span> Returns to{" "}
+            {LEVEL_LABEL[arrow.revertLevel]} {timeUntil(arrow.expiresAt, now)}.
           </div>
           <button
             type="button"
@@ -207,18 +256,19 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
               ])
             }
           >
-            Keep
+            Make permanent
           </button>
         </div>
       )}
-      <div className="section">Agents</div>
-      <div className="row">
-        <div>
-          <div className="t">
+
+      <Section>Agents</Section>
+      <label className="row toggle-row">
+        <span>
+          <span className="t">
             Agents on {f} use {t}'s T3 tools
-          </div>
-          <div className="v">Within the scopes of the level.</div>
-        </div>
+          </span>
+          <span className="v">Within the scopes of the level.</span>
+        </span>
         <input
           type="checkbox"
           className="switch"
@@ -236,32 +286,38 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
             ])
           }
         />
-      </div>
-      <div className="section">State</div>
-      <div className="v small">{appliedText}</div>
-      <div className="actions" style={{ marginTop: 8 }}>
+      </label>
+
+      <Section>Delivery</Section>
+      <p className="small">
+        {applied ? (
+          <span className="sticker ok flat">applied</span>
+        ) : (
+          <span className="sticker wait flat">pending</span>
+        )}{" "}
+        {appliedText.charAt(0).toUpperCase() + appliedText.slice(1)}.
+      </p>
+      <div className="actions spaced">
         <button
           type="button"
-          className="btn"
+          className="btn small"
           onClick={() => portal.command(source.id, { _tag: "testArrow", to: target.id })}
         >
-          Test
+          Test the connection
         </button>
         {lastTest && (
-          <span
-            className={`sticker ${lastTest.status === "succeeded" ? "ok" : lastTest.status === "failed" ? "" : "wait"}`}
-          >
-            {lastTest.status}
+          <span className="small muted">
+            Last test{" "}
+            <span className={`sticker flat ${COMMAND_STICKER[lastTest.status]}`}>
+              {lastTest.status}
+            </span>{" "}
+            {timeAgo(lastTest.updatedAt, now)}
           </span>
         )}
       </div>
       {lastTest?.result != null && <pre>{JSON.stringify(lastTest.result, null, 2)}</pre>}
-      {lastTest?.error && (
-        <div className="small" style={{ color: "var(--error-fg)" }}>
-          {lastTest.error}
-        </div>
-      )}
-      <p className="desc">
+      {lastTest?.error && <p className="error-text">{lastTest.error}</p>}
+      <p className="desc footnote">
         {f} proves who it is with its own Cloudflare service token,{" "}
         <code>{source.tokenClientId}</code>. {t} applies a change in under a second and ends open
         sessions from {f} when access drops.
@@ -293,6 +349,59 @@ const SIMPLE_COMMANDS: ReadonlyArray<
   { _tag: "restartServer" },
 ];
 
+const KIND_LABEL: Record<MachineKind, string> = {
+  laptop: "Laptop",
+  desktop: "Desktop",
+  server: "Server",
+};
+
+const EXPIRY_LABEL: Record<number, string> = {
+  60: "1 hour",
+  [DEFAULT_COMMAND_MINUTES]: "24 hours",
+  [7 * 24 * 60]: "7 days",
+};
+
+/** MM-206: rename in place. Enter saves, Escape keeps the old name. */
+function RenameForm({ machine, done }: { machine: MachineRecord; done: () => void }) {
+  const portal = usePortalContext();
+  const [name, setName] = useState(machine.name);
+  return (
+    <form
+      className="rename"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const next = name.trim();
+        if (next && next !== machine.name)
+          portal.submit(`Renamed ${machine.name} to ${next}`, [
+            { _tag: "putMachine", machine: { ...machine, name: next } },
+          ]);
+        done();
+      }}
+    >
+      <input
+        aria-label="Name"
+        value={name}
+        autoFocus
+        required
+        autoComplete="off"
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.stopPropagation();
+            done();
+          }
+        }}
+      />
+      <button type="submit" className="btn small primary">
+        Save
+      </button>
+      <button type="button" className="btn small" onClick={done}>
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 /** MM-206, MM-207, MM-208, MM-5xx, MM-1003, MM-1004. */
 function MachinePanel({ id }: { id: string }) {
   const portal = usePortalContext();
@@ -300,9 +409,11 @@ function MachinePanel({ id }: { id: string }) {
   const [delivery, setDelivery] = useState<CommandDelivery>("online");
   const [expiresInMinutes, setExpiry] = useState(DEFAULT_COMMAND_MINUTES);
   const [thread, setThread] = useState({ projectId: "", title: "", message: "" });
+  const [renaming, setRenaming] = useState(false);
   const machine = map.machines.find((m) => m.id === id);
   if (!machine) return <Missing what="machine" />;
   const presence = snapshot.presence[machine.id];
+  const state = presenceState(presence);
   const status = presence?.status ?? null;
   const supported = new Set(status?.commands ?? []);
   const options: CommandOptions = { delivery, expiresInMinutes };
@@ -310,47 +421,41 @@ function MachinePanel({ id }: { id: string }) {
   const put = (summary: string, next: MachineRecord) =>
     portal.submit(summary, [{ _tag: "putMachine", machine: next }]);
 
-  const rename = () => {
-    const name = window.prompt("New name", machine.name)?.trim();
-    if (name && name !== machine.name)
-      put(`Renamed ${machine.name} to ${name}`, { ...machine, name });
-  };
-
   const settings = effectiveSettings(map, machine.id);
   const own = map.settings.overrides[machine.id];
 
   return (
     <>
-      <h2 className="with-icon">
-        <span className="icon">
-          <KindIcon kind={machine.kind} />
-        </span>
-        {machine.name}
-      </h2>
-      <div className="desc">
-        <span className="mono">{machine.id}</span> · applied rev{" "}
-        {presence?.appliedRevision ?? "none"} of {map.revision}
-      </div>
-      <div className="actions" style={{ marginTop: 8 }}>
-        <span className={`sticker ${presence?.online ? "ok" : "wait"}`}>
-          {presenceText(presence, now)}
-        </span>
+      {renaming ? (
+        <RenameForm machine={machine} done={() => setRenaming(false)} />
+      ) : (
+        <h2 className="with-icon">
+          <span className="icon">
+            <KindIcon kind={machine.kind} />
+          </span>
+          {machine.name}
+        </h2>
+      )}
+      <p className="desc">
+        {presenceText(presence, now)} · applied rev {presence?.appliedRevision ?? "none"} of{" "}
+        {map.revision}
+      </p>
+      <div className="stickers-row">
+        <span className={`sticker ${PRESENCE_STICKER[state]}`}>{state}</span>
         {status && status.runningTurns > 0 && (
           <span className="sticker ok">{status.runningTurns} running</span>
         )}
         {status && status.waitingThreads > 0 && (
-          <span className="sticker wait">{status.waitingThreads} wait for you</span>
+          <span className="sticker wait">
+            {status.waitingThreads} {status.waitingThreads === 1 ? "needs" : "need"} you
+          </span>
         )}
-        {status?.updateWaiting && (
-          <span className="sticker info">update {status.updateWaiting}</span>
-        )}
-        {queue.waitingToJoin ? (
-          <span className="sticker wait">waiting to join</span>
-        ) : (
-          queue.count > 0 && <span className="sticker wait">{queue.count} queued</span>
+        {status?.updateWaiting && <span className="sticker info">update</span>}
+        {!queue.waitingToJoin && queue.count > 0 && (
+          <span className="sticker wait">{queue.count} queued</span>
         )}
       </div>
-      <div className="actions" style={{ marginTop: 10 }}>
+      <div className="actions spaced">
         {machine.hostname ? (
           <a
             className="btn primary"
@@ -358,17 +463,19 @@ function MachinePanel({ id }: { id: string }) {
             target="_blank"
             rel="noreferrer"
           >
-            Open
+            Open T3
           </a>
         ) : (
+          // The machine reports its hostname when it joins. The Status section says so.
           <button type="button" className="btn" disabled>
-            Open
+            Open T3
           </button>
         )}
-        <button type="button" className="btn" onClick={rename}>
+        <button type="button" className="btn" onClick={() => setRenaming(true)} disabled={renaming}>
           Rename
         </button>
         <select
+          aria-label="Kind"
           value={machine.kind}
           onChange={(e) => {
             const kind = e.target.value;
@@ -377,34 +484,48 @@ function MachinePanel({ id }: { id: string }) {
             }
           }}
         >
-          <option value="laptop">Laptop</option>
-          <option value="desktop">Desktop</option>
-          <option value="server">Server</option>
+          {(["laptop", "desktop", "server"] as const).map((kind) => (
+            <option key={kind} value={kind}>
+              {KIND_LABEL[kind]}
+            </option>
+          ))}
         </select>
       </div>
 
-      <div className="section">Status</div>
+      <Section>Status</Section>
       {status ? (
-        <div className="small">
-          <div>
-            T3 {status.t3Version} · <span className="mono">{status.build}</span>
-          </div>
-          <div className="muted">
-            up {Math.round(status.uptimeSeconds / 3600)} h · {status.scheduledTasks} scheduled tasks
-            {status.cpuPercent !== null && ` · CPU ${Math.round(status.cpuPercent)}%`}
-            {status.memoryPercent !== null && ` · memory ${Math.round(status.memoryPercent)}%`}
-          </div>
-          <div className="muted">{machine.hostname ?? "no hostname yet"}</div>
-        </div>
+        <dl className="facts small">
+          <dt>T3</dt>
+          <dd>
+            {status.t3Version} · <span className="mono">{status.build}</span>
+          </dd>
+          {status.updateWaiting && (
+            <>
+              <dt>Update</dt>
+              <dd>{status.updateWaiting} waits to install</dd>
+            </>
+          )}
+          <dt>Up</dt>
+          <dd>{Math.round(status.uptimeSeconds / 3600)} h</dd>
+          <dt>Load</dt>
+          <dd>
+            {status.cpuPercent === null ? "CPU —" : `CPU ${Math.round(status.cpuPercent)}%`} ·{" "}
+            {status.memoryPercent === null
+              ? "memory —"
+              : `memory ${Math.round(status.memoryPercent)}%`}
+          </dd>
+          <dt>Tasks</dt>
+          <dd>{status.scheduledTasks} scheduled</dd>
+          <dt>Host</dt>
+          <dd className="mono">{machine.hostname ?? "not reported yet"}</dd>
+        </dl>
       ) : (
-        <div className="small muted">
-          No status yet. The machine shows here after its first connection.
-        </div>
+        <p className="small muted">No status yet. It shows here after the first connection.</p>
       )}
 
-      <div className="section">Map role</div>
+      <Section>Map role</Section>
       {portal.pause && <PausedNote />}
-      <div className="seg wide">
+      <div className="seg wide" role="group" aria-label="Map role">
         {MAP_ROLES.map((role: MachineMapRole) => (
           <button
             key={role}
@@ -417,151 +538,200 @@ function MachinePanel({ id }: { id: string }) {
           </button>
         ))}
       </div>
-      <div className="desc">{ROLE_TEXT[machine.mapRole]}</div>
+      <p className="desc">{ROLE_TEXT[machine.mapRole]}</p>
 
-      <div className="section">Commands</div>
-      <div className="actions">
-        <select
-          value={delivery}
-          onChange={(e) => setDelivery(e.target.value === "idle" ? "idle" : "online")}
-        >
-          <option value="online">When online</option>
-          <option value="idle">When online and idle</option>
-        </select>
-        <select value={expiresInMinutes} onChange={(e) => setExpiry(Number(e.target.value))}>
-          <option value={60}>Expires in 1 h</option>
-          <option value={DEFAULT_COMMAND_MINUTES}>Expires in 24 h</option>
-          <option value={7 * 24 * 60}>Expires in 7 d</option>
-        </select>
-      </div>
-      <div className="actions" style={{ marginTop: 8 }}>
-        {status === null && (
-          <span className="small muted">Commands show after the machine reports them.</span>
-        )}
-        {SIMPLE_COMMANDS.filter((input) => supported.has(input._tag)).map((input) => (
-          <button
-            key={input._tag}
-            type="button"
-            className={`btn small${DANGEROUS_COMMANDS.has(input._tag) ? " danger" : ""}`}
-            onClick={() => portal.command(machine.id, input, options)}
-          >
-            {COMMAND_LABEL[input._tag]}
-          </button>
-        ))}
-        {supported.has("installUpdate") && (
-          <>
+      <Section>Commands</Section>
+      {state !== "online" && status !== null && (
+        <p className="hint">
+          {machine.name} is offline. Commands wait in its queue and run when it connects.
+        </p>
+      )}
+      {status === null ? (
+        <p className="small muted">Commands show after the machine reports them.</p>
+      ) : (
+        <div className="actions">
+          {SIMPLE_COMMANDS.filter((input) => supported.has(input._tag)).map((input) => (
             <button
+              key={input._tag}
               type="button"
-              className="btn small"
-              onClick={() =>
-                portal.command(machine.id, { _tag: "installUpdate", whenIdle: false }, options)
-              }
+              className={`btn small${DANGEROUS_COMMANDS.has(input._tag) ? " danger" : ""}`}
+              onClick={() => portal.command(machine.id, input, options)}
             >
-              Install update now
+              {COMMAND_LABEL[input._tag]}
             </button>
-            <button
-              type="button"
-              className="btn small"
-              onClick={() =>
-                portal.command(machine.id, { _tag: "installUpdate", whenIdle: true }, options)
-              }
-            >
-              Install update when idle
-            </button>
-          </>
-        )}
-      </div>
+          ))}
+          {supported.has("installUpdate") && (
+            <>
+              <button
+                type="button"
+                className="btn small"
+                onClick={() =>
+                  portal.command(machine.id, { _tag: "installUpdate", whenIdle: false }, options)
+                }
+              >
+                Install update now
+              </button>
+              <button
+                type="button"
+                className="btn small"
+                onClick={() =>
+                  portal.command(machine.id, { _tag: "installUpdate", whenIdle: true }, options)
+                }
+              >
+                Install update when idle
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      {status !== null && (
+        <details className="more">
+          <summary>
+            Delivery: {delivery === "idle" ? "when online and idle" : "when online"}, expires after{" "}
+            {EXPIRY_LABEL[expiresInMinutes] ?? `${expiresInMinutes} min`}
+          </summary>
+          <div className="actions">
+            <label className="field inline">
+              Deliver
+              <select
+                value={delivery}
+                onChange={(e) => setDelivery(e.target.value === "idle" ? "idle" : "online")}
+              >
+                <option value="online">When online</option>
+                <option value="idle">When online and idle</option>
+              </select>
+            </label>
+            <label className="field inline">
+              Expires after
+              <select value={expiresInMinutes} onChange={(e) => setExpiry(Number(e.target.value))}>
+                {Object.entries(EXPIRY_LABEL).map(([minutes, label]) => (
+                  <option key={minutes} value={minutes}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </details>
+      )}
       {supported.has("startThread") && (
-        <form
-          className="stack"
-          style={{ marginTop: 8 }}
-          onSubmit={(e) => {
-            e.preventDefault();
-            const projectId = thread.projectId.trim();
-            const title = thread.title.trim();
-            const message = thread.message.trim();
-            if (!projectId || !title || !message) return;
-            portal.command(machine.id, { _tag: "startThread", projectId, title, message }, options);
-          }}
-        >
-          <input
-            placeholder="Project id"
-            value={thread.projectId}
-            onChange={(e) => setThread({ ...thread, projectId: e.target.value })}
-          />
-          <input
-            placeholder="Thread title"
-            value={thread.title}
-            onChange={(e) => setThread({ ...thread, title: e.target.value })}
-          />
-          <input
-            placeholder="Message"
-            value={thread.message}
-            onChange={(e) => setThread({ ...thread, message: e.target.value })}
-          />
-          <button type="submit" className="btn small">
-            Start thread
-          </button>
-        </form>
+        <details className="more">
+          <summary>Start a thread</summary>
+          <form
+            className="stack"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const projectId = thread.projectId.trim();
+              const title = thread.title.trim();
+              const message = thread.message.trim();
+              if (!projectId || !title || !message) return;
+              portal.command(
+                machine.id,
+                { _tag: "startThread", projectId, title, message },
+                options,
+              );
+              setThread({ ...thread, title: "", message: "" });
+            }}
+          >
+            <label className="field">
+              Project id
+              <input
+                value={thread.projectId}
+                required
+                spellCheck={false}
+                onChange={(e) => setThread({ ...thread, projectId: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              Thread title
+              <input
+                value={thread.title}
+                required
+                onChange={(e) => setThread({ ...thread, title: e.target.value })}
+              />
+            </label>
+            <label className="field">
+              Message
+              <textarea
+                className="prose"
+                value={thread.message}
+                required
+                onChange={(e) => setThread({ ...thread, message: e.target.value })}
+              />
+            </label>
+            <div>
+              <button type="submit" className="btn small primary">
+                Start thread
+              </button>
+            </div>
+          </form>
+        </details>
       )}
 
-      {map.settings.managed.length > 0 && <div className="section">Settings</div>}
+      {map.settings.managed.length > 0 && <Section>Settings</Section>}
       {map.settings.managed.map(({ scope, key }) => {
         const mine = own !== undefined && Object.hasOwn(own[scope], key);
+        const follow = (keepOwn: boolean) => {
+          if (keepOwn === mine) return;
+          portal.submit(
+            keepOwn
+              ? `${machine.name} keeps its own ${key}`
+              : `${machine.name} follows shared ${key}`,
+            [
+              {
+                _tag: "setSetting",
+                machineId: machine.id,
+                scope,
+                key,
+                present: keepOwn,
+                value: keepOwn ? (settings[scope][key] ?? null) : null,
+              },
+            ],
+          );
+        };
         return (
           <div className="row" key={`${scope}.${key}`}>
-            <div>
-              <div className="t">{key}</div>
-              <div className="v">{valueText(settings[scope][key])}</div>
-            </div>
             <button
               type="button"
-              className={`sticker ${mine ? "warn" : "info"}`}
-              onClick={() =>
-                portal.submit(
-                  mine
-                    ? `${machine.name} follows shared ${key}`
-                    : `${machine.name} keeps its own ${key}`,
-                  [
-                    {
-                      _tag: "setSetting",
-                      machineId: machine.id,
-                      scope,
-                      key,
-                      present: !mine,
-                      value: mine ? null : (settings[scope][key] ?? null),
-                    },
-                  ],
-                )
-              }
+              className="link grow left"
+              onClick={() => portal.select({ _tag: "setting", scope, key }, "settings")}
             >
-              {mine ? "this machine" : "shared"}
+              <span className="t">{key}</span>
+              <span className="v">{valueText(settings[scope][key])}</span>
             </button>
+            <div className="seg tiny" role="group" aria-label={`${key} value`}>
+              <button type="button" aria-pressed={!mine} onClick={() => follow(false)}>
+                Shared
+              </button>
+              <button type="button" aria-pressed={mine} onClick={() => follow(true)}>
+                Own
+              </button>
+            </div>
           </div>
         );
       })}
 
-      <div className="section">Token</div>
-      <div className="small">
+      <Section>Token</Section>
+      <p className="small">
         <code>{machine.tokenClientId}</code>
-      </div>
+      </p>
       {queue.rotation && (
-        <div className="small muted">
-          Rotation waits for the machine. It expires {timeUntil(queue.rotation.expiresAt, now)}.
-        </div>
+        <p className="hint">
+          A new secret waits for {machine.name}. It expires{" "}
+          {timeUntil(queue.rotation.expiresAt, now)}.
+        </p>
       )}
-      <div className="actions" style={{ marginTop: 8 }}>
+      <div className="actions spaced">
         <button
           type="button"
           className="btn small"
           onClick={() =>
             portal.call(async () => {
-              const result = await callApi<{ delivered: boolean }>(
+              await callApi<{ delivered: boolean }>(
                 "POST",
                 `/api/machines/${encodeURIComponent(machine.id)}/rotate`,
               );
-              return result;
-            }, "The new secret waits for the machine.")
+            }, `A new secret waits for ${machine.name}.`)
           }
         >
           Rotate token
@@ -575,6 +745,13 @@ function MachinePanel({ id }: { id: string }) {
         >
           New join code
         </button>
+      </div>
+
+      <Section>Remove</Section>
+      <p className="hint">
+        Deletes its machine token, its arrows, its settings overrides and its queue.
+      </p>
+      <div className="actions spaced">
         <button
           type="button"
           className="btn small danger"
@@ -582,7 +759,7 @@ function MachinePanel({ id }: { id: string }) {
             portal.open({
               _tag: "confirm",
               title: `Remove ${machine.name}?`,
-              body: "This deletes its machine token, its arrows, its settings overrides and its queue.",
+              body: "This deletes its machine token, its arrows, its settings overrides and its queue. It cannot connect again with its old secret.",
               confirmLabel: "Remove",
               action: () =>
                 portal.call(async () => {
@@ -609,27 +786,26 @@ function RevisionPanel({ revision }: { revision: number }) {
     actor._tag === "agent" ? findMachine(portal.map, actor.machineId) : undefined;
   return (
     <>
-      <h2>
-        <span className="mono">rev {entry.revision}</span> {entry.summary}
-      </h2>
-      <div className="desc">
-        {shortTime(entry.at)} · {actorText(actor, portal.map)}
-      </div>
+      <h2>{entry.summary}</h2>
+      <p className="desc">
+        <span className="mono">rev {entry.revision}</span> · {shortTime(entry.at)} ·{" "}
+        {actorText(actor, portal.map)}
+      </p>
       {agentMachine?.hostname && actor._tag === "agent" && actor.threadId && (
-        <div className="small">
+        <p className="small">
           Thread <span className="mono">{actor.threadId}</span> on{" "}
           <a href={`https://${agentMachine.hostname}`} target="_blank" rel="noreferrer">
             {agentMachine.name}
           </a>
-        </div>
+        </p>
       )}
-      <div className="section">Changes</div>
-      <ul className="small">
+      <Section>Changes</Section>
+      <ul className="changes small">
         {entry.changes.map((change) => (
           <li key={JSON.stringify(change)}>{describeChange(change, portal.map)}</li>
         ))}
       </ul>
-      <div className="actions">
+      <div className="actions spaced">
         <button
           type="button"
           className="btn"
@@ -640,16 +816,25 @@ function RevisionPanel({ revision }: { revision: number }) {
             )
           }
         >
+          <UndoIcon />
           Undo
         </button>
         <button
           type="button"
           className="btn"
           onClick={() =>
-            portal.call(
-              () => callApi<WriteResult>("POST", "/api/restore", { revision: entry.revision }),
-              `Restored the map to rev ${entry.revision}.`,
-            )
+            portal.open({
+              _tag: "confirm",
+              title: `Restore the map to rev ${entry.revision}?`,
+              body: "Every arrow, setting and machine fact returns to how it was then, as one new revision. Undo reverses it.",
+              confirmLabel: "Restore",
+              tone: "primary",
+              action: () =>
+                portal.call(
+                  () => callApi<WriteResult>("POST", "/api/restore", { revision: entry.revision }),
+                  `Restored the map to rev ${entry.revision}.`,
+                ),
+            })
           }
         >
           Restore this revision
@@ -664,32 +849,42 @@ function ProposalPanel({ id }: { id: string }) {
   const portal = usePortalContext();
   const proposal = portal.snapshot.proposals.find((p) => p.id === id);
   if (!proposal) return <Missing what="proposal" />;
+  const own = proposal.reason === "self-escalation";
   return (
     <>
       <h2>{proposal.summary}</h2>
-      <div className="desc">
-        {actorText(proposal.actor, portal.map)} · {timeAgo(proposal.at, portal.now)} · expires{" "}
-        {timeUntil(proposal.expiresAt, portal.now)}
+      <p className="desc">
+        {actorText(proposal.actor, portal.map)} · {timeAgo(proposal.at, portal.now)}
+      </p>
+      <div className="stickers-row">
+        <span className={`sticker ${own ? "" : "wait"}`}>{own ? "own access" : "proposal"}</span>
       </div>
-      <div className="actions" style={{ marginTop: 8 }}>
-        <span className={`sticker ${proposal.reason === "self-escalation" ? "" : "wait"}`}>
-          {proposal.reason === "self-escalation" ? "raises its own access" : "map role propose"}
-        </span>
-      </div>
-      <div className="section">Changes</div>
-      <ul className="small">
+      <p className="desc">
+        {own
+          ? "The agent asks for more access for its own machine. That always needs you."
+          : "The machine has the map role propose, so its changes wait for you."}
+      </p>
+      <Section>Changes</Section>
+      <ul className="changes small">
         {proposal.changes.map((change) => (
           <li key={JSON.stringify(change)}>{describeChange(change, portal.map)}</li>
         ))}
       </ul>
-      <div className="actions">
+      <p className="hint">
+        It expires {timeUntil(proposal.expiresAt, portal.now)} if you do nothing.
+      </p>
+      <div className="actions spaced">
         <button
           type="button"
           className="btn primary"
           onClick={() =>
             portal.call(async () => {
-              await callApi("POST", `/api/proposals/${encodeURIComponent(proposal.id)}/approve`);
+              const result = await callApi<WriteResult>(
+                "POST",
+                `/api/proposals/${encodeURIComponent(proposal.id)}/approve`,
+              );
               portal.select(NO_SELECTION);
+              return result;
             }, "Approved.")
           }
         >
@@ -731,16 +926,21 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
 
   return (
     <>
-      <h2>{settingKey}</h2>
-      <div className="desc">{scope === "server" ? "Server setting" : "Client setting"}</div>
-      <div className="section">Shared value</div>
+      <h2 className="mono-title">{settingKey}</h2>
+      <p className="desc">
+        {scope === "server" ? "Server setting" : "Client setting"}. Machines follow the shared value
+        unless they keep their own.
+      </p>
+      <Section>Shared value</Section>
       <SettingEditor
         key={JSON.stringify(hasShared ? shared[settingKey] : null)}
+        label="Shared value"
         scope={scope}
         settingKey={settingKey}
         value={hasShared ? shared[settingKey] : undefined}
         onSave={(value) => set(null, value, `Shared ${settingKey} = ${valueText(value)}`)}
       />
+      <Section>Machines</Section>
       {map.machines.map((machine) => {
         const own = map.settings.overrides[machine.id]?.[scope];
         const hasOwn = own !== undefined && Object.hasOwn(own, settingKey);
@@ -749,15 +949,17 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
           reported && Object.hasOwn(reported, settingKey) ? reported[settingKey] : undefined;
         const changedHere = changedOn(portal.history, machine.id, scope, settingKey);
         return (
-          <div key={machine.id} className="stack" style={{ marginTop: 12 }}>
+          <div key={machine.id} className="machine-setting">
             <div className="row">
               <div>
-                <div className="t">{machine.name}</div>
-                <div className="v">
-                  {hasOwn ? `own value ${valueText(own?.[settingKey])}` : "follows shared"} ·
-                  reports {valueText(reportedValue)}
+                <div className="t">
+                  {machine.name} {hasOwn && <span className="sticker warn flat">own</span>}
                 </div>
-                {hasOwn && changedHere && <div className="v">changed on {machine.name}</div>}
+                <div className="v">
+                  {hasOwn ? `Own value ${valueText(own?.[settingKey])}` : "Follows shared"} ·
+                  reports {valueText(reportedValue)}
+                  {hasOwn && changedHere && ` · changed on ${machine.name}`}
+                </div>
               </div>
               {hasOwn && (
                 <div className="actions">
@@ -805,17 +1007,24 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
             </div>
             <SettingEditor
               key={JSON.stringify(hasOwn ? own?.[settingKey] : null)}
+              label={`Own value on ${machine.name}`}
               scope={scope}
               settingKey={settingKey}
               value={hasOwn ? own?.[settingKey] : undefined}
               onSave={(value) =>
                 set(machine.id, value, `${machine.name} ${settingKey} = ${valueText(value)}`)
               }
+              shared={{
+                value: hasShared ? shared[settingKey] : undefined,
+                follow: () => clear(machine.id, `${machine.name} follows shared ${settingKey}`),
+              }}
             />
           </div>
         );
       })}
-      <div className="actions" style={{ marginTop: 14 }}>
+      <Section>Stop managing</Section>
+      <p className="hint">Machines keep their current value. The map stops syncing it.</p>
+      <div className="actions spaced">
         <button
           type="button"
           className="btn small danger"
@@ -857,10 +1066,13 @@ function changedOn(
 
 /** MM-407: a switch, a choice, a number, text, or JSON for objects. */
 function SettingEditor(props: {
+  label: string;
   scope: SettingScope;
   settingKey: string;
   value: unknown;
   onSave: (value: unknown) => void;
+  /** A machine without its own value shows the shared value, and can go back to it. */
+  shared?: { readonly value: unknown; readonly follow: () => void };
 }) {
   const control = settingControl(props.scope, props.settingKey);
   const initial =
@@ -882,21 +1094,24 @@ function SettingEditor(props: {
         <input
           type="checkbox"
           className="switch"
-          checked={props.value === true}
+          aria-label={props.label}
+          checked={(props.value === undefined ? props.shared?.value : props.value) === true}
           onChange={(e) => save(e.target.checked)}
         />
       );
     case "choice":
       return (
         <select
+          aria-label={props.label}
           value={props.value === undefined ? "" : String(props.value)}
           onChange={(e) => {
+            if (e.target.value === "") return props.shared?.follow();
             const option = control.options.find((o) => String(o) === e.target.value);
             if (option !== undefined) save(option);
           }}
         >
-          <option value="" disabled>
-            Not set
+          <option value="" disabled={!props.shared}>
+            {props.shared ? `Shared (${valueText(props.shared.value)})` : "Not set"}
           </option>
           {control.options.map((option) => (
             <option key={String(option)} value={String(option)}>
@@ -910,7 +1125,7 @@ function SettingEditor(props: {
     case "json":
       return (
         <form
-          className="stack"
+          className="editor"
           onSubmit={(e) => {
             e.preventDefault();
             if (control._tag === "text") return save(text);
@@ -922,24 +1137,26 @@ function SettingEditor(props: {
           }}
         >
           {control._tag === "json" ? (
-            <textarea value={text} onChange={(e) => setText(e.target.value)} />
+            <textarea
+              aria-label={props.label}
+              placeholder={props.shared ? `Shared: ${valueText(props.shared.value)}` : undefined}
+              value={text}
+              spellCheck={false}
+              onChange={(e) => setText(e.target.value)}
+            />
           ) : (
             <input
+              aria-label={props.label}
               type={control._tag === "number" ? "number" : "text"}
+              placeholder={props.shared ? `Shared: ${valueText(props.shared.value)}` : undefined}
               value={text}
               onChange={(e) => setText(e.target.value)}
             />
           )}
-          {problem && (
-            <div className="small" style={{ color: "var(--error-fg)" }}>
-              {problem}
-            </div>
-          )}
-          <div>
-            <button type="submit" className="btn small">
-              Save
-            </button>
-          </div>
+          <button type="submit" className="btn small" disabled={text === initial}>
+            Save
+          </button>
+          {problem && <p className="error-text">{problem}</p>}
         </form>
       );
   }
@@ -955,28 +1172,20 @@ function CommandPanel({ id }: { id: string }) {
       <h2>
         {COMMAND_LABEL[command.input._tag]} on {machineName(portal.map, command.machineId)}
       </h2>
-      <div className="desc">
+      <p className="desc">
         {actorText(command.actor, portal.map)} · {shortTime(command.createdAt)}
-      </div>
-      <div className="actions" style={{ marginTop: 8 }}>
-        <span
-          className={`sticker ${command.status === "succeeded" ? "ok" : command.status === "queued" || command.status === "delivered" ? "wait" : ""}`}
-        >
-          {command.status}
-        </span>
-        <span className="small muted">
-          {command.delivery === "idle" ? "when online and idle" : "when online"} · expires{" "}
+      </p>
+      <p className="small">
+        <span className={`sticker ${COMMAND_STICKER[command.status]}`}>{command.status}</span>{" "}
+        <span className="muted">
+          {command.delivery === "idle" ? "When online and idle" : "When online"} · expires{" "}
           {shortTime(command.expiresAt)}
         </span>
-      </div>
-      {command.error && (
-        <div className="small" style={{ color: "var(--error-fg)", marginTop: 8 }}>
-          {command.error}
-        </div>
-      )}
+      </p>
+      {command.error && <p className="error-text">{command.error}</p>}
       {command.result != null && <pre>{JSON.stringify(command.result, null, 2)}</pre>}
       {command.status === "queued" && (
-        <div className="actions" style={{ marginTop: 10 }}>
+        <div className="actions spaced">
           <button
             type="button"
             className="btn danger"
@@ -987,7 +1196,7 @@ function CommandPanel({ id }: { id: string }) {
               )
             }
           >
-            Cancel
+            Cancel command
           </button>
         </div>
       )}

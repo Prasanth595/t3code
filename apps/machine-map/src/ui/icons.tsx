@@ -45,3 +45,31 @@ export function UndoIcon() {
     </svg>
   );
 }
+
+/** MM-602: an arrow end that did not apply the arrow yet. The label names the machine. */
+export function ClockIcon({ label }: { label: string }) {
+  return (
+    <svg viewBox="0 0 24 24" {...STROKE} className="clock" role="img" aria-label={label}>
+      <title>{label}</title>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+export function CloseIcon() {
+  return (
+    <svg viewBox="0 0 24 24" {...STROKE} strokeWidth={2.6} aria-hidden>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
+export function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" {...STROKE} aria-hidden>
+      <rect width="13" height="13" x="9" y="9" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}

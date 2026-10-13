@@ -39,7 +39,7 @@ export function EmergencyButton({
 
   return (
     <div className={`panic ${size}${paused ? " is-paused" : ""}`}>
-      <span className="sticker panic-note">do not press for fun</span>
+      <span className="sticker panic-note">hands off</span>
       <div className="panic-inner">
         <div className="panic-well">
           <button

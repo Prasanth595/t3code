@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
-import { MachineId, type MachineMapDocument, type MapChange } from "@t3tools/contracts/machineMap";
+import {
+  MachineId,
+  type MachineMapDocument,
+  type MapChange,
+  type MapPosition,
+} from "@t3tools/contracts/machineMap";
 
 import {
   applyChanges,
   checkEditableChanges,
   desiredState,
   findArrow,
+  freePosition,
   machinesTouched,
   MapRuleError,
 } from "./map.ts";
@@ -174,5 +180,17 @@ describe("desiredState", () => {
     expect(state?.settings).toEqual({ server: { theme: "dark" }, client: {} });
     expect(desiredState(map, MAC)?.settings).toEqual({ server: { theme: "light" }, client: {} });
     expect(desiredState(map, MachineId.make("gone"))).toBeUndefined();
+  });
+});
+
+describe("freePosition (MM-206)", () => {
+  it("puts the first machine in the middle and spreads the next ones apart", () => {
+    const taken: Array<MapPosition> = [];
+    for (let i = 0; i < 8; i++) taken.push(freePosition(taken));
+    expect(taken[0]).toEqual({ x: 0.5, y: 0.5 });
+    expect(new Set(taken.map((p) => `${p.x},${p.y}`)).size).toBe(taken.length);
+    for (const [i, a] of taken.entries())
+      for (const b of taken.slice(i + 1))
+        expect(Math.hypot((a.x - b.x) * 1.6, a.y - b.y)).toBeGreaterThan(0.3);
   });
 });

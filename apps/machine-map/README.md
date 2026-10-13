@@ -11,6 +11,7 @@ The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir
 - `src/rules/`: pure rules with tests: changes and their inverse, desired state, map roles, self-escalation, queue, presets and lockdown.
 - `src/api.ts`: request and response shapes of the HTTP API, shared by the Worker and the page.
 - `src/ui/`: the React page.
+- `public/`: the favicon, the app icons and the web app manifest. The PNG icons are `favicon.svg` rendered at each size; the full-bleed ones (`apple-touch-icon.png`, `icon-maskable-512.png`) put it on the canvas colour with a margin.
 
 ## Set up Cloudflare Access
 
