@@ -287,21 +287,29 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
 > {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const isLink = (target: string) =>
+    Effect.option(fileSystem.readLink(target)).pipe(Effect.map(Option.isSome));
+  // fx gives its managed root no read authority: it loads nothing through a
+  // link to the root or to a folder or SKILL.md inside it (HOME is already
+  // a real path here, so a linked root changes its real path).
+  if (
+    !input.followsLinks &&
+    (yield* fileSystem.realPath(input.directory).pipe(Effect.option)).pipe(
+      Option.exists((real) => real !== input.directory),
+    )
+  ) {
+    return [];
+  }
   const entries = yield* skipUnreadable(input.directory, fileSystem.readDirectory(input.directory));
   const skills: Array<{ readonly skill: ServerProviderSkill; readonly folder: string }> = [];
   // fx reads a root's folders in UTF-8 byte order; readDirectory promises none.
   for (const entry of [...(entries ?? [])].sort(compareUtf8)) {
-    // `readLink` succeeds only on a symlink.
-    if (
-      !input.followsLinks &&
-      Option.isSome(yield* Effect.option(fileSystem.readLink(path.join(input.directory, entry))))
-    ) {
-      continue;
-    }
+    if (!input.followsLinks && (yield* isLink(path.join(input.directory, entry)))) continue;
     // A stray file (`.DS_Store`, a README) is no skill folder.
     const entryInfo = yield* Effect.option(fileSystem.stat(path.join(input.directory, entry)));
     if (Option.isNone(entryInfo) || entryInfo.value.type !== "Directory") continue;
     const skillPath = path.join(input.directory, entry, "SKILL.md");
+    if (!input.followsLinks && (yield* isLink(skillPath))) continue;
     const skillInfo = yield* skipUnreadable(skillPath, fileSystem.stat(skillPath));
     if (skillInfo?.type !== "File") continue;
     // fx reads only the metadata prefix, so a long body never hides a skill.
