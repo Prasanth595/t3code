@@ -687,6 +687,10 @@ export const layer: Layer.Layer<
           return resumed.success;
         }
 
+        if (session.driver === "codex" && !uncertainDelivery) {
+          return yield* loadFromProvider(Effect.fail(resumed.failure));
+        }
+
         yield* Effect.logWarning("Provider resume failed; attempting a fresh native session", {
           driver: session.driver,
           providerThreadId: providerThread.id,

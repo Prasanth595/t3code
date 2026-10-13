@@ -181,7 +181,10 @@ function makeLocalCommandHarness(input: {
   const providerSessionId = ProviderSessionId.make("new-provider-session");
   const oldProviderThreadId = ProviderThreadId.make("existing-native-provider-thread");
   const oldInstanceId = ProviderInstanceId.make("antigravity-personal");
-  const newInstanceId = ProviderInstanceId.make("codex-personal");
+  const driver = ProviderDriverKind.make(
+    "historyReadFailureAfterFallback" in input ? "claudeAgent" : "codex",
+  );
+  const newInstanceId = ProviderInstanceId.make(`${driver}-personal`);
   const checkpointScopeId = CheckpointScopeId.make("scope-native-account-command");
   const messageId = MessageId.make("message-native-account-command");
   const run: OrchestrationV2ThreadProjection["runs"][number] = {
@@ -203,7 +206,7 @@ function makeLocalCommandHarness(input: {
   };
   const providerThread: OrchestrationV2ThreadProjection["providerThreads"][number] = {
     id: providerThreadId,
-    driver: ProviderDriverKind.make("codex"),
+    driver,
     providerInstanceId: newInstanceId,
     providerSessionId,
     appThreadId: threadId,

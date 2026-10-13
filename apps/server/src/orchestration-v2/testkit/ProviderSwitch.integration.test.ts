@@ -1933,6 +1933,22 @@ describe("orchestration v2 provider switching", () => {
             (providerThread) => providerThread.id === queued.runs[0]?.providerThreadId,
           )?.nativeThreadRef;
           assert.isNotNull(sourceNativeRef);
+          yield* orchestrator.dispatch({
+            type: "provider.switch",
+            commandId: CommandId.make("command:queued-account-switch:select-alternate"),
+            threadId: queuedThreadId,
+            modelSelection: alternateSelection,
+          });
+          const selected = yield* orchestrator.getThreadProjection(queuedThreadId);
+          assert.equal(selected.thread.modelSelection.instanceId, alternateSelection.instanceId);
+          assert.equal(selected.runs[0]?.status, "running");
+          assert.isTrue(
+            selected.providerSessions.some(
+              (session) =>
+                session.providerInstanceId === CODEX_MODEL_SELECTION.instanceId &&
+                session.status !== "stopped",
+            ),
+          );
           const now = yield* DateTime.now;
           yield* eventSink.write({
             events: [
@@ -2745,7 +2761,7 @@ describe("orchestration v2 provider switching", () => {
     () => importedFailureScenario(true),
   );
 
-  it.live("uses portable fallback when native resume fails after a provider switch", () =>
+  it.live("preserves native history when Codex resume fails after a provider switch", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("provider-switch");
@@ -2838,8 +2854,7 @@ describe("orchestration v2 provider switching", () => {
             CLAUDE_MODEL_SELECTION,
           );
           yield* waitForIdle(threadId);
-          // Stopping the shared Codex process drops its loaded native thread, so
-          // returning to Codex has to resume it (and fall back when that fails).
+          // Returning to a stopped Codex session must resume its saved native thread.
           const codexSession = (yield* orchestrator.getThreadProjection(
             threadId,
           )).providerSessions.find(
@@ -2884,72 +2899,25 @@ describe("orchestration v2 provider switching", () => {
           [
             ["codex", "completed"],
             ["claudeAgent", "completed"],
-            ["codex", "completed"],
+            ["codex", "failed"],
           ],
         );
-        assert.lengthOf(projection.providerThreads, 2);
         assert.equal(projection.runs[0]?.providerThreadId, projection.runs[2]?.providerThreadId);
-        assert.notEqual(projection.runs[0]?.providerThreadId, projection.runs[1]?.providerThreadId);
-        // The failed resume bound a fresh native Codex thread to the same row.
-        assert.equal(yield* Ref.get(codexNativeThreadGeneration), 2);
+        assert.equal(yield* Ref.get(codexNativeThreadGeneration), 1);
         const codexThread = projection.providerThreads.find(
           (providerThread) => providerThread.id === projection.runs[2]?.providerThreadId,
         );
-        assert.equal(codexThread?.nativeThreadRef?.nativeId, `codex:${threadId}:1`);
-        assert.deepEqual(
-          projection.contextHandoffs.map((handoff) => [
-            handoff.strategy,
-            handoff.coveredRunOrdinals,
-            handoff.delivery?.status,
-            handoff.delivery?.nativeThreadId,
-          ]),
-          [
-            ["full_thread_summary", { from: 1, to: 1 }, "inline", `claudeAgent:${threadId}`],
-            ["delta_since_target_last_seen", { from: 2, to: 2 }, "inline", `codex:${threadId}:1`],
-            ["full_thread_summary", { from: 1, to: 2 }, "inline", `codex:${threadId}:1`],
-          ],
+        assert.equal(codexThread?.nativeThreadRef?.nativeId, `codex:${threadId}:0`);
+        assert.isFalse(
+          projection.contextHandoffs.some(
+            (handoff) =>
+              handoff.strategy === "full_thread_summary" &&
+              handoff.targetRunId === projection.runs[2]?.id,
+          ),
         );
-        assert.deepEqual(
-          projection.contextTransfers.map((transfer) => [
-            transfer.type,
-            transfer.status,
-            transfer.resolution?.strategy,
-          ]),
-          [
-            ["provider_handoff", "consumed", "portable_context"],
-            ["provider_handoff", "consumed", "delta_context"],
-            ["provider_handoff", "resolved_portable", "portable_context"],
-          ],
-        );
-        assert.deepEqual(
-          projection.turnItems
-            .filter((item) => item.type === "user_message")
-            .map((item) => item.text),
-          [firstPrompt, claudePrompt, returnPrompt],
-        );
-        assert.deepEqual(
-          projection.providerThreads.map((providerThread) => [
-            providerThread.driver,
-            providerThread.status,
-            providerThread.handoffIds.length,
-          ]),
-          [
-            ["codex", "idle", 1],
-            ["claudeAgent", "idle", 1],
-          ],
-        );
+        assert.lengthOf(turns, 2);
         assert.equal(turns[0]?.text, firstPrompt);
-        assert.include(turns[1]?.text ?? "", "Context handoff (full_thread_summary):");
         assert.include(turns[1]?.text ?? "", "codex before switch");
-        assert.include(turns[1]?.text ?? "", claudePrompt);
-        // The fresh native thread has none of the earlier Codex turn, so the
-        // portable fallback re-sends it alongside the Claude delta.
-        assert.include(turns[2]?.text ?? "", "Context handoff (full_thread_summary):");
-        assert.include(turns[2]?.text ?? "", "Context handoff (delta_since_target_last_seen):");
-        assert.include(turns[2]?.text ?? "", "codex before switch");
-        assert.include(turns[2]?.text ?? "", "claude switched response");
-        assert.include(turns[2]?.text ?? "", returnPrompt);
-        assert.equal(turns[0]?.providerThreadId, turns[2]?.providerThreadId);
       }),
     ),
   );
@@ -3415,20 +3383,22 @@ describe("orchestration v2 provider switching", () => {
             (transfer) => transfer.type === "merge_back",
           );
 
-          if (failResume)
-            assert.isAtLeast(
-              projection.contextHandoffs.filter(
-                (handoff) => handoff.targetRunId === projection.runs.at(-1)?.id,
-              ).length,
-              2,
-            );
-          assert.isDefined(mergedTurn);
-          if (failResume)
-            assert.notEqual(
-              projection.providerThreads.find((thread) => thread.id === mergedTurn.providerThreadId)
-                ?.nativeThreadRef?.nativeId,
+          if (failResume) {
+            assert.equal(projection.runs.at(-1)?.status, "failed");
+            assert.equal(
+              projection.providerThreads.find(
+                (thread) => thread.id === projection.runs.at(-1)?.providerThreadId,
+              )?.nativeThreadRef?.nativeId,
               "unloaded-native-merge-target",
             );
+            assert.isFalse(
+              projection.contextTransfers.some(
+                (transfer) => transfer.status === "resolved_portable",
+              ),
+            );
+            return;
+          }
+          assert.isDefined(mergedTurn);
           assert.include(mergedTurn.text, "Context handoff (full_thread_summary):");
           assert.include(mergedTurn.text, firstSourcePrompt);
           assert.include(mergedTurn.text, "I will remember amber.");

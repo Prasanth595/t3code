@@ -231,7 +231,9 @@ const CODEX_CLIENT_CAPABILITIES = {
 
 export const CodexProviderCapabilitiesV2 = {
   sessions: {
-    supportsMultipleProviderThreadsPerSession: true,
+    // A native writer lives as long as its app-server process. Isolate app threads
+    // so switching accounts can close that writer without stopping other conversations.
+    supportsMultipleProviderThreadsPerSession: false,
     supportsModelSwitchInSession: true,
     supportsProviderSwitchingViaHandoff: true,
     supportsRuntimeModeSwitchInSession: true,
@@ -6547,6 +6549,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
+              if (response.thread.id !== nativeThreadId) {
+                return yield* new ProviderAdapter.ProviderAdapterResumeThreadError({
+                  driver: CODEX_PROVIDER,
+                  providerThreadId: threadInput.providerThread.id,
+                  providerSessionId: input.providerSessionId,
+                  cause: "Codex resumed a different native thread than requested.",
+                });
+              }
               // Codex follows a resume with a goal snapshot notification; the
               // run's first turn writes it if it differs from the stored goal.
               return {
