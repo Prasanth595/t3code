@@ -11,8 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
-
-const MAX_SKILL_BYTES = 1_000_000;
+import * as Stream from "effect/Stream";
 
 /**
  * fx's menu lists its managed `~/.fx/skills` first, then a workspace's own
@@ -49,6 +48,24 @@ const MAX_FRONTMATTER_BYTES = 64 * 1024;
 const MAX_NAME_BYTES = 256;
 const BLOCK_DESCRIPTION_STYLES = new Set([">", ">-", "|"]);
 const encoder = new TextEncoder();
+/**
+ * fx works on bytes: a byte-order mark means the file does not start with
+ * `---` (no frontmatter), and invalid UTF-8 makes a value invalid. Keeping
+ * the BOM and decoding bad bytes as U+FFFD lets the parser see both.
+ */
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
+const decodeSkillFile = (bytes: Uint8Array) => decoder.decode(bytes);
+
+function concatBytes(chunks: Iterable<Uint8Array>): Uint8Array {
+  const parts = [...chunks];
+  const bytes = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
+}
 function compareUtf8(left: string, right: string): number {
   const a = encoder.encode(left);
   const b = encoder.encode(right);
@@ -61,8 +78,9 @@ function compareUtf8(left: string, right: string): number {
 /** fx trims only spaces and tabs. */
 const trimSpaceTab = (value: string) => value.replace(/^[ \t]+|[ \t]+$/g, "");
 
-/** fx's `invalidTextCause`: no ASCII control bytes. */
-const hasControlByte = (value: string) => [...value].some((char) => char < " " || char === "\x7f");
+/** fx's `invalidTextCause`: valid UTF-8 (no U+FFFD from decoding), no ASCII control bytes. */
+const hasControlByte = (value: string) =>
+  [...value].some((char) => char < " " || char === "\x7f" || char === "\ufffd");
 
 /** fx's `parseRecognizedValue`: one quoted or bare scalar, no YAML. */
 function recognizedValue(raw: string): string | undefined {
@@ -130,11 +148,15 @@ function parseSkillMetadata(
       if (BLOCK_DESCRIPTION_STYLES.has(raw)) {
         // A block description runs over the following space-indented lines;
         // fx rejects a tab or a shrinking indent inside it.
-        const block: Array<string> = [];
+        // Blank lines stay part of the block (`undefined` below).
+        const block: Array<string | undefined> = [];
         let baseIndent: number | undefined;
         for (; index + 1 < header.length; index++) {
           const next = header[index + 1] ?? "";
-          if (trimSpaceTab(next).length === 0) continue;
+          if (trimSpaceTab(next).length === 0) {
+            block.push(undefined);
+            continue;
+          }
           const indent = /^ */.exec(next)?.[0].length ?? 0;
           if (next[indent] === "\t") return undefined;
           if (indent === 0) break;
@@ -144,7 +166,7 @@ function parseSkillMetadata(
           if (hasControlByte(content)) return undefined;
           block.push(content);
         }
-        description = block.join(raw === "|" ? "\n" : " ").trim();
+        description = decodeBlockDescription(block, raw);
       } else {
         description = recognizedValue(raw);
         if (description === undefined || hasControlByte(description)) return undefined;
@@ -154,6 +176,24 @@ function parseSkillMetadata(
   }
   if (name === undefined || !validSkillName(name)) return undefined;
   return { name, ...(description ? { description } : {}) };
+}
+
+/**
+ * fx's `decode_block_description`: `|` keeps line breaks; `>` and `>-` join
+ * neighbouring lines with a space and turn a blank line into a break. Only
+ * `>-` drops the final newline, which the menu trims anyway.
+ */
+function decodeBlockDescription(lines: ReadonlyArray<string | undefined>, style: string): string {
+  const lastLine = lines.findLastIndex((line) => line !== undefined);
+  let text = "";
+  for (let index = 0; index <= lastLine; index++) {
+    const line = lines[index];
+    if (index > 0) {
+      text += style !== "|" && lines[index - 1] !== undefined && line !== undefined ? " " : "\n";
+    }
+    text += line ?? "";
+  }
+  return text.trim();
 }
 
 /** fx's `invalidSkillNameCause`. */
@@ -248,15 +288,15 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
     const skillPath = path.join(input.directory, entry, "SKILL.md");
     const skillInfo = yield* skipUnreadable(skillPath, fileSystem.stat(skillPath));
     if (skillInfo?.type !== "File") continue;
-    if (skillInfo.size > MAX_SKILL_BYTES) {
-      yield* Effect.logWarning("fx skill scan skipped an oversized SKILL.md.", {
-        path: skillPath,
-        bytes: skillInfo.size,
-      });
-      continue;
-    }
-    const contents = yield* skipUnreadable(skillPath, fileSystem.readFileString(skillPath));
-    const metadata = contents === undefined ? undefined : parseSkillMetadata(contents, entry);
+    // fx reads only the metadata prefix, so a long body never hides a skill.
+    const prefix = yield* skipUnreadable(
+      skillPath,
+      fileSystem
+        .stream(skillPath, { bytesToRead: MAX_FRONTMATTER_BYTES + 1 })
+        .pipe(Stream.runCollect, Effect.map(concatBytes)),
+    );
+    const metadata =
+      prefix === undefined ? undefined : parseSkillMetadata(decodeSkillFile(prefix), entry);
     if (metadata === undefined) continue;
     const folder = yield* skipUnreadable(
       skillPath,

@@ -93,6 +93,20 @@ describe("discoverFxSkills", () => {
         path.join(home, ".agents/skills/review"),
         "---\nname: review\ndescription: first line\n  second line\n---\n",
       );
+      // fx sees no frontmatter after a byte-order mark, so this one is
+      // `bom-folder`, not `bom-name`, and its body may run past 1 MB.
+      yield* fileSystem.makeDirectory(path.join(home, ".fx/skills/bom-folder"), {
+        recursive: true,
+      });
+      yield* fileSystem.writeFile(
+        path.join(home, ".fx/skills/bom-folder/SKILL.md"),
+        new Uint8Array([
+          0xef,
+          0xbb,
+          0xbf,
+          ...new TextEncoder().encode(`---\nname: bom-name\n---\n${"x".repeat(1_100_000)}`),
+        ]),
+      );
       // fx folds only ASCII case, so these two are distinct.
       yield* writeSkillFile(
         path.join(home, ".fx/skills/accent-upper"),
@@ -115,6 +129,7 @@ describe("discoverFxSkills", () => {
         [
           ["été", true],
           ["Été", true],
+          ["bom-folder", true],
           ["plain", true],
           ["review", false],
           ["Review", false],
