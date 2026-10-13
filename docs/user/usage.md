@@ -114,6 +114,10 @@ its monthly allowance, including separate Auto and API usage, using the CLI logi
 usage. Keychain login is used for limits only with Cursor's default API endpoint. If you configure
 a custom Cursor endpoint, use an explicit token or file-based CLI login for limits.
 
+An ACP Registry instance that runs GLM models reports the account's GLM Coding Plan windows when
+its **Environment variables** carry a `Z_AI_API_KEY`. The key the GLM agent already signs in with
+is enough; an instance without one reports no limits and is left out of the view.
+
 Grok reports the remaining subscription allowance and reset time for its current billing period
 after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
 or endpoint configurations do not report subscription limits.
