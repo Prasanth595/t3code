@@ -82,8 +82,13 @@ describe("discoverFxSkills", () => {
         "---\ndescription: Missing name\n---\n",
       );
       yield* writeSkillFile(path.join(home, ".fx/skills/unclosed"), "---\nname: unclosed\n");
-      // A continued plain value is fx's `unsupported_multiline`, so this
-      // `review` is invalid and the valid ones stay the only two.
+      // A continued plain value is fx's `unsupported_multiline`, and fx trims
+      // only spaces and tabs, so a trailing vertical tab is a control byte:
+      // both these `review`s are invalid and the valid ones stay the only two.
+      yield* writeSkillFile(
+        path.join(home, ".codex/skills/review"),
+        "---\nname: review\u000b\n---\n",
+      );
       yield* writeSkillFile(
         path.join(home, ".agents/skills/review"),
         "---\nname: review\ndescription: first line\n  second line\n---\n",

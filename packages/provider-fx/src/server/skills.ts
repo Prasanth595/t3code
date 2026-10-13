@@ -49,6 +49,17 @@ const MAX_FRONTMATTER_BYTES = 64 * 1024;
 const MAX_NAME_BYTES = 256;
 const BLOCK_DESCRIPTION_STYLES = new Set([">", ">-", "|"]);
 const encoder = new TextEncoder();
+function compareUtf8(left: string, right: string): number {
+  const a = encoder.encode(left);
+  const b = encoder.encode(right);
+  for (let index = 0; index < Math.min(a.length, b.length); index++) {
+    if (a[index] !== b[index]) return (a[index] ?? 0) - (b[index] ?? 0);
+  }
+  return a.length - b.length;
+}
+
+/** fx trims only spaces and tabs. */
+const trimSpaceTab = (value: string) => value.replace(/^[ \t]+|[ \t]+$/g, "");
 
 /** fx's `invalidTextCause`: no ASCII control bytes. */
 const hasControlByte = (value: string) => [...value].some((char) => char < " " || char === "\x7f");
@@ -99,14 +110,14 @@ function parseSkillMetadata(
   let previousRecognized = false;
   for (let index = 0; index < header.length; index++) {
     const line = header[index] ?? "";
-    const trimmed = line.trim();
+    const trimmed = trimSpaceTab(line);
     if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
     if (previousRecognized && /^[ \t]/.test(line)) return undefined;
     previousRecognized = false;
     const colon = trimmed.indexOf(":");
     if (colon === -1) continue;
-    const key = trimmed.slice(0, colon).trim();
-    const raw = trimmed.slice(colon + 1).trim();
+    const key = trimSpaceTab(trimmed.slice(0, colon));
+    const raw = trimSpaceTab(trimmed.slice(colon + 1));
     if (key === "name") {
       if (sawName) return undefined;
       sawName = true;
@@ -123,7 +134,7 @@ function parseSkillMetadata(
         let baseIndent: number | undefined;
         for (; index + 1 < header.length; index++) {
           const next = header[index + 1] ?? "";
-          if (next.trim().length === 0) continue;
+          if (trimSpaceTab(next).length === 0) continue;
           const indent = /^ */.exec(next)?.[0].length ?? 0;
           if (next[indent] === "\t") return undefined;
           if (indent === 0) break;
@@ -222,8 +233,8 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
   const path = yield* Path.Path;
   const entries = yield* skipUnreadable(input.directory, fileSystem.readDirectory(input.directory));
   const skills: Array<{ readonly skill: ServerProviderSkill; readonly folder: string }> = [];
-  // fx reads a root's folders in byte order; readDirectory promises none.
-  for (const entry of [...(entries ?? [])].sort()) {
+  // fx reads a root's folders in UTF-8 byte order; readDirectory promises none.
+  for (const entry of [...(entries ?? [])].sort(compareUtf8)) {
     // `readLink` succeeds only on a symlink.
     if (
       !input.followsLinks &&
