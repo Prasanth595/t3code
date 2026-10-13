@@ -1,0 +1,1434 @@
+/**
+ * MM-101: the one Durable Object that holds the whole map. It keeps the document, the history,
+ * the queue, presence, proposals and join codes in SQLite, and the page and machine sockets with
+ * the WebSocket Hibernation API. The rules live in `rules/`. This class stores, sends and calls
+ * Cloudflare.
+ */
+import { DurableObject } from "cloudflare:workers";
+import * as Schema from "effect/Schema";
+import {
+  MACHINE_MAP_PROTOCOL,
+  machineSessionSubject,
+  MachineCommand,
+  MachineId,
+  MachineMapDocument,
+  MachinePresence,
+  MachineToPortal,
+  MapProposal,
+  MapRevision,
+  MapToolInputs,
+  ScopedSettingValues,
+  type CommandDelivery,
+  type MachineCommandInput,
+  type MachineRecord,
+  type MapActor,
+  type MapChange,
+  type MapToolName,
+  type PortalEvent,
+  type PortalSnapshot,
+  type PortalToMachine,
+} from "@t3tools/contracts/machineMap";
+
+import type {
+  AddMachineRequest,
+  ChangesRequest,
+  CommandRequest,
+  DevicesResponse,
+  EnrollResponse,
+  JoinCodeRequest,
+  JoinCodeResponse,
+  MapToolResult,
+  PendingRotation,
+  PortalSignIn,
+  RemoveMachineResponse,
+  RotationResponse,
+  RotationsEvent,
+  SignOutEverywhereResponse,
+  WriteResult,
+} from "./api.ts";
+import { configured } from "./access.ts";
+import { CloudflareApi } from "./cloudflare.ts";
+import type { Env } from "./env.ts";
+import { arrowChange, decideAgentWrite, gateTool } from "./rules/access.ts";
+import {
+  applyChanges,
+  checkEditableChanges,
+  desiredState,
+  emptyMap,
+  findMachine,
+  machinesTouched,
+  MapRuleError,
+} from "./rules/map.ts";
+import {
+  applyPresetChanges,
+  lockdownChanges,
+  restoreChanges,
+  savePresetChange,
+} from "./rules/presets.ts";
+import {
+  addMinutes,
+  canDeliver,
+  DEFAULT_COMMAND_MINUTES,
+  earliest,
+  isDue,
+  JOIN_CODE_MINUTES,
+  localSettingChanges,
+  PROPOSAL_MINUTES,
+  ROTATION_MINUTES,
+  supportsCommand,
+} from "./rules/queue.ts";
+import { newJoinCode, normalizeJoinCode, seal, sha256Hex, unseal } from "./sealedSecret.ts";
+
+/** The owner behind an API call, as the Worker saw it. */
+export interface OwnerContext {
+  readonly email: string;
+  readonly signInId: string;
+  readonly device: string;
+  readonly browser: string;
+  readonly place: string;
+}
+
+/** The result of every RPC method. The Worker turns it into an HTTP response. */
+export type Outcome<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly status: number; readonly error: string };
+
+/** An expected refusal with its HTTP status. */
+class PortalError extends Error {
+  override readonly name = "PortalError";
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** Header from the Worker with the client id of a verified machine token. */
+export const MACHINE_CLIENT_ID_HEADER = "X-Map-Machine-Client-Id";
+
+const PAGE_TAG = "page";
+const machineTag = (id: MachineId) => `machine:${id}`;
+
+const Attachment = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("page") }),
+  Schema.Struct({ kind: Schema.Literal("machine"), machineId: MachineId }),
+]);
+type Attachment = typeof Attachment.Type;
+
+const decodeJson = <T>(schema: Schema.ConstraintDecoder<T>) => {
+  const decode = Schema.decodeUnknownSync(schema);
+  return (text: string): T => decode(JSON.parse(text));
+};
+
+const decodeMap = decodeJson(MachineMapDocument);
+const decodeRevision = decodeJson(MapRevision);
+const decodeCommand = decodeJson(MachineCommand);
+const decodeProposal = decodeJson(MapProposal);
+const decodePresence = decodeJson(MachinePresence);
+const decodeSettings = decodeJson(ScopedSettingValues);
+const decodeMachineMessage = decodeJson(MachineToPortal);
+const decodeAttachment = Schema.decodeUnknownSync(Attachment);
+const decodeHelloProtocol = Schema.decodeUnknownOption(
+  Schema.TaggedStruct("hello", { protocol: Schema.Number }),
+);
+/** The protocol of a `hello` message, or undefined for any other message. */
+const decodeHelloVersion = (text: string): { protocol: number } | undefined => {
+  try {
+    const hello = decodeHelloProtocol(JSON.parse(text));
+    return hello._tag === "Some" ? hello.value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The shared input schemas of the agent tools (MM-801), compiled once. */
+const decodeToolInput = {
+  machines_read: Schema.decodeUnknownSync(MapToolInputs.machines_read),
+  machines_set_access: Schema.decodeUnknownSync(MapToolInputs.machines_set_access),
+  machines_set_setting: Schema.decodeUnknownSync(MapToolInputs.machines_set_setting),
+  machines_command: Schema.decodeUnknownSync(MapToolInputs.machines_command),
+  machines_queue_cancel: Schema.decodeUnknownSync(MapToolInputs.machines_queue_cancel),
+  machines_undo: Schema.decodeUnknownSync(MapToolInputs.machines_undo),
+  machines_preset: Schema.decodeUnknownSync(MapToolInputs.machines_preset),
+};
+
+const offline: MachinePresence = {
+  online: false,
+  lastSeenAt: null,
+  appliedRevision: null,
+  status: null,
+};
+
+/** MM-1204: at most this many enroll attempts per address in one window. */
+const ENROLL_LIMIT = 10;
+const ENROLL_WINDOW_MS = 15 * 60_000;
+const SNAPSHOT_HISTORY = 100;
+const SNAPSHOT_FINISHED_COMMANDS = 100;
+/** A page records the same sign-in at most once a minute. */
+const SIGN_IN_WRITE_MS = 60_000;
+
+const nowIso = () => new Date().toISOString();
+
+const slug = (name: string): string => {
+  let out = "";
+  for (const char of name.toLowerCase()) {
+    const keep = (char >= "a" && char <= "z") || (char >= "0" && char <= "9");
+    if (keep) out += char;
+    else if (!out.endsWith("-")) out += "-";
+  }
+  const trimmed = out
+    .split("-")
+    .filter((part) => part.length > 0)
+    .join("-")
+    .slice(0, 32);
+  return trimmed.length > 0 ? trimmed : "machine";
+};
+
+const randomHex = (bytes: number): string =>
+  [...crypto.getRandomValues(new Uint8Array(bytes))]
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+
+/**
+ * New machines go round a circle at the golden angle, so any count spreads out.
+ * The owner moves them later (MM-206).
+ */
+const nextPosition = (count: number) => {
+  const angle = -Math.PI / 2 + count * 2.39996;
+  const round = (value: number) => Math.round(Math.min(0.9, Math.max(0.1, value)) * 1000) / 1000;
+  return { x: round(0.5 + 0.38 * Math.cos(angle)), y: round(0.5 + 0.38 * Math.sin(angle)) };
+};
+
+const ownerActor = (owner: OwnerContext): MapActor => ({
+  _tag: "owner",
+  email: owner.email,
+  device: `${owner.device} · ${owner.browser}`,
+});
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+export class MachineMapObject extends DurableObject<Env> {
+  #map: MachineMapDocument;
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    // MM-1001: liveness pings get their answer without waking the object.
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    this.#migrate();
+    const row = this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'map'")[0];
+    this.#map = row ? decodeMap(row.value) : emptyMap();
+  }
+
+  // ---------------------------------------------------------------- storage
+
+  #sql<T extends Record<string, SqlStorageValue>>(
+    query: string,
+    ...bindings: Array<SqlStorageValue>
+  ): Array<T> {
+    return this.ctx.storage.sql.exec<T>(query, ...bindings).toArray();
+  }
+
+  #migrate(): void {
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS revisions (revision INTEGER PRIMARY KEY, data TEXT NOT NULL, map TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS commands (id TEXT PRIMARY KEY, machine_id TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS commands_by_status ON commands (status, created_at);
+      CREATE TABLE IF NOT EXISTS proposals (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS presence (machine_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS reported_settings (machine_id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS join_codes (code_hash TEXT PRIMARY KEY, machine_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS rotations (machine_id TEXT PRIMARY KEY, token_client_id TEXT NOT NULL, sealed_secret TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS machine_tokens (machine_id TEXT PRIMARY KEY, token_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
+    `);
+  }
+
+  #revision(revision: number): MapRevision | undefined {
+    const row = this.#sql<{ data: string }>(
+      "SELECT data FROM revisions WHERE revision = ?",
+      revision,
+    )[0];
+    return row ? decodeRevision(row.data) : undefined;
+  }
+
+  #history(before: number | null, limit: number): Array<MapRevision> {
+    return this.#sql<{ data: string }>(
+      "SELECT data FROM revisions WHERE revision < ? ORDER BY revision DESC LIMIT ?",
+      before ?? Number.MAX_SAFE_INTEGER,
+      limit,
+    ).map((row) => decodeRevision(row.data));
+  }
+
+  #command(id: string): MachineCommand | undefined {
+    const row = this.#sql<{ data: string }>("SELECT data FROM commands WHERE id = ?", id)[0];
+    return row ? decodeCommand(row.data) : undefined;
+  }
+
+  #commandsWithStatus(status: MachineCommand["status"]): Array<MachineCommand> {
+    return this.#sql<{ data: string }>(
+      "SELECT data FROM commands WHERE status = ? ORDER BY created_at",
+      status,
+    ).map((row) => decodeCommand(row.data));
+  }
+
+  #saveCommand(command: MachineCommand): void {
+    this.#sql(
+      "INSERT OR REPLACE INTO commands (id, machine_id, status, created_at, data) VALUES (?, ?, ?, ?, ?)",
+      command.id,
+      command.machineId,
+      command.status,
+      command.createdAt,
+      JSON.stringify(command),
+    );
+    this.#broadcast({ _tag: "command", command });
+  }
+
+  #proposals(): Array<MapProposal> {
+    return this.#sql<{ data: string }>("SELECT data FROM proposals").map((row) =>
+      decodeProposal(row.data),
+    );
+  }
+
+  #storedPresence(id: MachineId): MachinePresence {
+    const row = this.#sql<{ data: string }>(
+      "SELECT data FROM presence WHERE machine_id = ?",
+      id,
+    )[0];
+    return row ? decodePresence(row.data) : offline;
+  }
+
+  /** MM-105: the last known state, with `online` from the open sockets. */
+  #presence(id: MachineId, closing?: WebSocket): MachinePresence {
+    const online = this.ctx
+      .getWebSockets(machineTag(id))
+      .some((ws) => ws !== closing && ws.readyState === WebSocket.OPEN);
+    return { ...this.#storedPresence(id), online };
+  }
+
+  #savePresence(id: MachineId, presence: MachinePresence, closing?: WebSocket): void {
+    this.#sql(
+      "INSERT OR REPLACE INTO presence (machine_id, data) VALUES (?, ?)",
+      id,
+      JSON.stringify(presence),
+    );
+    this.#broadcast({ _tag: "presence", machineId: id, presence: this.#presence(id, closing) });
+  }
+
+  #reportedSettings(id: MachineId): ScopedSettingValues {
+    const row = this.#sql<{ data: string }>(
+      "SELECT data FROM reported_settings WHERE machine_id = ?",
+      id,
+    )[0];
+    return row ? decodeSettings(row.data) : { server: {}, client: {} };
+  }
+
+  #saveReportedSettings(id: MachineId, settings: ScopedSettingValues): void {
+    this.#sql(
+      "INSERT OR REPLACE INTO reported_settings (machine_id, data) VALUES (?, ?)",
+      id,
+      JSON.stringify(settings),
+    );
+    this.#broadcast({ _tag: "reportedSettings", machineId: id, settings });
+  }
+
+  #pendingRotations(): Array<PendingRotation> {
+    return this.#sql<{ machine_id: string; created_at: string; expires_at: string }>(
+      "SELECT machine_id, created_at, expires_at FROM rotations ORDER BY created_at",
+    ).map((row) => ({
+      machineId: MachineId.make(row.machine_id),
+      createdAt: row.created_at,
+      expiresAt: row.expires_at,
+    }));
+  }
+
+  // ---------------------------------------------------------------- sockets
+
+  #broadcast(event: PortalEvent | RotationsEvent): void {
+    const text = JSON.stringify(event);
+    for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
+      try {
+        ws.send(text);
+      } catch (error) {
+        console.error("page send failed", errorMessage(error));
+      }
+    }
+  }
+
+  #sendTo(machineId: MachineId, message: PortalToMachine): boolean {
+    let sent = false;
+    for (const ws of this.ctx.getWebSockets(machineTag(machineId))) {
+      try {
+        ws.send(JSON.stringify(message));
+        sent = true;
+      } catch (error) {
+        console.error("machine send failed", machineId, errorMessage(error));
+      }
+    }
+    return sent;
+  }
+
+  #sendDesired(machineId: MachineId): void {
+    const state = desiredState(this.#map, machineId);
+    if (state) this.#sendTo(machineId, { _tag: "desired", state });
+  }
+
+  #snapshot(): PortalSnapshot {
+    const finished = this.#sql<{ data: string }>(
+      "SELECT data FROM commands WHERE status NOT IN ('queued', 'delivered') ORDER BY created_at DESC LIMIT ?",
+      SNAPSHOT_FINISHED_COMMANDS,
+    ).map((row) => decodeCommand(row.data));
+    return {
+      map: this.#map,
+      presence: Object.fromEntries(this.#map.machines.map((m) => [m.id, this.#presence(m.id)])),
+      reportedSettings: Object.fromEntries(
+        this.#map.machines.map((m) => [m.id, this.#reportedSettings(m.id)]),
+      ),
+      commands: [
+        ...this.#commandsWithStatus("queued"),
+        ...this.#commandsWithStatus("delivered"),
+        ...finished,
+      ],
+      history: this.#history(null, SNAPSHOT_HISTORY),
+      proposals: this.#proposals(),
+    };
+  }
+
+  /** WebSocket upgrades from the Worker: `/api/events` for pages, `/connect` for machines. */
+  override async fetch(request: Request): Promise<Response> {
+    if (request.headers.get("Upgrade") !== "websocket") {
+      return new Response("Expected a WebSocket upgrade.", { status: 426 });
+    }
+    const { pathname } = new URL(request.url);
+    const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+    if (pathname === "/api/events") {
+      this.ctx.acceptWebSocket(server, [PAGE_TAG]);
+      server.serializeAttachment({ kind: "page" } satisfies Attachment);
+      // MM-106: a page gets the whole state first, then every change.
+      server.send(
+        JSON.stringify({ _tag: "snapshot", snapshot: this.#snapshot() } satisfies PortalEvent),
+      );
+      server.send(JSON.stringify(this.#rotationsEvent()));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (pathname === "/connect") {
+      const clientId = request.headers.get(MACHINE_CLIENT_ID_HEADER);
+      const machine = this.#map.machines.find((m) => m.tokenClientId === clientId);
+      // MM-104, MM-208: an unknown or removed machine token never connects.
+      if (!clientId || !machine) return new Response("Unknown machine token.", { status: 403 });
+      for (const old of this.ctx.getWebSockets(machineTag(machine.id))) {
+        old.close(4000, "Replaced by a new connection.");
+      }
+      this.ctx.acceptWebSocket(server, [machineTag(machine.id)]);
+      server.serializeAttachment({ kind: "machine", machineId: machine.id } satisfies Attachment);
+      this.#savePresence(machine.id, { ...this.#storedPresence(machine.id), lastSeenAt: nowIso() });
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    return new Response("Not found.", { status: 404 });
+  }
+
+  override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const attachment = decodeAttachment(ws.deserializeAttachment());
+    // Pages only listen. Their pings get the automatic answer.
+    if (attachment.kind !== "machine" || typeof message !== "string") return;
+    const machine = findMachine(this.#map, attachment.machineId);
+    if (!machine) {
+      ws.close(4004, "This machine left the map.");
+      return;
+    }
+    let parsed: MachineToPortal;
+    try {
+      parsed = decodeMachineMessage(message);
+    } catch (error) {
+      // A machine on another protocol version learns why, instead of waiting for a desired state.
+      const hello = decodeHelloVersion(message);
+      if (hello !== undefined && hello.protocol !== MACHINE_MAP_PROTOCOL) {
+        ws.close(4400, `The portal speaks protocol ${MACHINE_MAP_PROTOCOL}.`);
+      }
+      console.error("bad machine message", machine.id, errorMessage(error));
+      return;
+    }
+    await this.#onMachineMessage(machine, parsed);
+    await this.#scheduleAlarm();
+  }
+
+  override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    const attachment = decodeAttachment(ws.deserializeAttachment());
+    try {
+      ws.close(code, reason);
+    } catch {
+      // The socket is already closed.
+    }
+    if (attachment.kind !== "machine" || !findMachine(this.#map, attachment.machineId)) return;
+    const id = attachment.machineId;
+    this.#savePresence(id, { ...this.#storedPresence(id), lastSeenAt: nowIso() }, ws);
+  }
+
+  override async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    console.error("socket error", errorMessage(error));
+    await this.webSocketClose(ws, 1011, "Socket error.");
+  }
+
+  // ---------------------------------------------------------------- machines
+
+  async #onMachineMessage(machine: MachineRecord, message: MachineToPortal): Promise<void> {
+    const id = machine.id;
+    switch (message._tag) {
+      case "hello": {
+        this.#savePresence(id, {
+          online: true,
+          lastSeenAt: nowIso(),
+          appliedRevision: message.appliedRevision,
+          status: message.status,
+        });
+        this.#saveReportedSettings(id, message.settings);
+        this.#recordHostname(machine, message.status.hostname);
+        // MM-603: the current desired state, not each queued revision.
+        this.#sendDesired(id);
+        await this.#sendRotation(id);
+        this.#deliverCommands(id);
+        return;
+      }
+      case "status": {
+        this.#savePresence(id, {
+          ...this.#storedPresence(id),
+          lastSeenAt: nowIso(),
+          status: message.status,
+        });
+        this.#recordHostname(machine, message.status.hostname);
+        this.#deliverCommands(id);
+        return;
+      }
+      case "applied": {
+        this.#savePresence(id, {
+          ...this.#storedPresence(id),
+          lastSeenAt: nowIso(),
+          appliedRevision: message.revision,
+        });
+        return;
+      }
+      case "localSettings": {
+        const reported = this.#reportedSettings(id);
+        this.#saveReportedSettings(id, {
+          ...reported,
+          [message.scope]: { ...reported[message.scope], ...message.values },
+        });
+        const changes = localSettingChanges(this.#map, id, message.scope, message.values);
+        if (changes.length > 0) {
+          this.#commit(
+            { _tag: "agent", machineId: id, threadId: null, threadTitle: null },
+            `changed on ${machine.name}`,
+            changes,
+          );
+        }
+        return;
+      }
+      case "commandResult": {
+        const command = this.#command(message.commandId);
+        if (!command || command.machineId !== id) return;
+        if (command.status !== "queued" && command.status !== "delivered") return;
+        this.#saveCommand({
+          ...command,
+          status: message.ok ? "succeeded" : "failed",
+          updatedAt: nowIso(),
+          result: message.result,
+          error: message.error,
+        });
+        return;
+      }
+      case "toolCall": {
+        const actor: MapActor = {
+          _tag: "agent",
+          machineId: id,
+          threadId: message.threadId,
+          threadTitle: message.threadTitle,
+        };
+        try {
+          const result = this.#runTool(actor, message.tool, message.input);
+          this.#sendTo(id, {
+            _tag: "toolResult",
+            requestId: message.requestId,
+            ok: true,
+            result,
+            error: null,
+          });
+        } catch (error) {
+          this.#sendTo(id, {
+            _tag: "toolResult",
+            requestId: message.requestId,
+            ok: false,
+            result: null,
+            error: errorMessage(error),
+          });
+        }
+        return;
+      }
+      case "rotated": {
+        const row = this.#sql<{ token_client_id: string }>(
+          "SELECT token_client_id FROM rotations WHERE machine_id = ?",
+          id,
+        )[0];
+        if (!row || row.token_client_id !== message.tokenClientId) return;
+        this.#sql("DELETE FROM rotations WHERE machine_id = ?", id);
+        this.#broadcast(this.#rotationsEvent());
+        // MM-207: the machine saved the new secret, so the old one stops now.
+        const api = this.#cloudflare();
+        const tokenId = api ? await this.#tokenId(api, machine) : null;
+        if (api && tokenId) {
+          await api.endPreviousSecret(tokenId).catch((error: unknown) => {
+            console.error("could not end the previous secret", id, errorMessage(error));
+          });
+        }
+        return;
+      }
+    }
+  }
+
+  /** MM-209: the machine reports its tunnel hostname. Peers use it to connect. */
+  #recordHostname(machine: MachineRecord, hostname: string | null): void {
+    if (hostname === null || hostname === machine.hostname) return;
+    this.#commit(
+      { _tag: "portal", reason: `${machine.name} reported its hostname` },
+      `${machine.name} is at ${hostname}`,
+      [{ _tag: "putMachine", machine: { ...machine, hostname } }],
+    );
+  }
+
+  #deliverCommands(machineId: MachineId): void {
+    const presence = this.#presence(machineId);
+    for (const command of this.#commandsWithStatus("queued")) {
+      if (command.machineId !== machineId || !canDeliver(command, presence)) continue;
+      const delivered: MachineCommand = { ...command, status: "delivered", updatedAt: nowIso() };
+      if (this.#sendTo(machineId, { _tag: "command", command: delivered }))
+        this.#saveCommand(delivered);
+    }
+  }
+
+  async #sendRotation(machineId: MachineId): Promise<boolean> {
+    const row = this.#sql<{ token_client_id: string; sealed_secret: string }>(
+      "SELECT token_client_id, sealed_secret FROM rotations WHERE machine_id = ?",
+      machineId,
+    )[0];
+    if (!row) return false;
+    const tokenSecret = await unseal(this.env.SECRET_KEY, row.sealed_secret);
+    return this.#sendTo(machineId, {
+      _tag: "rotate",
+      tokenClientId: row.token_client_id,
+      tokenSecret,
+    });
+  }
+
+  #rotationsEvent(): RotationsEvent {
+    return { _tag: "rotations", rotations: this.#pendingRotations() };
+  }
+
+  // ---------------------------------------------------------------- writes
+
+  /** MM-701: one revision. Pushes the new desired state to every touched online machine. */
+  #commit(actor: MapActor, summary: string, changes: ReadonlyArray<MapChange>): MapRevision {
+    if (changes.length === 0) throw new PortalError(409, "Nothing changes.");
+    const applied = applyChanges(this.#map, changes);
+    const map = { ...applied.map, revision: this.#map.revision + 1 };
+    const revision: MapRevision = {
+      revision: map.revision,
+      at: nowIso(),
+      actor,
+      summary,
+      changes,
+      inverse: applied.inverse,
+    };
+    this.ctx.storage.transactionSync(() => {
+      this.#sql(
+        "INSERT INTO revisions (revision, data, map) VALUES (?, ?, ?)",
+        revision.revision,
+        JSON.stringify(revision),
+        JSON.stringify(map),
+      );
+      this.#sql("INSERT OR REPLACE INTO meta (key, value) VALUES ('map', ?)", JSON.stringify(map));
+    });
+    this.#map = map;
+    this.#broadcast({ _tag: "revision", revision, map });
+    const touched = machinesTouched(revision);
+    for (const machine of map.machines) {
+      if (touched === "all" || touched.has(machine.id)) this.#sendDesired(machine.id);
+    }
+    return revision;
+  }
+
+  #propose(
+    actor: MapActor,
+    summary: string,
+    changes: ReadonlyArray<MapChange>,
+    reason: MapProposal["reason"],
+  ): MapProposal {
+    const at = Date.now();
+    const proposal: MapProposal = {
+      id: crypto.randomUUID(),
+      at: new Date(at).toISOString(),
+      expiresAt: addMinutes(at, PROPOSAL_MINUTES),
+      actor,
+      summary,
+      changes,
+      reason,
+    };
+    this.#sql(
+      "INSERT INTO proposals (id, data) VALUES (?, ?)",
+      proposal.id,
+      JSON.stringify(proposal),
+    );
+    this.#broadcast({ _tag: "proposals", proposals: this.#proposals() });
+    return proposal;
+  }
+
+  /** MM-802, MM-803: an agent change applies at once or becomes a proposal. */
+  #agentWrite(
+    actor: Extract<MapActor, { _tag: "agent" }>,
+    summary: string,
+    changes: ReadonlyArray<MapChange>,
+  ): WriteResult {
+    checkEditableChanges(this.#map, changes);
+    const decision = decideAgentWrite(this.#map, actor.machineId, changes);
+    if (decision._tag === "apply") {
+      return { _tag: "applied", revision: this.#commit(actor, summary, changes).revision };
+    }
+    const proposal = this.#propose(actor, summary, changes, decision.reason);
+    return { _tag: "proposed", proposalId: proposal.id, reason: decision.reason };
+  }
+
+  #createCommand(
+    actor: MapActor,
+    machineId: MachineId,
+    input: MachineCommandInput,
+    delivery: CommandDelivery,
+    expiresInMinutes: number,
+  ): MachineCommand {
+    const machine = findMachine(this.#map, machineId);
+    if (!machine) throw new PortalError(404, `Unknown machine ${machineId}.`);
+    const status = this.#presence(machineId).status;
+    if (!supportsCommand(status, input._tag)) {
+      throw new PortalError(
+        409,
+        status === null
+          ? `${machine.name} did not report its commands yet.`
+          : `${machine.name} does not support ${input._tag}.`,
+      );
+    }
+    if (input._tag === "testArrow" && !findMachine(this.#map, input.to)) {
+      throw new PortalError(404, `Unknown machine ${input.to}.`);
+    }
+    const now = Date.now();
+    const command: MachineCommand = {
+      id: crypto.randomUUID(),
+      machineId,
+      input,
+      delivery,
+      actor,
+      status: "queued",
+      createdAt: new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+      expiresAt: addMinutes(now, expiresInMinutes),
+      result: null,
+      error: null,
+    };
+    this.#saveCommand(command);
+    this.#deliverCommands(machineId);
+    return this.#command(command.id) ?? command;
+  }
+
+  #cancelCommand(commandId: string): MachineCommand {
+    const command = this.#command(commandId);
+    if (!command) throw new PortalError(404, "Unknown command.");
+    if (command.status !== "queued") {
+      throw new PortalError(
+        409,
+        `The command is ${command.status}. Only a queued command can be cancelled.`,
+      );
+    }
+    const cancelled: MachineCommand = { ...command, status: "cancelled", updatedAt: nowIso() };
+    this.#saveCommand(cancelled);
+    return cancelled;
+  }
+
+  /** MM-703. Revisions that add or remove a machine cannot be undone (see checkEditableChanges). */
+  #undoChanges(revisionNumber: number): { summary: string; changes: ReadonlyArray<MapChange> } {
+    const revision = this.#revision(revisionNumber);
+    if (!revision) throw new PortalError(404, `Unknown revision ${revisionNumber}.`);
+    checkEditableChanges(this.#map, revision.inverse);
+    return {
+      summary: `Undo rev ${revision.revision}: ${revision.summary}`,
+      changes: revision.inverse,
+    };
+  }
+
+  #presetChanges(
+    action: "save" | "apply" | "lockdown",
+    name: string | undefined,
+  ): { summary: string; changes: ReadonlyArray<MapChange> } {
+    if (action === "lockdown") {
+      const changes = lockdownChanges(this.#map);
+      if (changes.length === 0) throw new PortalError(409, "The map is already locked down.");
+      return { summary: "Lockdown", changes };
+    }
+    if (!name) throw new PortalError(400, `The preset action ${action} needs a name.`);
+    if (action === "save") {
+      return {
+        summary: `Saved preset ${name}`,
+        changes: [savePresetChange(this.#map, name, nowIso())],
+      };
+    }
+    const preset = this.#map.presets.find((p) => p.name === name);
+    if (!preset) throw new PortalError(404, `Unknown preset ${name}.`);
+    const changes = applyPresetChanges(this.#map, preset);
+    if (changes.length === 0) throw new PortalError(409, `The arrows already match ${name}.`);
+    return { summary: `Applied preset ${name}`, changes };
+  }
+
+  /** MM-801, MM-805: one agent tool call, with the map role check of the calling machine. */
+  #runTool(
+    actor: Extract<MapActor, { _tag: "agent" }>,
+    tool: MapToolName,
+    input: unknown,
+  ): MapToolResult {
+    const gate = gateTool(this.#map, actor.machineId, tool);
+    if (gate._tag === "refuse") throw new PortalError(403, gate.error);
+    const name = (id: MachineId) => findMachine(this.#map, id)?.name ?? id;
+    switch (tool) {
+      case "machines_read": {
+        decodeToolInput.machines_read(input);
+        const snapshot = this.#snapshot();
+        return {
+          _tag: "read",
+          map: snapshot.map,
+          presence: snapshot.presence,
+          commands: snapshot.commands,
+          history: this.#history(null, 50),
+          proposals: snapshot.proposals,
+        };
+      }
+      case "machines_set_access": {
+        const args = decodeToolInput.machines_set_access(input);
+        const change = arrowChange(this.#map, {
+          from: args.from,
+          to: args.to,
+          level: args.level,
+          ...(args.agentTools === undefined ? {} : { agentTools: args.agentTools }),
+          expiresAt:
+            args.expiresInMinutes === undefined
+              ? null
+              : addMinutes(Date.now(), args.expiresInMinutes),
+        });
+        return this.#agentWrite(
+          actor,
+          `${name(args.from)} → ${name(args.to)} set to ${args.level}`,
+          [change],
+        );
+      }
+      case "machines_set_setting": {
+        const args = decodeToolInput.machines_set_setting(input);
+        const present = args.clear !== true && Object.hasOwn(args, "value");
+        const target = args.machineId === undefined ? "shared" : name(args.machineId);
+        return this.#agentWrite(
+          actor,
+          present
+            ? `${args.scope}.${args.key} set on ${target}`
+            : `${args.scope}.${args.key} cleared on ${target}`,
+          [
+            {
+              _tag: "setSetting",
+              machineId: args.machineId ?? null,
+              scope: args.scope,
+              key: args.key,
+              present,
+              value: present ? args.value : null,
+            },
+          ],
+        );
+      }
+      case "machines_command": {
+        const args = decodeToolInput.machines_command(input);
+        const command = this.#createCommand(
+          actor,
+          args.machineId,
+          args.command,
+          args.delivery ?? "online",
+          args.expiresInMinutes ?? DEFAULT_COMMAND_MINUTES,
+        );
+        return { _tag: "command", command };
+      }
+      case "machines_queue_cancel": {
+        const args = decodeToolInput.machines_queue_cancel(input);
+        return { _tag: "command", command: this.#cancelCommand(args.commandId) };
+      }
+      case "machines_undo": {
+        const args = decodeToolInput.machines_undo(input);
+        const undo = this.#undoChanges(args.revision);
+        return this.#agentWrite(actor, undo.summary, undo.changes);
+      }
+      case "machines_preset": {
+        const args = decodeToolInput.machines_preset(input);
+        const preset = this.#presetChanges(args.action, args.name);
+        return this.#agentWrite(actor, preset.summary, preset.changes);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- Cloudflare
+
+  /** MM-1205: null when the Worker has no Cloudflare API token. */
+  #cloudflare(): CloudflareApi | null {
+    return this.env.CF_API_TOKEN
+      ? new CloudflareApi(this.env.CF_API_TOKEN, this.env.ACCOUNT_ID)
+      : null;
+  }
+
+  async #tokenId(api: CloudflareApi, machine: MachineRecord): Promise<string | null> {
+    const row = this.#sql<{ token_id: string }>(
+      "SELECT token_id FROM machine_tokens WHERE machine_id = ?",
+      machine.id,
+    )[0];
+    if (row) return row.token_id;
+    const found = await api.findServiceTokenId(machine.tokenClientId);
+    if (found) {
+      this.#sql(
+        "INSERT OR REPLACE INTO machine_tokens (machine_id, token_id) VALUES (?, ?)",
+        machine.id,
+        found,
+      );
+    }
+    return found;
+  }
+
+  #accessAppIds(): Array<string> {
+    const ids = [this.env.MACHINE_ACCESS_APP_ID, this.env.CONNECT_ACCESS_APP_ID];
+    if (!ids.every(configured)) {
+      throw new PortalError(
+        503,
+        "Set MACHINE_ACCESS_APP_ID and CONNECT_ACCESS_APP_ID in wrangler.jsonc first.",
+      );
+    }
+    return ids;
+  }
+
+  async #issueJoinCode(machineId: MachineId, secret: string): Promise<JoinCodeResponse> {
+    const code = newJoinCode();
+    const codeHash = await sha256Hex(normalizeJoinCode(code));
+    const sealed = await seal(this.env.SECRET_KEY, secret);
+    const expiresAt = addMinutes(Date.now(), JOIN_CODE_MINUTES);
+    this.ctx.storage.transactionSync(() => {
+      this.#sql("DELETE FROM join_codes WHERE machine_id = ?", machineId);
+      this.#sql(
+        "INSERT INTO join_codes (code_hash, machine_id, sealed_secret, expires_at) VALUES (?, ?, ?, ?)",
+        codeHash,
+        machineId,
+        sealed,
+        expiresAt,
+      );
+    });
+    return { machineId, code, expiresAt };
+  }
+
+  // ---------------------------------------------------------------- alarms
+
+  async #scheduleAlarm(): Promise<void> {
+    const times = [
+      ...this.#map.arrows.flatMap((arrow) => (arrow.expiresAt ? [arrow.expiresAt] : [])),
+      ...this.#commandsWithStatus("queued").map((command) => command.expiresAt),
+      ...this.#proposals().map((proposal) => proposal.expiresAt),
+      ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM join_codes").map(
+        (r) => r.expires_at,
+      ),
+      ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM rotations").map(
+        (r) => r.expires_at,
+      ),
+    ];
+    const at = earliest(times);
+    if (at === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(at);
+  }
+
+  /** Arrow, command, proposal, join code and rotation expiry (MM-304, MM-605, MM-804, MM-202, MM-1201). */
+  override async alarm(): Promise<void> {
+    const now = Date.now();
+    for (const arrow of this.#map.arrows) {
+      if (arrow.expiresAt === null || arrow.revertLevel === null || !isDue(arrow.expiresAt, now))
+        continue;
+      const from = findMachine(this.#map, arrow.from)?.name ?? arrow.from;
+      const to = findMachine(this.#map, arrow.to)?.name ?? arrow.to;
+      this.#commit(
+        { _tag: "portal", reason: "expiry" },
+        `${from} → ${to} returned to ${arrow.revertLevel}`,
+        [
+          {
+            _tag: "setArrow",
+            arrow: { ...arrow, level: arrow.revertLevel, expiresAt: null, revertLevel: null },
+          },
+        ],
+      );
+    }
+    for (const command of this.#commandsWithStatus("queued")) {
+      if (!isDue(command.expiresAt, now)) continue;
+      this.#saveCommand({
+        ...command,
+        status: "expired",
+        updatedAt: new Date(now).toISOString(),
+        error: "Expired before the machine could take it.",
+      });
+    }
+    const expiredProposals = this.#proposals().filter((p) => isDue(p.expiresAt, now));
+    for (const proposal of expiredProposals)
+      this.#sql("DELETE FROM proposals WHERE id = ?", proposal.id);
+    if (expiredProposals.length > 0)
+      this.#broadcast({ _tag: "proposals", proposals: this.#proposals() });
+
+    for (const row of this.#sql<{ code_hash: string; expires_at: string }>(
+      "SELECT code_hash, expires_at FROM join_codes",
+    )) {
+      if (isDue(row.expires_at, now))
+        this.#sql("DELETE FROM join_codes WHERE code_hash = ?", row.code_hash);
+    }
+    let rotationsChanged = false;
+    for (const row of this.#sql<{ machine_id: string; expires_at: string }>(
+      "SELECT machine_id, expires_at FROM rotations",
+    )) {
+      if (!isDue(row.expires_at, now)) continue;
+      this.#sql("DELETE FROM rotations WHERE machine_id = ?", row.machine_id);
+      rotationsChanged = true;
+    }
+    if (rotationsChanged) this.#broadcast(this.#rotationsEvent());
+    this.#sql("DELETE FROM enroll_attempts WHERE window_start < ?", now - ENROLL_WINDOW_MS);
+    await this.#scheduleAlarm();
+  }
+
+  // ---------------------------------------------------------------- RPC
+
+  async #run<T>(owner: OwnerContext | null, work: () => T | Promise<T>): Promise<Outcome<T>> {
+    if (owner) this.#recordSignIn(owner);
+    try {
+      const value = await work();
+      await this.#scheduleAlarm();
+      return { ok: true, value };
+    } catch (error) {
+      if (error instanceof PortalError)
+        return { ok: false, status: error.status, error: error.message };
+      if (error instanceof MapRuleError) return { ok: false, status: 409, error: error.message };
+      throw error;
+    }
+  }
+
+  /** MM-901: the portal remembers each browser of the owner. */
+  #recordSignIn(owner: OwnerContext): void {
+    const now = Date.now();
+    const row = this.#sql<{ last_used: string }>(
+      "SELECT last_used FROM sign_ins WHERE id = ?",
+      owner.signInId,
+    )[0];
+    if (row && now - Date.parse(row.last_used) < SIGN_IN_WRITE_MS) return;
+    const at = new Date(now).toISOString();
+    this.#sql(
+      `INSERT INTO sign_ins (id, device, browser, place, first_seen, last_used) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (id) DO UPDATE SET place = excluded.place, last_used = excluded.last_used`,
+      owner.signInId,
+      owner.device,
+      owner.browser,
+      owner.place,
+      at,
+      at,
+    );
+  }
+
+  snapshot(owner: OwnerContext) {
+    return this.#run(owner, () => this.#snapshot());
+  }
+
+  /** POST /api/changes: owner changes apply at once (MM-701). */
+  changes(owner: OwnerContext, request: ChangesRequest) {
+    return this.#run(owner, (): WriteResult => {
+      checkEditableChanges(this.#map, request.changes);
+      return {
+        _tag: "applied",
+        revision: this.#commit(ownerActor(owner), request.summary, request.changes).revision,
+      };
+    });
+  }
+
+  createCommand(owner: OwnerContext, request: CommandRequest) {
+    return this.#run(owner, () =>
+      this.#createCommand(
+        ownerActor(owner),
+        request.machineId,
+        request.input,
+        request.delivery,
+        request.expiresInMinutes,
+      ),
+    );
+  }
+
+  cancelCommand(owner: OwnerContext, commandId: string) {
+    return this.#run(owner, () => this.#cancelCommand(commandId));
+  }
+
+  undo(owner: OwnerContext, revision: number) {
+    return this.#run(owner, (): WriteResult => {
+      const undo = this.#undoChanges(revision);
+      return {
+        _tag: "applied",
+        revision: this.#commit(ownerActor(owner), undo.summary, undo.changes).revision,
+      };
+    });
+  }
+
+  /** MM-704: a new revision that returns the map to an older revision. */
+  restore(owner: OwnerContext, revision: number) {
+    return this.#run(owner, (): WriteResult => {
+      const target = this.#mapAt(revision);
+      const changes = restoreChanges(this.#map, target);
+      if (changes.length === 0)
+        throw new PortalError(409, `The map already matches rev ${revision}.`);
+      return {
+        _tag: "applied",
+        revision: this.#commit(ownerActor(owner), `Restore rev ${revision}`, changes).revision,
+      };
+    });
+  }
+
+  history(owner: OwnerContext, before: number | null, limit: number) {
+    return this.#run(owner, () => ({
+      revisions: this.#history(before, Math.min(Math.max(limit, 1), 500)),
+    }));
+  }
+
+  #mapAt(revision: number): MachineMapDocument {
+    if (revision === 0) return emptyMap();
+    const row = this.#sql<{ map: string }>(
+      "SELECT map FROM revisions WHERE revision = ?",
+      revision,
+    )[0];
+    if (!row) throw new PortalError(404, `Unknown revision ${revision}.`);
+    return decodeMap(row.map);
+  }
+
+  mapAt(owner: OwnerContext, revision: number) {
+    return this.#run(owner, () => ({ map: this.#mapAt(revision) }));
+  }
+
+  /** MM-804: an approved proposal applies as a revision of its agent. */
+  approveProposal(owner: OwnerContext, id: string) {
+    return this.#run(owner, (): WriteResult => {
+      const proposal = this.#proposals().find((p) => p.id === id);
+      if (!proposal) throw new PortalError(404, "Unknown or expired proposal.");
+      checkEditableChanges(this.#map, proposal.changes);
+      const revision = this.#commit(
+        proposal.actor,
+        `${proposal.summary} (approved by ${owner.email})`,
+        proposal.changes,
+      );
+      this.#sql("DELETE FROM proposals WHERE id = ?", id);
+      this.#broadcast({ _tag: "proposals", proposals: this.#proposals() });
+      return { _tag: "applied", revision: revision.revision };
+    });
+  }
+
+  rejectProposal(owner: OwnerContext, id: string) {
+    return this.#run(owner, () => {
+      const removed = this.#sql<{ id: string }>(
+        "DELETE FROM proposals WHERE id = ? RETURNING id",
+        id,
+      );
+      if (removed.length === 0) throw new PortalError(404, "Unknown or expired proposal.");
+      this.#broadcast({ _tag: "proposals", proposals: this.#proposals() });
+      return { rejected: id };
+    });
+  }
+
+  /** MM-201, MM-202, MM-210. */
+  addMachine(owner: OwnerContext, request: AddMachineRequest) {
+    return this.#run(owner, async (): Promise<JoinCodeResponse> => {
+      if (!this.env.SECRET_KEY) throw new PortalError(503, "Set the SECRET_KEY secret first.");
+      const existing =
+        request.tokenClientId !== undefined && request.tokenSecret !== undefined
+          ? { clientId: request.tokenClientId, secret: request.tokenSecret }
+          : null;
+      if (!existing && (request.tokenClientId !== undefined || request.tokenSecret !== undefined)) {
+        throw new PortalError(400, "Give both the client id and the secret of the machine token.");
+      }
+      if (this.#map.machines.some((m) => m.name.toLowerCase() === request.name.toLowerCase())) {
+        throw new PortalError(409, `A machine named ${request.name} is already on the map.`);
+      }
+      const api = this.#cloudflare();
+      let token: { clientId: string; secret: string; id: string | null };
+      if (existing) {
+        if (this.#map.machines.some((m) => m.tokenClientId === existing.clientId)) {
+          throw new PortalError(409, "Another machine already uses this machine token.");
+        }
+        token = { ...existing, id: null };
+      } else if (api) {
+        const appIds = this.#accessAppIds();
+        const created = await api.createServiceToken(`t3-machine-${slug(request.name)}`);
+        try {
+          for (const appId of appIds) await api.addTokenToApp(appId, created.id);
+        } catch (error) {
+          await api.deleteServiceToken(created.id).catch(() => undefined);
+          throw error;
+        }
+        token = { clientId: created.client_id, secret: created.client_secret, id: created.id };
+      } else {
+        throw new PortalError(
+          400,
+          "The portal has no Cloudflare API token. Give the client id and secret of an existing machine token.",
+        );
+      }
+      const machine: MachineRecord = {
+        id: MachineId.make(`${slug(request.name)}-${randomHex(2)}`),
+        name: request.name,
+        kind: request.kind,
+        tokenClientId: token.clientId,
+        hostname: null,
+        position: nextPosition(this.#map.machines.length),
+        mapRole: "none",
+        createdAt: nowIso(),
+      };
+      this.#commit(ownerActor(owner), `Added ${machine.name}`, [{ _tag: "putMachine", machine }]);
+      if (token.id) {
+        this.#sql(
+          "INSERT OR REPLACE INTO machine_tokens (machine_id, token_id) VALUES (?, ?)",
+          machine.id,
+          token.id,
+        );
+      }
+      return this.#issueJoinCode(machine.id, token.secret);
+    });
+  }
+
+  /**
+   * A new join code for a machine. With a given secret, the code delivers it. Otherwise the portal
+   * rotates the token, and the old secret stops at once.
+   */
+  newJoinCode(owner: OwnerContext, machineId: MachineId, request: JoinCodeRequest) {
+    return this.#run(owner, async (): Promise<JoinCodeResponse> => {
+      if (!this.env.SECRET_KEY) throw new PortalError(503, "Set the SECRET_KEY secret first.");
+      const machine = findMachine(this.#map, machineId);
+      if (!machine) throw new PortalError(404, `Unknown machine ${machineId}.`);
+      if (request.tokenSecret !== undefined)
+        return this.#issueJoinCode(machine.id, request.tokenSecret);
+      const api = this.#cloudflare();
+      if (!api)
+        throw new PortalError(
+          400,
+          "The portal has no Cloudflare API token. Give the token secret.",
+        );
+      const tokenId = await this.#tokenId(api, machine);
+      if (!tokenId)
+        throw new PortalError(409, "Cloudflare has no service token with this client id.");
+      const secret = await api.rotateServiceToken(tokenId, nowIso());
+      return this.#issueJoinCode(machine.id, secret);
+    });
+  }
+
+  /**
+   * MM-207. The old secret works until the machine confirms the new one, or until the rotation
+   * expires. A machine that stays offline past the expiry needs a new join code.
+   */
+  rotateToken(owner: OwnerContext, machineId: MachineId) {
+    return this.#run(owner, async (): Promise<RotationResponse> => {
+      if (!this.env.SECRET_KEY) throw new PortalError(503, "Set the SECRET_KEY secret first.");
+      const machine = findMachine(this.#map, machineId);
+      if (!machine) throw new PortalError(404, `Unknown machine ${machineId}.`);
+      const api = this.#cloudflare();
+      if (!api) throw new PortalError(400, "Token rotation needs the CF_API_TOKEN secret.");
+      const tokenId = await this.#tokenId(api, machine);
+      if (!tokenId)
+        throw new PortalError(409, "Cloudflare has no service token with this client id.");
+      const now = Date.now();
+      const expiresAt = addMinutes(now, ROTATION_MINUTES);
+      const secret = await api.rotateServiceToken(tokenId, expiresAt);
+      this.#sql(
+        "INSERT OR REPLACE INTO rotations (machine_id, token_client_id, sealed_secret, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        machine.id,
+        machine.tokenClientId,
+        await seal(this.env.SECRET_KEY, secret),
+        new Date(now).toISOString(),
+        expiresAt,
+      );
+      this.#broadcast(this.#rotationsEvent());
+      return { machineId: machine.id, delivered: await this.#sendRotation(machine.id) };
+    });
+  }
+
+  /** MM-208. */
+  removeMachine(owner: OwnerContext, machineId: MachineId) {
+    return this.#run(owner, async (): Promise<RemoveMachineResponse> => {
+      const machine = findMachine(this.#map, machineId);
+      if (!machine) throw new PortalError(404, `Unknown machine ${machineId}.`);
+      const api = this.#cloudflare();
+      let tokenDeleted = false;
+      if (api) {
+        const tokenId = await this.#tokenId(api, machine);
+        if (tokenId) {
+          for (const appId of this.#accessAppIds()) await api.removeTokenFromApp(appId, tokenId);
+          await api.deleteServiceToken(tokenId);
+          tokenDeleted = true;
+        }
+      }
+      this.#commit(ownerActor(owner), `Removed ${machine.name}`, [
+        { _tag: "removeMachine", machineId },
+      ]);
+      for (const command of this.#commandsWithStatus("queued")) {
+        if (command.machineId !== machineId) continue;
+        this.#saveCommand({
+          ...command,
+          status: "cancelled",
+          updatedAt: nowIso(),
+          error: "The machine left the map.",
+        });
+      }
+      this.ctx.storage.transactionSync(() => {
+        for (const table of [
+          "presence",
+          "reported_settings",
+          "join_codes",
+          "rotations",
+          "machine_tokens",
+        ]) {
+          this.#sql(`DELETE FROM ${table} WHERE machine_id = ?`, machineId);
+        }
+      });
+      for (const ws of this.ctx.getWebSockets(machineTag(machineId)))
+        ws.close(4004, "This machine left the map.");
+      this.#broadcast(this.#rotationsEvent());
+      return { machineId, tokenDeleted };
+    });
+  }
+
+  applyPreset(owner: OwnerContext, name: string) {
+    return this.#run(owner, (): WriteResult => {
+      const preset = this.#presetChanges("apply", name);
+      return {
+        _tag: "applied",
+        revision: this.#commit(ownerActor(owner), preset.summary, preset.changes).revision,
+      };
+    });
+  }
+
+  /** MM-706. */
+  lockdown(owner: OwnerContext) {
+    return this.#run(owner, (): WriteResult => {
+      const preset = this.#presetChanges("lockdown", undefined);
+      return {
+        _tag: "applied",
+        revision: this.#commit(ownerActor(owner), preset.summary, preset.changes).revision,
+      };
+    });
+  }
+
+  /** MM-901, MM-902 (the T3 sessions come from presence on the page). */
+  devices(owner: OwnerContext) {
+    return this.#run(owner, async (): Promise<DevicesResponse> => {
+      const portalSignIns: Array<PortalSignIn> = this.#sql<{
+        id: string;
+        device: string;
+        browser: string;
+        place: string;
+        first_seen: string;
+        last_used: string;
+      }>("SELECT * FROM sign_ins ORDER BY last_used DESC").map((row) => ({
+        id: row.id,
+        device: row.device,
+        browser: row.browser,
+        place: row.place,
+        firstSeenAt: row.first_seen,
+        lastUsedAt: row.last_used,
+      }));
+      const api = this.#cloudflare();
+      if (!api) {
+        return {
+          portalSignIns,
+          access: {
+            _tag: "unavailable",
+            message: "Add the CF_API_TOKEN secret to list Cloudflare Access sessions.",
+          },
+        };
+      }
+      try {
+        return {
+          portalSignIns,
+          access: { _tag: "available", sessions: await api.ownerSessions(owner.email) },
+        };
+      } catch (error) {
+        return { portalSignIns, access: { _tag: "unavailable", message: errorMessage(error) } };
+      }
+    });
+  }
+
+  /** MM-903: ends owner Access sessions and revokes owner T3 sessions on every machine. */
+  signOutEverywhere(owner: OwnerContext) {
+    return this.#run(owner, async (): Promise<SignOutEverywhereResponse> => {
+      const api = this.#cloudflare();
+      let accessMessage: string | null =
+        "Cloudflare Access sessions need the CF_API_TOKEN secret. End them in the Zero Trust dashboard.";
+      if (api) {
+        await api.revokeOwner(owner.email);
+        accessMessage = null;
+      }
+      let revokeCommands = 0;
+      // Sessions of machines through their arrows are not owner sessions (MM-1305).
+      const machineSubjects = new Set(this.#map.machines.map((m) => machineSessionSubject(m.id)));
+      for (const machine of this.#map.machines) {
+        const status = this.#presence(machine.id).status;
+        if (!supportsCommand(status, "revokeClient")) continue;
+        for (const client of status?.clients ?? []) {
+          if (machineSubjects.has(client.subject)) continue;
+          this.#createCommand(
+            ownerActor(owner),
+            machine.id,
+            { _tag: "revokeClient", sessionId: client.sessionId },
+            "online",
+            DEFAULT_COMMAND_MINUTES,
+          );
+          revokeCommands += 1;
+        }
+      }
+      this.#sql("DELETE FROM sign_ins");
+      return { accessMessage, revokeCommands };
+    });
+  }
+
+  /** MM-204, MM-1204: exchanges a join code for the machine token. Each code works once. */
+  enroll(ip: string, code: string) {
+    return this.#run(null, async (): Promise<EnrollResponse> => {
+      const now = Date.now();
+      const attempts = this.#sql<{ window_start: number; count: number }>(
+        "SELECT window_start, count FROM enroll_attempts WHERE ip = ?",
+        ip,
+      )[0];
+      const fresh = !attempts || now - attempts.window_start > ENROLL_WINDOW_MS;
+      if (!fresh && attempts.count >= ENROLL_LIMIT) {
+        throw new PortalError(429, "Too many join attempts. Wait 15 minutes.");
+      }
+      this.#sql(
+        "INSERT OR REPLACE INTO enroll_attempts (ip, window_start, count) VALUES (?, ?, ?)",
+        ip,
+        fresh ? now : attempts.window_start,
+        fresh ? 1 : attempts.count + 1,
+      );
+      const codeHash = await sha256Hex(normalizeJoinCode(code));
+      // Read and delete in one step, so two requests cannot both use the code.
+      const row = this.#sql<{ machine_id: string; sealed_secret: string; expires_at: string }>(
+        "DELETE FROM join_codes WHERE code_hash = ? RETURNING machine_id, sealed_secret, expires_at",
+        codeHash,
+      )[0];
+      const machine = row ? findMachine(this.#map, MachineId.make(row.machine_id)) : undefined;
+      if (!row || !machine || isDue(row.expires_at, now)) {
+        throw new PortalError(404, "Unknown, used or expired join code.");
+      }
+      return {
+        machineId: machine.id,
+        name: machine.name,
+        kind: machine.kind,
+        tokenClientId: machine.tokenClientId,
+        tokenSecret: await unseal(this.env.SECRET_KEY, row.sealed_secret),
+      };
+    });
+  }
+}

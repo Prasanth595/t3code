@@ -1,0 +1,28 @@
+{
+  "name": "@t3tools/machine-map",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp build && wrangler dev --local --port 8787 --local-upstream localhost:8787 --var DEV_FAKE_ACCESS:1",
+    "build": "vp build",
+    "typecheck": "tsc-rs --noEmit -p tsconfig.json && tsc-rs --noEmit -p tsconfig.ui.json",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "deploy": "vp build && wrangler deploy"
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:",
+    "jose": "catalog:",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261013.1",
+    "@types/react": "~19.3.0",
+    "@types/react-dom": "~19.2.3",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "wrangler": "4.149.0"
+  }
+}

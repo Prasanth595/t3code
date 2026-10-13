@@ -1,0 +1,176 @@
+/**
+ * Request and response shapes of the portal HTTP API. The Worker decodes requests with these
+ * schemas, and the page uses the same types. The machine protocol lives in
+ * `@t3tools/contracts/machineMap`.
+ */
+import * as Schema from "effect/Schema";
+
+import {
+  CommandDelivery,
+  MachineCommandInput,
+  MachineId,
+  MachineKind,
+  MapChange,
+  type MachineCommand,
+  type MachineMapDocument,
+  type MachinePresence,
+  type MapProposal,
+  type MapRevision,
+} from "@t3tools/contracts/machineMap";
+
+const Text = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
+const PositiveInt = Schema.Int.check(Schema.isGreaterThan(0));
+const NonNegativeInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** POST /api/changes: one revision from the owner. */
+export const ChangesRequest = Schema.Struct({
+  summary: Text,
+  changes: Schema.Array(MapChange).check(Schema.isMinLength(1)),
+});
+export type ChangesRequest = typeof ChangesRequest.Type;
+
+/** POST /api/commands (MM-501, MM-605). */
+export const CommandRequest = Schema.Struct({
+  machineId: MachineId,
+  input: MachineCommandInput,
+  delivery: CommandDelivery,
+  expiresInMinutes: PositiveInt,
+});
+export type CommandRequest = typeof CommandRequest.Type;
+
+/** POST /api/undo and POST /api/restore. */
+export const RevisionRequest = Schema.Struct({ revision: NonNegativeInt });
+export type RevisionRequest = typeof RevisionRequest.Type;
+
+/**
+ * POST /api/machines (MM-201, MM-210). With the Cloudflare API token, the portal creates the
+ * machine token. Without it, the owner gives the id and secret of an existing machine token.
+ */
+export const AddMachineRequest = Schema.Struct({
+  name: Text,
+  kind: MachineKind,
+  tokenClientId: Schema.optionalKey(Text),
+  tokenSecret: Schema.optionalKey(Text),
+});
+export type AddMachineRequest = typeof AddMachineRequest.Type;
+
+/** POST /api/machines/:id/join-code. Without the Cloudflare API token, the secret is required. */
+export const JoinCodeRequest = Schema.Struct({ tokenSecret: Schema.optionalKey(Text) });
+export type JoinCodeRequest = typeof JoinCodeRequest.Type;
+
+/** POST /enroll (MM-204). No Access JWT: the join code is the credential. */
+export const EnrollRequest = Schema.Struct({ code: Text });
+export type EnrollRequest = typeof EnrollRequest.Type;
+
+export interface EnrollResponse {
+  readonly machineId: MachineId;
+  readonly name: string;
+  readonly kind: MachineKind;
+  readonly tokenClientId: string;
+  readonly tokenSecret: string;
+}
+
+export interface JoinCodeResponse {
+  readonly machineId: MachineId;
+  readonly code: string;
+  readonly expiresAt: string;
+}
+
+/** The result of a write: applied as a revision, or waiting in the Inbox (MM-804). */
+export type WriteResult =
+  | { readonly _tag: "applied"; readonly revision: number }
+  | {
+      readonly _tag: "proposed";
+      readonly proposalId: string;
+      readonly reason: MapProposal["reason"];
+    };
+
+/** GET /api/history?before&limit: newest first. */
+export interface HistoryResponse {
+  readonly revisions: ReadonlyArray<MapRevision>;
+}
+
+/** GET /api/map-at?revision (MM-704). */
+export interface MapAtResponse {
+  readonly map: MachineMapDocument;
+}
+
+/** A browser that opened the portal, as the portal saw it (MM-901). */
+export interface PortalSignIn {
+  readonly id: string;
+  readonly device: string;
+  readonly browser: string;
+  readonly place: string;
+  readonly firstSeenAt: string;
+  readonly lastUsedAt: string;
+}
+
+/** An owner session in Cloudflare Access (MM-901). Cloudflare does not report the browser. */
+export interface AccessSession {
+  readonly name: string;
+  readonly country: string | null;
+  readonly ip: string | null;
+  readonly signedInAt: string | null;
+  readonly expiresAt: string | null;
+}
+
+/** GET /api/devices. */
+export interface DevicesResponse {
+  readonly portalSignIns: ReadonlyArray<PortalSignIn>;
+  readonly access:
+    | { readonly _tag: "available"; readonly sessions: ReadonlyArray<AccessSession> }
+    | { readonly _tag: "unavailable"; readonly message: string };
+}
+
+/** POST /api/devices/sign-out-everywhere (MM-903). */
+export interface SignOutEverywhereResponse {
+  /** Null when Cloudflare Access sessions ended. Otherwise the reason they did not. */
+  readonly accessMessage: string | null;
+  readonly revokeCommands: number;
+}
+
+/** DELETE /api/machines/:id (MM-208). Without the Cloudflare API token, the token stays in Cloudflare. */
+export interface RemoveMachineResponse {
+  readonly machineId: MachineId;
+  readonly tokenDeleted: boolean;
+}
+
+/** POST /api/machines/:id/rotate (MM-207). */
+export interface RotationResponse {
+  readonly machineId: MachineId;
+  readonly delivered: boolean;
+}
+
+/** A token rotation that waits for its machine (MM-207). The secret never leaves the portal. */
+export interface PendingRotation {
+  readonly machineId: MachineId;
+  readonly createdAt: string;
+  readonly expiresAt: string;
+}
+
+/**
+ * Page events. The portal sends `PortalEvent` from the contracts, plus this event for pending
+ * token rotations, which `PortalSnapshot` does not hold.
+ */
+export interface RotationsEvent {
+  readonly _tag: "rotations";
+  readonly rotations: ReadonlyArray<PendingRotation>;
+}
+
+/** Every error response has this shape. */
+export interface ApiError {
+  readonly error: string;
+}
+
+/** Results of the agent tools that run through the portal (`toolResult.result`, MM-801). */
+export type MapToolResult =
+  | {
+      readonly _tag: "read";
+      readonly map: MachineMapDocument;
+      readonly presence: Readonly<Record<string, MachinePresence>>;
+      readonly commands: ReadonlyArray<MachineCommand>;
+      readonly history: ReadonlyArray<MapRevision>;
+      readonly proposals: ReadonlyArray<MapProposal>;
+    }
+  | WriteResult
+  | { readonly _tag: "command"; readonly command: MachineCommand };
