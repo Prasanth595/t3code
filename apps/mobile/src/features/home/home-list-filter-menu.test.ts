@@ -36,25 +36,4 @@ describe("buildHomeListFilterMenu", () => {
     expect(onProjectChange).toHaveBeenNthCalledWith(1, null);
     expect(onProjectChange).toHaveBeenNthCalledWith(2, "environment-1:project-2");
   });
-
-  it("keeps a project's native menu icon on its action only", () => {
-    const icon = { type: "sfSymbol" as const, name: "folder.fill" };
-    const menu = buildHomeListFilterMenu({
-      environments: [],
-      projects: [
-        { key: "environment-1:project-1", label: "Codething", icon },
-        { key: "environment-1:project-2", label: "Website" },
-      ],
-      selectedEnvironmentId: null,
-      selectedProjectKey: null,
-      onEnvironmentChange: vi.fn(),
-      onProjectChange: vi.fn(),
-    });
-
-    const projectMenu = menu.items.find(
-      (item) => item.type === "submenu" && item.title === "Project",
-    );
-    if (projectMenu?.type !== "submenu") throw new Error("Expected project submenu");
-    expect(projectMenu.items.map((item) => item.icon)).toEqual([undefined, icon, undefined]);
-  });
 });

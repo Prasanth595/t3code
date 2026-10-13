@@ -14,7 +14,6 @@ import { buildHomeListFilterMenu } from "./home-list-filter-menu";
 import { createSidebarHeaderItems } from "../threads/sidebar-native-header-items";
 import type { HomeHeaderProps } from "./HomeHeader.types";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { useProjectFilterMenuIcons } from "./useProjectFilterMenuIcons";
 
 export type { HomeHeaderEnvironment } from "./HomeHeader.types";
 
@@ -56,8 +55,7 @@ export function HomeHeader(props: HomeHeaderProps) {
     return searchBarRef.current !== null;
   }, [primaryColumn, panes.primarySidebarVisible, togglePrimarySidebar]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
-  const projects = useProjectFilterMenuIcons(props.projects);
-  const filterMenu = buildHomeListFilterMenu({ ...props, projects });
+  const filterMenu = buildHomeListFilterMenu(props);
 
   if (props.usesWorkspaceToolbar) {
     return null;
@@ -198,7 +196,7 @@ export function HomeHeader(props: HomeHeaderProps) {
               ))}
             </NativeHeaderToolbar.Menu>
 
-            {projects.length > 0 ? (
+            {props.projects.length > 0 ? (
               <NativeHeaderToolbar.Menu title="Project">
                 <NativeHeaderToolbar.Label>Project</NativeHeaderToolbar.Label>
                 <NativeHeaderToolbar.MenuAction
@@ -208,14 +206,9 @@ export function HomeHeader(props: HomeHeaderProps) {
                 >
                   <NativeHeaderToolbar.Label>All projects</NativeHeaderToolbar.Label>
                 </NativeHeaderToolbar.MenuAction>
-                {projects.map((project) => (
+                {props.projects.map((project) => (
                   <NativeHeaderToolbar.MenuAction
                     key={project.key}
-                    icon={
-                      project.icon?.type === "imageSource"
-                        ? { type: "image", source: project.icon.imageSource }
-                        : project.icon?.name
-                    }
                     isOn={props.selectedProjectKey === project.key}
                     onPress={() => props.onProjectChange(project.key)}
                   >

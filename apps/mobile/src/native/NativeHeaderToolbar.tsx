@@ -310,7 +310,7 @@ function NativeHeaderToolbarMenuAction(_props: {
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly discoverabilityLabel?: string;
-  readonly icon?: string | Extract<NativeStackHeaderIcon, { type: "image" }>;
+  readonly icon?: string;
   readonly isOn?: boolean;
   readonly onPress?: () => void;
   readonly subtitle?: string;

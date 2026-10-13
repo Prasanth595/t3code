@@ -58,7 +58,7 @@ export function HomeHeader(props: HomeHeaderProps) {
                       environmentId={project.representative.environmentId}
                       faviconPath={project.representative.faviconPath}
                       projectIcon={project.representative.projectIcon}
-                      projectTitle={project.label}
+                      projectTitle={project.representative.title}
                       size={iconSize}
                       workspaceRoot={project.representative.workspaceRoot}
                     />

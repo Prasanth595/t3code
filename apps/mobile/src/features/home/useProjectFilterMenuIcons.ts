@@ -1,8 +1,8 @@
 import type { HomeListFilterMenuProject } from "./home-list-filter-menu";
 
-/** Android draws `representative` itself; see the `.ios.ts` sibling. */
+/** Only the iOS pill menu needs image data; see the `.ios.ts` sibling. */
 export function useProjectFilterMenuIcons<T extends HomeListFilterMenuProject>(
   projects: ReadonlyArray<T>,
-): ReadonlyArray<T> {
+): ReadonlyArray<T & { readonly image?: string }> {
   return projects;
 }

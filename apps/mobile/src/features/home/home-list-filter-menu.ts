@@ -6,29 +6,11 @@ export interface HomeListFilterMenuEnvironment {
   readonly label: string;
 }
 
-/**
- * Row image for the native iOS menu. UIMenu only takes images, so a favicon
- * arrives as a sized image source and everything else uses an SF Symbol.
- */
-export type HomeListFilterMenuIcon =
-  | { readonly type: "sfSymbol"; readonly name: string }
-  | {
-      readonly type: "imageSource";
-      readonly imageSource: {
-        readonly uri: string;
-        readonly width: number;
-        readonly height: number;
-        readonly scale: number;
-      };
-    };
-
 export interface HomeListFilterMenuProject {
   readonly key: string;
   readonly label: string;
-  /** Project whose favicon stands for the scope; Android draws it beside the label. */
+  /** Project whose icon stands for the scope in the project filter. */
   readonly representative?: EnvironmentProject;
-  /** iOS counterpart of `representative`, resolved by `useProjectFilterMenuIcons`. */
-  readonly icon?: HomeListFilterMenuIcon;
 }
 
 type HomeListFilterMenuAction = {
@@ -36,7 +18,6 @@ type HomeListFilterMenuAction = {
   readonly title: string;
   readonly subtitle?: string;
   readonly state?: "on" | "off";
-  readonly icon?: HomeListFilterMenuIcon;
   readonly onPress: () => void;
 };
 
@@ -100,7 +81,6 @@ export function buildHomeListFilterMenu(props: {
           type: "action" as const,
           title: project.label,
           state: props.selectedProjectKey === project.key ? ("on" as const) : ("off" as const),
-          ...(project.icon ? { icon: project.icon } : {}),
           onPress: () => props.onProjectChange(project.key),
         })),
       ],
