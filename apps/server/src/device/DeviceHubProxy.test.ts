@@ -25,9 +25,11 @@ const fixture = (
 ) => {
   let finalized = 0;
   const requests: string[] = [];
+  const headers: Array<Record<string, string>> = [];
   const client = HttpClient.make((request, _url, signal) =>
     Effect.gen(function* () {
       requests.push(request.url);
+      headers.push(request.headers);
       signal.addEventListener("abort", () => {
         finalized++;
       });
@@ -61,7 +63,7 @@ const fixture = (
     { disableLogger: true },
   );
   disposers.push(dispose);
-  return { handler, requests, finalized: () => finalized };
+  return { handler, requests, headers, finalized: () => finalized };
 };
 
 describe("device hub proxy", () => {
@@ -129,6 +131,24 @@ describe("device hub proxy", () => {
     expect(operator.requests).toEqual([
       "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
     ]);
+  });
+
+  it("presents a remote browser's screenshot to the hub as a same-origin loopback request", async () => {
+    const { handler, headers } = fixture([AuthOrchestrationReadScope]);
+    const response = await handler(
+      new Request(
+        "http://t3.test/api/device-hub/vendor/serve-emu/api/screenshot?device=emulator-5554",
+        {
+          method: "POST",
+          headers: { origin: "https://devbox.tailnet.ts.net", "x-forwarded-proto": "https" },
+        },
+      ),
+    );
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(headers).toHaveLength(1);
+    expect(headers[0]).toMatchObject({ origin: "http://hub.test" });
+    expect(headers[0]).not.toHaveProperty("x-forwarded-proto");
   });
 
   it("never forwards the vendor shell endpoint", async () => {
