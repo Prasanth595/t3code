@@ -41,6 +41,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-208** "Remove machine" deletes the machine token, removes its arrows and its settings overrides, and drops its queue. A removed machine cannot connect again with its old secret.
 - **MM-209** Each machine reports its tunnel hostname. Arrows out of other machines use it to connect.
 - **MM-210** Without the Cloudflare API token of MM-1205, "Add machine" takes the client id and secret of an existing machine token, instead of creating one. The join code then delivers that secret.
+- **MM-211** The join dialog starts with step 0, "Install T3 Code (Yarden-zamir's fork)". It links to the newest fork nightly from `GET /api/fork-release`, which caches the GitHub answer for 10 minutes and falls back to the releases page. A split button copies `install.sh` with `--join <code>`. Its menu copies the macOS command and the Windows PowerShell command, and links the `.dmg` and the `.exe`.
 
 ## 3. Arrows
 

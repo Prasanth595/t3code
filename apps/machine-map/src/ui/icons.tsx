@@ -73,3 +73,11 @@ export function CopyIcon() {
     </svg>
   );
 }
+
+export function ChevronDownIcon() {
+  return (
+    <svg viewBox="0 0 24 24" {...STROKE} strokeWidth={2.6} aria-hidden>
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}

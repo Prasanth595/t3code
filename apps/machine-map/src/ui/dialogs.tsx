@@ -1,14 +1,20 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { MachineKind, SettingScope } from "@t3tools/contracts/machineMap";
 
-import type { JoinCodeResponse, WriteResult } from "../api.ts";
+import {
+  FORK_RELEASES_PAGE,
+  type ForkRelease,
+  type JoinCodeResponse,
+  type WriteResult,
+} from "../api.ts";
 import { findArrow } from "../rules/map.ts";
 import { savePresetChange } from "../rules/presets.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
-import { CopyIcon, KindIcon } from "./icons.tsx";
+import { ChevronDownIcon, CopyIcon, KindIcon } from "./icons.tsx";
+import { INSTALL_TARGET_LABEL, installCommand, type InstallTarget } from "./install.ts";
 import { VIEW_LABEL, VIEWS } from "./route.ts";
 import { knownKeys } from "./settingControls.ts";
 
@@ -317,6 +323,7 @@ function JoinCodeDialog(props: {
           {copied === "code" ? "Copied" : "Copy"}
         </button>
       </div>
+      <InstallStep code={props.code} />
       <p className="small muted">
         It works once and expires {timeUntil(props.expiresAt, portal.now)}. On {props.machineName},
         use it in one of these ways:
@@ -340,6 +347,114 @@ function JoinCodeDialog(props: {
         </button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * MM-211: step 0 of a join, for a machine without the fork. A split button copies the install
+ * command; its menu holds the Mac and Windows commands and installers.
+ */
+function InstallStep({ code }: { code: string }) {
+  const [release, setRelease] = useState<ForkRelease | null>(null);
+  const [copied, setCopied] = useState<InstallTarget | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuId = useId();
+  const menu = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let live = true;
+    callApi<ForkRelease>("GET", "/api/fork-release").then(
+      (result) => live && setRelease(result),
+      () => undefined,
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  const copy = (target: InstallTarget) => {
+    menu.current?.hidePopover();
+    navigator.clipboard.writeText(installCommand(target, code)).then(
+      () => setCopied(target),
+      () => setCopied(null),
+    );
+  };
+  const items = () => [...(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+  // Arrow keys, Home and End move between menu items. The popover closes itself on Escape.
+  const onMenuKey = (e: KeyboardEvent) => {
+    const all = items();
+    const at = all.indexOf(document.activeElement as HTMLElement);
+    const next =
+      e.key === "ArrowDown"
+        ? (at + 1) % all.length
+        : e.key === "ArrowUp"
+          ? (at - 1 + all.length) % all.length
+          : e.key === "Home"
+            ? 0
+            : e.key === "End"
+              ? all.length - 1
+              : null;
+    if (next === null) return;
+    e.preventDefault();
+    all[next]?.focus();
+  };
+  const download = (label: string, url: string | null) =>
+    url && (
+      <a role="menuitem" href={url} onClick={() => menu.current?.hidePopover()}>
+        {label}
+      </a>
+    );
+  return (
+    <div className="install-step">
+      <p className="small">
+        <strong>0. Install T3 Code (Yarden-zamir's fork)</strong> if the machine does not run it:{" "}
+        <a href={release?.pageUrl ?? FORK_RELEASES_PAGE} target="_blank" rel="noreferrer">
+          {release?.version ?? "fork releases"}
+        </a>
+      </p>
+      <div className="install-actions">
+        <div className="split">
+          <button type="button" className="btn small" onClick={() => copy("linux")}>
+            <CopyIcon />
+            {copied === "linux" ? "Copied" : "Copy curl"}
+          </button>
+          <button
+            type="button"
+            className="btn small icon-only"
+            popoverTarget={menuId}
+            aria-haspopup="menu"
+            aria-controls={menuId}
+            aria-expanded={menuOpen}
+            aria-label="Mac and Windows install"
+          >
+            <ChevronDownIcon />
+          </button>
+        </div>
+        <div
+          ref={menu}
+          id={menuId}
+          popover="auto"
+          role="menu"
+          aria-label="Install on Mac or Windows"
+          className="card install-menu"
+          onKeyDown={onMenuKey}
+          onToggle={(e) => {
+            setMenuOpen(e.newState === "open");
+            if (e.newState === "open") items()[0]?.focus();
+          }}
+        >
+          <button type="button" role="menuitem" onClick={() => copy("mac")}>
+            Copy Mac command
+          </button>
+          {download("Download Mac app (.dmg)", release?.macUrl ?? null)}
+          <button type="button" role="menuitem" onClick={() => copy("windows")}>
+            Copy Windows command
+          </button>
+          {download("Download Windows installer (.exe)", release?.windowsUrl ?? null)}
+        </div>
+        <span className="small muted" role="status">
+          {copied && `${INSTALL_TARGET_LABEL[copied]} command copied.`}
+        </span>
+      </div>
+    </div>
   );
 }
 
