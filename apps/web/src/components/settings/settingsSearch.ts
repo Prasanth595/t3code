@@ -581,6 +581,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "snooze-quick-options",
+    title: "Snooze quick options",
+    to: "/settings/general",
+    searchTerms: ["snooze menu presets choices later tonight tomorrow next week remind wake"],
+  },
+  {
     id: "pull-request-filter-chips",
     title: "Pull request filter chips",
     to: "/settings/general",
