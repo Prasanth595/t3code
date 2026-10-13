@@ -994,23 +994,24 @@ details.more[open] summary {
   height: 100%;
   pointer-events: none;
 }
-.map line {
+.map path {
+  fill: none;
   stroke: var(--ink);
   stroke-width: 3;
   transition:
     opacity 120ms,
     stroke 120ms;
 }
-.map line.empty {
+.map path.empty {
   stroke-dasharray: 7 7;
   stroke-width: 2;
 }
 /* Focus (MM-1103): the lines of the chosen machine turn purple, the rest step back. */
-.map line.hot {
+.map path.hot {
   stroke: var(--accent);
   stroke-width: 5;
 }
-.map line.hot.empty {
+.map path.hot.empty {
   stroke-width: 3;
 }
 .map-empty {

@@ -198,3 +198,32 @@ export function placePairs(
     return { x: box.x, y: box.y };
   });
 }
+
+/**
+ * MM-1108: the line of a pair through its placed card, as two cubic curves A -> P -> B. The curve
+ * passes P in the direction from A to B, so it bends smoothly through the card. The card covers
+ * the middle, so the line shows to enter and leave at the card edges. P on the straight line gives
+ * a straight curve. Returns A, two controls, P, two controls, B.
+ */
+export function pairCurve(a: Point, b: Point, p: Point): ReadonlyArray<Point> {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  const u = length === 0 ? { x: 0, y: 0 } : { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
+  const toP = Math.hypot(p.x - a.x, p.y - a.y) / 3;
+  const fromP = Math.hypot(b.x - p.x, b.y - p.y) / 3;
+  return [
+    a,
+    { x: a.x + (p.x - a.x) / 3, y: a.y + (p.y - a.y) / 3 },
+    { x: p.x - u.x * toP, y: p.y - u.y * toP },
+    p,
+    { x: p.x + u.x * fromP, y: p.y + u.y * fromP },
+    { x: b.x + (p.x - b.x) / 3, y: b.y + (p.y - b.y) / 3 },
+    b,
+  ];
+}
+
+/** MM-1108: the SVG path of a pair line. A card in its automatic place (`through` null) keeps it straight. */
+export function pairPath(a: Point, b: Point, through: Point | null): string {
+  if (through === null) return `M${a.x},${a.y}L${b.x},${b.y}`;
+  const [start, ...rest] = pairCurve(a, b, through).map((q) => `${q.x},${q.y}`);
+  return `M${start}C${rest.slice(0, 3).join(" ")}C${rest.slice(3).join(" ")}`;
+}

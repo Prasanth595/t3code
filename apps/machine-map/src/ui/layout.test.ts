@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { offsetPoint, placePairs, pointOffset, separate, type Box } from "./layout.ts";
+import {
+  offsetPoint,
+  pairCurve,
+  pairPath,
+  placePairs,
+  pointOffset,
+  separate,
+  type Box,
+  type Point,
+} from "./layout.ts";
 
 const overlaps = (a: Box, b: Box) =>
   Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
@@ -129,5 +138,39 @@ describe("pair placement (MM-1108)", () => {
     expect(overlaps({ ...(auto ?? { x: 0, y: 0 }), ...size }, { x: 600, y: 400, ...size })).toBe(
       false,
     );
+  });
+});
+
+describe("pairCurve (MM-1108)", () => {
+  const a = { x: 100, y: 100 };
+  const b = { x: 700, y: 100 };
+  /** Twice the area of the triangle: zero when the three points are on one line. */
+  const cross = (p: Point, q: Point, r: Point) =>
+    (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+
+  it("starts at A, passes the card and ends at B", () => {
+    const p = { x: 300, y: 260 };
+    const curve = pairCurve(a, b, p);
+    expect(curve[0]).toEqual(a);
+    expect(curve[3]).toEqual(p);
+    expect(curve[6]).toEqual(b);
+  });
+
+  it("bends smoothly through the card, without a corner", () => {
+    const curve = pairCurve(a, b, { x: 300, y: 260 });
+    const [, , before, p, after] = curve;
+    if (!before || !p || !after) throw new Error("short curve");
+    expect(cross(before, p, after)).toBeCloseTo(0);
+    // Both controls point along A -> B, on opposite sides of the card.
+    expect(before.x).toBeLessThan(p.x);
+    expect(after.x).toBeGreaterThan(p.x);
+  });
+
+  it("stays straight for a card on the line", () => {
+    for (const q of pairCurve(a, b, { x: 250, y: 100 })) expect(q.y).toBeCloseTo(100);
+  });
+
+  it("keeps an automatic card on a straight line", () => {
+    expect(pairPath(a, b, null)).toBe("M100,100L700,100");
   });
 });
