@@ -222,7 +222,8 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
   const path = yield* Path.Path;
   const entries = yield* skipUnreadable(input.directory, fileSystem.readDirectory(input.directory));
   const skills: Array<{ readonly skill: ServerProviderSkill; readonly folder: string }> = [];
-  for (const entry of entries ?? []) {
+  // fx reads a root's folders in byte order; readDirectory promises none.
+  for (const entry of [...(entries ?? [])].sort()) {
     // `readLink` succeeds only on a symlink.
     if (
       !input.followsLinks &&
@@ -230,6 +231,9 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
     ) {
       continue;
     }
+    // A stray file (`.DS_Store`, a README) is no skill folder.
+    const entryInfo = yield* Effect.option(fileSystem.stat(path.join(input.directory, entry)));
+    if (Option.isNone(entryInfo) || entryInfo.value.type !== "Directory") continue;
     const skillPath = path.join(input.directory, entry, "SKILL.md");
     const skillInfo = yield* skipUnreadable(skillPath, fileSystem.stat(skillPath));
     if (skillInfo?.type !== "File") continue;
