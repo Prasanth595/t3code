@@ -253,13 +253,6 @@ const mobileEndorsementRows = [
             <div class="harness-tag">Google sign-in</div>
           </div>
         </div>
-        <div class="harness">
-          <div class="harness-mark"><img src="/harnesses/fx-dark.svg" alt="" /></div>
-          <div class="harness-meta">
-            <div class="harness-name">fx</div>
-            <div class="harness-tag">fx login</div>
-          </div>
-        </div>
       </div>
 
       <div class="harness-footer">
@@ -809,7 +802,7 @@ const mobileEndorsementRows = [
 
   .harness-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: 0;
     border: 1px solid var(--border);
     border-radius: var(--radius);
@@ -837,12 +830,10 @@ const mobileEndorsementRows = [
   .harness-name {
     font-size: 14px; font-weight: 500;
     letter-spacing: -0.01em; margin-bottom: 2px;
-    overflow-wrap: anywhere;
   }
   .harness-tag {
     font-family: var(--font-mono);
     font-size: 11px; color: var(--fg-dim);
-    overflow-wrap: anywhere;
   }
 
   .harness-footer {
@@ -1286,7 +1277,6 @@ const mobileEndorsementRows = [
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
     .harness:nth-child(even) { border-right: 0; }
-    .harness:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; }
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .open-grid { grid-template-columns: 1fr; }
   }
