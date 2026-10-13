@@ -1,4 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off - Fingerprints raw frame bytes synchronously.
 /**
  * Desktop side of the in-app browser preview.
  *
