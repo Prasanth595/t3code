@@ -1461,7 +1461,7 @@ export default function FilePreviewPanel({
             ) : (
               <DiffWorkerPoolProvider>
                 <EditableFileSurface
-                  key={`${relativePath}:${resolvedTheme}`}
+                  key={relativePath}
                   environmentId={environmentId}
                   cwd={cwd}
                   relativePath={relativePath}
