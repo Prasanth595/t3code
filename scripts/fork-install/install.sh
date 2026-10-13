@@ -4,19 +4,25 @@
 #   curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --join <code>
 #
-# Linux: the script does not use the Linux server archive of the release yet. It builds the fork
-#   from source, like the VPS does. It installs the command `t3` in ~/.local/bin and a systemd user service that runs the
-#   server on loopback. Run it again to update.
-# macOS: the script installs the newest nightly app from the fork releases. --from-source builds
-#   the server from source instead, without a service.
+# Linux with a display: the script installs the newest nightly AppImage from the fork releases.
+# Linux without a display: the script installs the newest server archive from the fork releases,
+#   the command `t3` in ~/.local/bin and a systemd user service that runs the server on loopback.
+#   Run it again to update.
+# macOS: the script installs the newest nightly app from the fork releases.
+# --from-source builds the server from a fork checkout instead. On macOS it installs no service.
 set -euo pipefail
 
 readonly REPO=Yarden-zamir/t3code
 readonly REPO_URL="https://github.com/$REPO.git"
 readonly RELEASES_API="https://api.github.com/repos/$REPO/releases?per_page=20"
 readonly SERVICE=t3code-fork.service
+readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+readonly SERVER_DIR="$DATA_DIR/t3code-fork-server"
+readonly LINUX_APP="$HOME/Applications/T3-Code.AppImage"
 
-dir="${XDG_DATA_HOME:-$HOME/.local/share}/t3code-fork"
+dir="$DATA_DIR/t3code-fork"
+# The program and first arguments that run the server CLI. Each install path sets it.
+server=()
 port=3773
 join_code=""
 service=true
@@ -28,11 +34,11 @@ usage() {
 Usage: install.sh [--join <code>] [--from-source] [--dir <path>] [--port <port>] [--no-service] [--force]
 
   --join <code>   Join the machine map with this one-time code after the install.
-  --from-source   Build the server from a fork checkout. Linux always does this for now.
+  --from-source   Build the server from a fork checkout instead of a release.
   --dir <path>    From source: the fork checkout. Default: $dir
-  --port <port>   From source: the loopback port of the server. Default: $port
-  --no-service    From source: do not install or restart the systemd user service.
-  --force         macOS app: replace an installed app. Without it, an installed app stays,
+  --port <port>   Server: the loopback port of the server. Default: $port
+  --no-service    Server: do not install or restart the systemd user service.
+  --force         App: replace an installed app. Without it, an installed app stays,
                   because the app updates itself.
 EOF
 }
@@ -106,6 +112,110 @@ install_mac() {
   fi
 }
 
+# Linux ------------------------------------------------------------------------------------------
+
+# Prints the arch part of the Linux asset names: x64 or arm64.
+linux_arch() {
+  case "$(uname -m)" in
+    x86_64 | amd64) echo x64 ;;
+    aarch64 | arm64) echo arm64 ;;
+    *) die "the fork publishes Linux builds for x86_64 and aarch64 only, not $(uname -m)." ;;
+  esac
+}
+
+# Puts the join code on the clipboard when a clipboard tool exists, like on macOS.
+join_with_app() {
+  local message="the join code is on the clipboard. In T3 Code, open Settings > Machines and paste it."
+  if [[ -z "$join_code" ]]; then
+    log "next: in T3 Code, open Settings > Machines and paste the join code from the portal."
+  elif command -v wl-copy >/dev/null 2>&1 && printf '%s' "$join_code" | wl-copy 2>/dev/null; then
+    log "$message"
+  elif command -v xclip >/dev/null 2>&1 && printf '%s' "$join_code" | xclip -selection clipboard 2>/dev/null; then
+    log "$message"
+  else
+    log "next: in T3 Code, open Settings > Machines and paste the join code $join_code"
+  fi
+}
+
+# The AppImage updates itself in place, so its file name has no version.
+install_linux_app() {
+  need curl "Install it with your package manager, for example: sudo apt install curl"
+  local suffix=-x86_64.AppImage url
+  [[ "$(linux_arch)" == x64 ]] || suffix=-arm64.AppImage
+  if [[ -f "$LINUX_APP" && "$force" != true ]]; then
+    log "$LINUX_APP is already installed. It updates itself. Use --force to replace it."
+  else
+    url="$(newest_asset_url "$suffix")"
+    [[ -n "$url" ]] || die "no Linux app found. Open https://github.com/$REPO/releases"
+    mkdir -p "$(dirname "$LINUX_APP")" "$DATA_DIR/applications"
+    log "downloading $url"
+    curl -fL --progress-bar -o "$LINUX_APP.download" "$url"
+    chmod +x "$LINUX_APP.download"
+    mv -f "$LINUX_APP.download" "$LINUX_APP"
+    cat >"$DATA_DIR/applications/t3code-fork.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=T3 Code
+Exec=$LINUX_APP %U
+Terminal=false
+Categories=Development;
+EOF
+    log "installed $LINUX_APP and its menu entry"
+  fi
+  # AppImages need FUSE 2. Ubuntu 24.04 ships only FUSE 3 by default.
+  if ! ldconfig -p 2>/dev/null | grep -qF libfuse.so.2; then
+    log "if the app does not start, install FUSE 2, for example: sudo apt install libfuse2t64"
+  fi
+  nohup "$LINUX_APP" >/dev/null 2>&1 &
+  join_with_app
+}
+
+# Installs the newest server archive into $SERVER_DIR/<version> and points $SERVER_DIR/current at
+# it. The archive holds the `t3` single-executable, so the machine needs no Node.
+install_linux_server() {
+  need curl "Install it with your package manager, for example: sudo apt install curl"
+  need sha256sum "Install coreutils with your package manager."
+  local arch url archive version
+  arch="$(linux_arch)"
+  url="$(newest_asset_url "-linux-$arch.tar.gz")"
+  [[ -n "$url" ]] || die "no Linux server archive found. Open https://github.com/$REPO/releases"
+  archive="$(basename "$url")"
+  version="${archive#t3-}"
+  version="${version%-linux-"$arch".tar.gz}"
+  if [[ "$(cat "$SERVER_DIR/$version/.install-complete" 2>/dev/null)" == "$version" ]]; then
+    log "the server $version is already downloaded"
+  else
+    mkdir -p "$SERVER_DIR"
+    local staging
+    staging="$(mktemp -d "$SERVER_DIR/.staging-XXXXXX")"
+    # shellcheck disable=SC2064 # Expand $staging now: it is local.
+    trap "rm -rf '$staging'" EXIT
+    log "downloading $url"
+    curl -fL --progress-bar -o "$staging/$archive" "$url"
+    curl -fsSL -o "$staging/$archive.sha256" "$url.sha256"
+    (cd "$staging" && sha256sum --check --quiet "$archive.sha256") ||
+      die "the download of $archive is damaged. Run the installer again."
+    tar -xzf "$staging/$archive" -C "$staging" --strip-components=1
+    rm -f "$staging/$archive" "$staging/$archive.sha256"
+    "$staging/t3" --version >/dev/null || die "the downloaded t3 does not run on this machine."
+    # The marker shows a complete extraction, like the pinned runtime of `t3 service install`.
+    printf '%s\n' "$version" >"$staging/.install-complete"
+    rm -rf "${SERVER_DIR:?}/$version"
+    mv "$staging" "$SERVER_DIR/$version"
+    trap - EXIT
+  fi
+  # Keep the version that ran before, because a server without the service can still run from it.
+  local previous old
+  previous="$(readlink "$SERVER_DIR/current" 2>/dev/null || true)"
+  ln -sfn "$version" "$SERVER_DIR/current"
+  for old in "$SERVER_DIR"/*/; do
+    old="$(basename "$old")"
+    [[ "$old" == current || "$old" == "$version" || "$old" == "$previous" ]] || rm -rf "${SERVER_DIR:?}/$old"
+  done
+  server=("$SERVER_DIR/current/t3")
+  start_server
+}
+
 # From source ------------------------------------------------------------------------------------
 
 check_source_prerequisites() {
@@ -163,14 +273,15 @@ build_fork() {
   )
 }
 
+# The server -------------------------------------------------------------------------------------
+
 install_command() {
   local bin="$HOME/.local/bin"
   mkdir -p "$bin"
-  # The absolute node path keeps the command working from shells without the nvm setup.
   cat >"$bin/t3" <<EOF
 #!/usr/bin/env bash
 # Installed by the T3 Code fork installer. Run the installer again to update.
-exec "$(command -v node)" "$dir/apps/server/dist/bin.mjs" "\$@"
+exec $(printf '%q ' "${server[@]}")"\$@"
 EOF
   chmod +x "$bin/t3"
   log "installed $bin/t3"
@@ -198,7 +309,7 @@ After=network-online.target
 Environment=PATH=$PATH
 WorkingDirectory=%h
 # Loopback only. Publish it with a tunnel, as docs/fork.md describes.
-ExecStart=$(command -v node) $dir/apps/server/dist/bin.mjs --mode web --host 127.0.0.1 --port $port --no-browser %h
+ExecStart=${server[*]} --mode web --host 127.0.0.1 --port $port --no-browser %h
 Restart=on-failure
 RestartSec=5
 
@@ -229,6 +340,13 @@ install_from_source() {
   checkout_fork
   check_versions || die "fix the versions above, then run the installer again."
   build_fork
+  # The absolute node path keeps the command working from shells without the nvm setup.
+  server=("$(command -v node)" "$dir/apps/server/dist/bin.mjs")
+  start_server
+}
+
+# Installs the command and the service for $server, then joins with the join code.
+start_server() {
   install_command
   local running=false
   if [[ "$service" == true ]] && install_service; then
@@ -245,8 +363,15 @@ install_from_source() {
 }
 
 case "$(uname -s)" in
-  # To switch Linux to the server archive of the release, download it here unless --from-source is set.
-  Linux) install_from_source ;;
+  Linux)
+    if [[ "$from_source" == true ]]; then
+      install_from_source
+    elif [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]]; then
+      install_linux_app
+    else
+      install_linux_server
+    fi
+    ;;
   Darwin) if [[ "$from_source" == true ]]; then install_from_source; else install_mac; fi ;;
   *) die "use install.ps1 on Windows: https://raw.githubusercontent.com/$REPO/main/scripts/fork-install/install.ps1" ;;
 esac
