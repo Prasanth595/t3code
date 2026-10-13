@@ -66,6 +66,9 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
+  // expo-device-hub takes the request origin from X-Forwarded-Proto, so a
+  // client's `https` fails serve-emu's Origin check.
+  "x-forwarded-proto",
 ]);
 
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
