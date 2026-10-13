@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { makeThreadFixture, type ThreadFixtureOverrides } from "../../test-fixtures";
 import type { Project } from "../../types";
+import type { FilterOperator } from "../filters/FilterChip";
 import {
   buildSidebarOwnerOptions,
   filterSidebarProjectGroupsByOwner,
@@ -70,8 +71,8 @@ const groups = buildSidebarProjectSnapshots({
   resolveEnvironmentLabel: () => null,
 });
 
-function visibleProjectKeys(owners: ReadonlyArray<string | null>) {
-  const filter = resolveSidebarOwnerFilter({ enabled: true, owners });
+function visibleProjectKeys(operator: FilterOperator, owners: ReadonlyArray<string | null>) {
+  const filter = resolveSidebarOwnerFilter({ enabled: true, filter: { operator, owners } });
   return filter === null
     ? null
     : sidebarProjectGroupMemberKeys(filterSidebarProjectGroupsByOwner(groups, filter));
@@ -79,11 +80,21 @@ function visibleProjectKeys(owners: ReadonlyArray<string | null>) {
 
 describe("resolveSidebarOwnerFilter", () => {
   it("filters only while the setting is on and owners are selected", () => {
-    expect(resolveSidebarOwnerFilter({ enabled: false, owners: ["qlik-trial"] })).toBeNull();
-    expect(resolveSidebarOwnerFilter({ enabled: true, owners: [] })).toBeNull();
-    expect(resolveSidebarOwnerFilter({ enabled: true, owners: ["qlik-trial", null] })).toEqual(
-      new Set(["qlik-trial", null]),
-    );
+    expect(
+      resolveSidebarOwnerFilter({
+        enabled: false,
+        filter: { operator: "is", owners: ["qlik-trial"] },
+      }),
+    ).toBeNull();
+    expect(
+      resolveSidebarOwnerFilter({ enabled: true, filter: { operator: "is_not", owners: [] } }),
+    ).toBeNull();
+    expect(
+      resolveSidebarOwnerFilter({
+        enabled: true,
+        filter: { operator: "is_not", owners: ["qlik-trial", null] },
+      }),
+    ).toEqual({ operator: "is_not", owners: new Set(["qlik-trial", null]) });
   });
 });
 
@@ -106,17 +117,30 @@ describe("buildSidebarOwnerOptions", () => {
 
 describe("owner filter project keys", () => {
   it("shows every machine's checkout of a selected owner's repository", () => {
-    expect(visibleProjectKeys(["qlik-trial"])).toEqual(
+    expect(visibleProjectKeys("is", ["qlik-trial"])).toEqual(
       new Set([`${mac}:work-mac`, `${vps}:work-vps`]),
     );
   });
 
   it("selects projects without an owner through null", () => {
-    expect(visibleProjectKeys([null])).toEqual(new Set([`${mac}:notes`]));
+    expect(visibleProjectKeys("is", [null])).toEqual(new Set([`${mac}:notes`]));
+  });
+
+  it("hides every machine's checkout of a hidden owner's repository", () => {
+    expect(visibleProjectKeys("is_not", ["qlik-trial"])).toEqual(
+      new Set([`${mac}:dotfiles`, `${mac}:t3code`, `${mac}:notes`]),
+    );
+  });
+
+  it("hides projects without an owner through null", () => {
+    expect(visibleProjectKeys("is_not", [null])).toEqual(
+      new Set([`${mac}:work-mac`, `${vps}:work-vps`, `${mac}:dotfiles`, `${mac}:t3code`]),
+    );
   });
 
   it("returns no keys when nothing is selected", () => {
-    expect(visibleProjectKeys([])).toBeNull();
+    expect(visibleProjectKeys("is", [])).toBeNull();
+    expect(visibleProjectKeys("is_not", [])).toBeNull();
   });
 });
 
@@ -136,25 +160,34 @@ describe("filterSidebarThreadsByOwner", () => {
       ...overrides,
     });
 
+  const threads = [
+    thread("work", "work-mac"),
+    thread("idle-personal", "dotfiles"),
+    thread("running-personal", "dotfiles", {
+      runtime: { ...runtime, status: "running" },
+    }),
+    thread("approval-personal", "dotfiles", { hasPendingApprovals: true }),
+    thread("question-personal", "dotfiles", { hasPendingUserInput: true }),
+  ];
+
   it("hides threads of hidden projects but keeps the ones that run or wait for the user", () => {
-    const threads = [
-      thread("work", "work-mac"),
-      thread("idle-personal", "dotfiles"),
-      thread("running-personal", "dotfiles", {
-        runtime: { ...runtime, status: "running" },
-      }),
-      thread("approval-personal", "dotfiles", { hasPendingApprovals: true }),
-      thread("question-personal", "dotfiles", { hasPendingUserInput: true }),
-    ];
     expect(
-      filterSidebarThreadsByOwner(threads, visibleProjectKeys(["qlik-trial"])).map(
+      filterSidebarThreadsByOwner(threads, visibleProjectKeys("is", ["qlik-trial"])).map(
         (candidate) => candidate.id,
       ),
     ).toEqual(["work", "running-personal", "approval-personal", "question-personal"]);
   });
 
+  it("keeps the same threads when the filter hides the other owners instead", () => {
+    expect(
+      filterSidebarThreadsByOwner(
+        threads,
+        visibleProjectKeys("is_not", ["yarden-zamir", null]),
+      ).map((candidate) => candidate.id),
+    ).toEqual(["work", "running-personal", "approval-personal", "question-personal"]);
+  });
+
   it("returns the same array without a filter", () => {
-    const threads = [thread("work", "work-mac")];
     expect(filterSidebarThreadsByOwner(threads, null)).toBe(threads);
   });
 });

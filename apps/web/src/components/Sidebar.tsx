@@ -60,6 +60,7 @@ import {
   AuthOrchestrationOperateScope,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  type SidebarOwnerFilter,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -289,7 +290,6 @@ import {
   filterSidebarThreadsByOwner,
   resolveSidebarOwnerFilter,
   sidebarProjectGroupMemberKeys,
-  type SidebarOwner,
 } from "./sidebar/ownerFilter.logic";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -2591,9 +2591,9 @@ export default function Sidebar() {
   );
   const projectGroupsRef = useRef(projectGroups);
   projectGroupsRef.current = projectGroups;
-  // Fork: the owner filter hides the projects whose repository owner is not selected. The keys
-  // come from the unsorted groups, which keep their identity while threads stream, so the keys
-  // and the rows that read them stay stable.
+  // Fork: the owner filter shows only or hides the projects of the selected repository owners.
+  // The keys come from the unsorted groups, which keep their identity while threads stream, so
+  // the keys and the rows that read them stay stable.
   const repositoryOwnerFiltersEnabled = useClientSettings((s) => s.repositoryOwnerFilters);
   const savedOwnerFilter = useClientSettings((s) => s.sidebarOwnerFilter);
   const updateClientSettings = useUpdateClientSettings();
@@ -2601,25 +2601,25 @@ export default function Sidebar() {
     () =>
       resolveSidebarOwnerFilter({
         enabled: repositoryOwnerFiltersEnabled,
-        owners: savedOwnerFilter,
+        filter: savedOwnerFilter,
       }),
     [repositoryOwnerFiltersEnabled, savedOwnerFilter],
   );
   const ownerOptions = useMemo(
     () =>
       repositoryOwnerFiltersEnabled
-        ? buildSidebarOwnerOptions(unsortedProjectGroups, savedOwnerFilter)
+        ? buildSidebarOwnerOptions(unsortedProjectGroups, savedOwnerFilter.owners)
         : [],
-    [repositoryOwnerFiltersEnabled, savedOwnerFilter, unsortedProjectGroups],
+    [repositoryOwnerFiltersEnabled, savedOwnerFilter.owners, unsortedProjectGroups],
   );
-  const ownerVisibleProjectKeys = useMemo(
-    () =>
-      ownerFilter === null
-        ? null
-        : sidebarProjectGroupMemberKeys(
-            filterSidebarProjectGroupsByOwner(unsortedProjectGroups, ownerFilter),
-          ),
+  const ownerVisibleProjectGroups = useMemo(
+    () => filterSidebarProjectGroupsByOwner(unsortedProjectGroups, ownerFilter),
     [ownerFilter, unsortedProjectGroups],
+  );
+  const ownerHiddenProjectCount = unsortedProjectGroups.length - ownerVisibleProjectGroups.length;
+  const ownerVisibleProjectKeys = useMemo(
+    () => (ownerFilter === null ? null : sidebarProjectGroupMemberKeys(ownerVisibleProjectGroups)),
+    [ownerFilter, ownerVisibleProjectGroups],
   );
   // The project scope offers only the projects that the owner filter shows.
   const visibleProjectGroups = useMemo(
@@ -2627,10 +2627,9 @@ export default function Sidebar() {
     [ownerFilter, projectGroups],
   );
   const setOwnerFilter = useCallback(
-    (owners: readonly SidebarOwner[]) => void updateClientSettings({ sidebarOwnerFilter: owners }),
+    (filter: SidebarOwnerFilter) => void updateClientSettings({ sidebarOwnerFilter: filter }),
     [updateClientSettings],
   );
-  const clearOwnerFilter = useCallback(() => setOwnerFilter([]), [setOwnerFilter]);
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -3084,7 +3083,10 @@ export default function Sidebar() {
   // filter context changes so a scope/search flip never inherits a deep
   // page state.
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
-  const settledResetKey = JSON.stringify([projectScopeKey, ownerFilter ? [...ownerFilter] : null]);
+  const settledResetKey = JSON.stringify([
+    projectScopeKey,
+    ownerFilter ? [ownerFilter.operator, [...ownerFilter.owners]] : null,
+  ]);
   const lastSettledResetKeyRef = useRef(settledResetKey);
   if (lastSettledResetKeyRef.current !== settledResetKey) {
     lastSettledResetKeyRef.current = settledResetKey;
@@ -5130,7 +5132,7 @@ export default function Sidebar() {
                 repositoryOwnerFiltersEnabled ? (
                   <SidebarOwnerFilterMenu
                     options={ownerOptions}
-                    selected={savedOwnerFilter}
+                    filter={savedOwnerFilter}
                     onChange={setOwnerFilter}
                   />
                 ) : null
@@ -5286,7 +5288,11 @@ export default function Sidebar() {
               onClearSearch={clearThreadSearch}
             />
             {ownerFilter !== null ? (
-              <SidebarOwnerFilterNotice selected={savedOwnerFilter} onClear={clearOwnerFilter} />
+              <SidebarOwnerFilterNotice
+                filter={savedOwnerFilter}
+                hiddenProjectCount={ownerHiddenProjectCount}
+                onChange={setOwnerFilter}
+              />
             ) : null}
           </SidebarGroup>
         }
@@ -5720,8 +5726,10 @@ export default function Sidebar() {
                 </>
               ) : scopedProjectGroup ? (
                 `No threads in ${scopedProjectGroup.displayName} yet`
-              ) : ownerFilter !== null ? (
+              ) : ownerFilter?.operator === "is" ? (
                 "No threads in the projects of these owners"
+              ) : ownerFilter?.operator === "is_not" ? (
+                "No threads outside the hidden owners"
               ) : (
                 "No threads yet"
               )}

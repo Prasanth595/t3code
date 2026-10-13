@@ -1,11 +1,14 @@
 /**
- * Fork: the sidebar owner filter. It shows only the projects whose repository owner
- * (`repositoryOwnerOf`) is selected, and the threads of those projects.
+ * Fork: the sidebar owner filter. With "is" it shows only the projects whose repository owner
+ * (`repositoryOwnerOf`) is selected, and with "is_not" it hides them. Threads follow their
+ * projects. If upstream T3 Code ships an owner or organization filter for the sidebar, drop this
+ * fork version and use theirs.
  */
-import { repositoryOwnerOf } from "@t3tools/contracts";
+import { repositoryOwnerOf, type SidebarOwnerFilter } from "@t3tools/contracts";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
+import type { FilterOperator } from "../filters/FilterChip";
 import { resolveSidebarThreadStatus } from "../Sidebar.logic";
 
 /** A repository owner, or null for a project without one (no remote, or a scratch project). */
@@ -22,12 +25,18 @@ export function sidebarOwnerLabel(owner: SidebarOwner): string {
   return owner ?? "No repository owner";
 }
 
-/** The active selection, or null when the filter shows every project. */
+export interface ActiveSidebarOwnerFilter {
+  readonly operator: FilterOperator;
+  readonly owners: ReadonlySet<SidebarOwner>;
+}
+
+/** The active filter, or null when the filter shows every project. */
 export function resolveSidebarOwnerFilter(input: {
   readonly enabled: boolean;
-  readonly owners: readonly SidebarOwner[];
-}): ReadonlySet<SidebarOwner> | null {
-  return input.enabled && input.owners.length > 0 ? new Set(input.owners) : null;
+  readonly filter: SidebarOwnerFilter;
+}): ActiveSidebarOwnerFilter | null {
+  const { operator, owners } = input.filter;
+  return input.enabled && owners.length > 0 ? { operator, owners: new Set(owners) } : null;
 }
 
 export interface SidebarOwnerOption {
@@ -59,12 +68,18 @@ export function buildSidebarOwnerOptions(
     );
 }
 
-/** The groups whose owner is selected. A null filter returns the same array. */
+/**
+ * The groups that the filter shows: with "is" the groups of the selected owners, with "is_not"
+ * the other groups. A null filter returns the same array.
+ */
 export function filterSidebarProjectGroupsByOwner<
   T extends Pick<SidebarProjectSnapshot, "repositoryIdentity">,
->(groups: readonly T[], filter: ReadonlySet<SidebarOwner> | null): readonly T[] {
+>(groups: readonly T[], filter: ActiveSidebarOwnerFilter | null): readonly T[] {
   if (filter === null) return groups;
-  return groups.filter((group) => filter.has(sidebarProjectGroupOwner(group)));
+  const showsSelected = filter.operator === "is";
+  return groups.filter(
+    (group) => filter.owners.has(sidebarProjectGroupOwner(group)) === showsSelected,
+  );
 }
 
 /** The `environmentId:projectId` keys of the groups' member projects, the key that threads match. */

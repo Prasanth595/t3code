@@ -73,6 +73,16 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+/** Fork: the value of the `sidebarOwnerFilter` client setting. */
+export const SidebarOwnerFilter = Schema.Struct({
+  operator: Schema.Literals(["is", "is_not"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("is" as const)),
+  ),
+  owners: Schema.Array(Schema.NullOr(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type SidebarOwnerFilter = typeof SidebarOwnerFilter.Type;
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
 export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
 export const SidebarThreadPreviewCount = Schema.Int.check(
@@ -440,12 +450,11 @@ export const ClientSettingsSchema = Schema.Struct({
    */
   pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
-   * Fork: the repository owners whose projects the sidebar shows. Null stands for projects without
-   * an owner. An empty list shows every project. Applies only while `repositoryOwnerFilters` is on.
+   * Fork: the sidebar filter by repository owner. "is" shows only the projects of these owners,
+   * and "is_not" hides them. Null stands for projects without an owner. No owners shows every
+   * project. Applies only while `repositoryOwnerFilters` is on.
    */
-  sidebarOwnerFilter: Schema.Array(Schema.NullOr(TrimmedNonEmptyString)).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  sidebarOwnerFilter: SidebarOwnerFilter.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1879,7 +1888,7 @@ export const ClientSettingsPatch = Schema.Struct({
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
   pullRequestFilterChips: Schema.optionalKey(Schema.Boolean),
-  sidebarOwnerFilter: Schema.optionalKey(Schema.Array(Schema.NullOr(TrimmedNonEmptyString))),
+  sidebarOwnerFilter: Schema.optionalKey(SidebarOwnerFilter),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),

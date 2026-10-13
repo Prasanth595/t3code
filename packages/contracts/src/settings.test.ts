@@ -659,15 +659,17 @@ describe("ClientSettings sidebar", () => {
     ).toEqual({ confirmTerminalClose: false, terminalAppShortcutsFirst: true });
   });
 
-  it("shows every owner by default and keeps the entry for projects without an owner", () => {
-    expect(decodeClientSettings({}).sidebarOwnerFilter).toEqual([]);
-    const saved = encodeClientSettings(
-      decodeClientSettings({ sidebarOwnerFilter: ["qlik-trial", null] }),
+  it("shows every owner by default and keeps the operator and the entry for projects without an owner", () => {
+    expect(decodeClientSettings({}).sidebarOwnerFilter).toEqual({ operator: "is", owners: [] });
+    const filter = { operator: "is_not", owners: ["qlik-trial", null] };
+    const saved = encodeClientSettings(decodeClientSettings({ sidebarOwnerFilter: filter }));
+    expect(decodeClientSettings(saved).sidebarOwnerFilter).toEqual(filter);
+    expect(decodeClientSettingsPatch({ sidebarOwnerFilter: filter }).sidebarOwnerFilter).toEqual(
+      filter,
     );
-    expect(decodeClientSettings(saved).sidebarOwnerFilter).toEqual(["qlik-trial", null]);
-    expect(decodeClientSettingsPatch({ sidebarOwnerFilter: [null] }).sidebarOwnerFilter).toEqual([
-      null,
-    ]);
+    expect(() =>
+      decodeClientSettingsPatch({ sidebarOwnerFilter: { operator: "contains", owners: [] } }),
+    ).toThrow();
   });
 });
 
