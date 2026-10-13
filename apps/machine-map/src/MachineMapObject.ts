@@ -1,6 +1,6 @@
 /**
  * MM-101: the one Durable Object that holds the whole map. It keeps the document, the history,
- * the queue, presence, proposals and join codes in SQLite, and the page and machine sockets with
+ * the queue, presence, proposals, join codes, resource history and alerts in SQLite, and the page and machine sockets with
  * the WebSocket Hibernation API. The rules live in `rules/`. This class stores, sends and calls
  * Cloudflare.
  */
@@ -28,6 +28,16 @@ import {
   type PortalSnapshot,
   type PortalToMachine,
 } from "@t3tools/contracts/machineMap";
+import {
+  HealthThresholds,
+  MachineResourcesMessage,
+  type HealthAlert,
+  type HealthAlertKind,
+  type PortalResourcesRequest,
+  type ResourceRange,
+  type ResourceSample,
+  type ResourcesOverview,
+} from "@t3tools/contracts/machineMapResources";
 
 import type {
   AddMachineRequest,
@@ -46,11 +56,15 @@ import type {
   ResumeResponse,
   RotationResponse,
   RotationsEvent,
+  SampleResponse,
   SignOutEverywhereResponse,
   WriteResult,
+  HealthEvent,
+  ResourceSampleEvent,
 } from "./api.ts";
 import { PauseState } from "./api.ts";
 import { configured } from "./access.ts";
+import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
 import { CloudflareApi } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
 import {
@@ -60,6 +74,21 @@ import {
   raisesAnyAccess,
   usesText,
 } from "./rules/access.ts";
+import {
+  alertChanges,
+  HOUR_MS,
+  historyOf,
+  MAX_SAMPLE_MESSAGE_BYTES,
+  MINUTE_MS,
+  minuteStart,
+  offlineConditions,
+  offlineDueAt,
+  RANGE,
+  RESOURCE_ALERT_KINDS,
+  resourceConditions,
+  thresholdsFor,
+  type Conditions,
+} from "./rules/health.ts";
 import {
   applyChanges,
   checkEditableChanges,
@@ -143,7 +172,11 @@ const decodeCommand = decodeJson(MachineCommand);
 const decodeProposal = decodeJson(MapProposal);
 const decodePresence = decodeJson(MachinePresence);
 const decodeSettings = decodeJson(ScopedSettingValues);
-const decodeMachineMessage = decodeJson(MachineToPortal);
+/** MM-1502: resource samples ride next to the base protocol. */
+const MachineMessage = Schema.Union([MachineToPortal, MachineResourcesMessage]);
+type MachineMessage = typeof MachineMessage.Type;
+const decodeMachineMessage = decodeJson(MachineMessage);
+const decodeThresholds = decodeJson(Schema.Record(Schema.String, HealthThresholds));
 const decodeAttachment = Schema.decodeUnknownSync(Attachment);
 
 /** MM-713: the stored pause. Pages get `state` only. */
@@ -172,6 +205,7 @@ const decodeToolInput = {
   machines_queue_cancel: Schema.decodeUnknownSync(MapToolInputs.machines_queue_cancel),
   machines_undo: Schema.decodeUnknownSync(MapToolInputs.machines_undo),
   machines_preset: Schema.decodeUnknownSync(MapToolInputs.machines_preset),
+  machines_resources: Schema.decodeUnknownSync(MapToolInputs.machines_resources),
 };
 
 const offline: MachinePresence = {
@@ -190,6 +224,12 @@ const SNAPSHOT_FINISHED_COMMANDS = 100;
 const SIGN_IN_WRITE_MS = 60_000;
 /** MM-709: an offline machine stops its agents if it connects within 7 days of the pause. */
 const PAUSE_STOP_MINUTES = 7 * 24 * 60;
+/** MM-1501: the portal asks a machine for a sample at most this often. */
+const SAMPLE_REQUEST_GAP_MS = 10_000;
+/** MM-1506: pages get the active alerts and this many ended ones. */
+const PAGE_ENDED_ALERTS = 50;
+/** MM-1503: the alarm prunes old resource points and alerts this often. */
+const PRUNE_EVERY_MS = HOUR_MS;
 
 const nowIso = () => new Date().toISOString();
 
@@ -226,16 +266,29 @@ export class MachineMapObject extends DurableObject<Env> {
   #map: MachineMapDocument;
   /** MM-711: null when nothing is paused. */
   #pause: PauseRecord | null;
+  /** MM-1504: thresholds that differ from the defaults, by machine id. */
+  #thresholds: Readonly<Record<string, HealthThresholds>>;
+  /** MM-1501: when the portal last asked each machine for a sample. Lost on hibernation. */
+  readonly #sampleRequests = new Map<MachineId, number>();
+  readonly #health: HealthStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     // MM-1001: liveness pings get their answer without waking the object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
     this.#migrate();
+    this.#health = new HealthStore({
+      run: (query, ...bindings) => this.#sql(query, ...bindings),
+      transaction: (work) => this.ctx.storage.transactionSync(work),
+    });
     const row = this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'map'")[0];
     this.#map = row ? decodeMap(row.value) : emptyMap();
     const pause = this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'pause'")[0];
     this.#pause = pause ? decodePause(pause.value) : null;
+    const thresholds = this.#sql<{ value: string }>(
+      "SELECT value FROM meta WHERE key = 'health_thresholds'",
+    )[0];
+    this.#thresholds = thresholds ? decodeThresholds(thresholds.value) : {};
   }
 
   // ---------------------------------------------------------------- storage
@@ -262,6 +315,7 @@ export class MachineMapObject extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS enroll_attempts (ip TEXT PRIMARY KEY, window_start INTEGER NOT NULL, count INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sign_ins (id TEXT PRIMARY KEY, device TEXT NOT NULL, browser TEXT NOT NULL, place TEXT NOT NULL, first_seen TEXT NOT NULL, last_used TEXT NOT NULL);
     `);
+    this.ctx.storage.sql.exec(HEALTH_TABLES);
   }
 
   #revision(revision: number): MapRevision | undefined {
@@ -382,7 +436,9 @@ export class MachineMapObject extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- sockets
 
-  #broadcast(event: PortalEvent | RotationsEvent | PauseEvent): void {
+  #broadcast(
+    event: PortalEvent | RotationsEvent | PauseEvent | HealthEvent | ResourceSampleEvent,
+  ): void {
     const text = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
       try {
@@ -393,7 +449,7 @@ export class MachineMapObject extends DurableObject<Env> {
     }
   }
 
-  #sendTo(machineId: MachineId, message: PortalToMachine): boolean {
+  #sendTo(machineId: MachineId, message: PortalToMachine | PortalResourcesRequest): boolean {
     let sent = false;
     for (const ws of this.ctx.getWebSockets(machineTag(machineId))) {
       try {
@@ -448,6 +504,7 @@ export class MachineMapObject extends DurableObject<Env> {
       );
       server.send(JSON.stringify(this.#rotationsEvent()));
       server.send(JSON.stringify(this.#pauseEvent()));
+      server.send(JSON.stringify(this.#healthEvent()));
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === "/connect") {
@@ -475,7 +532,7 @@ export class MachineMapObject extends DurableObject<Env> {
       ws.close(4004, "This machine left the map.");
       return;
     }
-    let parsed: MachineToPortal;
+    let parsed: MachineMessage;
     try {
       parsed = decodeMachineMessage(message);
     } catch (error) {
@@ -485,6 +542,10 @@ export class MachineMapObject extends DurableObject<Env> {
         ws.close(4400, `The portal speaks protocol ${MACHINE_MAP_PROTOCOL}.`);
       }
       console.error("bad machine message", machine.id, errorMessage(error));
+      return;
+    }
+    if (parsed._tag === "resources" && message.length > MAX_SAMPLE_MESSAGE_BYTES) {
+      console.error("sample too big", machine.id, message.length);
       return;
     }
     await this.#onMachineMessage(machine, parsed);
@@ -501,6 +562,9 @@ export class MachineMapObject extends DurableObject<Env> {
     if (attachment.kind !== "machine" || !findMachine(this.#map, attachment.machineId)) return;
     const id = attachment.machineId;
     this.#savePresence(id, { ...this.#storedPresence(id), lastSeenAt: nowIso() }, ws);
+    // MM-1505: the samples stop, so a resource alert would only show old news.
+    this.#applyAlerts(id, {}, RESOURCE_ALERT_KINDS, Date.now());
+    await this.#scheduleAlarm();
   }
 
   override async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
@@ -510,7 +574,7 @@ export class MachineMapObject extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- machines
 
-  async #onMachineMessage(machine: MachineRecord, message: MachineToPortal): Promise<void> {
+  async #onMachineMessage(machine: MachineRecord, message: MachineMessage): Promise<void> {
     const id = machine.id;
     switch (message._tag) {
       case "hello": {
@@ -522,6 +586,7 @@ export class MachineMapObject extends DurableObject<Env> {
         });
         this.#saveReportedSettings(id, message.settings);
         this.#recordHostname(machine, message.status.hostname);
+        this.#checkOffline(id, Date.now());
         // MM-603: the current desired state, not each queued revision.
         this.#sendDesired(id);
         await this.#sendRotation(id);
@@ -602,6 +667,10 @@ export class MachineMapObject extends DurableObject<Env> {
         }
         return;
       }
+      case "resources": {
+        this.#recordSample(id, message.sample);
+        return;
+      }
       case "rotated": {
         const row = this.#sql<{ token_client_id: string }>(
           "SELECT token_client_id FROM rotations WHERE machine_id = ?",
@@ -659,6 +728,113 @@ export class MachineMapObject extends DurableObject<Env> {
 
   #rotationsEvent(): RotationsEvent {
     return { _tag: "rotations", rotations: this.#pendingRotations() };
+  }
+
+  // ---------------------------------------------------------------- resources and health
+
+  /**
+   * MM-1503: the portal clock places the point, so a machine with a wrong clock cannot write into
+   * the future.
+   */
+  #recordSample(machineId: MachineId, sample: ResourceSample): void {
+    const nowMs = Date.now();
+    this.#health.record(machineId, sample, nowMs);
+    this.#broadcast({ _tag: "resourceSample", machineId, sample });
+    this.#checkResources(machineId, nowMs);
+  }
+
+  #checkResources(machineId: MachineId, nowMs: number): void {
+    const thresholds = thresholdsFor(this.#thresholds, machineId);
+    const minutes = Math.max(thresholds.cpuMinutes, thresholds.swapMinutes);
+    const points = this.#health.points(
+      machineId,
+      "minute",
+      minuteStart(nowMs) - minutes * MINUTE_MS,
+    );
+    this.#applyAlerts(
+      machineId,
+      resourceConditions(points, thresholds),
+      RESOURCE_ALERT_KINDS,
+      nowMs,
+    );
+  }
+
+  #checkOffline(machineId: MachineId, nowMs: number): void {
+    const thresholds = thresholdsFor(this.#thresholds, machineId);
+    this.#applyAlerts(
+      machineId,
+      offlineConditions(this.#presence(machineId), thresholds, nowMs),
+      ["offline"],
+      nowMs,
+    );
+  }
+
+  #alerts(query: "active" | "page"): Array<HealthAlert> {
+    return this.#health.alerts(query === "active" ? 0 : PAGE_ENDED_ALERTS);
+  }
+
+  /** MM-1505: starts and ends the alerts of the given kinds. Pages hear of every change. */
+  #applyAlerts(
+    machineId: MachineId,
+    conditions: Conditions,
+    kinds: ReadonlyArray<HealthAlertKind>,
+    nowMs: number,
+  ): void {
+    const active = this.#alerts("active").filter((alert) => alert.machineId === machineId);
+    const changes = alertChanges(active, conditions, kinds);
+    if (changes.start.length === 0 && changes.end.length === 0) return;
+    const at = new Date(nowMs).toISOString();
+    for (const alert of changes.end) this.#health.saveAlert({ ...alert, endedAt: at });
+    for (const start of changes.start) {
+      this.#health.saveAlert({
+        id: crypto.randomUUID(),
+        machineId,
+        kind: start.kind,
+        startedAt: at,
+        endedAt: null,
+        value: start.value,
+        threshold: start.threshold,
+      });
+    }
+    this.#broadcast(this.#healthEvent());
+  }
+
+  #overview(alerts: "active" | "page"): ResourcesOverview {
+    const ids = new Set<string>(this.#map.machines.map((m) => m.id));
+    const latest = this.#health.latest(ids);
+    return { latest, alerts: this.#alerts(alerts), thresholds: this.#thresholds };
+  }
+
+  #healthEvent(): HealthEvent {
+    return { _tag: "health", health: this.#overview("page") };
+  }
+
+  #resourceHistory(machineId: MachineId, range: ResourceRange) {
+    const spec = RANGE[range];
+    return historyOf(
+      machineId,
+      range,
+      this.#health.points(machineId, spec.step, Date.now() - spec.spanMs),
+    );
+  }
+
+  /** MM-1503, MM-1505: prunes resource points and ended alerts, and remembers when. */
+  #pruneResources(nowMs: number): void {
+    this.#health.prune(
+      nowMs,
+      this.#map.machines.map((m) => m.id),
+    );
+    this.#sql(
+      "INSERT OR REPLACE INTO meta (key, value) VALUES ('resources_pruned_at', ?)",
+      String(nowMs),
+    );
+  }
+
+  #prunedAt(): number {
+    const row = this.#sql<{ value: string }>(
+      "SELECT value FROM meta WHERE key = 'resources_pruned_at'",
+    )[0];
+    return row ? Number(row.value) : 0;
   }
 
   // ---------------------------------------------------------------- writes
@@ -874,6 +1050,20 @@ export class MachineMapObject extends DurableObject<Env> {
           commands: snapshot.commands,
           history: this.#history(null, 50),
           proposals: snapshot.proposals,
+          resources: this.#overview("active"),
+        };
+      }
+      case "machines_resources": {
+        const args = decodeToolInput.machines_resources(input);
+        if (!findMachine(this.#map, args.machineId)) {
+          throw new PortalError(404, `Unknown machine ${args.machineId}.`);
+        }
+        const range = args.range ?? "hour";
+        const since = new Date(Date.now() - RANGE[range].spanMs).toISOString();
+        return {
+          _tag: "resources",
+          history: this.#resourceHistory(args.machineId, range),
+          alerts: this.#health.alertsOf(args.machineId, since),
         };
       }
       case "machines_set_access": {
@@ -1011,13 +1201,37 @@ export class MachineMapObject extends DurableObject<Env> {
       ...this.#sql<{ expires_at: string }>("SELECT expires_at FROM rotations").map(
         (r) => r.expires_at,
       ),
+      ...this.#healthAlarmTimes(),
     ];
     const at = earliest(times);
     if (at === null) await this.ctx.storage.deleteAlarm();
     else await this.ctx.storage.setAlarm(at);
   }
 
-  /** Arrow, command, proposal, join code and rotation expiry (MM-304, MM-605, MM-804, MM-202, MM-1201). */
+  /** MM-1504: when an offline machine counts as down, and MM-1503: the next prune. */
+  #healthAlarmTimes(): Array<string> {
+    const downAlready = new Set<string>(
+      this.#alerts("active").flatMap((alert) =>
+        alert.kind === "offline" ? [alert.machineId] : [],
+      ),
+    );
+    const times = this.#map.machines.flatMap((machine) => {
+      if (downAlready.has(machine.id)) return [];
+      const due = offlineDueAt(
+        this.#presence(machine.id),
+        thresholdsFor(this.#thresholds, machine.id),
+      );
+      return due === null ? [] : [new Date(due).toISOString()];
+    });
+    if (this.#health.hasPoints())
+      times.push(new Date(this.#prunedAt() + PRUNE_EVERY_MS).toISOString());
+    return times;
+  }
+
+  /**
+   * Arrow, command, proposal, join code and rotation expiry (MM-304, MM-605, MM-804, MM-202,
+   * MM-1201), offline alerts (MM-1504) and the resource prune (MM-1503).
+   */
   override async alarm(): Promise<void> {
     const now = Date.now();
     for (const arrow of this.#map.arrows) {
@@ -1067,6 +1281,8 @@ export class MachineMapObject extends DurableObject<Env> {
     }
     if (rotationsChanged) this.#broadcast(this.#rotationsEvent());
     this.#sql("DELETE FROM enroll_attempts WHERE window_start < ?", now - ENROLL_WINDOW_MS);
+    for (const machine of this.#map.machines) this.#checkOffline(machine.id, now);
+    if (now >= this.#prunedAt() + PRUNE_EVERY_MS) this.#pruneResources(now);
     await this.#scheduleAlarm();
   }
 
@@ -1363,6 +1579,12 @@ export class MachineMapObject extends DurableObject<Env> {
           this.#sql(`DELETE FROM ${table} WHERE machine_id = ?`, machineId);
         }
       });
+      this.#health.removeMachine(machineId);
+      if (Object.hasOwn(this.#thresholds, machineId)) {
+        const { [machineId]: _removed, ...rest } = this.#thresholds;
+        this.#saveThresholds(rest);
+      }
+      this.#broadcast(this.#healthEvent());
       for (const ws of this.ctx.getWebSockets(machineTag(machineId)))
         ws.close(4004, "This machine left the map.");
       this.#broadcast(this.#rotationsEvent());
@@ -1503,6 +1725,55 @@ export class MachineMapObject extends DurableObject<Env> {
       }
       this.#sql("DELETE FROM sign_ins");
       return { accessMessage, revokeCommands };
+    });
+  }
+
+  #saveThresholds(thresholds: Readonly<Record<string, HealthThresholds>>): void {
+    this.#sql(
+      "INSERT OR REPLACE INTO meta (key, value) VALUES ('health_thresholds', ?)",
+      JSON.stringify(thresholds),
+    );
+    this.#thresholds = thresholds;
+  }
+
+  /** MM-1504: the thresholds of one machine. Null returns it to the defaults. */
+  setThresholds(owner: OwnerContext, machineId: MachineId, thresholds: HealthThresholds | null) {
+    return this.#run(owner, (): ResourcesOverview => {
+      if (!findMachine(this.#map, machineId)) {
+        throw new PortalError(404, `Unknown machine ${machineId}.`);
+      }
+      const { [machineId]: _old, ...rest } = this.#thresholds;
+      this.#saveThresholds(thresholds === null ? rest : { ...rest, [machineId]: thresholds });
+      const nowMs = Date.now();
+      this.#checkResources(machineId, nowMs);
+      this.#checkOffline(machineId, nowMs);
+      this.#broadcast(this.#healthEvent());
+      return this.#overview("page");
+    });
+  }
+
+  /** MM-1503: GET /api/machines/:id/resources?range. */
+  resources(owner: OwnerContext, machineId: MachineId, range: ResourceRange) {
+    return this.#run(owner, () => {
+      if (!findMachine(this.#map, machineId)) {
+        throw new PortalError(404, `Unknown machine ${machineId}.`);
+      }
+      return this.#resourceHistory(machineId, range);
+    });
+  }
+
+  /** MM-1501: asks an online machine for a sample now. */
+  requestSample(owner: OwnerContext, machineId: MachineId) {
+    return this.#run(owner, (): SampleResponse => {
+      if (!findMachine(this.#map, machineId)) {
+        throw new PortalError(404, `Unknown machine ${machineId}.`);
+      }
+      const nowMs = Date.now();
+      const last = this.#sampleRequests.get(machineId) ?? 0;
+      if (nowMs - last < SAMPLE_REQUEST_GAP_MS) return { requested: false };
+      const requested = this.#sendTo(machineId, { _tag: "sampleResources" });
+      if (requested) this.#sampleRequests.set(machineId, nowMs);
+      return { requested };
     });
   }
 

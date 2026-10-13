@@ -395,6 +395,10 @@
       "types": "./src/diffCount.ts",
       "default": "./src/diffCount.ts"
     },
+    "./thread-card-info": {
+      "types": "./src/threadCardInfo.ts",
+      "default": "./src/threadCardInfo.ts"
+    },
     "./mcp-apps": {
       "types": "./src/mcpApps/host.ts",
       "default": "./src/mcpApps/host.ts"

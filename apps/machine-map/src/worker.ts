@@ -4,6 +4,7 @@
  */
 import * as Schema from "effect/Schema";
 import { MachineId } from "@t3tools/contracts/machineMap";
+import { RESOURCE_RANGES } from "@t3tools/contracts/machineMapResources";
 
 import { machineClientId, ownerEmail } from "./access.ts";
 import {
@@ -13,6 +14,7 @@ import {
   EnrollRequest,
   JoinCodeRequest,
   RevisionRequest,
+  ThresholdsRequest,
 } from "./api.ts";
 import type { Env } from "./env.ts";
 import { MACHINE_CLIENT_ID_HEADER, type Outcome, type OwnerContext } from "./MachineMapObject.ts";
@@ -151,6 +153,20 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.rotateToken(owner, MachineId.make(id)));
     case "DELETE /machines/:id":
       return toResponse(await stub.removeMachine(owner, MachineId.make(id)));
+    case "GET /machines/:id/resources": {
+      const range = url.searchParams.get("range") ?? "hour";
+      const known = RESOURCE_RANGES.find((r) => r === range);
+      if (known === undefined) return fail(400, `range is one of ${RESOURCE_RANGES.join(", ")}.`);
+      return toResponse(await stub.resources(owner, MachineId.make(id), known));
+    }
+    case "POST /machines/:id/sample":
+      return toResponse(await stub.requestSample(owner, MachineId.make(id)));
+    case "POST /machines/:id/thresholds": {
+      const body = await readBody(request, ThresholdsRequest);
+      return body instanceof Response
+        ? body
+        : toResponse(await stub.setThresholds(owner, MachineId.make(id), body.thresholds));
+    }
     case "POST /presets/:id/apply":
       return toResponse(await stub.applyPreset(owner, id));
     case "POST /lockdown":

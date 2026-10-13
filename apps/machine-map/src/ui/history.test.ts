@@ -131,7 +131,7 @@ describe("groupHistory (MM-714)", () => {
       revision(map, [arrowTo("admin")], { at: "2026-10-13T10:01:00.000Z", actor: phone }),
       revision(map, [move(0.3)], { at: "2026-10-13T10:00:00.000Z", actor: phone }),
     ];
-    const [day] = groupHistory(historyEntries(revisions, []));
+    const [day] = groupHistory(historyEntries(revisions, [], []));
     expect(day?.items.map((item) => (item._tag === "group" ? item.entries.length : 1))).toEqual([
       3, 1, 1, 1,
     ]);
@@ -144,6 +144,7 @@ describe("groupHistory (MM-714)", () => {
     const entries = historyEntries(
       [revision(map, [move(0.1)], { at: "2026-10-12T09:00:00.000Z" })],
       [command("c1"), command("c2", VPS), command("c3", WIN)],
+      [],
     );
     const days = groupHistory(entries);
     expect(days).toHaveLength(2);
@@ -161,6 +162,7 @@ describe("matchesFilter (MM-716)", () => {
       revision(map, [{ _tag: "manageSetting", scope: "server", key: "x", managed: true }]),
     ],
     [],
+    [],
   );
   const kinds = (filter: Parameters<typeof matchesFilter>[1]) =>
     entries.filter((e) => matchesFilter(e, filter)).map((e) => e.kind);
@@ -171,6 +173,37 @@ describe("matchesFilter (MM-716)", () => {
     expect(kinds({ ...NO_FILTER, actor: `agent:${VPS}` })).toEqual(["raise"]);
     expect(kinds({ ...NO_FILTER, importantOnly: true })).toEqual(["raise"]);
     expect(kinds(NO_FILTER)).toHaveLength(3);
+  });
+});
+
+describe("alert entries (MM-1505)", () => {
+  const alert = (endedAt: string | null) => ({
+    id: `a-${endedAt ?? "active"}`,
+    machineId: WIN,
+    kind: "offline" as const,
+    startedAt: "2026-10-12T08:00:00.000Z",
+    endedAt,
+    value: 20,
+    threshold: 15,
+  });
+
+  it("an ended alert gives a start and an end entry, an active one only a start", () => {
+    const entries = historyEntries([], [], [alert("2026-10-12T09:00:00.000Z"), alert(null)]);
+    expect(entries.map((e) => (e._tag === "alert" ? e.ended : null))).toEqual([true, false, false]);
+    expect(entries.every((e) => e.kind === "alert")).toBe(true);
+  });
+
+  it("filters by the alert machine and the portal actor", () => {
+    const entries = historyEntries([], [], [alert(null)]);
+    expect(entries.filter((e) => matchesFilter(e, { ...NO_FILTER, machineId: WIN }))).toHaveLength(
+      1,
+    );
+    expect(entries.filter((e) => matchesFilter(e, { ...NO_FILTER, machineId: VPS }))).toHaveLength(
+      0,
+    );
+    expect(entries.filter((e) => matchesFilter(e, { ...NO_FILTER, actor: "portal" }))).toHaveLength(
+      1,
+    );
   });
 });
 

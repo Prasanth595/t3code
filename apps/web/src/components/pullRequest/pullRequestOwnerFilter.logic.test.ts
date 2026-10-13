@@ -93,9 +93,18 @@ describe("owner qualifiers typed as a search", () => {
 describe("narrowing projects by repository owner", () => {
   const projects = [app, dotfiles, fork, scratch];
 
-  it("lists each owner once, sorted and lowercase", () => {
+  it("lists each owner of a project with threads once, sorted and lowercase", () => {
+    const other = project("other", "github.com/qlik-trial/x");
+    const clone = project("clone", "github.com/Aloxaf/fzf-tab");
+    const threadIn = (candidate: { id: ProjectId; environmentId: EnvironmentId }) => ({
+      environmentId: candidate.environmentId,
+      projectId: candidate.id,
+    });
     expect(
-      pullRequestProjectOwners([...projects, project("other", "github.com/qlik-trial/x")]),
+      pullRequestProjectOwners(
+        [...projects, other, clone],
+        [threadIn(app), threadIn(other), threadIn(fork), threadIn(scratch)],
+      ),
     ).toEqual(["qlik-trial", "yarden-zamir"]);
   });
 

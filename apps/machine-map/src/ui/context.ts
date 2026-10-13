@@ -9,6 +9,7 @@ import type {
   MapRevision,
   PortalSnapshot,
 } from "@t3tools/contracts/machineMap";
+import type { ResourcesOverview } from "@t3tools/contracts/machineMapResources";
 
 import type { PauseState, PendingRotation, WriteResult } from "../api.ts";
 import type { Route, Selection, View } from "./route.ts";
@@ -60,6 +61,8 @@ export interface Portal {
   readonly rotations: ReadonlyArray<PendingRotation>;
   /** MM-713: null when nothing is paused. */
   readonly pause: PauseState | null;
+  /** MM-1506: the latest samples, thresholds and alerts. */
+  readonly health: ResourcesOverview;
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;

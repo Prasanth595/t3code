@@ -15,7 +15,7 @@ This guide maps owner tasks to the fork tools. It is for agents that operate the
 
 - An agent in a T3 thread gets the fork MCP tools with the other T3 tools. Their descriptions hold the permissions, the side effects and the result shapes.
 - In a terminal, run `t3 tool list` for all tools and `t3 tool describe <name>` for one tool. Run `t3 tool call <name> --input '<json>'` to call one. In a checkout, use `node apps/server/src/bin.ts` instead of `t3`.
-- The fork MCP tools are `machines_read`, `machines_set_access`, `machines_set_setting`, `machines_command`, `machines_queue_cancel`, `machines_undo`, `machines_preset`, `machines_join` and `machine_tool_call`.
+- The fork MCP tools are `machines_read`, `machines_resources`, `machines_set_access`, `machines_set_setting`, `machines_command`, `machines_queue_cancel`, `machines_undo`, `machines_preset`, `machines_join` and `machine_tool_call`.
 
 ## Machine map
 
@@ -29,6 +29,8 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | Task                                   | Do this                                                                                                                                                                |
 | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | See the machines and their state       | `machines_read`.                                                                                                                                                       |
+| See the load and alerts of machines    | `machines_read`. `resources` holds the newest sample, the thresholds and the active alerts.                                                                            |
+| See the resource history of a machine  | `machines_resources` with `machineId` and `range` (`hour`, `day` or `month`).                                                                                          |
 | Give machine X access to machine Y     | `machines_set_access` with `from` X, `to` Y, a `level`, and `agentTools: true` if agents on X must call tools on Y. Add `expiresInMinutes` for temporary access.       |
 | Remove access                          | `machines_set_access` with `level: "none"`. The sessions of X on Y end at once.                                                                                        |
 | Run a tool on another machine          | `machine_tool_call` with `machine`, `tool` and `input`. It needs an arrow with agent tools from this machine to that machine.                                          |

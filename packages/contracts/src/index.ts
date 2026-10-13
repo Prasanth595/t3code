@@ -68,3 +68,5 @@ export * from "./clientRpcPermissions.ts";
 export * from "./forkChangelog.ts";
 export * from "./machineMap.ts";
 export * from "./machineMapClient.ts";
+export * from "./machineMapResources.ts";
+export * from "./slotLayout.ts";

@@ -35,6 +35,7 @@ import {
   type Selection,
   type View,
 } from "./route.ts";
+import { HealthView } from "./resources.tsx";
 import { usePortal, type Connection } from "./store.ts";
 import {
   DevicesView,
@@ -277,6 +278,7 @@ export function App() {
     history,
     rotations: state.rotations,
     pause: state.pause,
+    health: state.health,
     draft,
     now,
     route,
@@ -346,6 +348,8 @@ export function App() {
         return <MapView map={map} readOnly={false} />;
       case "table":
         return <TableView />;
+      case "health":
+        return <HealthView />;
       case "settings":
         return <SettingsView />;
       case "queue":

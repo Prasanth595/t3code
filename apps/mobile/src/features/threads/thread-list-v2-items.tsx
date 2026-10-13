@@ -17,10 +17,33 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
-import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  AuthOrchestrationOperateScope,
+  type EnvironmentMachineKind,
+  type MobileThreadCardElement,
+  type MobileThreadCardLayout,
+} from "@t3tools/contracts";
+import {
+  canSnooze,
+  resolveSnoozePresets,
+  snoozeWakeLabel,
+} from "@t3tools/client-runtime/state/thread-settled";
+import {
+  resolveThreadCardInfo,
+  type ThreadCardInfo,
+} from "@t3tools/client-runtime/thread-card-info";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import type { MenuAction } from "@react-native-menu/menu";
-import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -32,6 +55,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
+import { relativeTime } from "../../lib/time";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useEnvironmentScope } from "../../state/session";
@@ -53,6 +77,7 @@ import {
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { RUNTIME_MODE_DETAILS } from "./thread-settings-options";
 
 /**
  * Thread List v2 renders one flat native list: rich edge-to-edge rows for
@@ -109,6 +134,8 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     iconTintClassName: "accent-warning-foreground",
   },
 };
+const PLAN_LABELS = { mode: "Plan mode", ready: "Plan ready" } as const;
+
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
   icon: "checkmark.circle",
@@ -528,6 +555,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   /** Drawn after the label so the machine reads at a glance; ignored while
       the label is null. */
   readonly environmentMachine?: EnvironmentMachineKind;
+  /** The user-built card layout, read once by the list. Null keeps the
+      built-in card. Only the "card" variant uses it. */
+  readonly cardLayout: MobileThreadCardLayout | null;
   /** Hosting surface. "screen" (default) renders the compact Home idiom:
       flat edge-to-edge rows on the screen background with inset hairlines.
       "sidebar" renders the iPad split-view idiom: rounded rows blending
@@ -969,217 +999,422 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
 
   // Sidebar rows use navigation foregrounds on their active and idle surfaces.
-  const cardContent = (
-    <>
-      <View className="flex-row items-center gap-1.5">
-        {props.project ? (
-          <ProjectFavicon
-            environmentId={thread.environmentId}
-            faviconPath={props.project.faviconPath}
-            projectIcon={props.project.projectIcon}
-            size={15}
-            projectTitle={props.project.title}
-            workspaceRoot={props.project.workspaceRoot}
-          />
-        ) : null}
+  // The pieces below serve both the built-in card and a user layout, so each
+  // element keeps one look whichever path places it.
+  const mutedTextClassName = selected
+    ? selectedThreadRowColors.mutedForegroundClassName
+    : rowAppearance.mutedForegroundClassName;
+  const tertiaryTextClassName = selected
+    ? selectedThreadRowColors.mutedForegroundClassName
+    : rowAppearance.tertiaryForegroundClassName;
+  const projectTitle = props.projectTitle ?? props.project?.title ?? "";
+  const lastError =
+    (status === "failed" || status === "limited") && thread.runtime?.lastError
+      ? thread.runtime.lastError
+      : null;
+
+  const favicon = props.project ? (
+    <ProjectFavicon
+      environmentId={thread.environmentId}
+      faviconPath={props.project.faviconPath}
+      projectIcon={props.project.projectIcon}
+      size={15}
+      projectTitle={props.project.title}
+      workspaceRoot={props.project.workspaceRoot}
+    />
+  ) : null;
+  const projectText = (flexClassName: string) => (
+    <Text
+      className={cn(flexClassName, "text-sm font-t3-medium", mutedTextClassName)}
+      numberOfLines={1}
+    >
+      {projectTitle}
+    </Text>
+  );
+  const queuedIcon = props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null;
+  const pinGlyph = pinnedRow ? (
+    <SymbolView
+      name="pin"
+      size={11}
+      tintColorClassName={rowAppearance.mutedIconTintClassName}
+      type="monochrome"
+    />
+  ) : null;
+  const statusOrTime = statusLabel ? (
+    <View className="flex-row items-center gap-1">
+      <SymbolView
+        name={statusLabel.icon}
+        size={13}
+        tintColorClassName={
+          selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
+        }
+        type="monochrome"
+        weight="semibold"
+      />
+      <Text
+        className={cn(
+          "text-xs font-t3-bold",
+          selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
+        )}
+      >
+        {statusLabel.label}
+      </Text>
+    </View>
+  ) : (
+    <Text
+      className={cn(
+        "text-xs tabular-nums",
+        selected
+          ? selectedThreadRowColors.foregroundClassName
+          : rowAppearance.tertiaryForegroundClassName,
+      )}
+    >
+      {timeLabel}
+    </Text>
+  );
+  const titleText = (numberOfLines: number, spacingClassName?: string) => (
+    <Text
+      className={cn(
+        spacingClassName,
+        "text-base",
+        // Background work recedes to regular weight, matching web.
+        !recede && "font-t3-medium",
+        selected ? selectedThreadRowColors.foregroundClassName : rowAppearance.foregroundClassName,
+      )}
+      numberOfLines={numberOfLines}
+    >
+      {thread.title}
+    </Text>
+  );
+  const searchExcerpt = props.searchMatch ? (
+    <View className="mt-1">
+      <ThreadSearchMatchExcerpt
+        sidebar={sidebarPane}
+        match={props.searchMatch}
+        query={props.searchQuery ?? ""}
+        selected={selected}
+      />
+    </View>
+  ) : null;
+  const lastErrorText = (flexClassName: string, text: string) => (
+    <Text
+      className={cn(
+        flexClassName,
+        "text-xs",
+        selected
+          ? selectedThreadRowColors.mutedForegroundClassName
+          : status === "limited"
+            ? "text-warning-foreground"
+            : "text-danger-foreground",
+      )}
+      numberOfLines={1}
+    >
+      {text}
+    </Text>
+  );
+  // Nested texts share one truncating line; a glyph cannot live inside it
+  // without breaking truncation, so glyphs sit next to this line.
+  const truncatingLine = (children: ReactNode) => (
+    <Text className={cn("shrink text-xs", mutedTextClassName)} numberOfLines={1}>
+      {children}
+    </Text>
+  );
+  const branchText = thread.branch ? (
+    <Text className={cn("text-xs", mutedTextClassName)} style={{ fontFamily: MONO_FONT }}>
+      {thread.branch}
+    </Text>
+  ) : null;
+  const environmentText = props.environmentLabel ? (
+    <Text className={cn("text-xs", tertiaryTextClassName)}>{props.environmentLabel}</Text>
+  ) : null;
+  const machineSymbol =
+    props.environmentLabel && props.environmentMachine ? (
+      <EnvironmentMachineSymbol
+        kind={props.environmentMachine}
+        size={11}
+        tintColorClassName={
+          selected
+            ? selectedThreadRowColors.mutedIconTintClassName
+            : rowAppearance.tertiaryIconTintClassName
+        }
+      />
+    ) : null;
+  const prBadge = pr ? (
+    <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
+      <SymbolView
+        name={pr.kind === "stack" ? "square.3.layers.3d" : "arrow.triangle.pull"}
+        size={12}
+        tintColorClassName={
+          pr.state === null || pr.isDraft
+            ? rowAppearance.mutedIconTintClassName
+            : pr.state === "open"
+              ? "accent-adaptive-emerald-600-400"
+              : pr.state === "closed"
+                ? "accent-adaptive-rose-600-400"
+                : "accent-adaptive-violet-600-400"
+        }
+      />
+      <Text
+        accessibilityLabel={pr.accessibilityLabel}
+        className={cn("text-xs", pr.textClassName)}
+        style={{ fontFamily: MONO_FONT }}
+      >
+        {pr.label}
+      </Text>
+    </View>
+  ) : null;
+  const providerIcons = providerInstance ? (
+    // Earlier owners peek out behind the current provider so a
+    // handed-off thread shows where it has been. The current owner
+    // keeps its account badge so same-driver instances stay distinct.
+    <View className="flex-row items-center">
+      {providerDrivers.slice(0, -1).map((driver, index) => (
+        <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
+          <ProviderIcon provider={driver} size={12} />
+        </View>
+      ))}
+      <ProviderInstanceIcon
+        iconUrl={providerIconUrl}
+        provider={providerInstance.driverKind}
+        size={14}
+        displayName={providerInstance.displayName}
+        accentColor={providerInstance.accentColor}
+        showBadge={providerInstance.showBadge}
+        surfaceColor={rowAppearance.providerIconSurfaceColor}
+      />
+    </View>
+  ) : null;
+
+  const mutedIconTintClassName = selected
+    ? selectedThreadRowColors.mutedIconTintClassName
+    : rowAppearance.mutedIconTintClassName;
+  // A small glyph with optional text, the shape of every optional layout element.
+  const metaItem = (input: {
+    readonly icon: AppSymbolName;
+    readonly label: string;
+    readonly text?: string | number;
+    /** Lets long text truncate instead of pushing the row's other items out. */
+    readonly shrink?: boolean;
+    readonly textClassName?: string;
+    readonly iconTintClassName?: string;
+  }) => (
+    <View
+      accessible
+      accessibilityLabel={input.label}
+      className={cn("flex-row items-center gap-1", input.shrink && "min-w-0 shrink")}
+    >
+      <SymbolView
+        name={input.icon}
+        size={11}
+        tintColorClassName={
+          selected ? mutedIconTintClassName : (input.iconTintClassName ?? mutedIconTintClassName)
+        }
+        type="monochrome"
+      />
+      {input.text === undefined ? null : (
         <Text
           className={cn(
-            "flex-1 text-sm font-t3-medium",
-            selected
-              ? selectedThreadRowColors.mutedForegroundClassName
-              : rowAppearance.mutedForegroundClassName,
+            "text-xs tabular-nums",
+            input.shrink && "shrink",
+            selected ? mutedTextClassName : (input.textClassName ?? mutedTextClassName),
           )}
           numberOfLines={1}
         >
-          {props.projectTitle ?? props.project?.title ?? ""}
+          {input.text}
         </Text>
-        {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
-        {pinnedRow ? (
-          <SymbolView
-            name="pin"
-            size={11}
-            tintColorClassName={rowAppearance.mutedIconTintClassName}
-            type="monochrome"
-          />
-        ) : null}
-        {statusLabel ? (
-          <View className="flex-row items-center gap-1">
-            <SymbolView
-              name={statusLabel.icon}
-              size={13}
-              tintColorClassName={
-                selected ? selectedThreadRowColors.iconTintClassName : statusLabel.iconTintClassName
-              }
-              type="monochrome"
-              weight="semibold"
-            />
-            <Text
-              className={cn(
-                "text-xs font-t3-bold",
-                selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
-              )}
-            >
-              {statusLabel.label}
-            </Text>
-          </View>
-        ) : (
-          <Text
-            className={cn(
-              "text-xs tabular-nums",
-              selected
-                ? selectedThreadRowColors.foregroundClassName
-                : rowAppearance.tertiaryForegroundClassName,
-            )}
-          >
-            {timeLabel}
-          </Text>
-        )}
+      )}
+    </View>
+  );
+
+  const builtInCardContent = (
+    <>
+      <View className="flex-row items-center gap-1.5">
+        {favicon}
+        {projectText("flex-1")}
+        {queuedIcon}
+        {pinGlyph}
+        {statusOrTime}
       </View>
-      <Text
-        className={cn(
-          "mt-1 text-base",
-          // Background work recedes to regular weight, matching web.
-          !recede && "font-t3-medium",
-          selected
-            ? selectedThreadRowColors.foregroundClassName
-            : rowAppearance.foregroundClassName,
-        )}
-        numberOfLines={2}
-      >
-        {thread.title}
-      </Text>
-      {props.searchMatch ? (
-        <View className="mt-1">
-          <ThreadSearchMatchExcerpt
-            sidebar={sidebarPane}
-            match={props.searchMatch}
-            query={props.searchQuery ?? ""}
-            selected={selected}
-          />
-        </View>
-      ) : null}
+      {titleText(2, "mt-1")}
+      {searchExcerpt}
       <View className="mt-1 flex-row items-center gap-2">
-        {(status === "failed" || status === "limited") && thread.runtime?.lastError ? (
-          <Text
-            className={cn(
-              "flex-1 text-xs",
-              selected
-                ? selectedThreadRowColors.mutedForegroundClassName
-                : status === "limited"
-                  ? "text-warning-foreground"
-                  : "text-danger-foreground",
-            )}
-            numberOfLines={1}
-          >
-            {thread.runtime.lastError}
-          </Text>
+        {lastError ? (
+          lastErrorText("flex-1", lastError)
         ) : thread.branch || props.environmentLabel ? (
           /* "branch · machine" share one truncating line. The machine sits
              last so a tight fit cuts the repetitive label, not the branch —
-             and machine-only fills the row for non-git projects. The glyph
-             hugs the label (it cannot live inside the Text without breaking
-             truncation), and the wrapper takes the slack so the trailers
-             stay pinned right. */
+             and machine-only fills the row for non-git projects. The wrapper
+             takes the slack so the trailers stay pinned right. */
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
-            <Text
-              className={cn(
-                "shrink text-xs",
-                selected
-                  ? selectedThreadRowColors.mutedForegroundClassName
-                  : rowAppearance.mutedForegroundClassName,
-              )}
-              numberOfLines={1}
-            >
-              {thread.branch ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.mutedForegroundClassName,
-                  )}
-                  style={{ fontFamily: MONO_FONT }}
-                >
-                  {thread.branch}
-                </Text>
-              ) : null}
-              {thread.branch && props.environmentLabel ? "  ·  " : null}
-              {props.environmentLabel ? (
-                <Text
-                  className={cn(
-                    "text-xs",
-                    selected
-                      ? selectedThreadRowColors.mutedForegroundClassName
-                      : rowAppearance.tertiaryForegroundClassName,
-                  )}
-                >
-                  {props.environmentLabel}
-                </Text>
-              ) : null}
-            </Text>
-            {props.environmentLabel && props.environmentMachine ? (
-              <EnvironmentMachineSymbol
-                kind={props.environmentMachine}
-                size={11}
-                tintColorClassName={
-                  selected
-                    ? selectedThreadRowColors.mutedIconTintClassName
-                    : rowAppearance.tertiaryIconTintClassName
-                }
-              />
-            ) : null}
+            {truncatingLine(
+              <>
+                {branchText}
+                {thread.branch && props.environmentLabel ? "  ·  " : null}
+                {environmentText}
+              </>,
+            )}
+            {machineSymbol}
           </View>
         ) : (
           <View className="flex-1" />
         )}
-        {pr ? (
-          <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
-            <SymbolView
-              name={pr.kind === "stack" ? "square.3.layers.3d" : "arrow.triangle.pull"}
-              size={12}
-              tintColorClassName={
-                pr.state === null || pr.isDraft
-                  ? rowAppearance.mutedIconTintClassName
-                  : pr.state === "open"
-                    ? "accent-adaptive-emerald-600-400"
-                    : pr.state === "closed"
-                      ? "accent-adaptive-rose-600-400"
-                      : "accent-adaptive-violet-600-400"
-              }
-            />
-            <Text
-              accessibilityLabel={pr.accessibilityLabel}
-              className={cn("text-xs", pr.textClassName)}
-              style={{ fontFamily: MONO_FONT }}
-            >
-              {pr.label}
-            </Text>
-          </View>
-        ) : null}
-        {providerInstance ? (
-          // Earlier owners peek out behind the current provider so a
-          // handed-off thread shows where it has been. The current owner
-          // keeps its account badge so same-driver instances stay distinct.
-          <View className="flex-row items-center">
-            {providerDrivers.slice(0, -1).map((driver, index) => (
-              <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
-                <ProviderIcon provider={driver} size={12} />
-              </View>
-            ))}
-            <ProviderInstanceIcon
-              iconUrl={providerIconUrl}
-              provider={providerInstance.driverKind}
-              size={14}
-              displayName={providerInstance.displayName}
-              accentColor={providerInstance.accentColor}
-              showBadge={providerInstance.showBadge}
-              surfaceColor={rowAppearance.providerIconSurfaceColor}
-            />
-          </View>
-        ) : null}
+        {prBadge}
+        {providerIcons}
       </View>
     </>
   );
+
+  // The relative times (age, limit reset) refresh when the row re-renders,
+  // not on the list's minute tick. Precompute them on the list item, as
+  // timeLabel is, if a stale value shows.
+  const renderLayoutElement = (
+    element: MobileThreadCardElement,
+    info: ThreadCardInfo,
+  ): ReactNode => {
+    switch (element) {
+      case "favicon":
+        return favicon;
+      case "project":
+        return projectTitle ? projectText("shrink") : null;
+      case "branch":
+        // A failed or limited thread shows its error in the branch slot, as
+        // the built-in card does on its branch line.
+        if (lastError) return lastErrorText("shrink", lastError);
+        return branchText ? truncatingLine(branchText) : null;
+      case "title":
+        // One line keeps a custom card compact; a search hit sits under it.
+        return (
+          <View className="min-w-0 shrink">
+            {titleText(1)}
+            {searchExcerpt}
+          </View>
+        );
+      case "pin":
+        return pinGlyph;
+      case "status":
+        return (
+          <>
+            {queuedIcon}
+            {statusOrTime}
+          </>
+        );
+      case "pullRequest":
+        return prBadge;
+      case "machine":
+        return environmentText ? (
+          <View className="flex-row items-center gap-1">
+            {truncatingLine(environmentText)}
+            {machineSymbol}
+          </View>
+        ) : null;
+      case "providers":
+        return providerIcons;
+      case "model":
+        return (
+          <Text className={cn("min-w-0 shrink text-xs", mutedTextClassName)} numberOfLines={1}>
+            {formatModelSlugName(thread.modelSelection.model)}
+          </Text>
+        );
+      case "access": {
+        const access = RUNTIME_MODE_DETAILS[info.access];
+        return metaItem({ icon: access.icon, label: access.label });
+      }
+      case "plan":
+        return info.plan === null
+          ? null
+          : metaItem({
+              icon: "checklist",
+              label: PLAN_LABELS[info.plan],
+              iconTintClassName: info.plan === "ready" ? "accent-adaptive-sky-600-400" : undefined,
+            });
+      case "backgroundTasks":
+        return info.backgroundTaskCount === null
+          ? null
+          : metaItem({
+              icon: "square.3.layers.3d",
+              label: `${info.backgroundTaskCount} background ${info.backgroundTaskCount === 1 ? "task" : "tasks"}`,
+              text: info.backgroundTaskCount,
+            });
+      case "goal":
+        return info.goal === null
+          ? null
+          : metaItem({
+              icon: "target",
+              label: `Goal (${info.goal.status.replaceAll("_", " ")}): ${info.goal.objective}`,
+              text: info.goal.objective,
+              shrink: true,
+            });
+      case "lineage":
+        return info.lineage === null
+          ? null
+          : info.lineage === "fork"
+            ? metaItem({ icon: "arrow.triangle.branch", label: "Forked from another thread" })
+            : metaItem({ icon: "cpu", label: "Subagent of another thread" });
+      case "limitReset": {
+        if (info.limitResetAt === null) return null;
+        const resetIn = snoozeWakeLabel(info.limitResetAt, { now: new Date().toISOString() });
+        return metaItem({
+          icon: "clock",
+          label: resetIn === "now" ? "Usage limit resets now" : `Usage limit resets in ${resetIn}`,
+          text: resetIn,
+          textClassName: "text-warning-foreground",
+          iconTintClassName: "accent-warning-foreground",
+        });
+      }
+      case "error":
+        return info.error === null ? null : lastErrorText("min-w-0 shrink", info.error);
+      case "unread":
+        return isUnread ? (
+          <View
+            accessible
+            accessibilityLabel="Unread"
+            accessibilityRole="image"
+            className="size-1.5 rounded-full bg-primary"
+          />
+        ) : null;
+      case "age": {
+        const age = relativeTime(info.createdAt);
+        return metaItem({ icon: "calendar", label: `Started ${age} ago`, text: age });
+      }
+      case "messageCount":
+        return info.messageCount === null
+          ? null
+          : metaItem({
+              icon: "bubble.left",
+              label: `${info.messageCount} ${info.messageCount === 1 ? "message" : "messages"}`,
+              text: info.messageCount,
+            });
+    }
+  };
+
+  // A user layout: per row, the start group takes the free width and may
+  // truncate, and the end group stays pinned to the right edge.
+  const cardLayout = props.cardLayout;
+  // Only a user layout shows these facts, so the built-in card skips the work.
+  const layoutInfo = cardLayout === null ? null : resolveThreadCardInfo(thread);
+  const cardContent =
+    cardLayout === null || layoutInfo === null ? (
+      builtInCardContent
+    ) : (
+      <View className="gap-1">
+        {cardLayout.rows.map((row, rowIndex) => (
+          <View key={rowIndex} className="flex-row items-center gap-2">
+            <View className="min-w-0 flex-1 flex-row items-center gap-1.5">
+              {row.start.map((element) => (
+                <Fragment key={element}>{renderLayoutElement(element, layoutInfo)}</Fragment>
+              ))}
+            </View>
+            {row.end.length > 0 ? (
+              <View className="shrink-0 flex-row items-center gap-1.5">
+                {row.end.map((element) => (
+                  <Fragment key={element}>{renderLayoutElement(element, layoutInfo)}</Fragment>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ))}
+      </View>
+    );
 
   // Background work fades as a whole, status label included, so it takes
   // less attention than rows that need a human (input, approval, done).

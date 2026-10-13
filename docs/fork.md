@@ -222,11 +222,12 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is off by default. Turn it on in Settings > General > Repository owner filters.
 
 - The owner comes from the repository that groups the project in the sidebar. A fork checkout counts under the owner of the fork.
+- The menus offer only owners whose projects have threads. The owner of a cloned repository without threads does not show.
 - Pull request page: open Filters > Owner. Pick "Show only selected" or "Hide selected", then pick the owners.
 - In the pull request search, type `org:` or `owner:` to show only an owner, and `-org:` or `-owner:` to hide an owner. A typed owner replaces the menu choice.
 - Sidebar: click the building icon next to the project scope, pick "Show only" or "Hide", then pick the owners.
 - While the sidebar filter is on, a chip under the header names it and counts the hidden projects. Click "is" or "is not" on the chip to flip it. Click × to clear it.
-- The sidebar keeps a thread visible while it runs, waits for its subagents or monitors, or waits for you. This also applies when the filter hides its project.
+- The filter hides every thread of a hidden project. When a hidden thread waits for an approval or an answer, the chip shows how many, for example "2 need you".
 - A project without a remote has no owner. "Show only" hides it, and "Hide" keeps it. In the sidebar, pick "No repository owner" to filter these projects.
 
 ## Pull request filter chips
@@ -248,6 +249,18 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 - A choice for today shows while its time is more than an hour away. A choice that lands on the same time as an earlier one does not show.
 - A blank label shows a label that names the choice, such as "In 3 hours" or "Tomorrow".
 - The setting applies to the snooze button, the thread menu and the menu for selected threads, on web and desktop. The mobile app keeps the built-in choices.
+
+## Thread card layouts
+
+The server setting `threadCardLayouts` holds a custom thread card layout for desktop and web (`desktop`) and for the mobile app (`mobile`). Each value is `null` by default, and the card then keeps its built-in look. Edit it in Settings > Appearance > Thread cards.
+
+- A layout is rows of elements. Each row has a left group that takes the free width and truncates, and a right group that keeps its size.
+- Drag an element between groups, or into the Hidden tray to hide it. The title and the status cannot be hidden, because the status holds the settle and snooze controls.
+- The setting is shared: a change goes to every connected server that supports shared settings, so the phone reads the same layout.
+- The mobile tab offers no terminal or diff element. The preview shows the mobile arrangement with web styles, because the phone draws its cards natively.
+- Every element of a custom layout carries `data-thread-card-element="<name>"`, so a theme CSS file can style one element, for example `[data-thread-card-element="terminal"] > *`.
+- The layout schema and its edit operations are generic (`packages/contracts/src/slotLayout.ts`, `packages/shared/src/slotLayout.ts`). Another surface can reuse them with its own element list.
+- Search results in the sidebar and the hosted app (app.t3.codes, which has no primary server) keep the built-in card.
 
 ## Pull request watch remark filter
 

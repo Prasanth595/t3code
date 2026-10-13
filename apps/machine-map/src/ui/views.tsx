@@ -21,6 +21,8 @@ import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import { machineQueue } from "./derive.ts";
 import {
   actorText,
+  ALERT_STICKER,
+  ALERT_TEXT,
   COMMAND_LABEL,
   COMMAND_STICKER,
   LEVEL_LABEL,
@@ -36,6 +38,8 @@ import {
 import {
   actorKey,
   actorLabel,
+  entryActor,
+  entryKey,
   groupHistory,
   groupSummary,
   HISTORY_KIND,
@@ -566,10 +570,10 @@ export function HistoryView() {
   }, [viewing]);
   const shown = past !== null && past.revision === viewing ? past : null;
 
-  const entries = historyEntries(history, portal.snapshot.commands);
+  const entries = historyEntries(history, portal.snapshot.commands, portal.health.alerts);
   const actors = new Map<string, string>();
   for (const entry of entries) {
-    const actor = entry._tag === "revision" ? entry.revision.actor : entry.command.actor;
+    const actor = entryActor(entry);
     actors.set(actorKey(actor), actorLabel(actor, map));
   }
   const days = groupHistory(entries.filter((entry) => matchesFilter(entry, filter)));
@@ -670,6 +674,28 @@ export function HistoryView() {
         </Item>
       );
     }
+    if (entry._tag === "alert") {
+      const { alert, ended } = entry;
+      const title = `${ALERT_TEXT[alert.kind]} on ${machineName(map, alert.machineId)}${ended ? ": ended" : ""}`;
+      return (
+        <Item
+          key={entryKey(entry)}
+          kind="alert"
+          on={false}
+          label={title}
+          open={() => portal.select({ _tag: "machine", id: alert.machineId })}
+        >
+          {kindSticker("alert")}
+          <span className="grow">
+            <b>{title}</b>
+            <span className="sub">Portal · {when(entry.at)}</span>
+          </span>
+          <span className={`sticker ${ended ? "ok" : "warn"}`}>
+            {ended ? "ended" : ALERT_STICKER[alert.kind]}
+          </span>
+        </Item>
+      );
+    }
     const command = entry.command;
     return (
       <Item
@@ -697,9 +723,9 @@ export function HistoryView() {
   const groupRow = (group: Extract<HistoryItem, { _tag: "group" }>) => {
     const first = group.entries[0];
     if (!first) return null;
-    const key = first._tag === "revision" ? `rev${first.revision.revision}` : first.command.id;
+    const key = entryKey(first);
     const open = expanded.has(key);
-    const actor = first._tag === "revision" ? first.revision.actor : first.command.actor;
+    const actor = entryActor(first);
     const toggle = () =>
       setExpanded((current) => {
         const next = new Set(current);

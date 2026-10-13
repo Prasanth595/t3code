@@ -36,6 +36,7 @@ import { ClockIcon, KindIcon } from "./icons.tsx";
 import { offsetPoint, placePairs, pointOffset, separate, type Box, type Point } from "./layout.ts";
 import { NoteCard } from "./NoteCard.tsx";
 import { settleHeld, type Held } from "./store.ts";
+import { AlertStickers, CardMeters } from "./resources.tsx";
 
 /** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
 const MAX_WIDTH = 1500;
@@ -822,10 +823,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                     <span className="sub">{sub}</span>
                   </span>
                 </div>
+                {!readOnly && <CardMeters machineId={machine.id} />}
                 <div className="tags">
                   <BuildSticker standing={standings.get(machine.id)} />
                   {!readOnly && (
                     <>
+                      <AlertStickers machineId={machine.id} />
                       {status && status.runningTurns > 0 && (
                         <span className="sticker ok">{status.runningTurns} running</span>
                       )}
