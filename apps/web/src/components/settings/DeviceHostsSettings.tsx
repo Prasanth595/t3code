@@ -131,11 +131,12 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                     const failed = targets.filter(
                       (target) => results[target.environmentId]?.status === "failed",
                     );
+                    const label = isSshNetworkAddress(host.label) ? "Device host" : host.label;
                     toastManager.add({
                       type: failed.length ? "error" : "success",
                       title: failed.length
-                        ? `${host.label}: ${failed.length} of ${targets.length} environments failed`
-                        : `${host.label}: connection checks passed`,
+                        ? `${label}: ${failed.length} of ${targets.length} environments failed`
+                        : `${label}: connection checks passed`,
                       description: failed.length
                         ? `Could not connect from ${failed.map((target) => target.label).join(", ")}.`
                         : "Connected or already available locally on each selected environment.",
