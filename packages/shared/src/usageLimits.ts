@@ -170,12 +170,15 @@ function hubAccountKey(sourceId: string, accountId: string): string {
 }
 
 /** Personal and team subscriptions may share an email, even when one quota probe fails. */
-function ambiguousHubAccountKeys(sources: UsageLimitSourceSnapshots): ReadonlySet<string> {
+function ambiguousHubAccountKeys(
+  sources: UsageLimitSourceSnapshots,
+  resolveKey: ReturnType<typeof accountKeyResolver>,
+): ReadonlySet<string> {
   const identities = new Map<string, string>();
   const ambiguous = new Set<string>();
   for (const source of sources) {
     for (const account of source.accounts) {
-      const key = accountKey(account.driver, account.email);
+      const key = resolveKey(account);
       if (!key) continue;
       const identity = hubAccountKey(source.id, account.id);
       const previous = identities.get(key);
@@ -223,11 +226,6 @@ export interface LimitAccount {
  * native instances supply names and environment labels.
  */
 export function collectLimitAccounts(presentations: LimitPresentations): readonly LimitAccount[] {
-  const ambiguous = ambiguousHubAccountKeys(
-    [...presentations.values()].flatMap(
-      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
-    ),
-  );
   const accounts = new Map<string, LimitAccount>();
   const creditSources = new Map<string, LimitAccount>();
   const hubRedeems = new Map<string, LimitAccount>();
@@ -297,6 +295,12 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
         .map(nativeReport),
       ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
     ]),
+  );
+  const ambiguous = ambiguousHubAccountKeys(
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
+    ),
+    resolveKey,
   );
   for (const [environmentId, presentation] of presentations) {
     const label = presentation.entry.target.label;
@@ -729,7 +733,6 @@ export function collectProviderUsageLimits(
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
   if (!selected || !hasProviderUsageLimits(selected.driver, providers, sources)) return null;
-  const ambiguous = ambiguousHubAccountKeys(sources);
   const native = providersWithLimits(providers).filter(
     (provider) => provider.driver === selected.driver,
   );
@@ -737,6 +740,7 @@ export function collectProviderUsageLimits(
     ...providers.filter((provider) => provider.enabled).map(nativeReport),
     ...sources.flatMap((source) => source.accounts),
   ]);
+  const ambiguous = ambiguousHubAccountKeys(sources, resolveKey);
   const nativeAccounts = new Set(
     native.flatMap((provider) => {
       const key = resolveKey(nativeReport(provider));
