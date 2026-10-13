@@ -10,8 +10,10 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as HashSet from "effect/HashSet";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -36,6 +38,11 @@ import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { isExactServiceVersion, SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 
 const PREFLIGHT_TIMEOUT = Duration.seconds(30);
+
+interface InFlightBootServiceUpdate {
+  readonly targetVersion: string;
+  readonly fiber: Deferred.Deferred<Fiber.Fiber<ServerSelfUpdateResult, ServerSelfUpdateError>>;
+}
 
 export function resolveServerSelfUpdateCapability(input: {
   readonly desktopManaged: boolean;
@@ -184,7 +191,11 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
   const releaseBaseUrl = Option.getOrUndefined(
     yield* Config.String(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
   );
-  const inFlight = yield* Ref.make(false);
+  const scope = yield* Effect.scope;
+  // One boot-service update at a time. The fiber belongs to this service, not
+  // the RPC that started it, so a dropped client socket cannot cancel the
+  // download. A later call for the same version joins that fiber.
+  const inFlight = yield* Ref.make<InFlightBootServiceUpdate | null>(null);
 
   const capability: ServerSelfUpdateCapability | null =
     serverConfig.mode === "desktop" ? "desktop-managed" : launcher.managed ? "boot-service" : null;
@@ -217,121 +228,149 @@ export const make = Effect.fn("cloud.server_self_update.make")(function* () {
     if (!isExactServiceVersion(targetVersion)) {
       return yield* failWith(`'${targetVersion}' is not an exact t3 version.`);
     }
-    if (yield* Ref.getAndSet(inFlight, true)) {
-      return yield* failWith("A server update is already in progress.");
-    }
+    // Claim and fork without an interruptible gap. Otherwise a disconnect
+    // between the claim and `forkIn` would leave the slot occupied and the
+    // download never started.
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const fiberDeferred =
+          yield* Deferred.make<Fiber.Fiber<ServerSelfUpdateResult, ServerSelfUpdateError>>();
+        const created: InFlightBootServiceUpdate = { targetVersion, fiber: fiberDeferred };
+        const current = yield* Ref.modify(inFlight, (existing) =>
+          existing === null ? ([created, created] as const) : ([existing, existing] as const),
+        );
+        if (current !== created) {
+          if (current.targetVersion !== targetVersion) {
+            return yield* failWith("A server update is already in progress.");
+          }
+          return yield* restore(Deferred.await(current.fiber).pipe(Effect.flatMap(Fiber.join)));
+        }
 
-    return yield* Effect.gen(function* () {
-      yield* reportProgress("downloading");
-      const paths = yield* ensurePinnedRuntimeInstalled({
-        baseDir: serverConfig.baseDir,
-        version: targetVersion,
-        fs,
-        path,
-        runner,
-        httpClient,
-        platform,
-        arch,
-        releaseBaseUrl,
-        validate: (runtime) =>
-          runner
-            .run({
-              command: pinnedRuntimeCommand(runtime).command,
-              args: [
-                ...pinnedRuntimeCommand(runtime).args,
-                "__service-preflight",
-                "--database-path",
-                serverConfig.dbPath,
-                "--launcher-protocol",
-                String(SERVICE_LAUNCHER_PROTOCOL),
-              ],
-              timeout: PREFLIGHT_TIMEOUT,
-            })
-            .pipe(
-              Effect.mapError(
-                (cause) =>
-                  new PinnedRuntimeInstallError({
-                    step: "running the staged service preflight",
-                    cause,
-                  }),
-              ),
-              Effect.flatMap(
-                (
-                  result,
-                ): Effect.Effect<
-                  void,
-                  PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
-                > => {
-                  if (result.code !== 0) {
-                    return Effect.fail(
+        const fiber = yield* Effect.gen(function* () {
+          yield* reportProgress("downloading");
+          const paths = yield* ensurePinnedRuntimeInstalled({
+            baseDir: serverConfig.baseDir,
+            version: targetVersion,
+            fs,
+            path,
+            runner,
+            httpClient,
+            platform,
+            arch,
+            releaseBaseUrl,
+            validate: (runtime) =>
+              runner
+                .run({
+                  command: pinnedRuntimeCommand(runtime).command,
+                  args: [
+                    ...pinnedRuntimeCommand(runtime).args,
+                    "__service-preflight",
+                    "--database-path",
+                    serverConfig.dbPath,
+                    "--launcher-protocol",
+                    String(SERVICE_LAUNCHER_PROTOCOL),
+                  ],
+                  timeout: PREFLIGHT_TIMEOUT,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
                       new PinnedRuntimeInstallError({
                         step: "running the staged service preflight",
-                        exitCode: Number(result.code),
-                        stdoutLength: result.stdout.length,
-                        stderrLength: result.stderr.length,
-                      }),
-                    );
-                  }
-                  let parsed: unknown;
-                  try {
-                    parsed = JSON.parse(result.stdout.trim());
-                  } catch (cause) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "decoding the staged service preflight",
                         cause,
                       }),
-                    );
-                  }
-                  const preflight = decodeServicePreflightResult(parsed);
-                  if (preflight === undefined || preflight.version !== targetVersion) {
-                    return Effect.fail(
-                      new PinnedRuntimeInstallError({
-                        step: "verifying the staged service preflight",
-                      }),
-                    );
-                  }
-                  return preflight.status === "ready"
-                    ? Effect.void
-                    : Effect.fail(
-                        new PinnedRuntimePreflightBlockedError({
-                          version: targetVersion,
-                          reason: preflight.reason,
-                        }),
-                      );
-                },
+                  ),
+                  Effect.flatMap(
+                    (
+                      result,
+                    ): Effect.Effect<
+                      void,
+                      PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError
+                    > => {
+                      if (result.code !== 0) {
+                        return Effect.fail(
+                          new PinnedRuntimeInstallError({
+                            step: "running the staged service preflight",
+                            exitCode: Number(result.code),
+                            stdoutLength: result.stdout.length,
+                            stderrLength: result.stderr.length,
+                          }),
+                        );
+                      }
+                      let parsed: unknown;
+                      try {
+                        parsed = JSON.parse(result.stdout.trim());
+                      } catch (cause) {
+                        return Effect.fail(
+                          new PinnedRuntimeInstallError({
+                            step: "decoding the staged service preflight",
+                            cause,
+                          }),
+                        );
+                      }
+                      const preflight = decodeServicePreflightResult(parsed);
+                      if (preflight === undefined || preflight.version !== targetVersion) {
+                        return Effect.fail(
+                          new PinnedRuntimeInstallError({
+                            step: "verifying the staged service preflight",
+                          }),
+                        );
+                      }
+                      return preflight.status === "ready"
+                        ? Effect.void
+                        : Effect.fail(
+                            new PinnedRuntimePreflightBlockedError({
+                              version: targetVersion,
+                              reason: preflight.reason,
+                            }),
+                          );
+                    },
+                  ),
+                ),
+          }).pipe(
+            Effect.mapError((error) =>
+              error._tag === "PinnedRuntimePreflightBlockedError"
+                ? failWith(error.reason, error)
+                : failWith(`Could not prepare t3@${targetVersion}.`, error),
+            ),
+          );
+
+          yield* reportProgress("installing");
+          const updateId = yield* Effect.uninterruptible(
+            launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
+              Effect.mapError((error) =>
+                failWith(
+                  error._tag === "ServiceLauncherRejectedError"
+                    ? error.reason
+                    : "Could not ask the service launcher to activate the prepared update.",
+                  error,
+                ),
               ),
+              Effect.tap(() => onHandoffAccepted()),
             ),
-      }).pipe(
-        Effect.mapError((error) =>
-          error._tag === "PinnedRuntimePreflightBlockedError"
-            ? failWith(error.reason, error)
-            : failWith(`Could not prepare t3@${targetVersion}.`, error),
-        ),
-      );
+          );
 
-      yield* reportProgress("installing");
-      const updateId = yield* Effect.uninterruptible(
-        launcher.requestUpdate({ targetVersion, dbPath: serverConfig.dbPath }).pipe(
-          Effect.mapError((error) =>
-            failWith(
-              error._tag === "ServiceLauncherRejectedError"
-                ? error.reason
-                : "Could not ask the service launcher to activate the prepared update.",
-              error,
-            ),
+          yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
+            updateId,
+            targetVersion,
+            runtimePath: paths.entryPath,
+          });
+          return { targetVersion, method: "boot-service" as const, updateId };
+        }).pipe(
+          Effect.onError(() =>
+            Ref.update(inFlight, (existing) => (existing === created ? null : existing)),
           ),
-          Effect.tap(() => onHandoffAccepted()),
-        ),
-      );
-
-      yield* Effect.logInfo("Server update prepared; handing off to the service launcher.", {
-        updateId,
-        targetVersion,
-        runtimePath: paths.entryPath,
-      });
-      return { targetVersion, method: "boot-service" as const, updateId };
-    }).pipe(Effect.onError(() => Ref.set(inFlight, false)));
+          // Root span: the caller's `update` span ends when its socket drops.
+          Effect.withSpan("cloud.server_self_update.prepare", {
+            root: true,
+            attributes: { targetVersion },
+          }),
+          Effect.forkIn(scope),
+        );
+        yield* Deferred.succeed(fiberDeferred, fiber);
+        return yield* restore(Fiber.join(fiber));
+      }),
+    );
   });
 
   return ServerSelfUpdate.of({

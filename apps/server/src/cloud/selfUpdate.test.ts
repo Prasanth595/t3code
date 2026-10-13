@@ -18,19 +18,26 @@ import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 import { SERVICE_LAUNCHER_PROTOCOL } from "./serviceProtocol.ts";
 import * as ServerSelfUpdate from "./selfUpdate.ts";
 
+interface DownloadGate {
+  readonly hold: Deferred.Deferred<void>;
+  readonly started: Deferred.Deferred<void>;
+  readonly secondDownload: Deferred.Deferred<void>;
+}
+
 interface HarnessOptions {
   readonly mode?: "web" | "desktop";
   readonly managed?: boolean;
   readonly preflight?: "ready" | "blocked";
   readonly requestUpdate?: ServiceLauncherClient.ServiceLauncherClient["Service"]["requestUpdate"];
   readonly desktopAppUpdate?: DesktopAppUpdate.DesktopAppUpdate["Service"];
+  readonly downloadGate?: DownloadGate;
 }
 
 // The staged runtime is a release archive: the fake client serves SHA256SUMS
 // and the tarball, and the fake runner stands in for tar before it answers
 // the staged preflight.
 const archiveBytes = new TextEncoder().encode("not really a tarball");
-const releaseHttpClient = (order: string[]) =>
+const releaseHttpClient = (order: string[], downloadGate?: DownloadGate) =>
   HttpClient.make((request) =>
     Effect.gen(function* () {
       if (request.url.endsWith("/SHA256SUMS")) {
@@ -44,6 +51,17 @@ const releaseHttpClient = (order: string[]) =>
         );
       }
       order.push("download");
+      if (downloadGate !== undefined) {
+        const downloadCount = order.filter((step) => step === "download").length;
+        if (downloadCount > 1) {
+          // A second archive fetch means the first attempt was cancelled.
+          // Complete it so the test can observe that instead of hanging.
+          yield* Deferred.succeed(downloadGate.secondDownload, undefined).pipe(Effect.ignore);
+        } else {
+          yield* Deferred.succeed(downloadGate.started, undefined);
+          yield* Deferred.await(downloadGate.hold);
+        }
+      }
       return HttpClientResponse.fromWeb(request, new Response(archiveBytes));
     }),
   );
@@ -119,7 +137,7 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
         run: () => Effect.die("unexpected desktop app update run"),
       },
     ),
-    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order)),
+    Effect.provideService(HttpClient.HttpClient, releaseHttpClient(order, options.downloadGate)),
     Effect.provideService(HostProcess.Platform, "linux"),
     Effect.provideService(HostProcess.Architecture, "x64"),
     Effect.provide(ServerConfig.layer({ ...config, mode: options.mode ?? "web" })),
@@ -420,6 +438,63 @@ it.layer(NodeServices.layer)("server self update", (it) => {
       );
       yield* Deferred.succeed(accepted, "launcher-id");
       expect((yield* Fiber.join(first)).updateId).toBe("launcher-id");
+    }),
+  );
+
+  it.effect("keeps preparing the runtime after the caller is interrupted", () =>
+    Effect.gen(function* () {
+      const downloadGate: DownloadGate = {
+        hold: yield* Deferred.make<void>(),
+        started: yield* Deferred.make<void>(),
+        secondDownload: yield* Deferred.make<void>(),
+      };
+      const stages: string[] = [];
+      const { selfUpdate, order } = yield* makeHarness({ downloadGate });
+      const first = yield* selfUpdate
+        .update({ targetVersion: "1.1.0" }, (stage) => Effect.sync(() => void stages.push(stage)))
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(downloadGate.started);
+
+      yield* Fiber.interrupt(first);
+      const interrupted = yield* Fiber.await(first);
+      expect(interrupted._tag).toBe("Failure");
+      if (interrupted._tag === "Failure") {
+        expect(Cause.hasInterruptsOnly(interrupted.cause)).toBe(true);
+      }
+
+      const reattached = yield* selfUpdate
+        .update({ targetVersion: "1.1.0" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      const conflicting = yield* Effect.race(
+        selfUpdate.update({ targetVersion: "1.1.1" }).pipe(
+          Effect.flip,
+          Effect.map((error) => error.reason),
+        ),
+        Deferred.await(downloadGate.secondDownload).pipe(Effect.as("second-download" as const)),
+      );
+      expect(conflicting).toBe("A server update is already in progress.");
+
+      yield* Deferred.succeed(downloadGate.hold, undefined);
+      expect(yield* Fiber.join(reattached)).toEqual({
+        targetVersion: "1.1.0",
+        method: "boot-service",
+        updateId: "launcher-id",
+      });
+      expect(order).toEqual(["download", "extract", "preflight", "accept"]);
+      expect(stages).toEqual(["downloading", "installing"]);
+    }),
+  );
+
+  it.effect("starts another update after preparation fails", () =>
+    Effect.gen(function* () {
+      const { selfUpdate, order } = yield* makeHarness({ preflight: "blocked" });
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "local update required",
+      );
+      expect((yield* selfUpdate.update({ targetVersion: "1.1.0" }).pipe(Effect.flip)).reason).toBe(
+        "local update required",
+      );
+      expect(order.filter((step) => step === "download")).toEqual(["download", "download"]);
     }),
   );
 });

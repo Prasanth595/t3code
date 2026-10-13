@@ -2397,6 +2397,9 @@ const layerWsRpc = (
                   ServerSelfUpdateError: (error) => Queue.fail(queue, error),
                 }),
                 Effect.andThen(Queue.end(queue)),
+                // Boot-service preparation lives in ServerSelfUpdate's scope.
+                // This fiber only forwards progress, so closing the socket
+                // does not cancel a download that is already running.
                 Effect.forkScoped,
               ),
           ),
