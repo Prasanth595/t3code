@@ -15,7 +15,7 @@ export interface WorktreePathVariables {
   readonly branchLeaf: string;
 }
 
-export const WORKTREE_PATH_VARIABLES = [
+const WORKTREE_PATH_VARIABLES = [
   "worktrees",
   "repoDir",
   "repo",

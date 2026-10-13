@@ -99,10 +99,15 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
       );
     return { branch: input.branch, path, release: Effect.void };
   }
-  const branches = (yield* input.listBranchRefs)
-    .split("\n")
-    .filter((line) => line.startsWith(REFS_HEADS))
-    .map((line) => line.slice(REFS_HEADS.length));
+  const listBranches = input.listBranchRefs.pipe(
+    Effect.map((refs) =>
+      refs
+        .split("\n")
+        .filter((line) => line.startsWith(REFS_HEADS))
+        .map((line) => line.slice(REFS_HEADS.length)),
+    ),
+  );
+  let branches = yield* listBranches;
   let claimed = claimedBranches.get(input.gitCommonDir);
   if (claimed === undefined) {
     claimed = new Set();
@@ -125,6 +130,13 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
         claimedHere.delete(branch);
         claimedPaths.delete(path);
       });
+      // Check Git again after the claim. A launch that released its claim
+      // before this point already created its branch and folder.
+      branches = yield* listBranches;
+      if (branchConflicts(branch, branches) || (yield* input.pathExists(path))) {
+        yield* release;
+        continue;
+      }
       return { branch, path, release };
     }
   }
