@@ -66,6 +66,12 @@ export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 // wire field keeps its decoding default below.
 const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+/** How active inbox threads are arranged under the shelves. */
+export const SidebarInboxOrder = Schema.Literals(["manual", "status", "project"]);
+export type SidebarInboxOrder = typeof SidebarInboxOrder.Type;
+// Local fork default: group every provider's threads under their project.
+const DEFAULT_SIDEBAR_INBOX_ORDER: SidebarInboxOrder = "project";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -471,6 +477,11 @@ export const ClientSettingsSchema = Schema.Struct({
   // time, so manual placement there is ignored (and kept) while it is on.
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  // Arranges active inbox threads: manual placement, status priority, or
+  // project sections (every provider under the matching project).
+  sidebarInboxOrder: SidebarInboxOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_INBOX_ORDER)),
   ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -1735,6 +1746,7 @@ export const ClientSettingsPatch = Schema.Struct({
   showSkillsInSlashMenu: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarInboxOrder: Schema.optionalKey(SidebarInboxOrder),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

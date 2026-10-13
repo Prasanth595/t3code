@@ -46,6 +46,7 @@ import {
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
+  SidebarInboxOrder,
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -193,6 +194,13 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_INBOX_ORDER_LABELS: Record<SidebarInboxOrder, string> = {
+  manual: "Manual",
+  status: "By status",
+  project: "By project",
+};
+const isSidebarInboxOrder = Schema.is(SidebarInboxOrder);
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -574,6 +582,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectSortOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder
         ? ["Project order"]
         : []),
+      ...(settings.sidebarInboxOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarInboxOrder
+        ? ["Thread order"]
+        : []),
       ...(settings.sidebarWorkingShelfEnabled !==
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
@@ -713,6 +724,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.snoozeLimitedThreads,
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
+      settings.sidebarInboxOrder,
       settings.sidebarWorkingShelfEnabled,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -813,6 +825,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
+      sidebarInboxOrder: DEFAULT_UNIFIED_SETTINGS.sidebarInboxOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2374,6 +2387,44 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Snooze limited threads"
             />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("thread-order")}
+          description="Arrange active inbox threads manually, by who needs you, or under collapsible project sections (every provider)."
+          resetAction={
+            settings.sidebarInboxOrder !== DEFAULT_UNIFIED_SETTINGS.sidebarInboxOrder ? (
+              <SettingResetButton
+                label="thread order"
+                onClick={() =>
+                  updateSettings({
+                    sidebarInboxOrder: DEFAULT_UNIFIED_SETTINGS.sidebarInboxOrder,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.sidebarInboxOrder}
+              onValueChange={(value) => {
+                if (isSidebarInboxOrder(value)) {
+                  updateSettings({ sidebarInboxOrder: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label="Thread order">
+                <SelectValue>{SIDEBAR_INBOX_ORDER_LABELS[settings.sidebarInboxOrder]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {SidebarInboxOrder.literals.map((order) => (
+                  <SelectItem hideIndicator key={order} value={order}>
+                    {SIDEBAR_INBOX_ORDER_LABELS[order]}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

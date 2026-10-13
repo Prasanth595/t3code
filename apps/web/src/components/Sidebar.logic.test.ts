@@ -25,6 +25,9 @@ import {
   isSidebarSubagentThread,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
+  isWaitingOnUser,
+  nestSidebarThreadsUnderParents,
+  orderInboxThreads,
   orderItemsByPreferredIds,
   pinOrderKeyBetween,
   reduceSidebarProjectScopeMenuState,
@@ -445,6 +448,14 @@ describe("sidebar thread lineage helpers", () => {
         new Set([`${environmentId}:${projectId}`]),
       ).map((thread) => thread.id),
     ).toEqual([parentId, fork.id]);
+
+    expect(
+      filterSidebarV2VisibleThreads(
+        [root, subagent, fork, archived, otherProject],
+        new Set([`${environmentId}:${projectId}`]),
+        { includeSubagents: true },
+      ).map((thread) => thread.id),
+    ).toEqual([parentId, subagent.id, fork.id]);
   });
 
   it("identifies subagent threads so the sidebar can hide them", () => {
@@ -885,6 +896,113 @@ describe("isContextMenuPointerDown", () => {
         isMac: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("orderInboxThreads", () => {
+  const runtime = {
+    status: "running" as const,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  };
+  const thread = (
+    id: string,
+    projectId: string,
+    overrides: { hasPendingApprovals?: boolean; hasPendingUserInput?: boolean; working?: boolean },
+  ) => ({
+    id,
+    environmentId: EnvironmentId.make("env"),
+    projectId: ProjectId.make(projectId),
+    hasPendingApprovals: overrides.hasPendingApprovals ?? false,
+    hasPendingUserInput: overrides.hasPendingUserInput ?? false,
+    runtime: overrides.working ? runtime : null,
+  });
+  const threads = [
+    thread("working-a", "alpha", { working: true }),
+    thread("done-b", "beta", {}),
+    thread("question-a", "alpha", { hasPendingUserInput: true }),
+    thread("done-a", "alpha", {}),
+    thread("approval-b", "beta", { hasPendingApprovals: true }),
+  ];
+  const ids = (order: "manual" | "status" | "project") =>
+    orderInboxThreads(threads, order).map((entry) => entry.id);
+
+  it("keeps the incoming order when manual", () => {
+    expect(ids("manual")).toEqual(["working-a", "done-b", "question-a", "done-a", "approval-b"]);
+  });
+
+  it("lists what needs you first and running work last, keeping ties in order", () => {
+    expect(ids("status")).toEqual(["approval-b", "question-a", "done-b", "done-a", "working-a"]);
+  });
+
+  it("keeps each project together in order of its first thread", () => {
+    expect(ids("project")).toEqual(["working-a", "question-a", "done-a", "done-b", "approval-b"]);
+  });
+});
+
+describe("nestSidebarThreadsUnderParents", () => {
+  it("nests subagents under their parent and keeps orphan children", () => {
+    const parentId = ThreadId.make("thread-parent");
+    const environmentId = EnvironmentId.make("environment-1");
+    const parent = makeThreadFixture({ id: parentId, environmentId });
+    const child = makeThreadFixture({
+      id: ThreadId.make("thread-child"),
+      environmentId,
+      lineage: {
+        rootThreadId: parentId,
+        parentThreadId: parentId,
+        relationshipToParent: "subagent",
+      },
+    });
+    const orphan = makeThreadFixture({
+      id: ThreadId.make("thread-orphan"),
+      environmentId,
+      lineage: {
+        rootThreadId: ThreadId.make("missing"),
+        parentThreadId: ThreadId.make("missing"),
+        relationshipToParent: "subagent",
+      },
+    });
+    const sibling = makeThreadFixture({
+      id: ThreadId.make("thread-sibling"),
+      environmentId,
+    });
+
+    expect(
+      nestSidebarThreadsUnderParents([child, sibling, parent, orphan]).map((thread) => thread.id),
+    ).toEqual([sibling.id, parentId, child.id, orphan.id]);
+  });
+});
+
+describe("isWaitingOnUser", () => {
+  it("treats approval, input, failed, and limited as waiting on the user", () => {
+    const base = {
+      environmentId: EnvironmentId.make("env"),
+      projectId: ProjectId.make("project"),
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      runtime: null,
+    };
+    expect(isWaitingOnUser({ ...base, hasPendingApprovals: true })).toBe(true);
+    expect(isWaitingOnUser({ ...base, hasPendingUserInput: true })).toBe(true);
+    expect(
+      isWaitingOnUser({
+        ...base,
+        runtime: {
+          status: "failed",
+          activeRunId: null,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerName: "Codex",
+          lastError: "boom",
+          lastErrorClass: "unknown",
+          updatedAt: "2026-03-09T10:00:00.000Z",
+        },
+      }),
+    ).toBe(true);
+    expect(isWaitingOnUser(base)).toBe(false);
   });
 });
 

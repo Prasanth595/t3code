@@ -112,6 +112,24 @@ rename a thread, regenerate its title, or link and unlink a pull request. These 
 appear on web, desktop, and mobile without requiring the originating browser to remain
 open.
 
+### Group active threads by project
+
+On web and desktop, **Settings → General → Thread order** (also the sort control next to the
+project filter) arranges the active inbox:
+
+- **By project** (default in this local fork) keeps each project's threads together under a
+  collapsible heading, regardless of which provider is running them. Click a heading to fold
+  that block; a folded heading shows a dot when something inside waits on you, and the thread
+  you have open stays visible. Child agents nest under their parent when the sidebar can see
+  both.
+- **By status** lists approvals and questions first, then failures, finished work, and running
+  threads.
+- **Manual** restores drag-and-drop placement in the active list.
+
+Switching projects with the filter still scopes the list; with **All projects** and **By
+project**, conversations from every project stay in the sidebar so you can resume any thread
+without losing the others.
+
 ### Fold working threads (beta)
 
 Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →

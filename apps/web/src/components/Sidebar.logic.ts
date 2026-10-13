@@ -9,7 +9,11 @@ import {
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import type { ContextMenuItem, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import type {
+  SidebarInboxOrder,
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+} from "@t3tools/contracts/settings";
 import type { AsyncResult } from "effect/reactivity";
 import { planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
 import {
@@ -567,19 +571,69 @@ export function isSidebarSubagentThread(thread: Pick<SidebarThreadSummary, "line
   return thread.lineage.relationshipToParent === "subagent";
 }
 
+/** Physical project key used for inbox grouping and collapse persistence. */
+export function sidebarPhysicalProjectKey(thread: {
+  readonly environmentId: string;
+  readonly projectId: string;
+}): string {
+  return `${thread.environmentId}:${thread.projectId}`;
+}
+
 export function filterSidebarV2VisibleThreads<
   T extends Pick<SidebarThreadSummary, "archivedAt" | "lineage"> & {
     environmentId: string;
     projectId: string;
   },
->(threads: readonly T[], scopedProjectKeys: ReadonlySet<string> | null): T[] {
+>(
+  threads: readonly T[],
+  scopedProjectKeys: ReadonlySet<string> | null,
+  options?: { readonly includeSubagents?: boolean },
+): T[] {
+  const includeSubagents = options?.includeSubagents === true;
   return threads.filter(
     (thread) =>
       thread.archivedAt === null &&
-      !isSidebarSubagentThread(thread) &&
-      (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+      (includeSubagents || !isSidebarSubagentThread(thread)) &&
+      (scopedProjectKeys === null || scopedProjectKeys.has(sidebarPhysicalProjectKey(thread))),
   );
+}
+
+/**
+ * Keeps top-level threads in order and nests subagent children directly under
+ * their parent when the parent is also in the list. Orphan subagents stay as
+ * top-level rows so delegated work is never dropped from the roster.
+ */
+export function nestSidebarThreadsUnderParents<
+  T extends Pick<SidebarThreadSummary, "id" | "lineage"> & { readonly environmentId: string },
+>(threads: readonly T[]): readonly T[] {
+  const childrenByParentKey = new Map<string, T[]>();
+  const roots: T[] = [];
+  for (const thread of threads) {
+    if (!isSidebarSubagentThread(thread) || thread.lineage.parentThreadId === null) {
+      roots.push(thread);
+      continue;
+    }
+    const parentKey = `${thread.environmentId}:${thread.lineage.parentThreadId}`;
+    const siblings = childrenByParentKey.get(parentKey);
+    if (siblings) siblings.push(thread);
+    else childrenByParentKey.set(parentKey, [thread]);
+  }
+  const parentIds = new Set(threads.map((thread) => `${thread.environmentId}:${thread.id}`));
+  const nested: T[] = [];
+  for (const root of roots) {
+    nested.push(root);
+    const children = childrenByParentKey.get(`${root.environmentId}:${root.id}`);
+    if (children) {
+      nested.push(...children);
+      childrenByParentKey.delete(`${root.environmentId}:${root.id}`);
+    }
+  }
+  // Parents missing from this shelf: keep the children visible at the end of
+  // their relative order rather than hiding delegated work.
+  for (const [parentKey, children] of childrenByParentKey) {
+    if (!parentIds.has(parentKey)) nested.push(...children);
+  }
+  return nested;
 }
 
 export function getSidebarForkParentThreadId(
@@ -1000,6 +1054,56 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
   return "ready";
+}
+
+// Your turn first, then failures, finished work, and only then running work.
+const INBOX_STATUS_RANK: Record<SidebarThreadStatus, number> = {
+  approval: 0,
+  input: 1,
+  failed: 2,
+  limited: 3,
+  ready: 4,
+  waiting: 5,
+  working: 6,
+};
+
+type InboxOrderInput = SidebarThreadStatusInput &
+  Pick<SidebarThreadSummary, "environmentId" | "projectId"> & {
+    readonly environmentId: string;
+    readonly projectId: string;
+  };
+
+/**
+ * Rearranges the inbox for the chosen order. Both auto orders are stable, so
+ * the incoming order still decides within a status or a project. Projects
+ * appear in the order their first thread does.
+ */
+export function orderInboxThreads<T extends InboxOrderInput>(
+  threads: ReadonlyArray<T>,
+  order: SidebarInboxOrder,
+): ReadonlyArray<T> {
+  if (order === "manual") return threads;
+  if (order === "status") {
+    return [...threads].sort(
+      (left, right) =>
+        INBOX_STATUS_RANK[resolveSidebarThreadStatus(left)] -
+        INBOX_STATUS_RANK[resolveSidebarThreadStatus(right)],
+    );
+  }
+  const byProject = new Map<string, T[]>();
+  for (const thread of threads) {
+    const key = sidebarPhysicalProjectKey(thread);
+    const group = byProject.get(key);
+    if (group) group.push(thread);
+    else byProject.set(key, [thread]);
+  }
+  return [...byProject.values()].flat();
+}
+
+/** Whether the thread needs the user: answer, failure, or limit stop. */
+export function isWaitingOnUser(thread: InboxOrderInput): boolean {
+  const status = resolveSidebarThreadStatus(thread);
+  return status === "approval" || status === "input" || status === "failed" || status === "limited";
 }
 
 export type SidebarV2TopStatusKind =
