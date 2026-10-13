@@ -965,8 +965,8 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     for (const { platform, arch } of supportedPlatforms) {
       const asset = resolveAntigravityReleaseAsset(platform, arch);
       expect(asset).not.toBeNull();
-      expect(asset?.version).toBe("1.3.0");
-      expect(asset?.url).toContain("1.3.0");
+      expect(asset?.version).toBe("1.4.0");
+      expect(asset?.url).toContain("1.4.0");
       expect(asset?.archiveBytes).toBeGreaterThan(0);
       expect(asset?.executable.bytes).toBeGreaterThan(0);
       expect(asset?.harness.bytes).toBeGreaterThan(0);
