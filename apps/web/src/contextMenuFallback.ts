@@ -317,6 +317,7 @@ export function showContextMenuFallback<T extends string>(
         return;
       }
       const focusItem = (index: number) => {
+        closeMenusFromLevel(level + 1);
         const item = items[(index + items.length) % items.length];
         item?.focus({ preventScroll: true });
         item?.scrollIntoView({ block: "nearest" });
