@@ -51,6 +51,7 @@ import {
   RelayConnectionTarget,
   connectionRoutes,
   connectionStatusText,
+  environmentHostedMcpUrl,
   environmentMcpUrl,
 } from "@t3tools/client-runtime/connection";
 import {
@@ -82,6 +83,7 @@ import {
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { GrokBotSetupDialog } from "./GrokBotSetupDialog";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { usePreparedConnection } from "~/state/session";
 import {
@@ -1495,6 +1497,7 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [grokBotSetupOpen, setGrokBotSetupOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1569,8 +1572,11 @@ function SavedBackendListRow({
     relayDiscovery.environments.get(environmentId)?.environment.endpoint.httpBaseUrl;
   const [lastRelayHttpBaseUrl, setLastRelayHttpBaseUrl] = useState(discoveredRelayHttpBaseUrl);
   if (
-    discoveredRelayHttpBaseUrl !== undefined &&
-    discoveredRelayHttpBaseUrl !== lastRelayHttpBaseUrl
+    discoveredRelayHttpBaseUrl !== lastRelayHttpBaseUrl &&
+    (discoveredRelayHttpBaseUrl !== undefined ||
+      (!relayDiscovery.refreshing &&
+        relayDiscovery.offline === false &&
+        Option.isNone(relayDiscovery.error)))
   ) {
     setLastRelayHttpBaseUrl(discoveredRelayHttpBaseUrl);
   }
@@ -1580,6 +1586,10 @@ function SavedBackendListRow({
     entry: environment.entry,
     relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
     connectedTarget,
+  });
+  const hostedMcpUrl = environmentHostedMcpUrl({
+    entry: environment.entry,
+    relayHttpBaseUrl: discoveredRelayHttpBaseUrl ?? lastRelayHttpBaseUrl,
   });
   const machineKind = resolveEnvironmentMachineKind(
     environment.serverConfig ??
@@ -1779,6 +1789,7 @@ function SavedBackendListRow({
           {mcpUrl ? (
             <MenuItem onClick={() => copyMcpUrl(mcpUrl, { url: mcpUrl })}>Copy MCP URL</MenuItem>
           ) : null}
+          <MenuItem onClick={() => setGrokBotSetupOpen(true)}>Connect Grok Bot…</MenuItem>
           {errorTraceId ? (
             <MenuItem onClick={() => copyTraceId(errorTraceId)}>Copy trace ID</MenuItem>
           ) : null}
@@ -1788,6 +1799,14 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      {grokBotSetupOpen ? (
+        <GrokBotSetupDialog
+          open
+          onOpenChange={setGrokBotSetupOpen}
+          environmentLabel={environment.label}
+          mcpUrl={hostedMcpUrl}
+        />
+      ) : null}
     </EnvironmentRow>
   );
 }
@@ -2032,6 +2051,7 @@ function CloudRemoteEnvironmentRows({
 }
 
 export function ConnectionsSettings() {
+  const [grokBotSetupOpen, setGrokBotSetupOpen] = useState(false);
   const desktopBridge = window.desktopBridge;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { environments } = useEnvironments();
@@ -3646,12 +3666,26 @@ export function ConnectionsSettings() {
                       environmentId={primaryEnvironmentId}
                       serverConfig={primaryServerConfig}
                     />
+                    <MenuItem onClick={() => setGrokBotSetupOpen(true)}>Connect Grok Bot…</MenuItem>
                   </MenuPopup>
                 </Menu>
               ) : null
             }
           >
             <LocalEnvironmentSetting />
+            {grokBotSetupOpen ? (
+              <GrokBotSetupDialog
+                open
+                onOpenChange={setGrokBotSetupOpen}
+                environmentLabel={primaryEnvironment?.label ?? "this environment"}
+                mcpUrl={environmentHostedMcpUrl({
+                  entry: primaryEnvironment?.entry,
+                  relayHttpBaseUrl:
+                    relayDiscoveryState.environments.get(primaryEnvironmentId)?.environment.endpoint
+                      .httpBaseUrl,
+                })}
+              />
+            ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
                 title="Version"

@@ -7,6 +7,7 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { environmentHostedMcpUrl, grokBotMcpSetup } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState } from "react";
 import { Alert, View } from "react-native";
@@ -15,7 +16,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ScreenScrollView } from "../../components/ScreenScrollView";
+import { environmentCatalog } from "../../connection/catalog";
+import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { appAtomRegistry } from "../../state/atom-registry";
+import { relayEnvironmentDiscovery } from "../../state/relay";
 import { serverEnvironment } from "../../state/server";
 import { environmentSession, useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -50,6 +54,14 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const connections = useRemoteConnections();
+  const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
+  const relayDiscovery = useAtomValue(relayEnvironmentDiscovery.stateValueAtom);
+  const relay = relayDiscovery.environments.get(environmentId);
+  const grokMcpUrl = environmentHostedMcpUrl({
+    entry: catalog.entries.get(environmentId),
+    relayHttpBaseUrl: relay?.environment.endpoint.httpBaseUrl,
+  });
+  const grokSetup = grokMcpUrl === null ? null : grokBotMcpSetup(grokMcpUrl);
   const environment = connections.connectedEnvironments.find(
     (entry) => entry.environmentId === environmentId,
   );
@@ -168,6 +180,16 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     });
   }
 
+  async function copyGrokBotSetup(value: string, label: string) {
+    setError(null);
+    setNotice(null);
+    if (await tryCopyTextWithHaptic(value, { target: label })) {
+      setNotice(`${label} copied.`);
+    } else {
+      setError(`Could not copy ${label.toLowerCase()}.`);
+    }
+  }
+
   return (
     <SettingsScreen title={environment?.environmentLabel ?? "Environment"}>
       <ScreenScrollView
@@ -206,6 +228,60 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                 })
               }
             />
+            <SettingsSection
+              title="Grok Bot"
+              footer={
+                grokSetup
+                  ? "Start with Read only to verify access. Choose Supervised or above to let the bot create and message threads. Revoke access in T3 Code’s Connections settings."
+                  : undefined
+              }
+            >
+              <View className="gap-2 p-4">
+                <Text className="text-sm text-foreground-muted">
+                  Connect Grok Bot to this environment’s existing projects and threads with a custom
+                  MCP plugin.
+                </Text>
+                {grokMcpUrl ? (
+                  <>
+                    <Text selectable className="text-sm text-foreground">
+                      {grokMcpUrl}
+                    </Text>
+                    <Text className="text-sm text-foreground-muted">
+                      Paste the setup prompt into Grok Bot, or add a custom plugin with the MCP
+                      configuration. Use OAuth sign-in and leave headers and optional client
+                      credentials empty. T3’s approval page may name the client “Cursor”.
+                    </Text>
+                    {relay?.availability === "offline" ? (
+                      <Text className="text-sm text-foreground-muted">
+                        T3 Connect reports this environment offline. Turn on remote access on its
+                        host before connecting Grok Bot.
+                      </Text>
+                    ) : null}
+                  </>
+                ) : (
+                  <Text className="text-sm text-foreground-muted">
+                    Enable T3 Connect on this environment’s host, or add a public HTTPS route. Grok
+                    Bot runs in the cloud and cannot use local or Tailscale addresses.
+                  </Text>
+                )}
+              </View>
+              {grokSetup ? (
+                <>
+                  <SettingsActionRow
+                    icon="doc.on.doc"
+                    label="Copy Grok Bot setup prompt"
+                    onPress={() => void copyGrokBotSetup(grokSetup.prompt, "Grok Bot setup prompt")}
+                  />
+                  <SettingsActionRow
+                    icon="chevron.left.forwardslash.chevron.right"
+                    label="Copy MCP configuration"
+                    onPress={() =>
+                      void copyGrokBotSetup(grokSetup.configuration, "MCP configuration")
+                    }
+                  />
+                </>
+              ) : null}
+            </SettingsSection>
             {!connected ? (
               <Text className="px-2 text-sm text-foreground-muted">
                 Connect this environment to manage it.

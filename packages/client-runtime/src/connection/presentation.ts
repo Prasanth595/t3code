@@ -1,9 +1,15 @@
 import type { ServerConfig } from "@t3tools/contracts";
+import { isPrivateNetworkHost } from "@t3tools/shared/hostClassification";
 import * as Option from "effect/Option";
 
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import type { ConnectionTarget, SupervisorConnectionState } from "./model.ts";
-import { connectionRouteId, connectionRoutes, routeHttpBaseUrl } from "./routes.ts";
+import {
+  connectionRouteId,
+  connectionRouteKind,
+  connectionRoutes,
+  routeHttpBaseUrl,
+} from "./routes.ts";
 
 export type EnvironmentConnectionPhase =
   | "available"
@@ -119,6 +125,45 @@ export function environmentMcpUrl(input: {
     if (mcpUrl !== null) return mcpUrl;
   }
   return null;
+}
+
+/** A configured address suitable for a hosted agent; this does not probe internet reachability. */
+export function environmentHostedMcpUrl(input: {
+  readonly entry?: ConnectionCatalogEntry | null | undefined;
+  readonly relayHttpBaseUrl?: string | undefined;
+}): string | null {
+  if (input.relayHttpBaseUrl !== undefined) {
+    const relayUrl = hostedMcpUrlFromBase(input.relayHttpBaseUrl);
+    if (relayUrl !== null) return relayUrl;
+  }
+  for (const route of input.entry ? connectionRoutes(input.entry) : []) {
+    if (connectionRouteKind(route) !== "public") continue;
+    const httpBaseUrl = routeHttpBaseUrl(route);
+    const mcpUrl = httpBaseUrl === null ? null : hostedMcpUrlFromBase(httpBaseUrl);
+    if (mcpUrl !== null) return mcpUrl;
+  }
+  return null;
+}
+
+function hostedMcpUrlFromBase(httpBaseUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(httpBaseUrl);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username !== "" ||
+    url.password !== "" ||
+    isPrivateNetworkHost(url.hostname)
+  ) {
+    return null;
+  }
+  url.pathname = "/mcp";
+  url.search = "";
+  url.hash = "";
+  return url.toString();
 }
 
 function mcpUrlFromBase(httpBaseUrl: string): string | null {

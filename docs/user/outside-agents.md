@@ -82,6 +82,41 @@ Add the environment as a custom MCP app in ChatGPT's apps settings:
    need a client ID or secret.
 4. Create the app, then approve the sign-in page that opens.
 
+## Grok Bot
+
+Grok Bot can coordinate your existing T3 projects and coding threads through MCP.
+Chat with your Bot in Grok Bot; T3 runs the coding agents on your environment and
+keeps their threads, approvals, worktrees, and results there. This connection is
+separate from the Grok Build coding provider in **Settings → Providers**.
+
+In **Settings → Connections**, open the environment's menu and choose **Connect
+Grok Bot**. On mobile, open the environment's details. The setup uses the T3
+Connect address, or a saved public HTTPS route, rather than this device's local
+connection. Enable T3 Connect first if no cloud-reachable address is available.
+
+Copy the setup prompt into your existing Bot's chat. Alternatively, add a custom
+Remote HTTPS MCP server in Grok Bot using the copied configuration. Leave headers
+and optional OAuth client credentials empty, then authenticate the connector.
+Grok Bot discovers T3's OAuth sign-in settings; you do not need to copy a T3
+pairing token into the MCP URL or configuration.
+
+Approve the T3 sign-in in your signed-in browser or with a Connections pairing
+code. Grok Bot may identify itself as **Cursor** on the approval page. Choose
+**Read only** to inspect projects and threads, or **Supervised** or above to let
+the Bot launch, message, and stop coding threads.
+
+After connecting, ask the Bot to list your T3 projects and providers. For coding
+work, ask it to use a specific T3 project, keep the returned thread ID, and check
+that thread for progress and results. The Bot's cloud computer has its own
+filesystem; your T3 project and worktree stay on the T3 environment. Keep that
+environment online while the Bot uses it.
+
+If sign-in works but tool calls fail, update the T3 environment. Hosted MCP
+sign-in and Grok Bot protocol compatibility require a current server. Your
+organization's Grok Bot MCP policy can also restrict custom connectors. See
+[Grok Bot's MCP setup](https://docs.x.ai/grok-bot/team-bots) for connector setup and
+organization policies.
+
 ## Other agents and bots
 
 Any agent that supports remote MCP servers over HTTP with OAuth can connect. Give

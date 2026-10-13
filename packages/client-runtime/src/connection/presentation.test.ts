@@ -12,10 +12,12 @@ import {
   ConnectionBlockedError,
   ConnectionTransientError,
   RelayConnectionTarget,
+  SshConnectionTarget,
   type SupervisorConnectionState,
 } from "./model.ts";
 import {
   connectionCatalogDisplayUrl,
+  environmentHostedMcpUrl,
   environmentMcpUrl,
   connectionStatusText,
   connectionStatusTitle,
@@ -42,6 +44,23 @@ const ENTRY: ConnectionCatalogEntry = {
   ),
   enabled: true,
 };
+
+function route(connectionId: string, httpBaseUrl: string, network?: "tailscale"): ConnectionRoute {
+  const target = new BearerConnectionTarget({ ...TARGET, connectionId });
+  return {
+    target,
+    profile: Option.some(
+      new BearerConnectionProfile({
+        connectionId,
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        httpBaseUrl,
+        wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+        ...(network === undefined ? {} : { network }),
+      }),
+    ),
+  };
+}
 
 function supervisorState(overrides: Partial<SupervisorConnectionState>): SupervisorConnectionState {
   return {
@@ -78,21 +97,6 @@ describe("connection presentation", () => {
   });
 
   it("copies the MCP address of the route this device is connected over", () => {
-    const route = (connectionId: string, httpBaseUrl: string): ConnectionRoute => {
-      const target = new BearerConnectionTarget({ ...TARGET, connectionId });
-      return {
-        target,
-        profile: Option.some(
-          new BearerConnectionProfile({
-            connectionId,
-            environmentId: TARGET.environmentId,
-            label: TARGET.label,
-            httpBaseUrl,
-            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
-          }),
-        ),
-      };
-    };
     const lan = route("lan", "http://192.168.4.53:3773/");
     const tailnet = route("tailnet", "http://100.115.1.44:3773/");
     const serve = route("serve", "https://machine.tailnet.ts.net/");
@@ -259,5 +263,79 @@ describe("connection presentation", () => {
       error: null,
       traceId: null,
     });
+  });
+});
+
+describe("hosted agent MCP addresses", () => {
+  it("prefers the T3 Connect endpoint even when the primary environment has no saved route", () => {
+    const relayHttpBaseUrl = "https://tunnel.example.com/";
+    expect(environmentHostedMcpUrl({ relayHttpBaseUrl })).toBe("https://tunnel.example.com/mcp");
+    expect(environmentHostedMcpUrl({ entry: ENTRY, relayHttpBaseUrl })).toBe(
+      "https://tunnel.example.com/mcp",
+    );
+  });
+
+  it("skips local, tailnet, VPN, SSH, and insecure routes for a hosted agent", () => {
+    const lan = route("lan", "https://192.168.4.53:3773/");
+    const publicRoute = route("public", "https://t3.example.com/");
+    const entry: ConnectionCatalogEntry = {
+      ...ENTRY,
+      ...lan,
+      alternateRoutes: [
+        route("localhost", "https://localhost/"),
+        route("tailnet", "https://machine.tail1234.ts.net/"),
+        route("vpn", "https://100.96.0.2/"),
+        route("private-v6", "https://[fd00::2]/"),
+        route("tailnet-network", "https://private.example.com/", "tailscale"),
+        {
+          target: new SshConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "ssh",
+          }),
+          profile: Option.none(),
+        },
+        route("insecure-public", "http://t3.example.com/"),
+        publicRoute,
+      ],
+    };
+    expect(environmentMcpUrl({ entry, connectedTarget: lan.target })).toBe(
+      "https://192.168.4.53:3773/mcp",
+    );
+    expect(environmentHostedMcpUrl({ entry })).toBe("https://t3.example.com/mcp");
+    expect(environmentHostedMcpUrl({ entry: { ...entry, alternateRoutes: [] } })).toBeNull();
+  });
+
+  it.each([
+    "not a URL",
+    "http://tunnel.example.com/",
+    "https://user:password@tunnel.example.com/",
+    "https://localhost/",
+    "https://127.1/",
+    "https://192.168.1.1/",
+    "https://100.96.0.1/",
+    "https://machine.tail1234.ts.net/",
+    "https://[::1]/",
+    "https://[fd7a:115c:a1e0::1]/",
+    "https://[fe80::1]/",
+  ])("does not offer an unusable or credential-bearing relay address: %s", (relayHttpBaseUrl) => {
+    expect(environmentHostedMcpUrl({ relayHttpBaseUrl })).toBeNull();
+    expect(environmentHostedMcpUrl({ entry: ENTRY, relayHttpBaseUrl })).toBe(
+      "https://environment.example.test/mcp",
+    );
+  });
+
+  it("copies only the MCP URL without path, query credentials, or fragment", () => {
+    const source = "https://t3.example.com/connect?token=secret#pair";
+    const direct = route("public", source);
+    const credentials = route("credentials", "https://user:password@t3.example.com/");
+    expect(environmentHostedMcpUrl({ entry: { ...ENTRY, ...credentials } })).toBeNull();
+    expect(environmentHostedMcpUrl({ entry: { ...ENTRY, ...direct } })).toBe(
+      "https://t3.example.com/mcp",
+    );
+    expect(environmentHostedMcpUrl({ relayHttpBaseUrl: source })).toBe(
+      "https://t3.example.com/mcp",
+    );
+    expect(environmentHostedMcpUrl({})).toBeNull();
   });
 });
