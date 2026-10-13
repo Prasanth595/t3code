@@ -1,5 +1,6 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
@@ -802,6 +803,70 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
       assert.equal(error.message, "Codex App Server input stream ended.");
       assert.equal("cause" in error, false);
+    }),
+  );
+
+  it.effect("fails pending requests and both incoming streams with the process exit", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const expected = new CodexError.CodexAppServerProcessExitedError({
+        code: 4294967295,
+        pid: 51,
+      });
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        terminationError: Effect.succeed(expected),
+      });
+      const notifications = yield* transport.incomingNotifications.pipe(
+        Stream.runDrain,
+        Effect.flip,
+        Effect.forkScoped,
+      );
+      const requests = yield* transport.incomingRequests.pipe(
+        Stream.runDrain,
+        Effect.flip,
+        Effect.forkScoped,
+      );
+      const pending = yield* transport
+        .request("thread/start", {})
+        .pipe(Effect.exit, Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.end(input);
+
+      assert.deepEqual(yield* Fiber.join(pending), Exit.fail(expected));
+      assert.strictEqual(yield* Fiber.join(notifications), expected);
+      assert.strictEqual(yield* Fiber.join(requests), expected);
+      assert.deepEqual(
+        yield* transport.request("thread/start", {}).pipe(Effect.exit),
+        Exit.fail(expected),
+      );
+      assert.strictEqual(
+        yield* transport.incomingNotifications.pipe(Stream.runDrain, Effect.flip),
+        expected,
+      );
+    }),
+  );
+
+  it.effect("drains buffered notifications before reporting an input stream ending", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const received = yield* Deferred.make<void>();
+      const notification = { method: "thread/started", params: { thread: { id: "thread-1" } } };
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        onNotification: () => Deferred.succeed(received, undefined).pipe(Effect.asVoid),
+      });
+      yield* Queue.offer(input, encodeJsonl(notification));
+      yield* Deferred.await(received);
+      yield* Queue.end(input);
+
+      const buffered: Array<CodexProtocol.CodexAppServerIncomingNotification> = [];
+      const error = yield* transport.incomingNotifications.pipe(
+        Stream.runForEach((value) => Effect.sync(() => buffered.push(value))),
+        Effect.flip,
+      );
+      assert.deepEqual(buffered, [notification]);
+      assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
     }),
   );
 });

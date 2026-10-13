@@ -1802,6 +1802,7 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
+        runtime,
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
@@ -1811,6 +1812,28 @@ describe("CodexAdapterV2 session initialize", () => {
         initializeRequests: () => initializeRequests,
       };
     });
+
+  it.effect("fails the runtime event stream when its app-server exits", () =>
+    Effect.gen(function* () {
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "session-process-exit",
+          entries: [{ type: "runtime_exit", status: "success" }],
+        }),
+      );
+      const error = yield* session.runtime.events.pipe(Stream.runDrain, Effect.flip);
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterEventStreamError);
+      assert.equal(error.driver, CodexAdapterV2.CODEX_DRIVER_KIND);
+      assert.equal(error.providerSessionId, "provider-session-session-process-exit");
+      assert.instanceOf(error.cause, CodexError.CodexAppServerProcessExitedError);
+      assert.equal(error.cause.code, 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });

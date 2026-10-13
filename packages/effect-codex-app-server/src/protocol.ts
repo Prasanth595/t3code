@@ -50,8 +50,14 @@ export interface CodexAppServerPatchedProtocolOptions {
 }
 
 export interface CodexAppServerPatchedProtocol {
-  readonly incomingNotifications: Stream.Stream<CodexAppServerIncomingNotification>;
-  readonly incomingRequests: Stream.Stream<CodexAppServerIncomingRequest>;
+  readonly incomingNotifications: Stream.Stream<
+    CodexAppServerIncomingNotification,
+    CodexError.CodexAppServerError
+  >;
+  readonly incomingRequests: Stream.Stream<
+    CodexAppServerIncomingRequest,
+    CodexError.CodexAppServerError
+  >;
   readonly request: (
     method: string,
     payload?: unknown,
@@ -158,10 +164,14 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const protocolScope = yield* Scope.Scope;
     const requestHandlerScope = yield* Scope.fork(protocolScope, "parallel");
     const outgoing = yield* Queue.unbounded<string, Cause.Done<void>>();
-    const incomingNotifications =
-      yield* Queue.sliding<CodexAppServerIncomingNotification>(MAX_BUFFERED_RAW_MESSAGES);
-    const incomingRequests =
-      yield* Queue.sliding<CodexAppServerIncomingRequest>(MAX_BUFFERED_RAW_MESSAGES);
+    const incomingNotifications = yield* Queue.sliding<
+      CodexAppServerIncomingNotification,
+      CodexError.CodexAppServerError
+    >(MAX_BUFFERED_RAW_MESSAGES);
+    const incomingRequests = yield* Queue.sliding<
+      CodexAppServerIncomingRequest,
+      CodexError.CodexAppServerError
+    >(MAX_BUFFERED_RAW_MESSAGES);
     const pending = yield* Ref.make(new Map<string, CodexAppServerPendingRequest>());
     const nextRequestId = yield* Ref.make(1);
     const remainder: Array<string> = [];
@@ -203,6 +213,8 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             const error = yield* classify();
             yield* Ref.set(terminationFailure, Option.some(error));
             yield* failAllPending(error);
+            yield* Queue.fail(incomingNotifications, error);
+            yield* Queue.fail(incomingRequests, error);
             yield* Queue.end(outgoing);
             yield* Deferred.succeed(terminationSignal, undefined);
             yield* Scope.close(requestHandlerScope, Exit.void).pipe(
