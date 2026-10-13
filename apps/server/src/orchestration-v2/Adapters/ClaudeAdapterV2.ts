@@ -4874,6 +4874,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   : input.context.subagentsByToolUseId.get(input.toolUseId)) ??
                 registeredSubagent);
           if (existingSubagent === undefined && input.status !== "running") {
+            // A task an earlier process started (the replacement reports it
+            // stopped on resume) is unknown here, so the server settles it.
+            if (input.nativeOutcome !== undefined) {
+              yield* emitProviderEvent({
+                type: "subagent.ended",
+                driver: CLAUDE_PROVIDER,
+                threadId: input.context.input.threadId,
+                subagentId: claudeSubagentIds(input.context, input.taskId).nodeId,
+                status: input.status,
+                result: input.result ?? null,
+              });
+            }
             return;
           }
           if (
