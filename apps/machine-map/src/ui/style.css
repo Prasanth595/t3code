@@ -2176,9 +2176,18 @@ dialog.palette .dialog-body {
 }
 /* The popover opens under the "i" where anchor positioning works, and centred elsewhere. */
 .pause-info {
-  width: min(420px, calc(100vw - 32px));
-  padding: 16px 20px 18px;
+  width: min(400px, calc(100vw - 32px));
+  padding: 0;
+  overflow: hidden;
   color: var(--ink);
+}
+.pause-info > .hazard {
+  height: 14px;
+  background: var(--hazard);
+  border-bottom: var(--bw) solid var(--border);
+}
+.pause-info-body {
+  padding: 14px 18px 16px;
 }
 @supports (position-area: bottom) {
   .pause-info {
@@ -2195,37 +2204,38 @@ dialog.palette .dialog-body {
   gap: 12px;
 }
 .pause-info h3 {
-  font-size: 1.15rem;
+  font-size: 1.6rem;
+  text-transform: uppercase;
 }
 .pause-info-now {
-  margin: 10px 0 12px;
-  padding: 6px 10px;
+  margin: 10px 0 0;
   font-weight: 700;
-  background: var(--warning-surface);
-  border: var(--bw) solid var(--border);
-  border-radius: var(--radius);
 }
-.pause-info dl {
+.pause-info-effects {
   display: grid;
-  gap: 8px;
-  margin: 0;
-}
-.pause-info dl > div {
-  display: grid;
-  grid-template-columns: 5.2rem 1fr;
   gap: 10px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
 }
-.pause-info dt {
-  font-size: 0.7rem;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+.pause-info-effects li {
+  display: grid;
+  grid-template-columns: 4.6rem 1fr;
+  align-items: start;
+  gap: 10px;
+  line-height: 1.35;
+}
+.pause-info-effects .sticker {
+  justify-self: start;
+}
+.pause-info-resume {
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: var(--bw) dashed var(--border);
   color: var(--muted);
-  padding-top: 0.2rem;
 }
-.pause-info dd {
-  margin: 0;
-  line-height: 1.4;
+.pause-info-resume b {
+  color: var(--ink);
 }
 
 /* The paused state (MM-713): a hazard frame around the page and a banner with Resume. */
@@ -2405,9 +2415,11 @@ dialog.palette .dialog-body {
     margin: 0;
     overflow-y: auto;
     position-area: none;
-    padding-bottom: calc(18px + env(safe-area-inset-bottom));
     border-radius: var(--radius) var(--radius) 0 0;
     box-shadow: 0 -4px 0 0 var(--shadow-ink);
+  }
+  .pause-info-body {
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
   }
   .pause-info::backdrop {
     background: #0000006b;
