@@ -2,6 +2,7 @@ import { RequestActionButton } from "./RequestActionButton";
 import { QuestionAttachments } from "./QuestionAttachments";
 import type { RuntimeRequestId } from "@t3tools/contracts";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import { splitPlainTextLinks } from "@t3tools/shared/plainTextLinks";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
 import Animated, {
@@ -21,6 +22,7 @@ import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
+import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import {
   isPendingUserInputOptionSelected,
   type PendingUserInput,
@@ -97,6 +99,8 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
   const canRespond = props.pendingUserInput.responseCapability !== "not_resumable";
   const isResponding = props.respondingUserInputId === props.pendingUserInput.requestId;
   const responseDisabled = !canRespond || isResponding;
+  // The same path a link in the thread's messages takes.
+  const openLink = useOpenPullRequest();
 
   const cardCoverage = props.cardCoverage;
   const barHeightRef = useRef(0);
@@ -278,7 +282,21 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                 {question.header}
               </Text>
               <Text className="font-sans text-base leading-snug text-foreground">
-                {question.question}
+                {splitPlainTextLinks(question.question).map((segment, index) =>
+                  segment.kind === "url" ? (
+                    <Text
+                      // oxlint-disable-next-line react/no-array-index-key -- segments never reorder
+                      key={index}
+                      accessibilityRole="link"
+                      className="text-md-link"
+                      onPress={() => void openLink(segment.url)}
+                    >
+                      {segment.url}
+                    </Text>
+                  ) : (
+                    segment.text
+                  ),
+                )}
               </Text>
               <View className="gap-2">
                 {question.options.map((option) => {

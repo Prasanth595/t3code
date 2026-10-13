@@ -1,5 +1,6 @@
 import { type RuntimeRequestId } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { splitPlainTextLinks } from "@t3tools/shared/plainTextLinks";
+import { memo, useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -19,6 +20,7 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  onOpenLink: (event: MouseEvent<HTMLElement>, url: string) => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -30,6 +32,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  onOpenLink,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -46,6 +49,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      onOpenLink={onOpenLink}
     />
   );
 });
@@ -59,6 +63,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  onOpenLink,
 }: {
   prompt: PendingUserInput;
   disabled: boolean;
@@ -68,6 +73,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  onOpenLink: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
@@ -242,7 +248,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
-            <p className="text-sm text-foreground/85">{activeQuestion.question}</p>
+            <p className="text-sm text-foreground/85">
+              {splitPlainTextLinks(activeQuestion.question).map((segment, index) =>
+                segment.kind === "url" ? (
+                  <a
+                    // oxlint-disable-next-line react/no-array-index-key -- segments never reorder
+                    key={index}
+                    href={segment.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-info-foreground hover:underline focus-visible:underline"
+                    onClick={(event) => onOpenLink(event, segment.url)}
+                  >
+                    {segment.url}
+                  </a>
+                ) : (
+                  segment.text
+                ),
+              )}
+            </p>
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
