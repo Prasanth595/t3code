@@ -1,4 +1,6 @@
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import { RuntimeMode, type ProviderOptionDescriptor } from "@t3tools/contracts";
+
+import type { AppSymbolName } from "../../components/AppSymbol";
 
 /**
  * Desktop-oriented effort keywords that don't belong in the phone picker.
@@ -9,32 +11,39 @@ import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
  */
 const HIDDEN_EFFORT_OPTION_IDS: ReadonlySet<string> = new Set(["ultracode"]);
 
-export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
-  readonly mode: RuntimeMode;
+interface RuntimeModeDetails {
   readonly label: string;
   readonly description: string;
-}> = [
-  {
-    mode: "approval-required",
+  readonly icon: AppSymbolName;
+}
+
+/** Icons match the web composer's runtime mode picker. */
+export const RUNTIME_MODE_DETAILS: Record<RuntimeMode, RuntimeModeDetails> = {
+  "approval-required": {
     label: "Supervised",
     description: "Ask before commands and file changes.",
+    icon: "lock",
   },
-  {
-    mode: "auto-accept-edits",
+  "auto-accept-edits": {
     label: "Auto-accept edits",
     description: "Auto-approve edits, ask before other actions.",
+    icon: "pencil",
   },
-  {
-    mode: "auto",
+  auto: {
     label: "Auto",
     description: "Supported providers approve routine actions; others still ask.",
+    icon: "sparkles",
   },
-  {
-    mode: "full-access",
+  "full-access": {
     label: "Full access",
     description: "Allow commands and edits without prompts.",
+    icon: "lock.open",
   },
-];
+};
+
+export const RUNTIME_MODE_CHOICES: ReadonlyArray<
+  RuntimeModeDetails & { readonly mode: RuntimeMode }
+> = RuntimeMode.literals.map((mode) => ({ mode, ...RUNTIME_MODE_DETAILS[mode] }));
 
 export function runtimeModeChoicesForSupportedModes(
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,

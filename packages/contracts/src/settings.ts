@@ -29,6 +29,7 @@ import {
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
+import { MobileThreadCardLayout, ThreadCardLayout, ThreadCardLayouts } from "./slotLayout.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
@@ -1503,6 +1504,8 @@ export const ServerSettings = Schema.Struct({
   preferOriginRemote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: machine map connection. See `MachineMapSettings`. */
   machineMap: MachineMapSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** Fork: user-built thread card layouts. See `ThreadCardLayouts`. */
+  threadCardLayouts: ThreadCardLayouts.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1815,6 +1818,13 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   preferOriginRemote: Schema.optionalKey(Schema.Boolean),
+  /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */
+  threadCardLayouts: Schema.optionalKey(
+    Schema.Struct({
+      desktop: Schema.optionalKey(Schema.NullOr(ThreadCardLayout)),
+      mobile: Schema.optionalKey(Schema.NullOr(MobileThreadCardLayout)),
+    }),
+  ),
   /** Merges per field: a patched field replaces the saved one. */
   machineMap: Schema.optionalKey(
     Schema.Struct({

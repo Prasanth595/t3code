@@ -29,6 +29,15 @@ The controls retreat as the composer docks after you send the first message.
 Turn on **Composer context** to keep those controls visible after the thread starts. This preference
 applies to the web and desktop clients.
 
+## Thread cards
+
+To arrange the thread cards yourself, open **Settings → Appearance → Thread cards**. Pick the
+**Desktop & web** or **Mobile** tab, then turn on **Custom card layout**. Each row has a left group
+that truncates and a right group that keeps its size. Drag an element to move it, or drag it into
+**Hidden** to hide it. **Hidden** also holds extra details, such as the model, the age, an unread
+dot and the last error. The title and the status always stay on the card. Every server you
+connect to gets the same layout. To return to the built-in card, turn the switch off.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
