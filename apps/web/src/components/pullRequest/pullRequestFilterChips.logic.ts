@@ -65,8 +65,12 @@ export function pullRequestFilterChips(input: {
 }): ReadonlyArray<PullRequestFilterChip> {
   const { search, typed, names } = input;
   const chips: PullRequestFilterChip[] = [];
-  const plain = (key: string, field: string, value: string, remove: PullRequestFilterChip["remove"]) =>
-    chips.push({ key, field, operator: null, value, remove });
+  const plain = (
+    key: string,
+    field: string,
+    value: string,
+    remove: PullRequestFilterChip["remove"],
+  ) => chips.push({ key, field, operator: null, value, remove });
 
   if (search.state !== "open") plain("state", "State", names.state, { state: "open" });
   if (search.involvement !== "all") {
@@ -131,8 +135,7 @@ export function pullRequestFilterChips(input: {
 export function clearPullRequestFilterChips(
   chips: ReadonlyArray<PullRequestFilterChip>,
 ): PullRequestListPreferencePatch {
-  return chips.reduce<PullRequestListPreferencePatch>(
-    (patch, chip) => ({ ...patch, ...chip.remove }),
-    { environmentId: undefined },
-  );
+  const patch: PullRequestListPreferencePatch = { environmentId: undefined };
+  for (const chip of chips) Object.assign(patch, chip.remove);
+  return patch;
 }

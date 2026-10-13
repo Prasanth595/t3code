@@ -65,9 +65,9 @@ describe("pullRequestFilterChips", () => {
 
   it("leaves out menu labels that typed labels replace, but not for typed exclusions", () => {
     expect(chips({ labels: ["bug"] }, { typed: { filters: { labels: [["x"]] } } })).toEqual([]);
-    expect(chips({ labels: ["bug"] }, { typed: { filters: { excludedLabels: ["x"] } } })).toHaveLength(
-      1,
-    );
+    expect(
+      chips({ labels: ["bug"] }, { typed: { filters: { excludedLabels: ["x"] } } }),
+    ).toHaveLength(1);
   });
 
   it("flips drafts between only and hidden", () => {

@@ -2,6 +2,7 @@ import { XIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
  * Fork: how a filter compares. A field with one value per item (an owner, a project) has one
@@ -57,10 +58,7 @@ export function FilterChip({
     operator === "is_not" ? "text-warning-foreground" : "text-info-foreground",
   );
   return (
-    <span
-      className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-full border border-border bg-muted pl-2.5 text-xs"
-      title={filterSentence({ field, operator, value })}
-    >
+    <span className="inline-flex h-6 min-w-0 max-w-full items-center gap-1 rounded-full border border-border bg-muted pl-2.5 text-xs">
       <span className="shrink-0 text-muted-foreground">
         {operator === null ? `${field}:` : field}
       </span>
@@ -76,7 +74,13 @@ export function FilterChip({
       ) : (
         <span className={operatorClass}>{operatorLabel(operator)}</span>
       )}
-      <span className="min-w-0 truncate text-foreground">{value}</span>
+      {/* A long list of values truncates, so the tooltip holds the whole filter. */}
+      <Tooltip>
+        <TooltipTrigger
+          render={<span className="min-w-0 truncate text-foreground">{value}</span>}
+        />
+        <TooltipPopup side="top">{filterSentence({ field, operator, value })}</TooltipPopup>
+      </Tooltip>
       {detail ? <span className="shrink-0 text-muted-foreground">· {detail}</span> : null}
       <Button
         size="icon-micro"
