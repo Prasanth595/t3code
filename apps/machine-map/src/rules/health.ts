@@ -28,7 +28,12 @@ export const MAX_SAMPLE_MESSAGE_BYTES = 8_192;
 /** MM-1505: ended alerts stay 30 days, at most this many. */
 export const MAX_ENDED_ALERTS = 500;
 
-export const RESOURCE_ALERT_KINDS: ReadonlyArray<HealthAlertKind> = ["cpu", "memory", "disk", "swap"];
+export const RESOURCE_ALERT_KINDS: ReadonlyArray<HealthAlertKind> = [
+  "cpu",
+  "memory",
+  "disk",
+  "swap",
+];
 
 /** One stored step. Percent values, swap traffic in MB/s, and the agent process count. */
 export interface ResourcePoint {

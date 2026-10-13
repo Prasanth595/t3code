@@ -121,7 +121,9 @@ export class HealthStore {
   /** The active alerts, newest first, then up to `ended` ended ones. */
   alerts(ended: number): Array<HealthAlert> {
     const active = this.#sql
-      .run<{ data: string }>("SELECT data FROM health_alerts WHERE active = 1 ORDER BY started_at DESC")
+      .run<{ data: string }>(
+        "SELECT data FROM health_alerts WHERE active = 1 ORDER BY started_at DESC",
+      )
       .map((row) => decodeAlert(row.data));
     if (ended === 0) return active;
     const done = this.#sql

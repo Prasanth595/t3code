@@ -37,7 +37,8 @@ export function chartLines(
   let lastAt: number | null = null;
   const flush = () => {
     const [only] = current;
-    if (current.length === 1 && only) lines.push(`${only.x},${only.y} ${round2(only.x + 1.5)},${only.y}`);
+    if (current.length === 1 && only)
+      lines.push(`${only.x},${only.y} ${round2(only.x + 1.5)},${only.y}`);
     else if (current.length > 1) lines.push(current.map((p) => `${p.x},${p.y}`).join(" "));
     current = [];
   };

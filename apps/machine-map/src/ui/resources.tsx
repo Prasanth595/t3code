@@ -34,7 +34,11 @@ import {
 } from "./format.ts";
 import { KindIcon } from "./icons.tsx";
 
-const RANGE_LABEL: Record<ResourceRange, string> = { hour: "1 hour", day: "24 hours", month: "30 days" };
+const RANGE_LABEL: Record<ResourceRange, string> = {
+  hour: "1 hour",
+  day: "24 hours",
+  month: "30 days",
+};
 const RANGE_START: Record<ResourceRange, string> = {
   hour: "1 h ago",
   day: "24 h ago",
@@ -112,7 +116,7 @@ export function AlertStickers({ machineId }: { machineId: MachineId }) {
   return (
     <>
       {activeAlerts(health.alerts, machineId).map((alert) => (
-        <span key={alert.id} className="sticker warn" title={ALERT_TEXT[alert.kind]}>
+        <span key={alert.id} className="sticker warn" aria-label={ALERT_TEXT[alert.kind]}>
           {ALERT_STICKER[alert.kind]}
         </span>
       ))}
@@ -168,7 +172,13 @@ function Chart({
         role="img"
         aria-label={`${title}, ${RANGE_LABEL[range]}`}
       >
-        <line className="grid" x1={0} x2={CHART_WIDTH} y1={CHART_HEIGHT / 2} y2={CHART_HEIGHT / 2} />
+        <line
+          className="grid"
+          x1={0}
+          x2={CHART_WIDTH}
+          y1={CHART_HEIGHT / 2}
+          y2={CHART_HEIGHT / 2}
+        />
         {limit !== null && limit < max && (
           <line
             className="limit"
@@ -329,7 +339,8 @@ function ThresholdsForm({ machine }: { machine: MachineRecord }) {
             onClick={() => {
               setDraft(toFields(DEFAULT_HEALTH_THRESHOLDS));
               portal.call(
-                () => callApi("POST", `${machinePath(machine.id)}/thresholds`, { thresholds: null }),
+                () =>
+                  callApi("POST", `${machinePath(machine.id)}/thresholds`, { thresholds: null }),
                 `${machine.name} uses the default thresholds.`,
               );
             }}
@@ -585,7 +596,10 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
       </div>
 
       {machineAlerts.length > 0 && <AlertList alerts={machineAlerts} showMachine={false} />}
-      <ThresholdsForm key={JSON.stringify(health.thresholds[machine.id] ?? null)} machine={machine} />
+      <ThresholdsForm
+        key={JSON.stringify(health.thresholds[machine.id] ?? null)}
+        machine={machine}
+      />
     </>
   );
 }
@@ -684,9 +698,7 @@ function HealthCard({ machine }: { machine: MachineRecord }) {
               Agents {sample.agents === null ? "—" : sample.agents.count}
               {sample.agents !== null && ` · ${formatPercent(sample.agents.cpuPercent)}`}
             </span>
-            <span>
-              Net {perSecond(sample.netInBytesPerSecond)} in
-            </span>
+            <span>Net {perSecond(sample.netInBytesPerSecond)} in</span>
           </span>
         </>
       )}

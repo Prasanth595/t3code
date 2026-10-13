@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { DatabaseSync } from "node:sqlite";
+import * as NodeSqlite from "node:sqlite";
 import { describe, expect, it } from "vite-plus/test";
 import { MachineId } from "@t3tools/contracts/machineMap";
 import type { HealthAlert, ResourceSample } from "@t3tools/contracts/machineMapResources";
@@ -19,10 +19,10 @@ const T0 = Date.parse("2026-10-13T08:00:00.000Z");
 
 /** The store on an in-memory `node:sqlite` database, like `ctx.storage.sql` in the Worker. */
 function memoryStore() {
-  const db = new DatabaseSync(":memory:");
+  const db = new NodeSqlite.DatabaseSync(":memory:");
   db.exec(HEALTH_TABLES);
   const store = new HealthStore({
-    run: <T,>(query: string, ...bindings: Array<string | number | null>) =>
+    run: <T>(query: string, ...bindings: Array<string | number | null>) =>
       db.prepare(query).all(...bindings) as Array<T>,
     transaction: (work) => {
       db.exec("BEGIN");

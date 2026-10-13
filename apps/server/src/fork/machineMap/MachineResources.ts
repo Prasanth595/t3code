@@ -60,12 +60,10 @@ const make = Effect.gen(function* () {
   const unix = platform === "darwin" || platform === "linux";
 
   const output = (command: string, args: ReadonlyArray<string>) =>
-    spawner
-      .string(ChildProcess.make(command, args, { stdin: "ignore", stderr: "ignore" }))
-      .pipe(
-        Effect.timeout("2 seconds"),
-        Effect.orElseSucceed(() => ""),
-      );
+    spawner.string(ChildProcess.make(command, args, { stdin: "ignore", stderr: "ignore" })).pipe(
+      Effect.timeout("2 seconds"),
+      Effect.orElseSucceed(() => ""),
+    );
   const file = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
   const orNull = <A>(text: string, parse: (text: string) => A | null) =>
     text.length === 0 ? null : parse(text);

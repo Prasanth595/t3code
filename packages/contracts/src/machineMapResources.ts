@@ -125,7 +125,11 @@ export const HealthAlert = Schema.Struct({
 export type HealthAlert = typeof HealthAlert.Type;
 
 export type ResourceRange = NonNullable<(typeof MapToolInputs.machines_resources.Type)["range"]>;
-export const RESOURCE_RANGES = ["hour", "day", "month"] as const satisfies ReadonlyArray<ResourceRange>;
+export const RESOURCE_RANGES = [
+  "hour",
+  "day",
+  "month",
+] as const satisfies ReadonlyArray<ResourceRange>;
 
 /**
  * MM-1503: the history of one machine, one entry per step. The arrays have the same length.

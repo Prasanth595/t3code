@@ -742,7 +742,12 @@ export class MachineMapObject extends DurableObject<Env> {
       "minute",
       minuteStart(nowMs) - minutes * MINUTE_MS,
     );
-    this.#applyAlerts(machineId, resourceConditions(points, thresholds), RESOURCE_ALERT_KINDS, nowMs);
+    this.#applyAlerts(
+      machineId,
+      resourceConditions(points, thresholds),
+      RESOURCE_ALERT_KINDS,
+      nowMs,
+    );
   }
 
   #checkOffline(machineId: MachineId, nowMs: number): void {
@@ -1197,7 +1202,9 @@ export class MachineMapObject extends DurableObject<Env> {
   /** MM-1504: when an offline machine counts as down, and MM-1503: the next prune. */
   #healthAlarmTimes(): Array<string> {
     const downAlready = new Set<string>(
-      this.#alerts("active").flatMap((alert) => (alert.kind === "offline" ? [alert.machineId] : [])),
+      this.#alerts("active").flatMap((alert) =>
+        alert.kind === "offline" ? [alert.machineId] : [],
+      ),
     );
     const times = this.#map.machines.flatMap((machine) => {
       if (downAlready.has(machine.id)) return [];
@@ -1207,7 +1214,8 @@ export class MachineMapObject extends DurableObject<Env> {
       );
       return due === null ? [] : [new Date(due).toISOString()];
     });
-    if (this.#health.hasPoints()) times.push(new Date(this.#prunedAt() + PRUNE_EVERY_MS).toISOString());
+    if (this.#health.hasPoints())
+      times.push(new Date(this.#prunedAt() + PRUNE_EVERY_MS).toISOString());
     return times;
   }
 

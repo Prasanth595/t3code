@@ -276,8 +276,7 @@ export function buildSample(
           cpuOf,
           (p) => cpuOf(p) ?? 0,
         );
-  const topMemory =
-    processes === null ? null : topProcesses(processes, cpuOf, (p) => p.rssBytes);
+  const topMemory = processes === null ? null : topProcesses(processes, cpuOf, (p) => p.rssBytes);
 
   const t3Cpu =
     previous === null || elapsedMs <= 0 || raw.t3.cpuMicros < previous.t3CpuMicros
@@ -289,30 +288,16 @@ export function buildSample(
     cpuPercent: raw.cpuPercent === null ? null : round1(raw.cpuPercent),
     cpuCount: raw.cpuCount,
     load:
-      raw.load === null
-        ? null
-        : [round1(raw.load[0]), round1(raw.load[1]), round1(raw.load[2])],
+      raw.load === null ? null : [round1(raw.load[0]), round1(raw.load[1]), round1(raw.load[2])],
     memoryUsedBytes: raw.memory?.usedBytes ?? null,
     memoryTotalBytes: raw.memory?.totalBytes ?? null,
     swapUsedBytes: raw.swap?.usedBytes ?? null,
     swapTotalBytes: raw.swap?.totalBytes ?? null,
-    swapBytesPerSecond: rate(
-      raw.swapTrafficBytes,
-      previous?.swapTrafficBytes ?? null,
-      seconds,
-    ),
+    swapBytesPerSecond: rate(raw.swapTrafficBytes, previous?.swapTrafficBytes ?? null, seconds),
     diskUsedBytes: raw.disk?.usedBytes ?? null,
     diskTotalBytes: raw.disk?.totalBytes ?? null,
-    netInBytesPerSecond: rate(
-      raw.net?.inBytes ?? null,
-      previous?.net?.inBytes ?? null,
-      seconds,
-    ),
-    netOutBytesPerSecond: rate(
-      raw.net?.outBytes ?? null,
-      previous?.net?.outBytes ?? null,
-      seconds,
-    ),
+    netInBytesPerSecond: rate(raw.net?.inBytes ?? null, previous?.net?.inBytes ?? null, seconds),
+    netOutBytesPerSecond: rate(raw.net?.outBytes ?? null, previous?.net?.outBytes ?? null, seconds),
     t3: { cpuPercent: t3Cpu, memoryBytes: raw.t3.rssBytes },
     agents:
       raw.agents === null

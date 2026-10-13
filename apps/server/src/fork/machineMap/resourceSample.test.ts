@@ -52,7 +52,12 @@ describe("parsers (MM-1501)", () => {
     );
     expect(processes).toEqual([
       { pid: 1, cpuMs: 4_009_620, rssBytes: 26_304 * 1024, name: "launchd" },
-      { pid: 326, cpuMs: 27_180, rssBytes: 272_384 * 1024, name: "Google Chrome Helper (Renderer)" },
+      {
+        pid: 326,
+        cpuMs: 27_180,
+        rssBytes: 272_384 * 1024,
+        name: "Google Chrome Helper (Renderer)",
+      },
       { pid: 999, cpuMs: 1_000, rssBytes: 1_024_000, name: "node" },
     ]);
   });
@@ -78,9 +83,10 @@ describe("parsers (MM-1501)", () => {
   });
 
   it("reads macOS swap use, swap traffic and network bytes", () => {
-    expect(parseDarwinSwap("total = 2048.00M  used = 1.50G  free = 512.00M  (encrypted)")).toEqual(
-      { usedBytes: 1.5 * 1024 ** 3, totalBytes: 2048 * 1024 ** 2 },
-    );
+    expect(parseDarwinSwap("total = 2048.00M  used = 1.50G  free = 512.00M  (encrypted)")).toEqual({
+      usedBytes: 1.5 * 1024 ** 3,
+      totalBytes: 2048 * 1024 ** 2,
+    });
     expect(
       parseDarwinSwapTraffic(
         "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nSwapins:     2.\nSwapouts:    3.\n",

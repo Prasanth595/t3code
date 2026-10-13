@@ -26,15 +26,13 @@ const point = (cpu: number): ResourcePoint => ({
 
 describe("chartLines (MM-1508)", () => {
   it("draws one line through steady points, scaled to the frame", () => {
-    expect(chartLines(at([0, 1, 2]), [0, 50, 200], MINUTE_MS, frame)).toEqual([
-      "0,50 10,25 20,0",
-    ]);
+    expect(chartLines(at([0, 1, 2]), [0, 50, 200], MINUTE_MS, frame)).toEqual(["0,50 10,25 20,0"]);
   });
 
   it("breaks the line at a missing value and at an offline gap", () => {
-    expect(chartLines(at([0, 1, 2, 3, 6, 7]), [10, null, 10, 10, 10, 10], MINUTE_MS, frame)).toEqual(
-      ["0,45 1.5,45", "20,45 30,45", "60,45 70,45"],
-    );
+    expect(
+      chartLines(at([0, 1, 2, 3, 6, 7]), [10, null, 10, 10, 10, 10], MINUTE_MS, frame),
+    ).toEqual(["0,45 1.5,45", "20,45 30,45", "60,45 70,45"]);
   });
 
   it("skips points outside the frame", () => {
