@@ -42,7 +42,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
-  probeClaudeOrganizationId,
+  readClaudeAccountOrganizationId,
   probeClaudeWorkspaceSnapshot,
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -207,7 +207,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         lookup: () =>
           Effect.all([
             probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
-            probeClaudeOrganizationId(effectiveConfig, processEnv).pipe(
+            readClaudeAccountOrganizationId(effectiveConfig, processEnv).pipe(
               Effect.timeout(AUTH_PROBE_TIMEOUT_MS),
               Effect.catch(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
             ),
