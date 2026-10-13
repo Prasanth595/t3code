@@ -43,11 +43,11 @@ import IconCircleDot from "@tabler/icons-react-native/IconCircleDot";
 import IconCircleXFilled from "@tabler/icons-react-native/IconCircleXFilled";
 import IconTicket from "@tabler/icons-react-native/IconTicket";
 import IconClock from "@tabler/icons-react-native/IconClock";
+import IconClick from "@tabler/icons-react-native/IconClick";
 import IconCode from "@tabler/icons-react-native/IconCode";
 import IconCopy from "@tabler/icons-react-native/IconCopy";
 import IconDatabase from "@tabler/icons-react-native/IconDatabase";
 import IconDeviceDesktop from "@tabler/icons-react-native/IconDeviceDesktop";
-import IconPointer from "@tabler/icons-react-native/IconPointer";
 import IconDeviceLaptop from "@tabler/icons-react-native/IconDeviceLaptop";
 import IconDeviceMobile from "@tabler/icons-react-native/IconDeviceMobile";
 import IconDots from "@tabler/icons-react-native/IconDots";
@@ -187,7 +187,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "chevron.right": IconChevronRight,
   "chevron.up": IconChevronUp,
   desktopcomputer: IconDeviceDesktop,
-  cursorarrow: IconPointer,
+  "cursorarrow.click": IconClick,
   doc: IconFileText,
   "doc.on.doc": IconCopy,
   "doc.text": IconFileText,

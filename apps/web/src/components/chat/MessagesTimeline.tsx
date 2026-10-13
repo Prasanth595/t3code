@@ -147,7 +147,6 @@ import {
   Undo2Icon,
   HammerIcon,
   WrenchIcon,
-  MousePointer2Icon,
   Code2Icon,
   XIcon,
   ZapIcon,
@@ -5226,7 +5225,7 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
     case "browser":
       return <BrowserAppIcon className={className} />;
     case "computer":
-      return <MousePointer2Icon className={className} aria-hidden />;
+      return <MousePointerClickIcon className={className} aria-hidden />;
     case "code":
       return <Code2Icon className={className} aria-hidden />;
     case "device":

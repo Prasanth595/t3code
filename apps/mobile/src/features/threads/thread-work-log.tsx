@@ -387,7 +387,7 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
     case "command":
       return { ios: "terminal", android: "terminal" };
     case "computer":
-      return "cursorarrow";
+      return "cursorarrow.click";
     case "code":
       return "chevron.left.forwardslash.chevron.right";
     case "edit":
