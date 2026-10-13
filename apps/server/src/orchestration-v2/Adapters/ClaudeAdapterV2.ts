@@ -6870,7 +6870,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 context.reasoning.lastThinking = null;
                 if (
                   block.type === "tool_use" &&
-                  update?.messageId === message.message.id &&
+                  update !== null &&
+                  update.messageId === message.message.id &&
                   update.followsThinking &&
                   claudeWritesUpdatesAsThinking(message.message.model)
                 ) {
@@ -6900,7 +6901,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     messageId: message.message.id,
                     itemId,
                     text: finalText,
-                    followsThinking: previous?.messageId === message.message.id,
+                    followsThinking:
+                      previous !== null && previous.messageId === message.message.id,
                   }
                 : null;
             }
