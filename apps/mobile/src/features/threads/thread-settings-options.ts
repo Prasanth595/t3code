@@ -1,4 +1,4 @@
-import type { RuntimeMode } from "@t3tools/contracts";
+import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 
 export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   readonly mode: RuntimeMode;
@@ -42,4 +42,16 @@ export function compatibleRuntimeModeForChoices(
   return choices.some((choice) => choice.mode === runtimeMode)
     ? runtimeMode
     : (choices[0]?.mode ?? runtimeMode);
+}
+
+/**
+ * Options a picker row can store. Prompt-injected values (ultrathink) are
+ * prompt keywords, not stored selections: descriptor resolution maps a stored
+ * one back to the default, so offering it would show the wrong value.
+ */
+export function selectableChoices(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+) {
+  const injected = new Set(descriptor.promptInjectedValues ?? []);
+  return descriptor.options.filter((option) => !injected.has(option.id));
 }

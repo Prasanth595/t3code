@@ -92,6 +92,7 @@ import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
+  selectableChoices,
 } from "./thread-settings-options";
 import {
   canCommitPendingModel,
@@ -1186,7 +1187,7 @@ function ThreadSettingsChoiceContent(props: {
         }
       : activeDescriptor?.type === "select"
         ? {
-            rows: activeDescriptor.options.map((choice) => ({
+            rows: selectableChoices(activeDescriptor).map((choice) => ({
               id: choice.id,
               label: choice.label,
               description: choice.description,
