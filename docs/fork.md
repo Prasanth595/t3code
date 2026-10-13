@@ -216,6 +216,16 @@ The client setting `pullRequestFilterChips` shows the active pull request filter
 - Typed qualifiers stay in the search box, so they get no chip. A menu filter that a typed qualifier replaces gets no chip, because it does not apply.
 - When no pull request matches the menu filters, the empty list names them and offers "Clear filters". With search text, the empty list names the search instead.
 
+## Snooze quick options
+
+The client setting `snoozeQuickOptions` holds the choices of the snooze menus. It is empty by default, and the menus then show the built-in choices. Edit it in Settings > General > Snooze quick options.
+
+- The list starts from the built-in choices. The first change saves the whole list. The reset button brings back the built-in choices.
+- A choice snoozes for a number of minutes, hours or days, or until a time today, tomorrow or on the next given weekday.
+- A choice for today shows while its time is more than an hour away. A choice that lands on the same time as an earlier one does not show.
+- A blank label shows a label that names the choice, such as "In 3 hours" or "Tomorrow".
+- The setting applies to the snooze button, the thread menu and the menu for selected threads, on web and desktop. The mobile app keeps the built-in choices.
+
 ## Pull request watch remark filter
 
 The server setting `pullRequestWatchRemarkFilter` selects which comments and reviews wake an agent that watches a pull request. It is off by default. Turn it on in Settings > Source control > Pull request watch.
