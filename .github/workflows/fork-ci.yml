@@ -38,6 +38,7 @@ jobs:
     outputs:
       code: ${{ steps.classify.outputs.code }}
       files: ${{ steps.classify.outputs.files }}
+      machine_map: ${{ steps.classify.outputs.machine_map }}
     steps:
       - name: Classify the changed files
         id: classify
@@ -57,14 +58,37 @@ jobs:
           while IFS= read -r file; do
             [[ -n "$file" ]] || continue
             case "$file" in
-              # apps/machine-map is not on main yet. When it lands, add a job for its tests, typecheck and lint.
-              docs/* | *.md | apps/machine-map/*) ;;
+              docs/* | *.md) ;;
+              apps/machine-map/*) echo "machine_map=true" >>"$GITHUB_OUTPUT" ;;
               *) code "$file changed since $base" ;;
             esac
           done <<<"$files"
           echo "code=false" >>"$GITHUB_OUTPUT"
           { echo "files<<EOF"; echo "$files"; echo "EOF"; } >>"$GITHUB_OUTPUT"
-          echo "Only docs, markdown or apps/machine-map changed since $base: only lint runs."
+          echo "Only docs, markdown or apps/machine-map changed since $base: only lint and the machine map job run."
+
+  # The heavy jobs also cover apps/machine-map. This job checks it alone when nothing else changed.
+  machine_map:
+    name: Machine map
+    needs: changes
+    if: needs.changes.outputs.code == 'false' && needs.changes.outputs.machine_map == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            - args: ["--filter", "@t3tools/machine-map...", "--filter", "@t3tools/monorepo"]
+      - run: vp run --filter @t3tools/machine-map typecheck
+      - run: vp run --filter @t3tools/machine-map test
 
   lint:
     name: Lint
@@ -258,7 +282,7 @@ jobs:
   # main goes unnoticed. Off until the T3_AGENT_WEBHOOK_URL secret is set.
   notify_agent:
     name: Notify repair agent
-    needs: [changes, lint, typecheck, build, test, test_web, test_server, rust]
+    needs: [changes, lint, machine_map, typecheck, build, test, test_web, test_server, rust]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
