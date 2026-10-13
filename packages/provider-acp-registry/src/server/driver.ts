@@ -836,7 +836,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         auth,
         snapshot: {
           ...snapshot,
-          refresh: snapshot.refresh.pipe(
+          // A manual refresh must re-read what enrichment caches: the pooled
+          // Limits view expects the refresh button to re-check a provider's
+          // quota, and the cached entry would otherwise answer for its TTL.
+          // Background checks keep the cache.
+          refresh: liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache).pipe(
+            Effect.andThen(snapshot.refresh),
             Effect.tap(() => controller.refreshMethods ?? Effect.void),
           ),
         },
