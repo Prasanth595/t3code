@@ -212,9 +212,9 @@ export function FloatingWorkingControl(props: {
         >
           <View className="mr-1 h-4 w-px bg-border" />
           {backgroundStop.stopping ? (
-            <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
+            <AppActivityIndicator size="small" colorClassName="accent-icon-muted" />
           ) : (
-            <SymbolView name="stop.fill" size={12} tintColorClassName="accent-foreground-muted" />
+            <SymbolView name="stop.fill" size={12} tintColorClassName="accent-danger-foreground" />
           )}
           <Text className="font-t3-medium text-xs" numberOfLines={1}>
             {backgroundStop.stopping ? "Stopping" : "Stop"}
