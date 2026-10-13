@@ -176,7 +176,9 @@ export function subagentResultForRun(
       )
       .toSorted(
         (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt) ||
+          // Providers can finalize every message of a turn at once; the later one is the report.
+          DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null;
   const turnItem =
     projection.turnItems
