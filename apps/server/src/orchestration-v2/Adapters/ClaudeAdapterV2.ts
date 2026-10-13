@@ -8693,7 +8693,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   lastResult.num_turns === 0 &&
                   !lastResult.is_error &&
                   terminalStatusFromResult(lastResult) === "completed" &&
-                  drained.slice(lastResultIndex + 1).some((entry) => isClaudeTurnStartMessage(entry));
+                  drained
+                    .slice(lastResultIndex + 1)
+                    .some((entry) => isClaudeTurnStartMessage(entry));
                 const opaqueReplayTombstones = taskIdSetForNativeThread(
                   yield* Ref.get(opaqueBackgroundTaskReplayTombstonesByNativeThread),
                   nativeThreadId,

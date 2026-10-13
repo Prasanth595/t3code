@@ -7107,7 +7107,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               event.message.text === WAKE_RESULT_TEXT,
           ),
         );
-      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
     ),
   );
 
