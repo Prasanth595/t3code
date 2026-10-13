@@ -87,9 +87,14 @@ export function actorText(actor: MapActor, map: MachineMapDocument): string {
   }
 }
 
+/** MM-602: false for a machine that never connected. Its changes wait for it to join, not in a queue. */
+export function hasJoined(presence: MachinePresence | undefined): boolean {
+  return presence !== undefined && (presence.online || presence.lastSeenAt !== null);
+}
+
 /** MM-601, MM-205. */
 export function presenceText(presence: MachinePresence | undefined, now: number): string {
-  if (!presence || (presence.lastSeenAt === null && !presence.online)) return "waiting";
+  if (!presence || !hasJoined(presence)) return "waiting";
   if (presence.online) return "online";
   return `offline ${timeAgo(presence.lastSeenAt, now).replace(" ago", "")}`;
 }

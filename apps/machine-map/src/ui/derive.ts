@@ -15,12 +15,14 @@ import type {
 import type { PendingRotation } from "../api.ts";
 import { findMachine } from "../rules/map.ts";
 import { pendingRevisions } from "../rules/queue.ts";
-import { LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
+import { hasJoined, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
 export interface MachineQueue {
   readonly revisions: ReadonlyArray<MapRevision>;
   readonly commands: ReadonlyArray<MachineCommand>;
   readonly rotation: PendingRotation | undefined;
+  /** MM-602: the machine never connected. Its work waits for it to join and is not counted. */
+  readonly waitingToJoin: boolean;
   readonly count: number;
 }
 
@@ -36,11 +38,13 @@ export function machineQueue(
     (c) => c.machineId === machineId && c.status === "queued",
   );
   const rotation = rotations.find((r) => r.machineId === machineId);
+  const waitingToJoin = !hasJoined(presence);
   return {
     revisions,
     commands,
     rotation,
-    count: revisions.length + commands.length + (rotation ? 1 : 0),
+    waitingToJoin,
+    count: waitingToJoin ? 0 : revisions.length + commands.length + (rotation ? 1 : 0),
   };
 }
 

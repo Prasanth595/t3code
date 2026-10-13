@@ -280,7 +280,8 @@ export function QueueView() {
   const byRevision = new Map<number, Extract<QueueItem, { _tag: "revision" }>>();
   for (const machine of map.machines) {
     const queue = machineQueue(snapshot, portal.rotations, machine);
-    for (const revision of queue.revisions) {
+    // MM-602, MM-603: a machine that never joined gets the current map when it joins.
+    for (const revision of queue.waitingToJoin ? [] : queue.revisions) {
       const item = byRevision.get(revision.revision);
       if (item) item.machineIds.push(machine.id);
       else

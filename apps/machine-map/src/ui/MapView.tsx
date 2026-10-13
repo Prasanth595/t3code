@@ -4,7 +4,7 @@ import type { MachineId, MachineMapDocument, MachineRecord } from "@t3tools/cont
 import { findArrow } from "../rules/map.ts";
 import { usePortalContext } from "./context.ts";
 import { arrowApplied, machineQueue } from "./derive.ts";
-import { LEVEL_LABEL, presenceText, spatialArrow } from "./format.ts";
+import { hasJoined, LEVEL_LABEL, presenceText, spatialArrow } from "./format.ts";
 import { KindIcon } from "./icons.tsx";
 
 /** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
@@ -129,6 +129,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const [first, second] = direction.first === "from" ? [from, to] : [to, from];
     const on = selection._tag === "arrow" && selection.from === from.id && selection.to === to.id;
     const applied = arrowApplied(snapshot, from.id, to.id);
+    const pendingEnds = [...(applied.from ? [] : [from]), ...(applied.to ? [] : [to])];
+    const joining = pendingEnds.filter((m) => !hasJoined(snapshot.presence[m.id]));
+    const wait =
+      pendingEnds.length > joining.length
+        ? "queued"
+        : joining.length > 0
+          ? `waiting for ${joining.map((m) => m.name).join(" and ")} to join`
+          : null;
     return (
       <button
         type="button"
@@ -141,9 +149,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           {second.name}
         </span>
         <span className="actions">
-          {!readOnly && (!applied.from || !applied.to) && (
-            <span className="sticker wait flat">queued</span>
-          )}
+          {!readOnly && wait && <span className="sticker wait flat">{wait}</span>}
           {arrow.expiresAt && <span className="sticker warn flat">temp</span>}
           {arrow.agentTools && <span className="sticker accent flat">tools</span>}
           <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
@@ -238,7 +244,11 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                     <span className="sticker wait">{status.waitingThreads} waits</span>
                   )}
                   {status?.updateWaiting && <span className="sticker info">update</span>}
-                  {queue.count > 0 && <span className="sticker wait">{queue.count} queued</span>}
+                  {queue.waitingToJoin ? (
+                    <span className="sticker wait">waiting to join</span>
+                  ) : (
+                    queue.count > 0 && <span className="sticker wait">{queue.count} queued</span>
+                  )}
                 </div>
               )}
             </div>
