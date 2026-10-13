@@ -51,16 +51,23 @@ describe("T3 orchestration provider instructions", () => {
     assert.equal(t3OrchestrationSystemPrompt(true), T3_CODE_ORCHESTRATION_INSTRUCTIONS);
   });
 
-  it("gives ACP sessions provider-neutral mode, browser, and orchestration guidance", () => {
-    const injected = t3AcpPromptWithInstructions({
-      prompt: "Inspect the repository.",
-      state: { interactionMode: "default", hasT3Mcp: true },
-    });
+  it("gives ACP sessions mode and orchestration guidance without a browser policy", () => {
+    for (const interactionMode of ["default", "plan"] as const) {
+      const injected = t3AcpPromptWithInstructions({
+        prompt: "Inspect the repository.",
+        state: { interactionMode, hasT3Mcp: true },
+      });
 
-    assert.include(injected, "T3 Code interaction mode: Default");
-    assert.include(injected, "T3 Code collaborative browser");
-    assert.include(injected, "T3 Code orchestration");
-    assert.include(injected, "<user_request>\nInspect the repository.\n</user_request>");
+      assert.include(
+        injected,
+        `T3 Code interaction mode: ${interactionMode === "plan" ? "Plan" : "Default"}`,
+      );
+      assert.include(injected, "T3 Code orchestration");
+      assert.notInclude(injected, "T3 Code collaborative browser");
+      assert.notInclude(injected, "preview_status");
+      assert.notInclude(injected, "Playwright");
+      assert.include(injected, "<user_request>\nInspect the repository.\n</user_request>");
+    }
   });
 
   it("reinjects ACP guidance only when mode or tool availability changes", () => {

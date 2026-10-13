@@ -70,46 +70,29 @@ describe("buildCodexDeveloperInstructions", () => {
   });
 });
 
-describe("T3 browser developer instructions", () => {
+describe("buildCodexAdditionalContext", () => {
   const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
 
-  it("prefers the product-native preview tools in both collaboration modes", () => {
-    {
-      const instructions = toolInstructions(runtime, true);
-      NodeAssert.match(instructions, /t3-code/);
-      NodeAssert.match(instructions, /preview_status/);
-      NodeAssert.match(instructions, /preview_open/);
-      NodeAssert.match(instructions, /Do not switch to global browser skills/);
-    }
+  it("leaves browser testing guidance to the repository", () => {
+    const context = buildCodexAdditionalContext(runtime);
+    const instructions = Object.values(context)
+      .map((entry) => entry.value)
+      .join("\n");
+
+    NodeAssert.doesNotMatch(instructions, /preview_|Playwright|T3 Code collaborative browser/);
+    NodeAssert.equal(context.t3_code_tools, undefined);
   });
 
-  it("omits the browser block entirely when the preview tools are not attached", () => {
-    for (const mode of ["default", "plan"] as const) {
-      const instructions = toolInstructions(runtime, false);
-      NodeAssert.doesNotMatch(instructions, /preview_status/);
-      NodeAssert.doesNotMatch(instructions, /preview_open/);
-      NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
-      // Steering away from other browser automation must go with the tools;
-      // keeping it would leave the model talked out of its only option.
-      NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
-      // The rest of the collaboration mode is untouched.
-      NodeAssert.match(buildCodexDeveloperInstructions(mode), /<collaboration_mode>/);
-      NodeAssert.match(buildCodexDeveloperInstructions(mode), /<\/collaboration_mode>/);
-    }
-  });
+  it("includes device guidance only when device tools are attached", () => {
+    const withDevices = buildCodexAdditionalContext(runtime, true);
+    const withoutDevices = buildCodexAdditionalContext(runtime, false);
 
-  it("tracks the turn's MCP configuration rather than defaulting to on", () => {
-    NodeAssert.match(toolInstructions(runtime, true), /preview_open/);
-    NodeAssert.doesNotMatch(toolInstructions(runtime, false), /preview_open/);
+    NodeAssert.match(withDevices.t3_code_tools?.value ?? "", /device_open/);
+    NodeAssert.doesNotMatch(withDevices.t3_code_tools?.value ?? "", /preview_|Playwright/);
+    NodeAssert.equal(withoutDevices.t3_code_tools, undefined);
   });
 });
 
 function runtimeInstructions(runtime: Parameters<typeof buildCodexAdditionalContext>[0]) {
   return buildCodexAdditionalContext(runtime).t3_code_runtime!.value;
-}
-function toolInstructions(
-  runtime: Parameters<typeof buildCodexAdditionalContext>[0],
-  available: boolean,
-) {
-  return buildCodexAdditionalContext(runtime, available).t3_code_tools?.value ?? "";
 }
