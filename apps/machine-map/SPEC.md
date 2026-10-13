@@ -141,14 +141,14 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 10. Presence and status
 
 - **MM-1001** Each machine reports its status on connection and on each change, at most once every 5 seconds. Liveness uses the text messages `ping` and `pong`. The Durable Object answers `ping` with its auto response, so a ping does not wake it.
-- **MM-1002** The status holds: T3 version, build (live commit, deploy commit or release), uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands.
-- **MM-1003** A machine card shows online or offline, the build, and stickers for running agents, threads that wait for the owner, a waiting update, and queued items.
+- **MM-1002** The status holds: T3 version, build (live commit, deploy commit or release), uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands. The resource sample (MM-1501) is a separate message.
+- **MM-1003** A machine card shows online or offline, the build, and stickers for running agents, threads that wait for the owner, a waiting update, queued items and active health alerts (MM-1505), and the CPU and memory bars (MM-1506).
 - **MM-1004** "Open" on a machine opens its T3 web app at its tunnel hostname.
 
 ## 11. Portal UI
 
 - **MM-1101** The portal uses the tick3d style in light and dark mode, as in the `neo-brutalism` skill. It works on a phone and on a desktop.
-- **MM-1102** Views: Map, Table, Settings, Queue, History, Inbox, Devices. The selected item opens in a side panel, or in a bottom sheet on a phone.
+- **MM-1102** Views: Map, Table, Health, Settings, Queue, History, Inbox, Devices. The selected item opens in a side panel, or in a bottom sheet on a phone.
 - **MM-1103** The Map view draws one line per pair of machines. A card on each line shows both directions in words, with arrows rounded to the four directions of the map. A pair with no access either way shows one short row; a phone shows its card only for the focused machine. Pair cards stay off machine cards. Tapping a machine focuses it and fades the lines that do not touch it. Tapping it again, tapping the empty map, "Show all" or Escape ends the focus.
 - **MM-1104** Dragging from a machine to another machine opens their arrow.
 - **MM-1105** The command palette, opened with Cmd+K or Ctrl+K, finds every action and every machine.
@@ -179,6 +179,17 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 - **MM-1401** The desktop app gets the list of machines it can reach from its own server. It adds each one to its saved environments with the machine token headers, and removes it when the arrow drops to `none`.
 - **MM-1402** The desktop app applies queued client settings and commands for windows when it starts.
+
+## 15. Resources and health
+
+- **MM-1501** While connected, a machine sends a resource sample on connection, every minute, and when the portal asks. The portal asks at most every 10 seconds per machine. A sample holds: CPU percent and load averages, memory, swap and swap traffic, disk of the T3 home volume, network rates, the T3 server process, the processes that T3 started (count, CPU, memory), and the top 5 processes by CPU and by memory. A value that the platform does not give is null. Sampling reuses the T3 resource telemetry and runs at most four short commands per sample.
+- **MM-1502** The sample messages stay outside the base protocol unions. An older portal ignores a sample, and the portal works with a machine that never sends one.
+- **MM-1503** The portal keeps one point per machine and minute for 24 hours, and one point per hour (the average, with the CPU peak) for 30 days, in SQLite. Each machine has a size cap. The portal refuses a sample message over 8 KB. The alarm prunes old points every hour. The portal clock places each point.
+- **MM-1504** Each machine has health thresholds. The defaults are: CPU above 90% for 5 minutes, memory above 90%, disk above 90%, swap traffic above 10 MB per second for 5 minutes, and offline for more than 15 minutes. The owner edits them per machine in the machine panel. An empty field turns a check off. Thresholds are portal data, not T3 settings and not map revisions.
+- **MM-1505** An alert starts when its threshold is crossed and ends when it is not. The machine card shows one sticker per active alert: HOT (CPU), FULL (memory), DISK, SWAP, DOWN (offline). Alert starts and ends show in the History view as portal events, not as map revisions. Ended alerts stay 30 days, at most 500.
+- **MM-1506** The machine card shows CPU and memory bars. The machine panel shows charts of CPU, memory, disk and agent processes for the last hour, 24 hours and 30 days, the top processes now, the thresholds, and a link to the "Collect diagnostics" command. The Health view compares all machines side by side and lists the alerts with their start time. Bars and charts change only when a sample arrives.
+- **MM-1507** `machines_read` returns the latest sample, the thresholds and the active alerts of each machine. `machines_resources` with a machine id and a range (`hour`, `day` or `month`) returns the history and the alerts of that machine. Both are read only and need the map role `read`.
+- **MM-1508** Charts are SVG polylines from a small helper in the portal. A missing step breaks the line instead of drawing a guess.
 
 ## Later
 
