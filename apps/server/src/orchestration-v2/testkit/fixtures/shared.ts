@@ -376,7 +376,7 @@ export const GROK_MODEL_SELECTION = {
   model: "grok-build",
 } satisfies ModelSelection;
 
-/** fx fixtures send `default` and let the adapter resolve the probed model. */
+/** fx fixtures run on fx's Default; the replay adapter has no probed model, so it writes none. */
 export const FX_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("fx"),
   model: "default",
