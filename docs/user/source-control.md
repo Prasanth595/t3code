@@ -69,8 +69,10 @@ Open **Settings → Source Control**, expand **Bitbucket**, and enter one of:
 - **Access token**: a token created for one repository, project, or workspace. It can only reach
   what it was created for.
 - **Atlassian account email** and **API token**: an Atlassian API token for your account. It can
-  reach every repository you can. Give it read/write access to repositories and pull requests, plus
-  user read access (`read:user:bitbucket`).
+  reach every repository you can. Use **Create an API token** to open Bitbucket token creation
+  with the required scopes selected and a 30-day expiry. The scopes cover user and workspace
+  reads, repository and pull request reads and writes, and repository admin access to publish
+  new repositories. You can change the expiry before creating the token.
 
 A field saves when you leave it, and applies right away. The access token wins when both are saved.
 Credentials are saved on the environment's server, so select a remote environment to configure

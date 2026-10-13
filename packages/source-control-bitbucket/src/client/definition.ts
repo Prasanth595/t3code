@@ -22,6 +22,25 @@ const repositoryName = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
 
 const KIND = SourceControlProviderKind.make("bitbucket");
 
+const apiTokenScopes = [
+  "read:user:bitbucket",
+  "read:workspace:bitbucket",
+  "read:repository:bitbucket",
+  "write:repository:bitbucket",
+  "admin:repository:bitbucket",
+  "read:pullrequest:bitbucket",
+  "write:pullrequest:bitbucket",
+];
+
+const tokenCreationUrl = `https://id.atlassian.com/manage-profile/security/api-tokens?${new URLSearchParams(
+  {
+    autofillToken: "",
+    appId: "bitbucket",
+    selectedScopes: JSON.stringify(apiTokenScopes),
+    expiryDays: "30",
+  },
+)}`;
+
 const text = (annotations: Schema.Annotations.Key<string>) =>
   TrimmedString.pipe(
     Schema.withDecodingDefault(Effect.succeed("")),
@@ -50,7 +69,7 @@ export const settings = makeProviderSettingsSchema(
     apiToken: text({
       title: "API token",
       description:
-        "Reaches every repository your Atlassian account can. Give it read and write access to repositories and pull requests, and read:user:bitbucket.",
+        "Reaches every repository your Atlassian account can. Use the token link below to select the scopes T3 Code needs.",
       settingsSecret: true,
       providerSettingsForm: { control: "password" },
     }),
@@ -98,4 +117,5 @@ export const definition = defineSourceControlClient({
     isChangeRequestOnProjectHost(KIND, identity, link),
   isChangeRequestUrl: (url) => isChangeRequestPath(url, "/pull-requests/"),
   settings,
+  tokenCreationUrl,
 });

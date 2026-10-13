@@ -1015,17 +1015,15 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect(
-    "reads a removed permissions endpoint as granted rather than failing the merge on it",
-    () =>
+  it.effect.each([404, 410])(
+    "treats HTTP %s from the retired permissions endpoint as an unknown permission",
+    (status) =>
       Effect.gen(function* () {
-        // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
-        // gets HTTP 410 here, whatever it may do.
         mockedRequest.mockReturnValue(
           Effect.fail(
             new BitbucketApi.BitbucketResponseError({
               operation: "request",
-              status: 410,
+              status,
               responseBodyLength: 0,
             }),
           ),
@@ -1036,13 +1034,13 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       }),
   );
 
-  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+  it.effect.each([401, 403, 429, 500])("still fails the permission read on HTTP %s", (status) =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValue(
         Effect.fail(
           new BitbucketApi.BitbucketResponseError({
             operation: "request",
-            status: 401,
+            status,
             responseBodyLength: 0,
           }),
         ),
@@ -1051,7 +1049,26 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       const error = yield* Effect.flip(api.getRepositoryPermission({ repository: "acme/web" }));
 
-      assert.strictEqual(error._tag, "BitbucketResponseError");
+      expect(error).toMatchObject({ _tag: "BitbucketResponseError", status });
+    }),
+  );
+
+  it.effect("still fails a pull request read on HTTP 404", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValue(
+        Effect.fail(
+          new BitbucketApi.BitbucketResponseError({
+            operation: "request",
+            status: 404,
+            responseBodyLength: 0,
+          }),
+        ),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const error = yield* Effect.flip(api.getPullRequest({ repository: "acme/web", number: 7 }));
+
+      expect(error).toMatchObject({ _tag: "BitbucketResponseError", status: 404 });
     }),
   );
 

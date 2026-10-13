@@ -148,6 +148,7 @@ export interface SourceControlClientDefinition {
    * kept in the server's secret store. Omitted for a host with nothing to configure.
    */
   readonly settings?: SourceControlHostSettingsSchema;
+  readonly tokenCreationUrl?: string;
 }
 
 /** A host's settings struct. Its fields are strings, or a secret string per server host. */
