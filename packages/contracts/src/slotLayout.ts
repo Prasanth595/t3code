@@ -31,7 +31,8 @@ export function slotLayoutElements<Element extends string>(
  * the `required` elements must appear, so a layout can never hide the parts a
  * surface depends on (for example the controls a hover reveals).
  */
-export function makeSlotLayoutSchema<const Element extends string>(
+// Export it when a second surface gets a layout; until then only this file uses it.
+function makeSlotLayoutSchema<const Element extends string>(
   elements: ReadonlyArray<Element>,
   required: ReadonlyArray<Element>,
 ) {

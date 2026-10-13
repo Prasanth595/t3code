@@ -80,7 +80,7 @@ export function ThreadCardStatusBadge(props: { status: ThreadCardStatus; trailin
   );
 }
 
-export function threadCardProjectLabelClassName(recede: boolean): string {
+function threadCardProjectLabelClassName(recede: boolean): string {
   return cn(
     "min-w-0 truncate text-secondary-label text-xs",
     recede ? "font-normal" : "font-medium",
@@ -209,7 +209,7 @@ export function compactRelativeTimeLabel(isoDate: string): string {
 }
 
 /** A small icon, with optional text, that explains itself on hover. */
-export function ThreadCardMeta(props: {
+function ThreadCardMeta(props: {
   icon: ComponentType<{ className?: string }>;
   label: string;
   text?: ReactNode;

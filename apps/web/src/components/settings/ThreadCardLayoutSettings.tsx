@@ -3,6 +3,7 @@ import {
   DEFAULT_THREAD_CARD_LAYOUT,
   type MobileThreadCardElement,
   type MobileThreadCardLayout,
+  MOBILE_THREAD_CARD_ELEMENTS,
   REQUIRED_THREAD_CARD_ELEMENTS,
   THREAD_CARD_ELEMENTS,
   type ThreadCardElement,
@@ -80,10 +81,7 @@ const DESKTOP_OPTIONS: ReadonlyArray<SlotLayoutElementOption<ThreadCardElement>>
   THREAD_CARD_ELEMENTS.map((id) => ({ id, ...ELEMENT_OPTIONS[id] }));
 
 const MOBILE_OPTIONS: ReadonlyArray<SlotLayoutElementOption<MobileThreadCardElement>> =
-  DESKTOP_OPTIONS.filter(
-    (option): option is SlotLayoutElementOption<MobileThreadCardElement> =>
-      option.id !== "terminal" && option.id !== "diff",
-  );
+  MOBILE_THREAD_CARD_ELEMENTS.map((id) => ({ id, ...ELEMENT_OPTIONS[id] }));
 
 /** Fork: builds the thread card from its elements, per client surface. Off by default. */
 export function ThreadCardLayoutSettingsSection() {
