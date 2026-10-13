@@ -3472,7 +3472,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           checkoutRoot: repositoryPaths?.worktreeRoot ?? input.cwd,
           branch: targetBranch,
           pickFreeName: newRefName !== undefined && options?.pickFreeName === true,
-          listBranches: listLocalBranchNames(input.cwd),
+          listBranchRefs: runGitStdout("GitVcsDriver.createWorktree.listBranches", input.cwd, [
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/heads/",
+          ]),
           pathExists: (candidate) =>
             fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => true)),
           path,

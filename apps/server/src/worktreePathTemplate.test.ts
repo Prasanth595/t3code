@@ -121,6 +121,40 @@ it.layer(layerTest)("worktree path template", (it) => {
     }),
   );
 
+  it.effect("gives concurrent launches with clashing namespaces different names", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { main } = yield* makeContainer;
+      const create = (newRefName: string) =>
+        driver.createWorktree(
+          { cwd: main, path: null, refName: "main", newRefName },
+          { worktreePathTemplate: "{repoDir}/{branch}", pickFreeName: true },
+        );
+
+      const created = yield* Effect.all([create("fix"), create("fix/sidebar")], {
+        concurrency: "unbounded",
+      });
+
+      assert.equal(created.length, 2);
+    }),
+  );
+
+  it.effect("sees a branch that shares its name with a tag", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { main } = yield* makeContainer;
+      yield* git(main, ["branch", "fix"]);
+      yield* git(main, ["tag", "fix"]);
+
+      const created = yield* driver.createWorktree(
+        { cwd: main, path: null, refName: "main", newRefName: "fix" },
+        { worktreePathTemplate: "{repoDir}/{branchLeaf}", pickFreeName: true },
+      );
+
+      assert.equal(created.worktree.refName, "fix-1");
+    }),
+  );
+
   it.effect("marks a worktree that is created again at its recorded path", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

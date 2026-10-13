@@ -31,10 +31,13 @@ const branchConflicts = (candidate: string, branches: ReadonlyArray<string>) =>
       candidate.startsWith(`${branch}/`),
   );
 
-// Names picked but not yet created, so two launches with the same first words
-// in this process do not pick the same branch and folder. A claim that leaks
+// Branches (per Git common dir) and folders picked but not yet created, so two
+// launches in this process do not pick clashing names. A claim that leaks
 // after a failure only gives a later launch with that name a suffix.
-const claimedNames = new Set<string>();
+const claimedBranches = new Map<string, Set<string>>();
+const claimedPaths = new Set<string>();
+
+const REFS_HEADS = "refs/heads/";
 
 /**
  * The folder and branch for a new worktree. With `pickFreeName`, a taken
@@ -51,7 +54,8 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
   readonly checkoutRoot: string;
   readonly branch: string;
   readonly pickFreeName: boolean;
-  readonly listBranches: Effect.Effect<ReadonlyArray<string>, GitCommandError>;
+  /** `git for-each-ref --format=%(refname) refs/heads/` output. Full names stay unambiguous next to tags. */
+  readonly listBranchRefs: Effect.Effect<string, GitCommandError>;
   readonly pathExists: (path: string) => Effect.Effect<boolean>;
   readonly path: Path.Path;
   readonly home: string;
@@ -95,7 +99,16 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
       );
     return { branch: input.branch, path, release: Effect.void };
   }
-  const branches = yield* input.listBranches;
+  const branches = (yield* input.listBranchRefs)
+    .split("\n")
+    .filter((line) => line.startsWith(REFS_HEADS))
+    .map((line) => line.slice(REFS_HEADS.length));
+  let claimed = claimedBranches.get(input.gitCommonDir);
+  if (claimed === undefined) {
+    claimed = new Set();
+    claimedBranches.set(input.gitCommonDir, claimed);
+  }
+  const claimedHere = claimed;
   const flattened = input.branch.replaceAll("/", "-");
   const bases = flattened === input.branch ? [input.branch] : [input.branch, flattened];
   for (const base of bases) {
@@ -105,11 +118,12 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
       if (typeof path !== "string") return yield* path;
       if (branchConflicts(branch, branches) || (yield* input.pathExists(path))) continue;
       // Checked and claimed in one synchronous step, so no other fiber runs between.
-      const keys = [`branch:${input.gitCommonDir}:${branch}`, `path:${path}`];
-      if (keys.some((key) => claimedNames.has(key))) continue;
-      for (const key of keys) claimedNames.add(key);
+      if (claimedPaths.has(path) || branchConflicts(branch, [...claimedHere])) continue;
+      claimedHere.add(branch);
+      claimedPaths.add(path);
       const release = Effect.sync(() => {
-        for (const key of keys) claimedNames.delete(key);
+        claimedHere.delete(branch);
+        claimedPaths.delete(path);
       });
       return { branch, path, release };
     }
