@@ -80,9 +80,14 @@ function PullRequestListErrors(props: {
         <Pressable
           accessibilityRole="button"
           accessibilityState={{ expanded }}
-          accessibilityHint={expanded ? "Hides the list" : "Lists each repository"}
+          accessibilityLabel={
+            expanded
+              ? "Hide repositories that could not be read"
+              : `Show ${repositories.length} repositories that could not be read`
+          }
+          hitSlop={8}
           onPress={() => setExpanded((value) => !value)}
-          className="flex-row items-baseline gap-2"
+          className="min-h-11 flex-row items-center gap-2"
         >
           <Text className="shrink text-sm text-foreground-muted">
             {repositories.length} repositories could not be read.
@@ -344,8 +349,8 @@ export function PullRequestsScreen(
             {result.data?.errors.length ? (
               <PullRequestListErrors
                 errors={result.data.errors}
-                environmentLabel={(environmentId) =>
-                  environments.find((environment) => environment.environmentId === environmentId)
+                environmentLabel={(id) =>
+                  environments.find((environment) => environment.environmentId === id)
                     ?.environmentLabel ?? "Environment"
                 }
               />
