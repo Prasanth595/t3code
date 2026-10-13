@@ -48,13 +48,30 @@ const MAX_FRONTMATTER_BYTES = 64 * 1024;
 const MAX_NAME_BYTES = 256;
 const BLOCK_DESCRIPTION_STYLES = new Set([">", ">-", "|"]);
 const encoder = new TextEncoder();
+const strictDecoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const lenientDecoder = new TextDecoder("utf-8", { ignoreBOM: true });
+
 /**
  * fx works on bytes: a byte-order mark means the file does not start with
- * `---` (no frontmatter), and invalid UTF-8 makes a value invalid. Keeping
- * the BOM and decoding bad bytes as U+FFFD lets the parser see both.
+ * `---` (no frontmatter), and invalid UTF-8 in a value makes it invalid,
+ * while a literal U+FFFD is valid text. So the BOM is kept, and a line with
+ * invalid UTF-8 ends in a NUL, which the parser rejects in any value read
+ * from that line.
  */
-const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
-const decodeSkillFile = (bytes: Uint8Array) => decoder.decode(bytes);
+function decodeSkillFile(bytes: Uint8Array): string {
+  const lines: Array<string> = [];
+  for (let start = 0; ;) {
+    const newline = bytes.indexOf(0x0a, start);
+    const line = bytes.subarray(start, newline === -1 ? bytes.length : newline);
+    try {
+      lines.push(strictDecoder.decode(line));
+    } catch {
+      lines.push(`${lenientDecoder.decode(line)}\u0000`);
+    }
+    if (newline === -1) return lines.join("\n");
+    start = newline + 1;
+  }
+}
 
 function concatBytes(chunks: Iterable<Uint8Array>): Uint8Array {
   const parts = [...chunks];
@@ -78,9 +95,8 @@ function compareUtf8(left: string, right: string): number {
 /** fx trims only spaces and tabs. */
 const trimSpaceTab = (value: string) => value.replace(/^[ \t]+|[ \t]+$/g, "");
 
-/** fx's `invalidTextCause`: valid UTF-8 (no U+FFFD from decoding), no ASCII control bytes. */
-const hasControlByte = (value: string) =>
-  [...value].some((char) => char < " " || char === "\x7f" || char === "\ufffd");
+/** fx's `invalidTextCause`: no ASCII control bytes (invalid UTF-8 shows up as one). */
+const hasControlByte = (value: string) => [...value].some((char) => char < " " || char === "\x7f");
 
 /** fx's `parseRecognizedValue`: one quoted or bare scalar, no YAML. */
 function recognizedValue(raw: string): string | undefined {

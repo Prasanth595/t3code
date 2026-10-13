@@ -107,6 +107,24 @@ describe("discoverFxSkills", () => {
           ...new TextEncoder().encode(`---\nname: bom-name\n---\n${"x".repeat(1_100_000)}`),
         ]),
       );
+      // A literal U+FFFD is valid text to fx; an invalid UTF-8 byte is not.
+      yield* writeSkillFile(
+        path.join(home, ".fx/skills/replacement"),
+        "---\nname: replacement\ndescription: Replace \ufffd in imported text.\n---\n",
+      );
+      yield* fileSystem.makeDirectory(path.join(home, ".fx/skills/bad-bytes"), { recursive: true });
+      yield* fileSystem.writeFile(
+        path.join(home, ".fx/skills/bad-bytes/SKILL.md"),
+        new Uint8Array([
+          ...new TextEncoder().encode("---\nname: bad"),
+          0xff,
+          0x0a,
+          0x2d,
+          0x2d,
+          0x2d,
+          0x0a,
+        ]),
+      );
       // fx folds only ASCII case, so these two are distinct.
       yield* writeSkillFile(
         path.join(home, ".fx/skills/accent-upper"),
@@ -131,6 +149,7 @@ describe("discoverFxSkills", () => {
           ["Été", true],
           ["bom-folder", true],
           ["plain", true],
+          ["replacement", true],
           ["review", false],
           ["Review", false],
         ],
