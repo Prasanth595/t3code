@@ -5097,7 +5097,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
               ...itemBase(3, completedRun.id),
               type: "command_execution" as const,
               input: "vp test run",
-              output: "Tests 12 passed",
+              output: `${"collecting tests\n".repeat(4_000)}Tests 12 passed`,
               exitCode: 0,
             },
             {
@@ -5129,6 +5129,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       });
 
       expect(generatedThreadContext).toContain("Command: vp test run\nExit code: 0");
+      expect(generatedThreadContext).toContain("Tests 12 passed");
       expect(generatedThreadContext).toContain("Make the PR writer see the thread");
       expect(generatedThreadContext).not.toContain("vp run abandoned");
     }),

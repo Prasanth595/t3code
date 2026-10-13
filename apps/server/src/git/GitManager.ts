@@ -35,6 +35,7 @@ import {
   type VcsStatusRemoteResult,
   VcsStatusResult,
   ModelSelection,
+  type OrchestrationV2TurnItem,
   type ProjectId,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
@@ -198,6 +199,7 @@ const PR_LOOKUP_CACHE_CAPACITY = 2_048;
 // change made outside the app.
 const PR_LOOKUP_GIT_STATE_TTL = Duration.minutes(5);
 const PR_THREAD_CONTEXT_BYTES = 16_000;
+const PR_THREAD_COMMAND_OUTPUT_CHARS = 2_000;
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 /**
@@ -513,6 +515,14 @@ function limitContext(value: string, maxChars: number): string {
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
 }
 
+// selectHistory drops oversized items whole, so a verbose test run would lose its
+// command and exit code. Keep the tail, where test runners print their verdict.
+function limitCommandOutput(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  if (item.type !== "command_execution" || item.output === undefined) return item;
+  if (item.output.length <= PR_THREAD_COMMAND_OUTPUT_CHARS) return item;
+  return { ...item, output: `[truncated]\n${item.output.slice(-PR_THREAD_COMMAND_OUTPUT_CHARS)}` };
+}
+
 function shortenSha(sha: string | undefined): string | null {
   if (!sha) return null;
   return sha.slice(0, SHORT_SHA_LENGTH);
@@ -764,7 +774,9 @@ export const make = Effect.gen(function* () {
       if (threadId === undefined) return undefined;
       const { visibleTurnItems } = yield* threads.getThreadProjection(threadId);
       const selected = selectHistory({
-        messages: visibleTurnItems.flatMap(({ item }) => historicalMessage(item) ?? []),
+        messages: visibleTurnItems.flatMap(
+          ({ item }) => historicalMessage(limitCommandOutput(item)) ?? [],
+        ),
         coverage: "Digest of the thread that made this change, oldest first.",
         budget: PR_THREAD_CONTEXT_BYTES,
       });
