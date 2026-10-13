@@ -54,6 +54,8 @@ export interface AcpAgentTerminalState {
   readonly exitStatus?: EffectAcpSchema.TerminalExitStatus;
   /** Incomplete trailing UTF-8 bytes retained until the next output update. */
   readonly pendingOutputBytes?: Uint8Array;
+  /** UTF-8 byte length of {@link output}; lets truncation skip the whole-string encode below the cap. */
+  readonly outputByteLength?: number;
 }
 
 type AcpAgentTerminalUpdate = Extract<
@@ -133,12 +135,23 @@ function decodeTerminalOutputChunk(
     : { text, pendingOutputBytes: Uint8Array.from(bytes.subarray(completeEnd)) };
 }
 
-function truncateTerminalOutput(output: string): string {
+function truncateTerminalOutput(
+  output: string,
+  outputByteLength?: number,
+): { readonly output: string; readonly outputByteLength: number } {
+  // The stored output is always valid UTF-8 at a chunk boundary, so when the
+  // caller-tracked byte length is below the cap there is nothing to do and the
+  // whole-string encode (O(output) per chunk — the #19052 quadratic) is skipped.
+  if (outputByteLength !== undefined && outputByteLength <= MAX_ACP_TERMINAL_OUTPUT_BYTES) {
+    return { output, outputByteLength };
+  }
   const bytes = Buffer.from(output, "utf8");
-  if (bytes.length <= MAX_ACP_TERMINAL_OUTPUT_BYTES) return output;
+  if (bytes.length <= MAX_ACP_TERMINAL_OUTPUT_BYTES) {
+    return { output, outputByteLength: bytes.length };
+  }
   let start = bytes.length - MAX_ACP_TERMINAL_OUTPUT_BYTES;
   while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1;
-  return bytes.subarray(start).toString("utf8");
+  return { output: bytes.subarray(start).toString("utf8"), outputByteLength: bytes.length - start };
 }
 
 /** Applies an ACP v2 agent-owned terminal snapshot or chunk to display state. */
@@ -151,9 +164,14 @@ export function applyAcpAgentTerminalUpdate(
     const decoded = decodeTerminalOutputChunk(current.pendingOutputBytes, update.data);
     if (decoded === undefined) return current;
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = current;
+    const truncated = truncateTerminalOutput(
+      `${current.output}${decoded.text}`,
+      (current.outputByteLength ?? 0) + Buffer.byteLength(decoded.text, "utf8"),
+    );
     return {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${current.output}${decoded.text}`),
+      output: truncated.output,
+      outputByteLength: truncated.outputByteLength,
       ...(decoded.pendingOutputBytes === undefined
         ? {}
         : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -179,9 +197,11 @@ export function applyAcpAgentTerminalUpdate(
         : decodeTerminalOutputChunk(undefined, update.output.data);
     if (decoded !== undefined) {
       const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
+      const truncated = truncateTerminalOutput(decoded.text);
       next = {
         ...withoutPendingOutputBytes,
-        output: truncateTerminalOutput(decoded.text),
+        output: truncated.output,
+        outputByteLength: truncated.outputByteLength,
         ...(decoded.pendingOutputBytes === undefined
           ? {}
           : { pendingOutputBytes: decoded.pendingOutputBytes }),
@@ -197,9 +217,14 @@ export function applyAcpAgentTerminalUpdate(
         ? ""
         : Buffer.from(next.pendingOutputBytes).toString("utf8");
     const { pendingOutputBytes: _pendingOutputBytes, ...withoutPendingOutputBytes } = next;
+    const flushed = truncateTerminalOutput(
+      `${next.output}${pendingText}`,
+      (next.outputByteLength ?? 0) + Buffer.byteLength(pendingText, "utf8"),
+    );
     next = {
       ...withoutPendingOutputBytes,
-      output: truncateTerminalOutput(`${next.output}${pendingText}`),
+      output: flushed.output,
+      outputByteLength: flushed.outputByteLength,
       exitStatus: update.exitStatus,
     };
   }

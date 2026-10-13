@@ -1268,6 +1268,7 @@ describe("AcpRuntimeModel", () => {
       command: "pnpm test",
       cwd: "/workspace",
       output: "first line\nsecond line\n",
+      outputByteLength: 23,
       exitStatus: { exitCode: 0 },
     });
   });
@@ -1289,6 +1290,29 @@ describe("AcpRuntimeModel", () => {
     expect(first.pendingOutputBytes).toBeDefined();
     expect(second.output).toBe("A🙂B");
     expect(second.pendingOutputBytes).toBeUndefined();
+  });
+
+  it("keeps per-chunk accumulation cost independent of accumulated output size (#19052)", () => {
+    // Before #19052 every terminal_output_chunk re-encoded the whole accumulated
+    // string (Buffer.from(output, "utf8")) to check the 16 MiB cap, making a
+    // few MiB of agent output cost seconds of main-thread CPU. The fix tracks the
+    // UTF-8 byte length in state, so the encode only happens near/over the cap.
+    const chunk = Buffer.from("x".repeat(4 * 1024)).toString("base64");
+    let state: ReturnType<typeof applyAcpAgentTerminalUpdate> | undefined;
+    const t0 = performance.now();
+    for (let i = 0; i < 256; i++) {
+      state = applyAcpAgentTerminalUpdate(state, {
+        sessionUpdate: "terminal_output_chunk",
+        terminalId: "terminal-19052",
+        data: chunk,
+      });
+    }
+    const perChunkMs = (performance.now() - t0) / 256;
+    expect(state?.outputByteLength).toBe(256 * 4 * 1024);
+    expect(state?.output.length).toBe(256 * 4 * 1024);
+    // 256 chunks of 4 KiB (1 MiB total) must stay far below the naive ~1 ms+/chunk
+    // quadratic cost; the tracked path is O(1) per chunk.
+    expect(perChunkMs).toBeLessThan(0.05);
   });
 
   it("drops malformed and oversized ACP terminal frames without decoding them", () => {
