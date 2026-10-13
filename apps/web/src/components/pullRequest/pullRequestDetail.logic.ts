@@ -1127,10 +1127,7 @@ export function mergeRefusalHint(state: {
   }
   // Mergeable with nothing failing, yet refused: a branch rule the page cannot see, such as an
   // approval from someone other than the author, signed commits, or resolved conversations.
-  if (state.mergeability === "mergeable") {
-    return "The branch rules blocked the merge. They may need an approval from someone other than the author, signed commits, or resolved conversations. The pull request on the host lists what is missing.";
-  }
-  return null;
+  return "The branch rules blocked the merge. They may need an approval from someone other than the author, signed commits, or resolved conversations. The pull request on the host lists what is missing.";
 }
 
 export function resolveBaseFreshness(detail: {
