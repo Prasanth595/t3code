@@ -86,7 +86,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 6. Queue and offline machines
 
 - **MM-601** A machine that is not connected is offline. The portal shows the time since its last connection.
-- **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card, arrow or setting with a "queued" sticker and a count.
+- **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card, arrow or setting with a "queued" sticker and a count. A machine that never connected shows "waiting to join" instead, and arrows show "waiting for <machine> to join". Its work does not count in the queued counts or the Queue tab badge.
 - **MM-603** Each machine reports the last revision that it applied. Its desired state is the current map. On connection, the machine applies the current desired state, not each queued revision one by one.
 - **MM-604** An arrow with an online target and an offline source shows "applied on <target>, queued for <source>".
 - **MM-605** A command for an offline machine waits in its queue. Each queued command has a delivery rule: "when online" or "when online and idle". It also has an expiry, by default 24 hours.

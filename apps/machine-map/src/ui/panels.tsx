@@ -29,6 +29,7 @@ import {
   actorText,
   COMMAND_LABEL,
   DANGEROUS_COMMANDS,
+  hasJoined,
   LEVEL_LABEL,
   LEVEL_TEXT,
   machineName,
@@ -130,11 +131,13 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   };
 
   const applied = arrowApplied(snapshot, source.id, target.id);
-  const online = (id: MachineId) => snapshot.presence[id]?.online === true;
-  const appliedText = [
-    applied.to ? `applied on ${t}` : `queued for ${t}${online(target.id) ? "" : " (offline)"}`,
-    applied.from ? `applied on ${f}` : `queued for ${f}${online(source.id) ? "" : " (offline)"}`,
-  ].join(", ");
+  const endText = (done: boolean, machine: MachineRecord) => {
+    const presence = snapshot.presence[machine.id];
+    if (done) return `applied on ${machine.name}`;
+    if (!hasJoined(presence)) return `waiting for ${machine.name} to join`;
+    return `queued for ${machine.name}${presence?.online ? "" : " (offline)"}`;
+  };
+  const appliedText = [endText(applied.to, target), endText(applied.from, source)].join(", ");
   const lastTest = snapshot.commands.find(
     (c) => c.machineId === source.id && c.input._tag === "testArrow" && c.input.to === target.id,
   );
@@ -343,7 +346,11 @@ function MachinePanel({ id }: { id: string }) {
         {status?.updateWaiting && (
           <span className="sticker info">update {status.updateWaiting}</span>
         )}
-        {queue.count > 0 && <span className="sticker wait">{queue.count} queued</span>}
+        {queue.waitingToJoin ? (
+          <span className="sticker wait">waiting to join</span>
+        ) : (
+          queue.count > 0 && <span className="sticker wait">{queue.count} queued</span>
+        )}
       </div>
       <div className="actions" style={{ marginTop: 10 }}>
         {machine.hostname ? (
