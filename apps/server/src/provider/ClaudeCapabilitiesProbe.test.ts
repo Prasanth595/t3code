@@ -22,6 +22,7 @@ import {
   buildClaudeCapabilitiesProbeQueryOptions,
   CLAUDE_CAPABILITIES_PROBE_SETTING_SOURCES,
   probeClaudeCapabilities,
+  probeClaudeOrganizationId,
   probeClaudeWorkspaceSnapshot,
 } from "./ClaudeProvider.ts";
 import { COMPACT_SLASH_COMMAND } from "@t3tools/provider-core/server/snapshotProbe";
@@ -60,6 +61,30 @@ it("isolates Claude capability probes without dropping workspace setting sources
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
+  it.effect.skipIf(process.platform === "win32")("reads each wrapper's account instead of the inherited account", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const organizations: Array<string | undefined> = [];
+      for (const orgId of ["personal", "team"]) {
+        const wrapper = path.join(directory, `claude-${orgId}`);
+        yield* fs.writeFileString(
+          wrapper,
+          `#!/bin/sh\nexport CLAUDE_CONFIG_DIR=${orgId}\n[ "$*" = "auth status --json" ] || exit 2\nprintf '{"loggedIn":true,"email":"same@example.com","orgId":"%s"}' "$CLAUDE_CONFIG_DIR"\n`,
+        );
+        yield* fs.chmod(wrapper, 0o755);
+        organizations.push(
+          yield* probeClaudeOrganizationId(decodeClaudeSettings({ binaryPath: wrapper }), {
+            ...process.env,
+            CLAUDE_CONFIG_DIR: path.join(directory, "personal"),
+          }),
+        );
+      }
+      assert.deepEqual(organizations, ["personal", "team"]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect(
     "discovers commands and skills separately for each cwd without replacing machine metadata",
     () =>
