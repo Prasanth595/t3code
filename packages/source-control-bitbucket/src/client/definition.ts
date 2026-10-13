@@ -68,10 +68,12 @@ export const settings = makeProviderSettingsSchema(
     }),
     apiToken: text({
       title: "API token",
-      description:
-        "Reaches every repository your Atlassian account can. Use the token link below to select the scopes T3 Code needs.",
+      description: "Reaches every repository your Atlassian account can.",
       settingsSecret: true,
-      providerSettingsForm: { control: "password" },
+      providerSettingsForm: {
+        control: "password",
+        descriptionLink: { label: "Create an API token", href: tokenCreationUrl },
+      },
     }),
   },
   { order: ["accessToken", "email", "apiToken"] },
@@ -117,5 +119,4 @@ export const definition = defineSourceControlClient({
     isChangeRequestOnProjectHost(KIND, identity, link),
   isChangeRequestUrl: (url) => isChangeRequestPath(url, "/pull-requests/"),
   settings,
-  tokenCreationUrl,
 });

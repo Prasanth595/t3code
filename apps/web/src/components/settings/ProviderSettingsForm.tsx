@@ -13,7 +13,7 @@ import {
 import { PlusIcon, XIcon } from "lucide-react";
 
 import { cn } from "../../lib/utils";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
 import { Input } from "../ui/input";
 import { SecretInput } from "./SecretInput";
@@ -33,6 +33,7 @@ export interface ProviderSettingsFieldModel {
   readonly control: ProviderSettingsFormControl;
   readonly label: string;
   readonly description?: string | undefined;
+  readonly descriptionLink?: ProviderSettingsFormAnnotation["descriptionLink"];
   readonly placeholder?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   /** Kept in the server's secret store: a saved value arrives as `SECRET_REDACTED` and never shows. */
@@ -133,6 +134,9 @@ export function deriveProviderSettingsFields(
               ? { placeholder: formAnnotation.placeholder }
               : {}),
           clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
+          ...(formAnnotation.descriptionLink
+            ? { descriptionLink: formAnnotation.descriptionLink }
+            : {}),
           ...(isSecretSetting(fieldSchema) ? { secret: true } : {}),
           ...(formAnnotation.control === "switch"
             ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
@@ -375,12 +379,30 @@ function ProviderSettingsFieldRow({
       ? "text-2xs text-muted-foreground"
       : "mt-1 block text-xs text-muted-foreground";
   const label = <span className="text-xs font-medium text-foreground">{field.label}</span>;
-  const description = field.description ? (
-    <span className={descriptionClassName}>{field.description}</span>
+  const descriptionContent =
+    field.description || field.descriptionLink ? (
+      <>
+        {field.description}
+        {field.descriptionLink ? (
+          <>
+            {" "}
+            <InlineButton
+              render={
+                <a href={field.descriptionLink.href} target="_blank" rel="noreferrer noopener" />
+              }
+            >
+              {field.descriptionLink.label}
+            </InlineButton>
+          </>
+        ) : null}
+      </>
+    ) : null;
+  const description = descriptionContent ? (
+    <span className={descriptionClassName}>{descriptionContent}</span>
   ) : null;
 
   if (variant === "settings") {
-    const descriptionId = field.description ? `${inputId}-description` : undefined;
+    const descriptionId = descriptionContent ? `${inputId}-description` : undefined;
     const control =
       field.control === "switch" ? (
         <Switch
@@ -445,7 +467,7 @@ function ProviderSettingsFieldRow({
           field.control === "switch" ? field.label : <label htmlFor={inputId}>{field.label}</label>
         }
         description={
-          field.description ? <span id={descriptionId}>{field.description}</span> : undefined
+          descriptionContent ? <span id={descriptionId}>{descriptionContent}</span> : undefined
         }
         control={control}
       />

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind } from "@t3tools/contracts";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { providerClients } from "./providerDriverMeta";
 import {
@@ -8,6 +9,36 @@ import {
 } from "./ProviderSettingsForm";
 
 describe("ProviderSettingsForm helpers", () => {
+  it("places Bitbucket token creation in the API token description with the required scopes", () => {
+    const settingsSchema = sourceControlClients.get("bitbucket").settings;
+    if (settingsSchema === undefined) throw new Error("Bitbucket has no settings schema");
+    const field = deriveProviderSettingsFields({ settingsSchema }).find(
+      (candidate) => candidate.key === "apiToken",
+    );
+    const link = field?.descriptionLink;
+    if (link === undefined) throw new Error("The API token description has no creation link");
+    const url = new URL(link.href);
+
+    expect(link.label).toBe("Create an API token");
+    expect(field?.description).toBe("Reaches every repository your Atlassian account can.");
+    expect(url.origin).toBe("https://id.atlassian.com");
+    expect(url.pathname).toBe("/manage-profile/security/api-tokens");
+    expect(url.searchParams.get("autofillToken")).toBe("");
+    expect(url.searchParams.get("appId")).toBe("bitbucket");
+    expect(url.searchParams.get("expiryDays")).toBe("30");
+    expect(url.searchParams.get("selectedScopes")).toBe(
+      JSON.stringify([
+        "read:user:bitbucket",
+        "read:workspace:bitbucket",
+        "read:repository:bitbucket",
+        "write:repository:bitbucket",
+        "admin:repository:bitbucket",
+        "read:pullrequest:bitbucket",
+        "write:pullrequest:bitbucket",
+      ]),
+    );
+  });
+
   it("derives visible provider config fields from the client definition schema", () => {
     const codex = providerClients.get(ProviderDriverKind.make("codex"));
 

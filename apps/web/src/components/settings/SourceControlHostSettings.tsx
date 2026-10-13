@@ -1,12 +1,11 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { SourceControlClientDefinition } from "@t3tools/client-runtime/source-control-clients";
-import { ExternalLinkIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { Button, InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 
 /**
@@ -67,18 +66,6 @@ export function SourceControlHostSettings({
           void save({ ...changed, ...Object.fromEntries(cleared.map((key) => [key, ""])) });
         }}
       />
-      {definition.tokenCreationUrl ? (
-        <div className="pt-2">
-          <InlineButton
-            render={
-              <a href={definition.tokenCreationUrl} target="_blank" rel="noreferrer noopener" />
-            }
-          >
-            Create an API token
-            <ExternalLinkIcon aria-hidden className="size-3" />
-          </InlineButton>
-        </div>
-      ) : null}
       {hasSaved ? (
         <div className="flex justify-end pt-2">
           <Button
