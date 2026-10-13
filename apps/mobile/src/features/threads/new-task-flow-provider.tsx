@@ -179,6 +179,7 @@ type NewTaskFlowContextValue = {
   readonly selectedBranchName: string | null;
   readonly selectedWorktreePath: string | null;
   readonly startFromOrigin: boolean;
+  readonly pullRequestReference: string | undefined;
   readonly draftKey: string | null;
   readonly editingPendingTask: QueuedThreadMessage | null;
   readonly prompt: string;
@@ -602,27 +603,33 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const draftModelSelection = resolveSelectableModelSelection(
     selectedEnvironmentServerConfig,
     selectedProjectDraft.modelSelection ?? null,
+    selectedProject?.id ?? null,
   );
   const projectDefaultModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     projectSettings.settings.defaultModelSelection,
+    selectedProject?.id ?? null,
   );
   const storedStickyModelSelection = useStickyComposerModelSelection();
   const stickyModelSelection = resolveDefaultableModelSelection(
     selectedEnvironmentServerConfig,
     storedStickyModelSelection,
+    selectedProject?.id ?? null,
   );
   const modelOptions = useMemo(
     () =>
       buildModelOptions(
         selectedEnvironmentServerConfig,
         draftModelSelection ?? projectDefaultModelSelection ?? stickyModelSelection,
+        undefined,
+        selectedProject?.id ?? null,
       ),
     [
       selectedEnvironmentServerConfig,
       draftModelSelection,
       projectDefaultModelSelection,
       stickyModelSelection,
+      selectedProject?.id,
     ],
   );
 
@@ -1129,6 +1136,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           branch: message.creation.branch,
           worktreePath: message.creation.worktreePath,
           startFromOrigin: message.creation.startFromOrigin ?? false,
+          pullRequestReference: message.creation.pullRequestReference,
         },
       });
     }
@@ -1160,6 +1168,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         resolveSelectableModelSelection(
           selectedEnvironmentServerConfig,
           draft.modelSelection ?? null,
+          selectedProject.id,
         ) ?? selectedModel;
       // A shared image or file is a task on its own; text is optional.
       if ((text.length === 0 && draft.attachments.length === 0) || !draftModelSelection) {
@@ -1206,6 +1215,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
+          ...(mode === "worktree" && workspaceSelection?.pullRequestReference
+            ? { pullRequestReference: workspaceSelection.pullRequestReference }
+            : {}),
           // An explicit picker choice wins. Otherwise only a task sending now
           // records the current checkout: a queued local task drains days
           // later against whatever is checked out then, so a queue-time
@@ -1357,6 +1369,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedWorktreePath,
       startFromOrigin,
       draftKey: selectedProjectDraftKey,
+      pullRequestReference: selectedProjectDraft.workspaceSelection?.pullRequestReference,
       editingPendingTask,
       prompt,
       attachments,
@@ -1447,6 +1460,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProviderStatus,
       setSelectedModelOptions,
       selectedProject,
+      selectedProjectDraft.workspaceSelection?.pullRequestReference,
       selectedProjectKey,
       manualProjectRef,
       selectedWorktreePath,
