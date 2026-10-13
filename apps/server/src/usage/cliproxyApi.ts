@@ -100,6 +100,7 @@ const decodeConsumeResponse = Schema.decodeUnknownEffect(
 
 const CODEX_BASE = "https://chatgpt.com/backend-api/wham";
 const CREDIT_URL = `${CODEX_BASE}/rate-limit-reset-credits`;
+const CLAUDE_OAUTH_BASE = "https://api.anthropic.com/api/oauth";
 
 // 6f1c2a9e-2d4b-4c1e-9a7f-3b8d5e0c1a42
 const CREDIT_REDEEM_NAMESPACE = new Uint8Array([
@@ -208,35 +209,30 @@ export const makeCliproxyApi = Effect.gen(function* () {
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
 
-  const claudeOrganizations = new Map<string, string>();
-
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     config: UsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const key = `${config.url} ${account.id}`;
     const workspace =
       account.provider === "claude"
-        ? apiCall(config, account, "https://api.anthropic.com/api/oauth/profile").pipe(
+        ? apiCall(config, account, `${CLAUDE_OAUTH_BASE}/profile`).pipe(
             Effect.flatMap(decodeClaudeProfile),
-            Effect.map(
-              (profile) => profile.organization.uuid.trim() || claudeOrganizations.get(key),
+            Effect.map((profile) => profile.organization.uuid.trim() || undefined),
+            Effect.orElseSucceed(() => undefined),
+            Effect.tap((uuid) =>
+              uuid ? Effect.void : Effect.logDebug("Claude hub organization identity unavailable"),
             ),
-            Effect.orElseSucceed(() => claudeOrganizations.get(key)),
           )
-        : Effect.succeed(undefined);
+        : Effect.succeed(account.id_token?.chatgpt_account_id?.trim() || undefined);
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
-      ...(account.provider === "codex" && account.id_token?.chatgpt_account_id?.trim()
-        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
-        : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
-        const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
+        const body = yield* apiCall(config, account, `${CLAUDE_OAUTH_BASE}/usage`);
         const usage = yield* decodeClaudeUsage(body);
         const model_scoped = (usage.limits ?? []).flatMap((limit) =>
           limit.kind === "weekly_scoped" && limit.scope?.model && typeof limit.percent === "number"
@@ -307,24 +303,20 @@ export const makeCliproxyApi = Effect.gen(function* () {
             : {}),
         },
       };
-    });
-    const [workspaceId, result] = yield* Effect.all(
-      [
-        workspace,
-        read.pipe(
-          Effect.orElseSucceed(() => ({
-            ...base,
-            usageLimits: makeUnavailableUsageLimits({
-              checkedAt,
-              reason: "probeFailed",
-              message: "The hub could not read this account's usage.",
-            }),
-          })),
-        ),
-      ],
+    }).pipe(
+      Effect.orElseSucceed(() => ({
+        ...base,
+        usageLimits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "The hub could not read this account's usage.",
+        }),
+      })),
+    );
+    const { workspaceId, result } = yield* Effect.all(
+      { workspaceId: workspace, result: read },
       { concurrency: 2 },
     );
-    if (workspaceId) claudeOrganizations.set(key, workspaceId);
     return { ...result, ...(workspaceId ? { workspaceId } : {}) };
   });
 
