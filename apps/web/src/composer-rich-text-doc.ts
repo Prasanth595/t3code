@@ -243,14 +243,15 @@ const ComposerListItemExtension = ListItem.extend({
   // The source marker rides on the item so the composer draws `3)` and a
   // nested `7.` as written, rather than the browser own numbering.
   // `data-marker-width` lets the list widen its gutter for `10.` (index.css):
-  // a marker edit redraws the item, never the list around it.
+  // a marker edit redraws the item, never the list around it. CommonMark caps
+  // ordered markers at 9 digits, so widths stop at 10.
   renderHTML({ node, HTMLAttributes }) {
     const marker = String(node.attrs.marker);
     return [
       "li",
       mergeAttributes(HTMLAttributes, {
         "data-marker": marker,
-        "data-marker-width": marker.length,
+        "data-marker-width": Math.min(marker.length, 10),
       }),
       0,
     ];

@@ -1869,6 +1869,26 @@ code {
   --list-gutter: max(1.25rem, 6ch);
 }
 
+.composer-tiptap ol:has(> li[data-marker-width="6"]) {
+  --list-gutter: max(1.25rem, 7ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="7"]) {
+  --list-gutter: max(1.25rem, 8ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="8"]) {
+  --list-gutter: max(1.25rem, 9ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="9"]) {
+  --list-gutter: max(1.25rem, 10ch);
+}
+
+.composer-tiptap ol:has(> li[data-marker-width="10"]) {
+  --list-gutter: max(1.25rem, 11ch);
+}
+
 .composer-tiptap ul {
   padding-left: max(1.25rem, 2ch);
 }
