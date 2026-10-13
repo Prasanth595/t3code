@@ -468,7 +468,7 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
 });
 
-const ClaudeAuthStatus = Schema.fromJsonString(
+const ClaudeAuthStatusJson = Schema.fromJsonString(
   Schema.Struct({
     orgId: Schema.optional(Schema.NullOr(Schema.String)),
   }),
@@ -480,7 +480,7 @@ export const probeClaudeOrganizationId = Effect.fn("probeClaudeOrganizationId")(
   environment?: NodeJS.ProcessEnv,
 ) {
   const result = yield* runClaudeCommand(claudeSettings, ["auth", "status", "--json"], environment);
-  const status = yield* Schema.decodeUnknownEffect(ClaudeAuthStatus)(result.stdout);
+  const status = yield* Schema.decodeUnknownEffect(ClaudeAuthStatusJson)(result.stdout);
   return status.orgId?.trim() || undefined;
 });
 
