@@ -85,6 +85,7 @@ import {
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { installDesktopPasteAsText } from "../lib/desktopPasteAsText";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
+import { DesktopImageContextMenu } from "../components/desktop/DesktopImageContextMenu";
 
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
@@ -253,6 +254,7 @@ function RootRouteView() {
           <SnapShotCoordinator />
           <ThreadNotificationCoordinator />
           <ReopenClosedViewShortcut />
+          <DesktopImageContextMenu />
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
