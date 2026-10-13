@@ -47,6 +47,9 @@ const SET_CONTENT_VIEW_METHOD = `
   }
 `;
 
+const CONFIGURATION_CHANGED_SIGNATURE =
+  "override fun onConfigurationChanged(newConfig: Configuration) {";
+
 const BIND_CALL = `
     bindWindowDisplayMetrics()`;
 
@@ -94,13 +97,16 @@ module.exports = function withAndroidWindowDisplayMetrics(config) {
     );
     // Another plugin (withAndroidTabletOrientation) may already override
     // onConfigurationChanged; extend it rather than declaring a second override.
-    if (contents.includes("super.onConfigurationChanged(newConfig)")) {
-      contents = insertAfter(
-        contents,
-        "super.onConfigurationChanged(newConfig)",
-        BIND_CALL,
-        "the super.onConfigurationChanged call",
-      );
+    const overrideStart = contents.indexOf(CONFIGURATION_CHANGED_SIGNATURE);
+    if (overrideStart !== -1) {
+      contents =
+        contents.slice(0, overrideStart) +
+        insertAfter(
+          contents.slice(overrideStart),
+          "super.onConfigurationChanged(newConfig)",
+          BIND_CALL,
+          "the super call in the onConfigurationChanged override",
+        );
     } else {
       contents = addImport(contents, "import android.content.res.Configuration");
       contents = insertAfter(
