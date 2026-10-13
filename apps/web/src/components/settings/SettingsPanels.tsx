@@ -578,6 +578,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
         ? ["Working section"]
         : []),
+      ...(settings.sidebarThreadMachineNames !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadMachineNames
+        ? ["Machine names"]
+        : []),
       ...(settings.sidebarAutoSettleAfterDays !==
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
@@ -714,6 +717,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.sidebarProjectGroupingMode,
       settings.sidebarProjectSortOrder,
       settings.sidebarWorkingShelfEnabled,
+      settings.sidebarThreadMachineNames,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
       settings.timestampFormat,
@@ -814,6 +818,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarThreadMachineNames: DEFAULT_UNIFIED_SETTINGS.sidebarThreadMachineNames,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
@@ -2400,6 +2405,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ sidebarWorkingShelfEnabled: Boolean(checked) })
               }
               aria-label="Working section (beta)"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("thread-machine-names")}
+          description="Name the machine on every thread row when your threads span more than one environment."
+          resetAction={
+            settings.sidebarThreadMachineNames !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarThreadMachineNames ? (
+              <SettingResetButton
+                label="machine names"
+                onClick={() =>
+                  updateSettings({
+                    sidebarThreadMachineNames: DEFAULT_UNIFIED_SETTINGS.sidebarThreadMachineNames,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarThreadMachineNames}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarThreadMachineNames: Boolean(checked) })
+              }
+              aria-label="Machine names"
             />
           }
         />

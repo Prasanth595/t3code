@@ -1151,6 +1151,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
   scratchMachineLabel: string | null;
+  // Set when the user asked for machine names on every row; the row then
+  // labels local threads too, not just glyphs on other machines.
+  machineNameLabel: string | null;
   project: EnvironmentProject | null;
   projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
@@ -2199,13 +2202,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 aria-hidden
                 className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
               >
-                {isRemote && !showsScratchMachine ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                {(isRemote || props.machineNameLabel !== null) && !showsScratchMachine ? (
+                  <span className="inline-flex min-w-0 items-center gap-1 text-sidebar-muted-foreground/70">
                     <EnvironmentMachineIcon
                       aria-hidden
                       kind={props.environmentMachine}
-                      className="size-3.5"
+                      className="size-3.5 shrink-0"
                     />
+                    {props.machineNameLabel !== null ? (
+                      <span className="max-w-24 truncate">{props.machineNameLabel}</span>
+                    ) : null}
                   </span>
                 ) : null}
                 <SidebarProviderStack
@@ -2429,6 +2435,7 @@ export default function Sidebar() {
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const threadMachineNames = useClientSettings((s) => s.sidebarThreadMachineNames);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const {
     settleThread,
@@ -2668,6 +2675,13 @@ export default function Sidebar() {
       return environmentLabelById.get(thread.environmentId) ?? null;
     },
     [environmentLabelById, projectByKey, serverConfigs, showProjectEnvironments],
+  );
+  const machineNameLabelFor = useCallback(
+    (thread: Pick<SidebarThreadSummary, "environmentId">) =>
+      threadMachineNames && showProjectEnvironments
+        ? (environmentLabelById.get(thread.environmentId) ?? null)
+        : null,
+    [environmentLabelById, showProjectEnvironments, threadMachineNames],
   );
   const projectGroupByScopeKey = useMemo(
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
@@ -5403,6 +5417,7 @@ export default function Sidebar() {
                               environmentMachineById.get(thread.environmentId) ?? "server"
                             }
                             scratchMachineLabel={scratchMachineLabelFor(thread)}
+                            machineNameLabel={machineNameLabelFor(thread)}
                             project={
                               projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
                               null

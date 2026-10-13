@@ -362,6 +362,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "thread-machine-names",
+    title: "Machine names",
+    to: "/settings/general",
+    searchTerms: ["environment remote host server computer device sidebar thread label"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/general",
