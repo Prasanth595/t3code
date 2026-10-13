@@ -1,7 +1,9 @@
 name: Fork Release
 
 # Builds the desktop apps from fork main and publishes a nightly-channel release
-# that the in-app updater (electron-updater) follows. It does not touch main:
+# that the in-app updater (electron-updater) follows. Linux also gets the
+# self-contained server archive (t3-<version>-linux-<arch>.tar.gz) for machines
+# without a display. It does not touch main:
 # .github/workflows/fork-sync.yml merges upstream. Server and web changes reach
 # the machines through the live server path, so a release is only needed when
 # the app shell changes. See docs/fork.md.
@@ -163,6 +165,21 @@ jobs:
             platform: win
             target: nsis
             arch: x64
+          # node-pty compiles from source on Linux, so each arch builds on its own hardware.
+          - label: Linux x64
+            runner: ubuntu-24.04
+            platform: linux
+            target: AppImage
+            arch: x64
+            rust_target: x86_64-unknown-linux-gnu
+            resource_key: linux-x64
+          - label: Linux arm64
+            runner: ubuntu-24.04-arm
+            platform: linux
+            target: AppImage
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            resource_key: linux-arm64
     steps:
       - uses: actions/checkout@v6
         with:
@@ -182,6 +199,16 @@ jobs:
         with:
           name: js-bundle
           path: apps
+
+      # Same packages and toolchain as upstream's release-desktop.yml.
+      - name: Install Linux desktop build libraries
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-dev pkg-config imagemagick
+
+      - if: matrix.platform == 'linux'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       # The resource monitor build needs the Spectre-mitigated MSVC libraries.
       # The Visual Studio Installer takes minutes, so cache the library folder.
@@ -271,28 +298,58 @@ jobs:
           codesign --verify --deep --strict --verbose=2 "$app"
           grep -q "Yarden Zamir T3 Fork" "$RUNNER_TEMP/codesign.txt"
 
+      # The headless server: upstream's self-contained CLI archive with the `t3`
+      # single-executable, the web client and the native packages. It needs no
+      # Node on the machine. The steps copy upstream's release-desktop.yml.
+      - name: Build server single-executable
+        if: matrix.platform == 'linux'
+        env:
+          # Keep in step with SEA_NODE_VERSION in apps/server/vite.config.ts.
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Build server archive
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          monitor_dir="$RUNNER_TEMP/cli-resource-monitor"
+          mkdir -p "$monitor_dir/${{ matrix.resource_key }}"
+          cp "native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor" \
+            "$monitor_dir/${{ matrix.resource_key }}/"
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch "${{ matrix.arch }}" \
+            --version "${{ needs.prepare.outputs.version }}" \
+            --resource-monitor-dir "$monitor_dir" \
+            --output-dir release-cli
+          node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.prepare.outputs.version }}"
+          # The installer checks the download against this file.
+          (cd release-cli && for archive in t3-*.tar.gz; do sha256sum "$archive" > "$archive.sha256"; done)
+
       - name: Collect release assets
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
           mkdir -p release-publish
-          for file in release/*.dmg release/*.zip release/*.exe release/*.blockmap release/*.yml; do
+          for file in release/*.dmg release/*.zip release/*.exe release/*.AppImage release/*.blockmap release/*.yml release-cli/*; do
             [[ "$file" == */builder-debug.yml ]] && continue
             cp "$file" release-publish/
           done
           ls -la release-publish
 
-      # The first platform to finish creates the release, the other adds its files.
-      # Each platform has its own updater manifest: nightly-mac.yml and nightly.yml.
+      # The first platform to finish creates the release, the others add their files.
+      # Each platform has its own updater manifest: nightly-mac.yml, nightly.yml
+      # (Windows), nightly-linux.yml (x64) and nightly-linux-arm64.yml.
       # The release creates a tag. GITHUB_TOKEN cannot create a tag on a commit
       # whose workflow files differ from main, which happens when main moved
       # during the run. FORK_SYNC_TOKEN has the workflow scope.
       - name: Publish to the release
+        if: github.ref == 'refs/heads/main'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
-          MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || 'nightly.yml' }}
+          MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || matrix.platform == 'win' && 'nightly.yml' || matrix.arch == 'arm64' && 'nightly-linux-arm64.yml' || 'nightly-linux.yml' }}
         run: |
           set -euo pipefail
           test -s "release-publish/$MANIFEST"
@@ -307,6 +364,16 @@ jobs:
             exit 0
           fi
           gh release upload "$tag" release-publish/* --repo "$GITHUB_REPOSITORY" --clobber
+
+      # A manual run from another branch tests the build without a release.
+      - name: Upload assets of a branch run
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.platform }}-${{ matrix.arch }}
+          path: release-publish/*
+          if-no-files-found: error
+          retention-days: 3
 
   # Starts a repair agent on a T3 server through a scheduled-task webhook.
   # Off until the T3_AGENT_WEBHOOK_URL secret is set.

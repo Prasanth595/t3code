@@ -49,7 +49,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 const STATUS: MachineStatus = {
   t3Version: "1.2.3",
-  build: "release 1.2.3",
+  build: "release",
   hostname: null,
   uptimeSeconds: 0,
   runningTurns: 0,

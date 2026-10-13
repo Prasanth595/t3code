@@ -2,6 +2,7 @@
  * Fork: machine map. Shared types of the portal (`apps/machine-map`), the T3 server and the
  * desktop app. Requirement numbers (MM-xxx) refer to `apps/machine-map/SPEC.md`.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -115,12 +116,45 @@ export const MapPreset = Schema.Struct({
 });
 export type MapPreset = typeof MapPreset.Type;
 
+/**
+ * Where the owner put the card of a pair (MM-1108), relative to the line from machine `a` to
+ * machine `b`, so the card follows when the machines move.
+ */
+export const PairOffset = Schema.Struct({
+  /** 0 is the center of `a`, 1 the center of `b`. */
+  along: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  /** Distance beside the line, as a fraction of the shorter side of the map. */
+  aside: Schema.Number.check(Schema.isBetween({ minimum: -1, maximum: 1 })),
+});
+export type PairOffset = typeof PairOffset.Type;
+
+/** A stored pair placement. `a` sorts before `b`. */
+export const PairPlacement = Schema.Struct({ a: MachineId, b: MachineId, ...PairOffset.fields });
+export type PairPlacement = typeof PairPlacement.Type;
+
+export const NoteColor = Schema.Literals(["yellow", "pink", "blue", "green"]);
+export type NoteColor = typeof NoteColor.Type;
+
+/** A sticky note on the map (MM-1109). */
+export const MapNote = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString.check(Schema.isMaxLength(500)),
+  color: NoteColor,
+  position: MapPosition,
+});
+export type MapNote = typeof MapNote.Type;
+
 export const MachineMapDocument = Schema.Struct({
   revision: NonNegativeInt,
   machines: Schema.Array(MachineRecord),
   arrows: Schema.Array(ArrowRecord),
   settings: MapSettings,
   presets: Schema.Array(MapPreset),
+  /** Display data (MM-1108, MM-1109): no machine applies it. Older maps decode with none. */
+  pairPlacements: Schema.Array(PairPlacement).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+  notes: Schema.Array(MapNote).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 });
 export type MachineMapDocument = typeof MachineMapDocument.Type;
 
@@ -160,6 +194,14 @@ export const MapChange = Schema.Union([
   Schema.TaggedStruct("removeMachine", { machineId: MachineId }),
   Schema.TaggedStruct("putPreset", { preset: MapPreset }),
   Schema.TaggedStruct("removePreset", { name: TrimmedNonEmptyString }),
+  /** MM-1108: null returns the card of the pair to its automatic place. */
+  Schema.TaggedStruct("placePair", {
+    a: MachineId,
+    b: MachineId,
+    offset: Schema.NullOr(PairOffset),
+  }),
+  Schema.TaggedStruct("putNote", { note: MapNote }),
+  Schema.TaggedStruct("removeNote", { id: TrimmedNonEmptyString }),
 ]);
 export type MapChange = typeof MapChange.Type;
 
@@ -302,7 +344,7 @@ export type MachineClientSession = typeof MachineClientSession.Type;
 /** MM-1002. */
 export const MachineStatus = Schema.Struct({
   t3Version: Schema.String,
-  /** Live commit, release version or deploy commit. */
+  /** `<kind> <commit>`: `live`, `deploy` or `dev` with a 7-character commit, or `release`. */
   build: Schema.String,
   hostname: Schema.NullOr(TrimmedNonEmptyString),
   uptimeSeconds: Schema.Number,

@@ -1,26 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { actorText, presenceState, presenceText, spatialArrow, timeAgo } from "./format.ts";
+import { actorText, presenceState, presenceText, timeAgo, towardGlyph } from "./format.ts";
 import { threeMachines } from "../rules/testMap.ts";
 
-describe("spatialArrow (MM-1103)", () => {
-  it("rounds to the nearest of the four directions and reads left or top first", () => {
-    expect(spatialArrow({ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.6 })).toEqual({
-      first: "from",
-      glyph: "→",
-    });
-    expect(spatialArrow({ x: 0.8, y: 0.5 }, { x: 0.2, y: 0.6 })).toEqual({
-      first: "to",
-      glyph: "←",
-    });
-    expect(spatialArrow({ x: 0.5, y: 0.1 }, { x: 0.6, y: 0.9 })).toEqual({
-      first: "from",
-      glyph: "↓",
-    });
-    expect(spatialArrow({ x: 0.5, y: 0.9 }, { x: 0.6, y: 0.1 })).toEqual({
-      first: "to",
-      glyph: "↑",
-    });
+describe("towardGlyph (MM-1103)", () => {
+  it("points from the source to the target, rounded to the nearest of the four directions", () => {
+    expect(towardGlyph({ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.6 })).toBe("→");
+    expect(towardGlyph({ x: 0.8, y: 0.5 }, { x: 0.2, y: 0.6 })).toBe("←");
+    expect(towardGlyph({ x: 0.5, y: 0.1 }, { x: 0.6, y: 0.9 })).toBe("↓");
+    expect(towardGlyph({ x: 0.5, y: 0.9 }, { x: 0.6, y: 0.1 })).toBe("↑");
   });
 });
 

@@ -11,8 +11,10 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge, runs the fork tests and pushes it as a fast-forward. The fork tests are the test files that the fork changed since the last merged upstream commit, `git merge-base upstream/main HEAD`. A diff against a newer upstream main also lists files that only upstream changed. If main moved during the run, it merges the new main and pushes again.
 - If the merge conflicts, the typecheck fails or a fork test fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
 - `.github/workflows/fork-release.yml` builds the desktop apps. It runs when a push to main changes the app shell (`apps/desktop` without its tests, icons, build config, dependencies, or the settings schema `packages/contracts/src/settings.ts`, because the shell drops client settings it does not know), once a day, and on manual dispatch. If the commit already has a release, it stops early. Server and web changes reach the machines without a release, see "Live server updates" and "Deploy to the VPS".
-- The release builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
-- The release carries `nightly-mac.yml` and `nightly.yml` for electron-updater. Until the Windows build adds `nightly.yml`, Windows apps find no update in the new release.
+- The release builds macOS arm64 (signed), Windows x64 (unsigned), and Linux x64 and arm64 AppImages (unsigned) at the same time, on GitHub-hosted runners. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
+- Each Linux build also publishes the server archive `t3-<version>-linux-<arch>.tar.gz` and its `.sha256` file. The archive holds the `t3` single-executable, the web client and the native packages, so a machine without a display runs the server without Node: `t3 serve`. Do not run `t3 update` on such a machine, because it installs the newest upstream release, not the fork release.
+- A manual run from a branch other than main does not publish a release. It uploads the files of each platform as workflow artifacts, for a test of release changes.
+- The release carries `nightly-mac.yml`, `nightly.yml` (Windows), `nightly-linux.yml` (x64) and `nightly-linux-arm64.yml` for electron-updater. Until a platform adds its file, its apps find no update in the new release.
 - If a sync, a release or a Fork CI run fails, its `notify_agent` job runs `scripts/fork-notify-agent.sh`. The script posts the run to `T3_AGENT_WEBHOOK_URL`, a webhook scheduled task on a T3 server that starts a repair agent. A manual run with `notify_agent=false` does not post. A failure right after a failure of the same workflow does not post either, because the agent that the first failure started watches the next run.
 - `.github/workflows/fork-ci.yml` runs the `ci.yml` commands on GitHub-hosted runners for each push to main. `ci.yml` needs upstream's Blacksmith runners, so it is disabled on the fork.
 - A newer push to main cancels the Fork CI run of the older push. The repair agent ignores a cancelled run.
@@ -236,6 +238,16 @@ The client setting `pullRequestFilterChips` shows the active pull request filter
 - Click × on a chip to remove that filter. Click "Clear all" to remove all of them.
 - Typed qualifiers stay in the search box, so they get no chip. A menu filter that a typed qualifier replaces gets no chip, because it does not apply.
 - When no pull request matches the menu filters, the empty list names them and offers "Clear filters". With search text, the empty list names the search instead.
+
+## Snooze quick options
+
+The client setting `snoozeQuickOptions` holds the choices of the snooze menus. It is empty by default, and the menus then show the built-in choices. Edit it in Settings > General > Snooze quick options.
+
+- The list starts from the built-in choices. The first change saves the whole list. The reset button brings back the built-in choices.
+- A choice snoozes for a number of minutes, hours or days, or until a time today, tomorrow or on the next given weekday.
+- A choice for today shows while its time is more than an hour away. A choice that lands on the same time as an earlier one does not show.
+- A blank label shows a label that names the choice, such as "In 3 hours" or "Tomorrow".
+- The setting applies to the snooze button, the thread menu and the menu for selected threads, on web and desktop. The mobile app keeps the built-in choices.
 
 ## Pull request watch remark filter
 

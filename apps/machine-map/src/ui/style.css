@@ -771,8 +771,31 @@ p.error-text {
   font-size: 1.6rem;
   overflow-wrap: anywhere;
 }
-.panel h2 .arrow-glyph {
-  font-family: var(--mono);
+/* A hint on hover or keyboard focus, for example the exact time of a history entry. */
+.tip {
+  position: relative;
+}
+.tip:hover::after,
+.tip:focus-visible::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  padding: 3px 8px;
+  font: 600 0.78rem/1.3 var(--sans);
+  white-space: nowrap;
+  color: var(--surface);
+  background: var(--ink);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
+/* MM-1103: "Mac uses Windows". The verb is quieter than the names. */
+.verb {
+  font-weight: 600;
+  opacity: 0.7;
 }
 .desc {
   color: var(--muted);
@@ -957,6 +980,9 @@ details.more[open] summary {
   height: clamp(560px, calc(100vh - 290px), 980px);
   overflow: hidden;
   touch-action: none;
+  /* A double click on the map opens the add menu (MM-1110); it selects no text. */
+  user-select: none;
+  -webkit-user-select: none;
   background-color: var(--raised);
   background-image: radial-gradient(var(--dots) 1.4px, transparent 1.4px);
   background-size: 22px 22px;
@@ -1093,6 +1119,19 @@ details.more[open] summary {
   gap: 2px;
   box-shadow: 3px 3px 0 0 var(--shadow-ink);
   transition: opacity 120ms;
+  /* MM-1108: the owner drags pair cards too. */
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.pair.readonly {
+  cursor: auto;
+}
+.pair.dragging {
+  z-index: 5;
+  cursor: grabbing;
+  box-shadow: 6px 6px 0 0 var(--shadow-ink);
 }
 .pair.quiet {
   padding: 3px;
@@ -1119,12 +1158,17 @@ details.more[open] summary {
 .dir .who {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
 }
-.dir .arrow {
+/* MM-1103: where the target sits on the map. The text already says the direction. */
+.dir .toward {
   font-family: var(--mono);
-  font-weight: 800;
-  font-size: 1.2rem;
-  margin: 0 6px;
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 2px 3px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.7;
 }
 .dir .actions {
   flex-wrap: nowrap;
@@ -1167,6 +1211,111 @@ details.more[open] summary {
   font-weight: 700;
   color: var(--warning-fg);
   white-space: nowrap;
+}
+/* Notes (MM-1109): sticky notes in four colours, each tilted a little. */
+.note {
+  position: absolute;
+  z-index: 1;
+  transform: translate(-50%, -50%) rotate(var(--note-tilt, 0deg));
+  width: 190px;
+  min-height: 64px;
+  padding: 12px 14px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #000000;
+  border: var(--bw) solid var(--shadow-ink);
+  border-radius: 2px;
+  box-shadow: 4px 4px 0 0 var(--shadow-ink);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.note.tilt-0 {
+  --note-tilt: -2.5deg;
+}
+.note.tilt-1 {
+  --note-tilt: 1.5deg;
+}
+.note.tilt-2 {
+  --note-tilt: -1deg;
+}
+.note.tilt-3 {
+  --note-tilt: 2.5deg;
+}
+.note.readonly {
+  cursor: auto;
+}
+.note.dragging {
+  z-index: 5;
+  cursor: grabbing;
+}
+.note.editing {
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  width: 250px;
+  cursor: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.note-yellow {
+  background: var(--yellow);
+}
+.note-pink {
+  background: var(--pink);
+}
+.note-blue {
+  background: #8fd8ff;
+}
+.note-green {
+  background: var(--green);
+}
+.note textarea {
+  width: 100%;
+  font: inherit;
+  color: #000000;
+  background: #ffffffb3;
+  border: var(--bw) solid #000000;
+  border-radius: 2px;
+  resize: vertical;
+}
+.note-colors {
+  display: flex;
+  gap: 8px;
+}
+.swatch {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--bw) solid #000000;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.swatch[aria-pressed="true"] {
+  outline: 3px solid #000000;
+  outline-offset: 2px;
+}
+.note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+/* MM-1110: the add menu at the point of a double click or a long press. */
+.map-menu {
+  position: absolute;
+  z-index: 7;
+  display: grid;
+  gap: 6px;
+  min-width: 200px;
+  padding: 8px;
+}
+.map-menu .btn {
+  justify-content: flex-start;
 }
 .map-bar {
   display: flex;
@@ -1231,13 +1380,29 @@ details.more[open] summary {
   width: 15px;
   height: 15px;
 }
-.map.compact .dir .nm,
 .map.compact .pair-wait,
 .map.compact .dir .sticker.flat:not(.lvl-none) {
   display: none;
 }
-.map.compact .dir .arrow {
-  margin: 0 2px 0 0;
+.map.compact .dir .who {
+  gap: 3px;
+}
+.map.compact .dir .nm {
+  max-width: 4.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.map.compact .dir .verb {
+  font-size: 0.72rem;
+}
+.map.compact .note {
+  width: 140px;
+  min-height: 48px;
+  padding: 8px 10px;
+  font-size: 0.82rem;
+}
+.map.compact .note.editing {
+  width: 220px;
 }
 .readonly-banner {
   display: flex;
@@ -1402,6 +1567,181 @@ td .stickers,
   font-family: var(--mono);
   font-size: 0.9rem;
   font-weight: 600;
+}
+/* History (MM-714 to MM-716): days, colours and stickers by meaning, groups, filters. */
+.history-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin-bottom: 18px;
+}
+.history-filters select {
+  width: auto;
+  min-width: 9em;
+}
+.history-day + .history-day {
+  margin-top: 24px;
+}
+.day-sep {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.day-sep::after {
+  content: "";
+  flex: 1;
+  border-top: var(--bw) dashed var(--border);
+}
+.item[class*="hk-"] {
+  border-left-width: 8px;
+  padding-left: 10px;
+}
+.item.hk-raise {
+  border-left-color: var(--warning);
+}
+.item.hk-lower {
+  border-left-color: var(--info);
+}
+.item.hk-lockdown {
+  border-left-color: var(--ink);
+}
+.item.hk-machines {
+  border-left-color: var(--green);
+}
+.item.hk-settings,
+.item.hk-preset {
+  border-left-color: var(--accent);
+}
+.item.hk-expiry,
+.item.hk-join {
+  border-left-color: var(--yellow);
+}
+.item.hk-note {
+  border-left-color: var(--pink);
+}
+.item.hk-move,
+.item.hk-other,
+.item.hk-command {
+  border-left-color: var(--none);
+}
+.item.hk-pause,
+.item.hk-resume {
+  border-left-color: transparent;
+}
+.item.hk-pause::before,
+.item.hk-resume::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--bw));
+  bottom: calc(-1 * var(--bw));
+  left: calc(-1 * var(--bw));
+  width: 10px;
+  background: var(--hazard);
+}
+.sticker.hk {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 6.2em;
+}
+.sticker.hk svg {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+.sticker.hk-raise {
+  background: var(--warning);
+}
+.sticker.hk-lower {
+  background: var(--info);
+}
+.sticker.hk-pause,
+.sticker.hk-resume,
+.sticker.hk-expiry,
+.sticker.hk-join {
+  background: var(--yellow);
+}
+.sticker.hk-lockdown {
+  background: #000000;
+  color: var(--yellow);
+}
+.sticker.hk-machines {
+  background: var(--green);
+}
+.sticker.hk-settings {
+  background: var(--accent);
+  color: #ffffff;
+}
+.sticker.hk-preset {
+  background: var(--stamp);
+  color: #ffffff;
+}
+.sticker.hk-note {
+  background: var(--pink);
+}
+.sticker.hk-move,
+.sticker.hk-other {
+  background: var(--none);
+  color: #3d3d5c;
+}
+.sticker.hk-command {
+  background: var(--surface);
+  color: var(--ink);
+}
+.sticker.hk-agent {
+  min-width: 0;
+  background: var(--ink);
+  color: var(--surface);
+}
+.item > details.diff,
+.item > .nested {
+  position: relative;
+  z-index: 1;
+  flex-basis: 100%;
+}
+details.diff summary {
+  width: fit-content;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+details.diff table {
+  width: auto;
+  margin-top: 8px;
+  font-size: 0.88rem;
+}
+details.diff th,
+details.diff td {
+  padding: 3px 14px 3px 0;
+  text-align: left;
+  vertical-align: top;
+  border: 0;
+  background: none;
+}
+details.diff th {
+  font-weight: 600;
+}
+details.diff .before {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+details.diff .after {
+  font-weight: 700;
+}
+.item > .nested {
+  gap: 8px;
+}
+.more-toggle {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-decoration: underline;
 }
 .slider {
   display: grid;
@@ -1750,6 +2090,90 @@ dialog.palette .dialog-body {
 .panic.dialog .panic-label b {
   font-size: 1.5rem;
 }
+/* The "i" sits on the bottom edge of the frame, out of the flow, so no state moves the box. */
+.panic-info {
+  position: absolute;
+  right: 14px;
+  bottom: -14px;
+  z-index: 3;
+  width: 1.7rem;
+  height: 1.7rem;
+  padding: 0;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #000000;
+  background: var(--info);
+  border: var(--bw) solid #000000;
+  border-radius: 50%;
+  box-shadow: 2px 2px 0 0 #000000;
+  cursor: pointer;
+  transition:
+    transform 80ms,
+    box-shadow 80ms;
+}
+.panic-info:hover {
+  transform: translateY(-1px);
+  box-shadow: 3px 3px 0 0 #000000;
+}
+.panic-info:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+/* The popover opens under the "i" where anchor positioning works, and centred elsewhere. */
+.pause-info {
+  width: min(420px, calc(100vw - 32px));
+  padding: 16px 20px 18px;
+  color: var(--ink);
+}
+@supports (position-area: bottom) {
+  .pause-info {
+    inset: auto;
+    margin: 10px 0;
+    position-area: bottom span-left;
+    position-try-fallbacks: flip-block;
+  }
+}
+.pause-info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pause-info h3 {
+  font-size: 1.15rem;
+}
+.pause-info-now {
+  margin: 10px 0 12px;
+  padding: 6px 10px;
+  font-weight: 700;
+  background: var(--warning-surface);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+}
+.pause-info dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.pause-info dl > div {
+  display: grid;
+  grid-template-columns: 5.2rem 1fr;
+  gap: 10px;
+}
+.pause-info dt {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-top: 0.2rem;
+}
+.pause-info dd {
+  margin: 0;
+  line-height: 1.4;
+}
 
 /* The paused state (MM-713): a hazard frame around the page and a banner with Resume. */
 .paused-frame {
@@ -1915,6 +2339,26 @@ dialog.palette .dialog-body {
       transform: translateY(-8px);
     }
   }
+  /* The pause info opens as a bottom sheet, like the dialogs. */
+  .panic-info {
+    width: 2.2rem;
+    height: 2.2rem;
+  }
+  .pause-info {
+    inset: auto 0 0;
+    width: 100%;
+    max-width: none;
+    max-height: 88vh;
+    margin: 0;
+    overflow-y: auto;
+    position-area: none;
+    padding-bottom: calc(18px + env(safe-area-inset-bottom));
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -4px 0 0 var(--shadow-ink);
+  }
+  .pause-info::backdrop {
+    background: #0000006b;
+  }
   /* Dialogs open as bottom sheets, close to the thumb. */
   dialog.modal,
   dialog.palette {
@@ -1980,4 +2424,8 @@ dialog.palette .dialog-body {
   *::after {
     transition-duration: 0ms !important;
   }
+}
+/* The card subline is already mono and small. */
+.node .sub .build {
+  font-size: inherit;
 }

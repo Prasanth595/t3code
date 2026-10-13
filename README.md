@@ -13,7 +13,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Updates and releases**
 
-- **Fork releases:** signed nightly desktop builds with a self-made certificate. A release builds when the app shell changes, and once a day.
+- **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus a Linux server archive for machines without a display. A release builds when the app shell changes, and once a day.
 - **Fork installers:** one command installs the fork on macOS, Windows or Linux and joins the machine map. Linux builds from source with a systemd user service.
 - **Live server updates:** the desktop app runs its server and web client from a live folder. The update button offers a new main commit in blue, before "update everything", and only the server restarts (`T3CODE_DESKTOP_LIVE_SERVER_DIR`).
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
@@ -29,6 +29,10 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Pull requests from origin:** a fork checkout lists, reads and watches the pull requests of its fork, not of upstream (`preferOriginRemote`).
 - **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).
 - **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
+
+**Threads**
+
+- **Snooze quick options:** edit the choices of the snooze menus. Each choice snoozes for a time, or until a time of day, with an optional label (`snoozeQuickOptions`).
 
 **Filters**
 

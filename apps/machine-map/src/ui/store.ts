@@ -3,13 +3,7 @@
  */
 import { useEffect, useState } from "react";
 import * as Schema from "effect/Schema";
-import {
-  MachineId,
-  PortalEvent,
-  type MachineMapDocument,
-  type MapPosition,
-  type PortalSnapshot,
-} from "@t3tools/contracts/machineMap";
+import { MachineId, PortalEvent, type PortalSnapshot } from "@t3tools/contracts/machineMap";
 
 import { PauseEvent, type PauseState, type PendingRotation, type RotationsEvent } from "../api.ts";
 
@@ -70,29 +64,32 @@ export function reduce(state: PortalState, event: PageEvent): PortalState {
 }
 
 /**
- * A machine position that the page shows before the map holds it: a dropped machine stays where
- * the owner let go while the save runs.
+ * A place that the page shows before the map holds it: a dropped card stays where the owner let
+ * go while the save runs. `key` names the card, for example `machine:mac`.
  */
-export interface HeldPosition {
-  readonly machineId: MachineId;
-  readonly position: MapPosition;
-  /** The revision that saved the position. Null until the portal answers. */
+export interface Held<T> {
+  readonly key: string;
+  readonly value: T;
+  /** The revision that saved the place. Null until the portal answers. */
   readonly revision: number | null;
 }
 
 /**
- * Drops the held positions that the map caught up with: the map has the same position, or the map
- * reached the revision that saved it. Returns the same array when nothing changed.
+ * Drops the held places that the map caught up with: the map has the same place, or the map
+ * reached the revision that saved it. `saved` returns undefined for a card that is gone.
+ * Returns the same array when nothing changed.
  */
-export function settleHeldPositions(
-  held: ReadonlyArray<HeldPosition>,
-  map: MachineMapDocument,
-): ReadonlyArray<HeldPosition> {
+export function settleHeld<T>(
+  held: ReadonlyArray<Held<T>>,
+  mapRevision: number,
+  saved: (key: string) => T | undefined,
+  same: (a: T, b: T) => boolean,
+): ReadonlyArray<Held<T>> {
   const open = held.filter((h) => {
-    const machine = map.machines.find((m) => m.id === h.machineId);
-    if (!machine) return false;
-    if (h.revision !== null && map.revision >= h.revision) return false;
-    return machine.position.x !== h.position.x || machine.position.y !== h.position.y;
+    const current = saved(h.key);
+    if (current === undefined) return false;
+    if (h.revision !== null && mapRevision >= h.revision) return false;
+    return !same(current, h.value);
   });
   return open.length === held.length ? held : open;
 }

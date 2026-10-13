@@ -217,7 +217,8 @@ const MORNING_HOUR = 9;
 export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
 
 export interface SnoozePreset {
-  readonly id: SnoozePresetId;
+  /** Fork: `custom-<index>` for an option of the `snoozeQuickOptions` client setting. */
+  readonly id: SnoozePresetId | `custom-${number}`;
   readonly label: string;
   /** Menu-row time column. Complements the label instead of repeating it:
       "Tomorrow" pairs with "9:00 AM", not "tomorrow 9:00 AM". */

@@ -10,8 +10,8 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import { applyChanges, findArrow, findMachine } from "../rules/map.ts";
-import { MAC, threeMachines, VPS } from "../rules/testMap.ts";
-import { arrowEnds, arrowEndWait, machineQueue } from "./derive.ts";
+import { MAC, threeMachines, VPS, WIN } from "../rules/testMap.ts";
+import { arrowEnds, arrowEndWait, machineQueue, pauseReach } from "./derive.ts";
 
 describe("machineQueue (MM-602)", () => {
   const map = threeMachines();
@@ -137,5 +137,37 @@ describe("arrowEnds (MM-602, MM-604)", () => {
     expect(ends).toEqual({ from: "applied", to: "waitingToJoin" });
     expect(arrowEndWait(ends.to, findMachine(map.map, VPS)!)).toBe("waiting for VPS to join");
     expect(machineQueue(map, [], findMachine(map.map, VPS)!).count).toBe(0);
+  });
+});
+
+describe("pauseReach (MM-708 to MM-710)", () => {
+  const online: MachinePresence = {
+    online: true,
+    lastSeenAt: "2026-10-13T08:00:00.000Z",
+    appliedRevision: 1,
+    status: null,
+  };
+  const start = threeMachines();
+  const changes: Array<MapChange> = [
+    { _tag: "setArrow", arrow: { ...findArrow(start, MAC, VPS), level: "read" } },
+    { _tag: "setArrow", arrow: { ...findArrow(start, VPS, MAC), level: "none", agentTools: true } },
+    { _tag: "putMachine", machine: { ...findMachine(start, WIN)!, mapRole: "edit" } },
+  ];
+  const snapshot = (map: MachineMapDocument): PortalSnapshot => ({
+    map,
+    presence: { [MAC]: online },
+    reportedSettings: {},
+    commands: [],
+    history: [],
+    proposals: [],
+  });
+
+  it("counts every machine, the offline ones, and each arrow and map role the pause sets to none", () => {
+    const map = applyChanges(start, changes).map;
+    expect(pauseReach(snapshot(map))).toEqual({ machines: 3, offline: 2, arrows: 2, mapRoles: 1 });
+  });
+
+  it("drops nothing on a map that is already locked down", () => {
+    expect(pauseReach(snapshot(start))).toMatchObject({ arrows: 0, mapRoles: 0 });
   });
 });

@@ -13,7 +13,9 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import type { PendingRotation } from "../api.ts";
-import { changesPublicFacts, findMachine } from "../rules/map.ts";
+import { usesText } from "../rules/access.ts";
+import { changesPublicFacts, findMachine, findNote } from "../rules/map.ts";
+import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import { hasJoined, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
@@ -106,7 +108,7 @@ export function describeChange(change: MapChange, map: MachineMapDocument): stri
   switch (change._tag) {
     case "setArrow": {
       const a = change.arrow;
-      const parts = [`${name(a.from)} → ${name(a.to)}: ${LEVEL_LABEL[a.level]}`];
+      const parts = [`${usesText(name(a.from), name(a.to))}: ${LEVEL_LABEL[a.level]}`];
       if (a.agentTools) parts.push("with agent tools");
       if (a.expiresAt && a.revertLevel)
         parts.push(`until ${shortTime(a.expiresAt)}, then ${LEVEL_LABEL[a.revertLevel]}`);
@@ -135,5 +137,44 @@ export function describeChange(change: MapChange, map: MachineMapDocument): stri
       return `Preset ${change.preset.name} with ${change.preset.arrows.length} arrows`;
     case "removePreset":
       return `Delete preset ${change.name}`;
+    case "placePair":
+      return change.offset
+        ? `Card of ${name(change.a)} and ${name(change.b)} moved`
+        : `Card of ${name(change.a)} and ${name(change.b)} back to its own place`;
+    case "putNote":
+      return `Note ${noteQuote(change.note.text)}`;
+    case "removeNote": {
+      const note = findNote(map, change.id);
+      return note ? `Delete note ${noteQuote(note.text)}` : "Delete a note";
+    }
   }
+}
+
+/** The start of a note in quotes, for one-line texts. */
+export function noteQuote(text: string): string {
+  const line = text.split("\n")[0] ?? "";
+  return `“${line.length > 32 ? `${line.slice(0, 31)}…` : line}”`;
+}
+
+/** MM-708: what one press of the big red button reaches now. */
+export interface PauseReach {
+  /** MM-709: every machine gets "stop all agents". */
+  readonly machines: number;
+  /** Offline machines stop their agents when they connect again. */
+  readonly offline: number;
+  /** MM-710: the arrows and map roles that become `none`. */
+  readonly arrows: number;
+  readonly mapRoles: number;
+}
+
+/** Uses the lockdown rule of the pause on the live map without the draft, like the server. */
+export function pauseReach(snapshot: PortalSnapshot): PauseReach {
+  const machines = snapshot.map.machines;
+  const changes = lockdownChanges(snapshot.map);
+  return {
+    machines: machines.length,
+    offline: machines.filter((machine) => snapshot.presence[machine.id]?.online !== true).length,
+    arrows: changes.filter((change) => change._tag === "setArrow").length,
+    mapRoles: changes.filter((change) => change._tag === "putMachine").length,
+  };
 }

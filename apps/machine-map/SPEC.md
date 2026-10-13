@@ -36,7 +36,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-203** A machine joins with the code in one of three ways: in T3 Settings > Machines, with `t3 machine-map join <code>`, or with the agent tool `machines_join`.
 - **MM-204** The join exchanges the code at `/enroll`, which a bypass Access app leaves open. The response holds the token id and secret. The machine keeps the secret in its server secret store and turns on `machineMap`.
 - **MM-205** A new machine shows on the map as "waiting" until its first connection. Then it shows as online.
-- **MM-206** The owner can rename a machine, change its kind and icon, and move it on the map. Positions are part of the map and sync to every page. A new machine takes the free spot farthest from the other machines. The page shows cards that overlap apart, without saving it.
+- **MM-206** The owner can rename a machine, change its kind and icon, and move it on the map. Positions are part of the map and sync to every page. A new machine takes the place that the owner picked (MM-1110), or else the free spot farthest from the other machines. The page shows cards that overlap apart, without saving it.
 - **MM-207** "Rotate token" makes a new secret for a machine token. An online machine gets the new secret on its connection, saves it, and confirms. Then the old secret stops working. An offline machine gets the rotation as a queued command.
 - **MM-208** "Remove machine" deletes the machine token, removes its arrows and its settings overrides, and drops its queue. A removed machine cannot connect again with its old secret.
 - **MM-209** Each machine reports its tunnel hostname. Arrows out of other machines use it to connect.
@@ -88,7 +88,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 - **MM-601** A machine that is not connected is offline. The portal shows the time since its last connection.
 - **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card or setting with a "queued" sticker and a count. A machine that never connected shows "waiting to join" instead. An arrow shows a clock and names each end that did not apply it, in plain text: "queued for <machine>" for a machine that connected before, "waiting for <machine> to join" for a machine that never connected. The work of a machine that never connected does not count in the queued counts or the Queue tab badge.
-- **MM-603** Each machine reports the last revision that it applied. Its desired state is the current map. On connection, the machine applies the current desired state, not each queued revision one by one. A revision that does not change the desired state of a machine, for example a move on the map, queues nothing for it.
+- **MM-603** Each machine reports the last revision that it applied. Its desired state is the current map. On connection, the machine applies the current desired state, not each queued revision one by one. A revision that does not change the desired state of a machine, for example a move on the map, a note or a pair card place (MM-1108, MM-1109), queues nothing for it.
 - **MM-604** An arrow with an online target and an offline source shows "applied on <target>, queued for <source>".
 - **MM-605** A command for an offline machine waits in its queue. Each queued command has a delivery rule: "when online" or "when online and idle". It also has an expiry, by default 24 hours.
 - **MM-606** The owner can cancel a queued command and see why a command expired or failed.
@@ -100,21 +100,24 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-701** Every change makes one revision. A revision records the number, the time, the actor, a one-line summary and the change.
 - **MM-702** The actor is the owner with a device name, an agent with its machine and thread, or the portal itself for expiry.
 - **MM-703** "Undo" on any revision makes a new revision that reverses it. The history keeps both.
-- **MM-704** The history has a time slider. Moving it shows the map at that revision, read only. "Restore" makes a new revision that returns the map to it.
+- **MM-704** The history has a time slider. Moving it shows the map at that revision, read only. "Restore" asks for confirmation, then makes a new revision that returns the map to it, with its pair card places and notes.
 - **MM-705** A preset is a named copy of all arrows. "Save as preset" stores the current arrows. "Apply" makes one revision.
 - **MM-706** "Lockdown" is a built-in preset: every arrow becomes `none` and every map role becomes `none`. It is one click with a confirmation.
 - **MM-707** "Hold changes" collects changes as a draft. "Apply" makes one revision from the draft. "Discard" drops it.
-- **MM-708** "Emergency pause" is a big red button under a flip-up cover. Lifting the cover is the confirmation. One press then does MM-709 and MM-710 in one step. The command palette also opens the button.
+- **MM-708** "Emergency pause" is a big red button under a flip-up cover. Lifting the cover is the confirmation. One press then does MM-709 and MM-710 in one step. The command palette also opens the button. An "i" button on its frame lists what one press does, from MM-709 to MM-712, with the counts of the current map: the machines that get a stop and the arrows and map roles that drop. While paused, it also shows who paused and when. It opens as a popover, and as a bottom sheet on a phone. It never moves the button.
 - **MM-709** Emergency pause sends "stop all agents" to every machine, with delivery "when online" and an expiry of 7 days. An offline machine stops its agents when it connects again. The pause skips the check of MM-502: a machine without the command reports a failure.
 - **MM-710** Emergency pause makes one revision with the summary "Emergency pause": every arrow and every map role becomes `none`, as in lockdown. The portal keeps the arrows and map roles from before the pause. If the map is already locked down, the pause makes no revision. Owner access through Cloudflare Access stays (MM-308).
 - **MM-711** While paused, the portal refuses every agent tool call, `machines_read` too. It also refuses every change that raises an arrow or a map role, from any actor. Changes that lower access, settings and commands still work.
 - **MM-712** "Resume" is for the owner only and asks for confirmation. It makes one revision that returns the arrows and map roles from before the pause, and ends the pause. It does not start agents again, and queued stop commands stay in the queue. A machine that joined during the pause keeps `none`.
 - **MM-713** Every open page shows the pause at once: a hazard frame, the banner "Everything is paused" with who paused and when, and "Resume". The Durable Object stores the pause, so it survives a restart.
+- **MM-714** The history groups moves in a row of one actor (machines, pair cards and notes) into one entry, for example "Moved Mac, VPS and 2 cards · 6 moves". The stop commands of one emergency pause also show as one entry. A group expands to show each revision with its own Undo.
+- **MM-715** Each history entry has a colour and a sticker of one or two words by its meaning: access raised (up), access lowered (down), emergency pause and resume (hazard stripes), lockdown, settings, machines added or removed, joins and hostnames, expiries (clock), moves, notes and presets. A change by an agent also shows an "agent" sticker. Each entry shows the actor, the time since it happened with the exact time on hover, a short summary, and an expandable before and after of each change. Day headings separate the days.
+- **MM-716** The history filters by machine, by kind, by actor and "important only". Important kinds are access raised or lowered, pause, resume, lockdown, expiries and machines added or removed.
 
 ## 8. Agents
 
 - **MM-801** Every action in the portal is also a T3 tool on each machine:
-  - `machines_read`: the map, presence, arrows, settings, queue and history.
+  - `machines_read`: the map with its notes and pair card places, presence, arrows, settings, queue and history.
   - `machines_set_access`: set the level, agent tools and expiry of an arrow.
   - `machines_set_setting`: set or clear a shared value or a machine override.
   - `machines_command`: send a command, with a delivery rule and expiry.
@@ -142,7 +145,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 10. Presence and status
 
 - **MM-1001** Each machine reports its status on connection and on each change, at most once every 5 seconds. Liveness uses the text messages `ping` and `pong`. The Durable Object answers `ping` with its auto response, so a ping does not wake it.
-- **MM-1002** The status holds: T3 version, build (live commit, deploy commit or release), uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands.
+- **MM-1002** The status holds: T3 version, build, uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands. The build is `<kind> <commit>` with a 7-character commit, for example `live 5abed5f`. The kind is `live` (the Mac desktop live server), `deploy` (the VPS deploy in `/opt/t3code*`) or `dev` (another checkout). A packaged release reports `release` with no commit. The portal shows the build in one mono label, `<T3 version> · <kind> <commit>`, for example `0.0.45 · live 5abed5f`, on machine cards, in the Table, in the machine panel and in Devices. The commit links to the fork commit on GitHub. With two or more online machines, a NEWEST sticker marks the machines that run the newest build and a BEHIND sticker marks the others. The portal cannot order commits, so the newest build has the highest T3 version, then the latest server start.
 - **MM-1003** A machine card shows online or offline, the build, and stickers for running agents, threads that wait for the owner, a waiting update, and queued items.
 - **MM-1004** "Open" on a machine opens its T3 web app at its tunnel hostname.
 
@@ -150,11 +153,15 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 - **MM-1101** The portal uses the tick3d style in light and dark mode, as in the `neo-brutalism` skill. It works on a phone and on a desktop.
 - **MM-1102** Views: Map, Table, Settings, Queue, History, Inbox, Devices. The selected item opens in a side panel, or in a bottom sheet on a phone.
-- **MM-1103** The Map view draws one line per pair of machines. A card on each line shows both directions in words, with arrows rounded to the four directions of the map. A pair with no access either way shows one short row; a phone shows its card only for the focused machine. Pair cards stay off machine cards. Tapping a machine focuses it and fades the lines that do not touch it. Tapping it again, tapping the empty map, "Show all" or Escape ends the focus.
+- **MM-1103** The Map view draws one line per pair of machines. A card on each line shows both directions in words. Each row reads "<source> uses <target>" with the level, so the text says the direction in every layout. A small glyph after the target shows where the target sits on the map, rounded to the four directions. A pair with no access either way shows one short row, "<a> and <b>"; a phone shows its card only for the focused machine. The table, the arrow panel, the history and the command palette use the same "uses" wording. Pair cards in their automatic place stay off machine cards and notes. Tapping a machine focuses it and fades the lines that do not touch it. Tapping it again, tapping the empty map, "Show all" or Escape ends the focus.
 - **MM-1104** Dragging from a machine to another machine opens their arrow.
 - **MM-1105** The command palette, opened with Cmd+K or Ctrl+K, finds every action and every machine.
 - **MM-1106** Each view and each selected item has its own link, so a link opens the same state.
 - **MM-1107** The portal has no continuous animation. A change plays at most one short transition.
+- **MM-1108** The owner can drag a pair card like a machine card. The map stores its place relative to the line of the pair, along the line and beside it, so the card follows when the machines move. A card that the owner did not place keeps its automatic place. "Reset position" in the arrow panel returns it to the automatic place. A card place is display data: no machine applies it.
+- **MM-1109** Notes are sticky notes on the map: free text of at most 500 characters, one of four colours, with a small tilt. The owner moves a note by dragging, edits it in place with a tap, and deletes it in place. Each change is a revision with Undo. A note is display data: no machine applies it.
+- **MM-1110** A double click on empty map space, or a long press on a phone, opens a small menu at that point: "Add machine here" opens Add machine (MM-201) and places the new machine at that point. "Add note here" opens a new note in place.
+- **MM-1111** A drag of a machine, a pair card or a note moves at the frame rate of the screen. The dropped card stays where the owner let go until the map holds the new place, and it never jumps back.
 
 ## 12. Security
 
