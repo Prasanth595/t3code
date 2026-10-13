@@ -1,9 +1,7 @@
 /**
- * Discover fx skills for the `$` picker by scanning SKILL.md directories.
- *
- * Roots are an ordered table in fx's documented order. Workspace roots are
- * repeated from the workspace upward, stopping before the home directory, then
- * the user roots. The first skill with a name wins.
+ * Discovers fx skills for the `$` picker by scanning the SKILL.md folders fx
+ * reads (fx 0.0.13, src/builtins/skills.zig), so no `fx acp` session starts
+ * for a composer menu.
  *
  * @module provider-fx/server/skills
  */
@@ -18,33 +16,30 @@ import { parse as parseYamlDocument } from "yaml";
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/;
 const MAX_SKILL_BYTES = 1_000_000;
 
-type SkillScope = "project" | "user";
+/**
+ * fx's menu lists its managed `~/.fx/skills` first, then a workspace's own
+ * `.fx/skills` and `skills/`, then every compatibility root
+ * (`skillGroupRank` in src/core/skills/skill_runtime.zig).
+ */
+type SkillRoot = { readonly relative: string; readonly rank: 0 | 1 | 2 };
 
-interface SkillRoot {
-  readonly scope: SkillScope;
-  readonly relative: string;
-}
-
-const FX_SKILL_ROOTS = [
-  { scope: "project", relative: ".fx/skills" },
-  { scope: "project", relative: "skills" },
-  { scope: "project", relative: ".opencode/skills" },
-  { scope: "project", relative: ".codex/skills" },
-  { scope: "project", relative: ".claude/skills" },
-  { scope: "project", relative: ".agents/skills" },
-  { scope: "project", relative: ".claw/skills" },
-  { scope: "user", relative: ".fx/skills" },
-  { scope: "user", relative: ".config/opencode/skills" },
-  { scope: "user", relative: ".codex/skills" },
-  { scope: "user", relative: ".claude/skills" },
-  { scope: "user", relative: ".agents/skills" },
-  { scope: "user", relative: ".claw/skills" },
-] as const satisfies ReadonlyArray<SkillRoot>;
-
-interface SkillFrontmatter {
-  readonly name?: string;
-  readonly description?: string;
-}
+const FX_WORKSPACE_ROOTS: ReadonlyArray<SkillRoot> = [
+  { relative: ".fx/skills", rank: 1 },
+  { relative: "skills", rank: 1 },
+  { relative: ".opencode/skills", rank: 2 },
+  { relative: ".codex/skills", rank: 2 },
+  { relative: ".claude/skills", rank: 2 },
+  { relative: ".agents/skills", rank: 2 },
+  { relative: ".claw/skills", rank: 2 },
+];
+const FX_HOME_ROOTS: ReadonlyArray<SkillRoot> = [
+  { relative: ".fx/skills", rank: 0 },
+  { relative: ".config/opencode/skills", rank: 2 },
+  { relative: ".codex/skills", rank: 2 },
+  { relative: ".claude/skills", rank: 2 },
+  { relative: ".agents/skills", rank: 2 },
+  { relative: ".claw/skills", rank: 2 },
+];
 
 function nonEmptyTrimmed(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -52,11 +47,14 @@ function nonEmptyTrimmed(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function parseSkillFrontmatter(contents: string): SkillFrontmatter {
+function parseSkillFrontmatter(contents: string): {
+  readonly name?: string;
+  readonly description?: string;
+} {
   const match = FRONTMATTER_PATTERN.exec(contents);
   if (!match) return {};
   try {
-    const parsed = parseYamlDocument(match[1] ?? "");
+    const parsed: unknown = parseYamlDocument(match[1] ?? "");
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
     const record = parsed as Record<string, unknown>;
     const name = nonEmptyTrimmed(record.name);
@@ -70,43 +68,32 @@ function parseSkillFrontmatter(contents: string): SkillFrontmatter {
   }
 }
 
-function ancestorsBeforeHome(
-  path: Path.Path,
-  workspaceCwd: string,
-  home: string,
-): ReadonlyArray<string> {
-  const homePath = path.resolve(home);
-  const ancestors: Array<string> = [];
-  let current = path.resolve(workspaceCwd);
-  while (current !== homePath) {
-    ancestors.push(current);
+/**
+ * fx scans the workspace roots of each directory from the workspace up to,
+ * not including, HOME, then its managed root, then the home roots.
+ */
+function skillRoots(path: Path.Path, cwd: string, home: string) {
+  const roots: Array<{
+    readonly directory: string;
+    readonly scope: string;
+    readonly rank: number;
+  }> = [];
+  for (let current = path.resolve(cwd); current !== home;) {
+    for (const root of FX_WORKSPACE_ROOTS) {
+      roots.push({
+        directory: path.join(current, root.relative),
+        scope: "project",
+        rank: root.rank,
+      });
+    }
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
   }
-  return ancestors;
-}
-
-function concreteSkillRoots(
-  path: Path.Path,
-  home: string,
-  workspaceCwd: string | undefined,
-): ReadonlyArray<{ readonly directory: string; readonly scope: SkillScope }> {
-  const projectRoots = FX_SKILL_ROOTS.filter((root) => root.scope === "project");
-  const userRoots = FX_SKILL_ROOTS.filter((root) => root.scope === "user");
-  const ancestors = workspaceCwd === undefined ? [] : ancestorsBeforeHome(path, workspaceCwd, home);
-  return [
-    ...ancestors.flatMap((ancestor) =>
-      projectRoots.map((root) => ({
-        directory: path.join(ancestor, root.relative),
-        scope: "project" as const,
-      })),
-    ),
-    ...userRoots.map((root) => ({
-      directory: path.join(path.resolve(home), root.relative),
-      scope: "user" as const,
-    })),
-  ];
+  for (const root of FX_HOME_ROOTS) {
+    roots.push({ directory: path.join(home, root.relative), scope: "user", rank: root.rank });
+  }
+  return roots;
 }
 
 const skipUnreadable = <A, R>(
@@ -127,21 +114,14 @@ const skipUnreadable = <A, R>(
 
 const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (input: {
   readonly directory: string;
-  readonly scope: SkillScope;
+  readonly scope: string;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const rootInfo = yield* skipUnreadable(input.directory, fileSystem.stat(input.directory));
-  if (rootInfo?.type !== "Directory") return [];
   const entries = yield* skipUnreadable(input.directory, fileSystem.readDirectory(input.directory));
-  if (entries === undefined) return [];
-
   const skills: Array<ServerProviderSkill> = [];
-  for (const entry of entries) {
-    const candidate = path.join(input.directory, entry);
-    const candidateInfo = yield* skipUnreadable(candidate, fileSystem.stat(candidate));
-    if (candidateInfo?.type !== "Directory") continue;
-    const skillPath = path.join(candidate, "SKILL.md");
+  for (const entry of entries ?? []) {
+    const skillPath = path.join(input.directory, entry, "SKILL.md");
     const skillInfo = yield* skipUnreadable(skillPath, fileSystem.stat(skillPath));
     if (skillInfo?.type !== "File") continue;
     if (skillInfo.size > MAX_SKILL_BYTES) {
@@ -167,27 +147,20 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
   return skills;
 });
 
-function firstNameWins(
-  groups: ReadonlyArray<ReadonlyArray<ServerProviderSkill>>,
-): ReadonlyArray<ServerProviderSkill> {
-  const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const skill of groups.flat()) {
-    if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
-  }
-  return [...skillsByName.values()];
-}
-
+/** Skills in fx's menu order. The first root to name a skill wins, as in fx. */
 export const discoverFxSkills = Effect.fn("discoverFxSkills")(function* (input: {
-  readonly cwd?: string;
-  readonly environment?: NodeJS.ProcessEnv;
+  readonly cwd: string;
+  readonly environment: NodeJS.ProcessEnv;
 }): Effect.fn.Return<ReadonlyArray<ServerProviderSkill>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
-  const environment = input.environment ?? process.env;
-  const home = environment.HOME?.trim() || (yield* HostProcess.HomeDirectory);
-  const roots = concreteSkillRoots(path, home, input.cwd);
-  const groups: Array<ReadonlyArray<ServerProviderSkill>> = [];
-  for (const root of roots) {
-    groups.push(yield* discoverSkillsInRoot(root));
+  const home = path.resolve(input.environment.HOME?.trim() || (yield* HostProcess.HomeDirectory));
+  const ranked = new Map<string, { readonly skill: ServerProviderSkill; readonly rank: number }>();
+  for (const root of skillRoots(path, input.cwd, home)) {
+    for (const skill of yield* discoverSkillsInRoot(root)) {
+      if (!ranked.has(skill.name)) ranked.set(skill.name, { skill, rank: root.rank });
+    }
   }
-  return firstNameWins(groups);
+  return [...ranked.values()]
+    .sort((left, right) => left.rank - right.rank)
+    .map((entry) => entry.skill);
 });
