@@ -1,4 +1,4 @@
-import { isSshNetworkAddress } from "@t3tools/client-runtime/connection";
+import { isSshNetworkAddress, redactSshAddresses } from "@t3tools/client-runtime/connection";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -189,7 +189,14 @@ function ActiveSshPasswordPrompt({
           >
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-medium text-foreground">{request.prompt}</p>
+                <p className="text-sm font-medium text-foreground">
+                  {redactSshAddresses(request.prompt, {
+                    alias: request.destination,
+                    hostname: request.destination,
+                    username: request.username,
+                    port: null,
+                  })}
+                </p>
                 {remainingLabel ? (
                   <span
                     className={
