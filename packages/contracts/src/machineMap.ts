@@ -265,7 +265,7 @@ export type MachineClientSession = typeof MachineClientSession.Type;
 /** MM-1002. */
 export const MachineStatus = Schema.Struct({
   t3Version: Schema.String,
-  /** Live commit, release version or deploy commit. */
+  /** `<kind> <commit>`: `live`, `deploy` or `dev` with a 7-character commit, or `release`. */
   build: Schema.String,
   hostname: Schema.NullOr(TrimmedNonEmptyString),
   uptimeSeconds: Schema.Number,
