@@ -9,8 +9,8 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { Command, Flag } from "effect/unstable/cli";
-import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { Command, Flag } from "effect/cli";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { fromYaml } from "@t3tools/shared/schemaYaml";
 
 import { referenceRepos, type ReferenceRepo } from "./lib/reference-repos.ts";
@@ -91,14 +91,11 @@ export class ReferenceRepoGitSubtreeError extends Schema.TaggedError<ReferenceRe
   }
 }
 
-export const ReferenceRepoSyncError = Schema.Union([
-  ReferenceRepoSelectionError,
-  ReferenceRepoVersionSourceError,
-  ReferenceRepoVersionResolutionError,
-  ReferenceRepoGitSubtreeError,
-]);
-export type ReferenceRepoSyncError = typeof ReferenceRepoSyncError.Type;
-export const isReferenceRepoSyncError = Schema.is(ReferenceRepoSyncError);
+export type ReferenceRepoSyncError =
+  | ReferenceRepoSelectionError
+  | ReferenceRepoVersionSourceError
+  | ReferenceRepoVersionResolutionError
+  | ReferenceRepoGitSubtreeError;
 
 const decodeJsonSource = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeYamlSource = Schema.decodeEffect(fromYaml(Schema.Unknown));
