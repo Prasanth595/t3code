@@ -198,7 +198,7 @@ export function ImageChipButton({
           crossOrigin={corsFailedUrl === previewUrl ? undefined : "anonymous"}
           src={previewUrl}
           alt=""
-          className="size-[1.17em] shrink-0 rounded-sm object-cover"
+          className="ml-[-0.1em] size-[calc(1.32em-2px)] shrink-0 rounded-sm object-cover"
           onError={() => setCorsFailedUrl(previewUrl)}
           onLoad={(event) =>
             setSample({ url: previewUrl, color: averageImageColor(event.currentTarget) })
