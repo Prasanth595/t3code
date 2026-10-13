@@ -1042,6 +1042,7 @@ describe("searchSidebarThreads", () => {
   it("matches a full or partial thread ID", () => {
     expect(searchSidebarThreads(threads, "thread-2")).toEqual([threads[1]]);
     expect(searchSidebarThreads(threads, "  THREAD-3 ")).toEqual([threads[2]]);
+    expect(searchSidebarThreads(threads, "ead-2")).toEqual([threads[1]]);
   });
 
   it("does not match project metadata", () => {
