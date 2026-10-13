@@ -142,6 +142,27 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 - The server reads GitHub with the GitHub credential of its machine, the same one that pull requests use (settings, `GH_TOKEN` or `gh auth login`). Without a credential, the changelog shows the GitHub error.
 - Starting Fork Sync needs the `source-control:write` scope on the connection.
 
+## Install the fork
+
+`scripts/fork-install/` installs the fork on a new machine. The join dialog of the machine map copies these commands with the join code (MM-211).
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
+```
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
+```
+
+- On macOS, `install.sh` downloads the newest nightly `.dmg`, copies the app to `/Applications` and opens it. It keeps an installed app, because the app updates itself. `--force` replaces it. The join code goes to the clipboard for Settings > Machines.
+- On Windows, `install.ps1` downloads and runs the newest nightly `.exe`. The join code goes to the clipboard.
+- Both read the release list of the GitHub API, because the nightlies are pre-releases and `releases/latest` skips them.
+- On Linux, `install.sh` does not use the Linux server archive of the release yet. It clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs `~/.local/bin/t3` and the systemd user service `t3code-fork.service` on `127.0.0.1:3773`. Then it runs `t3 machine-map join <code>`. Run it again to update. A restart stops the running agent turns of that server.
+- `--from-source` selects the source build on any system. Keep this path when Linux switches to the server archive. On macOS it installs no service.
+- The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
+- To keep the Linux server running after logout, run `loginctl enable-linger $(id -un)`. To reach it from other machines, publish it with a tunnel, like the VPS.
+- Run `install.sh --help` for the options.
+
 ## Deploy to the VPS
 
 The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
@@ -267,7 +288,7 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
 
 - Agents use the machine map through the `machines_*` and `machine_tool_call` tools. See [fork-agents.md](fork-agents.md).
-- Join: in the portal, "Add machine" shows a one-time join code. On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
+- Join: in the portal, "Add machine" shows a one-time join code. A machine without the fork installs it first with the step 0 command of the dialog, see "Install the fork". On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
 - Settings > Machines shows the connection status, the last error, the portal link, this machine's name, and the machines that it can use with their levels. "Leave" forgets the token and turns `machineMap` off. Join and leave need the `settings:write` scope.
 - The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.
 - The desktop app reads the machine map state of its own server. It acts only while that server is joined, because only then does the server send it the token headers.

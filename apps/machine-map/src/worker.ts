@@ -18,6 +18,7 @@ import {
 } from "./api.ts";
 import type { Env } from "./env.ts";
 import { MACHINE_CLIENT_ID_HEADER, type Outcome, type OwnerContext } from "./MachineMapObject.ts";
+import { fetchNewestRelease } from "./releases.ts";
 import { describeUserAgent } from "./rules/device.ts";
 import { sha256Hex } from "./sealedSecret.ts";
 
@@ -174,6 +175,8 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.pause(owner));
     case "POST /resume":
       return toResponse(await stub.resume(owner));
+    case "GET /fork-release":
+      return json(await fetchNewestRelease());
     case "GET /devices":
       return toResponse(await stub.devices(owner));
     case "POST /devices/sign-out-everywhere":

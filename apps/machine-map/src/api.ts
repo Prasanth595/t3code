@@ -242,3 +242,15 @@ export type MapToolResult =
     }
   | WriteResult
   | { readonly _tag: "command"; readonly command: MachineCommand };
+
+export const FORK_RELEASES_PAGE = "https://github.com/Yarden-zamir/t3code/releases";
+
+/** GET /api/fork-release: the newest nightly of the fork (MM-211). */
+export interface ForkRelease {
+  /** Null when GitHub did not answer. The page then links to `pageUrl` only. */
+  readonly tag: string | null;
+  readonly version: string | null;
+  readonly pageUrl: string;
+  readonly macUrl: string | null;
+  readonly windowsUrl: string | null;
+}

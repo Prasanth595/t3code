@@ -1872,6 +1872,66 @@ dialog.palette .dialog-body {
   display: grid;
   gap: 8px;
 }
+/* MM-211: the install step of the join dialog. */
+.install-step {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--raised);
+  border: var(--bw) solid var(--border);
+  border-radius: var(--radius);
+}
+.install-step p {
+  margin: 0;
+}
+.install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+/* A split button: the main action and an arrow that opens its menu, joined into one box. */
+.split {
+  display: inline-flex;
+  anchor-name: --install-split;
+}
+.split .btn:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.split .btn + .btn {
+  margin-left: calc(-1 * var(--bw));
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.install-menu {
+  position-anchor: --install-split;
+  position-area: block-end span-inline-end;
+  position-try-fallbacks: flip-block;
+  margin: 6px 0;
+  padding: 4px;
+  min-width: 15rem;
+  color: var(--ink);
+}
+.install-menu [role="menuitem"] {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: none;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.install-menu [role="menuitem"]:is(:hover, :focus-visible) {
+  background: var(--select);
+  color: var(--select-fg);
+}
 /* The big red button (MM-708): a mushroom in a hazard frame under a flip-up cover. */
 .panic {
   position: relative;
