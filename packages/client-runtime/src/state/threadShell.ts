@@ -30,6 +30,11 @@ const EMPTY_THREAD_REFS_BY_PROJECT: ReadonlyMap<
   ReadonlyArray<ScopedThreadRef>
 > = new Map();
 
+// An async question outlives the subagent's run, but once that run ends the
+// parent is no longer waiting on the answer, so it stops counting as input.
+const isChildRunLive = (status: OrchestrationV2ThreadShell["status"]) =>
+  status === "preparing" || status === "starting" || status === "running" || status === "waiting";
+
 export function createEnvironmentThreadShellAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly snapshotAtom: (
@@ -163,6 +168,7 @@ export function createEnvironmentThreadShellAtoms(input: {
           pending.push(child.id);
           if (
             child.pendingRuntimeRequest?.kind === "user_input" &&
+            isChildRunLive(child.status) &&
             !isProviderNativeSubagentThread(child)
           ) {
             next.push(scopedThread(ref.environmentId, child));
