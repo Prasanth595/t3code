@@ -163,7 +163,7 @@ const makeMigrationLoader = (throughId?: number) =>
     ),
   );
 
-// V2 owns every id from 55 on; main's migrations end at 54.
+// V2's schema migrations start at 55 after the legacy schema migrations.
 const FIRST_V2_MIGRATION_ID = 55;
 
 /**
@@ -173,7 +173,9 @@ const FIRST_V2_MIGRATION_ID = 55;
  * start without V2's schema and fail on first use. Earlier ids keep the
  * warning below: databases with a site-local migration there still work.
  */
-const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* () {
+const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
+  throughId?: number,
+) {
   const sql = yield* SqlClient.SqlClient;
   const tables = yield* sql`
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
@@ -186,7 +188,12 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   const latestRecordedId = Math.max(0, ...recorded.map((row) => row.migration_id));
   const recordedNames = new Map(recorded.map((row) => [row.migration_id, row.name]));
   const skipped = migrationEntries.flatMap(([id, name]) => {
-    if (id < FIRST_V2_MIGRATION_ID || id > latestRecordedId) return [];
+    if (
+      id < FIRST_V2_MIGRATION_ID ||
+      id > latestRecordedId ||
+      (throughId !== undefined && id > throughId)
+    )
+      return [];
     const recordedName = recordedNames.get(id);
     if (recordedName === name) return [];
     return [`${id}_${name} (recorded: ${recordedName ?? "nothing"})`];
@@ -194,7 +201,7 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
   if (skipped.length === 0) return;
   return yield* new Migrator.MigrationError({
     kind: "BadState",
-    message: `This database recorded other migrations at ids this build needs for its own schema, so it would skip ${skipped.join(", ")}. It was probably written by a different build. Start the build that wrote it, or report this so the migration can be renumbered.`,
+    message: `This database's migration history would skip required schema migrations: ${skipped.join(", ")}. The migrator skips every id up to the highest recorded id (${latestRecordedId}), regardless of name. It was probably written by a different build. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
   });
 });
 
@@ -225,7 +232,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
   if (includesV2) {
-    yield* assertV2MigrationsCanRun();
+    yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
   const executedMigrations = [
     ...previewMigrations,

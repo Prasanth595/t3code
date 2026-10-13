@@ -6,6 +6,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
 
+const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
+const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
+
 const history = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ readonly migration_id: number; readonly name: string }>`
@@ -40,6 +43,7 @@ describe("runMigrations", () => {
       `;
       const before = yield* history;
 
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 54 }), []);
       const exit = yield* Effect.exit(runMigrations());
 
       assert.isTrue(Exit.isFailure(exit));
@@ -54,35 +58,63 @@ describe("runMigrations", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 54 });
       yield* sql`
-        INSERT INTO effect_sql_migrations (migration_id, name) VALUES (60, 'FutureMainMigration')
+        INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (${newerMigrationId}, 'FutureMainMigration')
       `;
+      const before = yield* history;
 
       const exit = yield* Effect.exit(runMigrations());
 
       assert.isTrue(Exit.isFailure(exit));
-      assert.include(String(exit), "55_OrchestrationV2 (recorded: nothing)");
-      assert.include(String(exit), "56_RemoveRedundantProjectionIndexes (recorded: nothing)");
-      assert.include(String(exit), "57_ScheduledTaskWebhooks (recorded: nothing)");
-      assert.include(String(exit), "58_WebhookRelayDeliveries (recorded: nothing)");
-      assert.include(String(exit), "59_McpAppModelContext (recorded: nothing)");
+      for (const [id, name] of v2Migrations) {
+        assert.include(String(exit), `${id}_${name} (recorded: nothing)`);
+      }
+      assert.deepStrictEqual(yield* history, before);
       assert.strictEqual(yield* v2TableCount, 0);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("still starts with a site-local migration at an earlier id", () =>
+  it.effect("upgrades a database at exactly 54", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive: 54 });
+      assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.isAbove(yield* v2TableCount, 0);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect.each([30, 54])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 54 });
-      yield* sql`UPDATE effect_sql_migrations SET name = 'SiteLocalMigration' WHERE migration_id = 30`;
+      yield* sql`
+        UPDATE effect_sql_migrations SET name = 'SiteLocalMigration' WHERE migration_id = ${id}
+      `;
 
-      assert.deepStrictEqual(yield* runMigrations(), [
-        [55, "OrchestrationV2"],
-        [56, "RemoveRedundantProjectionIndexes"],
-        [57, "ScheduledTaskWebhooks"],
-        [58, "WebhookRelayDeliveries"],
-        [59, "McpAppModelContext"],
-      ]);
+      assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
       assert.isAbove(yield* v2TableCount, 0);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("only checks V2 migrations within the requested limit", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 55 });
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (56, 'SiteLocalMigration'), (${newerMigrationId}, 'NewerV2Migration')
+      `;
+      const before = yield* history;
+
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 55 }), []);
+      const exit = yield* Effect.exit(runMigrations({ toMigrationInclusive: 56 }));
+      assert.isTrue(Exit.isFailure(exit));
+      assert.include(
+        String(exit),
+        "56_RemoveRedundantProjectionIndexes (recorded: SiteLocalMigration)",
+      );
+      assert.notInclude(String(exit), "57_ScheduledTaskWebhooks");
+      assert.deepStrictEqual(yield* history, before);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
@@ -91,7 +123,8 @@ describe("runMigrations", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations();
       yield* sql`
-        INSERT INTO effect_sql_migrations (migration_id, name) VALUES (60, 'NewerV2Migration')
+        INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (${newerMigrationId}, 'NewerV2Migration')
       `;
 
       assert.deepStrictEqual(yield* runMigrations(), []);
