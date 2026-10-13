@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "t3-machine-map",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "t3.yarden-zamir.com", "custom_domain": true }],
+  // The page bundle from `vp build`. The Worker runs first only for its own paths.
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/connect", "/enroll"],
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "MAP", "class_name": "MachineMapObject" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MachineMapObject"] }],
+  "vars": {
+    "TEAM_DOMAIN": "super-bird-2876.cloudflareaccess.com",
+    "OWNER_EMAILS": "dev@yarden-zamir.com",
+    "ACCOUNT_ID": "2b654a284959a6a3b93fe33940d70db0",
+    // The Access app of the machine hostnames. MM-201 adds new machine tokens to its policy.
+    "MACHINE_ACCESS_APP_ID": "105f4611-1456-4a57-a127-9af5155e5c49",
+    // Create the Access apps of the README, then replace these values before the first deploy.
+    // The Worker refuses every owner and machine request while a value starts with REPLACE_.
+    "PAGE_AUD": "7b996f4459cde10da806d3c60d5b498a08bcd655323dda1521e2c8fc631db0da",
+    "CONNECT_AUD": "4fb6adb125d42e929f534ac373e5de3b0306176bbe02ef3029bb9fa478ceb0ee",
+    "CONNECT_ACCESS_APP_ID": "6cfe30ed-8abe-41d7-9f36-ef3e2a509b97",
+  },
+  // Secrets (`wrangler secret put`): SECRET_KEY (required for joins), CF_API_TOKEN (optional).
+}

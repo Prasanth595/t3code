@@ -51,7 +51,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
   - `standard`: `AuthStandardClientScopes`.
   - `admin`: `AuthAdministrativeScopes`.
 - **MM-303** An arrow has the option "agent tools". With it on, agents on the source machine can call T3 tools on the target machine, within the scopes of the level.
-- **MM-304** An arrow can expire. "For 1 hour", "for 1 day" and "until a time" set an expiry. At expiry the arrow returns to its earlier level as a new revision made by the portal.
+- **MM-304** An arrow can expire. "For 1 hour", "for 1 day" and "until a time" set an expiry. At expiry the arrow returns to its earlier permanent level as a new revision made by the portal. A second temporary level keeps the first permanent level.
 - **MM-305** The target machine enforces an arrow. A lower level ends the sessions of the source machine on the target at once, including open connections. The source then connects again with the new level, or not at all for `none`.
 - **MM-306** The source machine uses an arrow. Its desktop app adds each machine it can reach, with its machine token as request headers. No pairing code is needed.
 - **MM-307** "Test" on an arrow makes the source machine connect to the target and report the result: reachable or not, the round trip time, and the scopes it got.
@@ -86,7 +86,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 6. Queue and offline machines
 
 - **MM-601** A machine that is not connected is offline. The portal shows the time since its last connection.
-- **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card, arrow or setting with a "queued" sticker and a count.
+- **MM-602** A change that touches an offline machine waits for it. The map shows the change at once, and marks the affected machine card, arrow or setting with a "queued" sticker and a count. A machine that never connected shows "waiting to join" instead, and arrows show "waiting for <machine> to join". Its work does not count in the queued counts or the Queue tab badge.
 - **MM-603** Each machine reports the last revision that it applied. Its desired state is the current map. On connection, the machine applies the current desired state, not each queued revision one by one.
 - **MM-604** An arrow with an online target and an offline source shows "applied on <target>, queued for <source>".
 - **MM-605** A command for an offline machine waits in its queue. Each queued command has a delivery rule: "when online" or "when online and idle". It also has an expiry, by default 24 hours.
@@ -103,6 +103,12 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-705** A preset is a named copy of all arrows. "Save as preset" stores the current arrows. "Apply" makes one revision.
 - **MM-706** "Lockdown" is a built-in preset: every arrow becomes `none` and every map role becomes `none`. It is one click with a confirmation.
 - **MM-707** "Hold changes" collects changes as a draft. "Apply" makes one revision from the draft. "Discard" drops it.
+- **MM-708** "Emergency pause" is a big red button under a flip-up cover. Lifting the cover is the confirmation. One press then does MM-709 and MM-710 in one step. The command palette also opens the button.
+- **MM-709** Emergency pause sends "stop all agents" to every machine, with delivery "when online" and an expiry of 7 days. An offline machine stops its agents when it connects again. The pause skips the check of MM-502: a machine without the command reports a failure.
+- **MM-710** Emergency pause makes one revision with the summary "Emergency pause": every arrow and every map role becomes `none`, as in lockdown. The portal keeps the arrows and map roles from before the pause. If the map is already locked down, the pause makes no revision. Owner access through Cloudflare Access stays (MM-308).
+- **MM-711** While paused, the portal refuses every agent tool call, `machines_read` too. It also refuses every change that raises an arrow or a map role, from any actor. Changes that lower access, settings and commands still work.
+- **MM-712** "Resume" is for the owner only and asks for confirmation. It makes one revision that returns the arrows and map roles from before the pause, and ends the pause. It does not start agents again, and queued stop commands stay in the queue. A machine that joined during the pause keeps `none`.
+- **MM-713** Every open page shows the pause at once: a hazard frame, the banner "Everything is paused" with who paused and when, and "Resume". The Durable Object stores the pause, so it survives a restart.
 
 ## 8. Agents
 
@@ -118,7 +124,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
   - `machine_tool_call`: call a T3 tool on another machine.
 - **MM-802** A tool works when the machine that runs the agent has the map role for it:
   - `read`: `machines_read`.
-  - `propose`: every change becomes a proposal for the owner.
+  - `propose`: every change becomes a proposal for the owner. A proposal holds only map changes, so `machines_command` and `machines_queue_cancel` need `edit`.
   - `edit`: changes apply at once.
   - `machine_tool_call` needs an arrow with "agent tools" to the target machine.
 - **MM-803** An agent can never raise access for its own machine. That change always becomes a proposal, whatever the map role.
