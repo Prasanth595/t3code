@@ -24,6 +24,7 @@ import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
 import {
   getLocalEnvironmentBootstraps,
@@ -31,6 +32,7 @@ import {
   pasteAsText,
   pickProjectFavicon,
   probeRemoteEditors,
+  revealMainWindow,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -344,3 +346,26 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
       assert.include(editors, "webstorm");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("revealMainWindow", () => {
+  it.effect("activates the main window only for its renderer", () => {
+    const activations: string[] = [];
+    return Effect.gen(function* () {
+      yield* revealMainWindow.handler(undefined, { sender: { id: 8 } });
+      yield* revealMainWindow.handler(undefined);
+      yield* revealMainWindow.handler(undefined, { sender: { id: 7 } });
+      assert.deepEqual(activations, ["activate"]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(ElectronWindow.ElectronWindow, {
+            main: Effect.succeedSome({ webContents: { id: 7 } }),
+          } as ElectronWindow.ElectronWindow["Service"]),
+          Layer.succeed(DesktopWindow.DesktopWindow, {
+            activate: Effect.sync(() => activations.push("activate")),
+          } as unknown as DesktopWindow.DesktopWindow["Service"]),
+        ),
+      ),
+    );
+  });
+});

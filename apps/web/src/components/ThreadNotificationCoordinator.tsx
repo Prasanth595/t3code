@@ -222,6 +222,7 @@ function EnvironmentNotifications({
         onNotification(environmentId, notification);
         notification.addEventListener("click", () => {
           notification.close();
+          void window.desktopBridge?.revealMainWindow?.().catch(() => undefined);
           window.focus();
           void navigate({
             to: "/$environmentId/$threadId",
