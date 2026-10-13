@@ -1,8 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, it } from "@effect/vitest";
 import {
+  MessageId,
+  NodeId,
+  ProjectId,
   ProviderInstanceId,
   ProviderSessionId,
+  RunAttemptId,
+  RunId,
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -14,11 +19,13 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/ProviderAdapter";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
@@ -130,6 +137,8 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly model?: string;
   /** Loads this fx session instead of creating one. */
   readonly loadSessionId?: string;
+  /** Then starts a turn on this model. */
+  readonly turnModel?: string;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -165,24 +174,77 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
       fileSystem,
     }),
   });
-  yield* adapter
-    .openSession({
-      threadId: ThreadId.make(`thread-fx-${input.scenario}`),
+  const threadId = ThreadId.make(`thread-fx-${input.scenario}`);
+  // The thread's effort matches the session's, so no effort write is scripted.
+  const selectionOn = (model: string) => ({
+    instanceId,
+    model,
+    options: [{ id: "effort", value: "xhigh" }],
+  });
+  const modelSelection = selectionOn(input.model ?? "default");
+  const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: input.runtimeMode,
+    interactionMode: "default",
+    cwd: replayDir,
+  });
+  yield* Effect.gen(function* () {
+    const session = yield* adapter.openSession({
+      threadId,
       providerSessionId: ProviderSessionId.make(`provider-session-fx-${input.scenario}`),
-      // The thread's effort matches the session's, so no effort write is scripted.
-      modelSelection: {
-        instanceId,
-        model: input.model ?? "default",
-        options: [{ id: "effort", value: "xhigh" }],
-      },
-      runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
-        runtimeMode: input.runtimeMode,
-        interactionMode: "default",
-        cwd: replayDir,
-      }),
+      modelSelection,
+      runtimePolicy,
       ...(input.loadSessionId === undefined ? {} : { initialNativeThreadId: input.loadSessionId }),
-    })
-    .pipe(Effect.scoped);
+    });
+    if (input.turnModel === undefined) return;
+    const providerThread = yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+    const now = yield* DateTime.now;
+    const turnSelection = selectionOn(input.turnModel);
+    yield* session.startTurn({
+      appThread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make(`project:${threadId}`),
+        title: "fx adapter test",
+        providerInstanceId: instanceId,
+        modelSelection: turnSelection,
+        runtimeMode: runtimePolicy.runtimeMode,
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      threadId,
+      runId: RunId.make(`run:${threadId}:1`),
+      runOrdinal: 1,
+      providerTurnOrdinal: 1,
+      attemptId: RunAttemptId.make(`attempt:${threadId}:1`),
+      rootNodeId: NodeId.make(`node:${threadId}:1`),
+      providerThread,
+      message: {
+        createdBy: "user",
+        creationSource: "web",
+        messageId: MessageId.make(`message:${threadId}:1`),
+        text: "Say hello",
+        attachments: [],
+      },
+      modelSelection: turnSelection,
+      runtimePolicy,
+    });
+    yield* session.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runDrain,
+    );
+  }).pipe(Effect.scoped);
   yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
 });
 
@@ -236,12 +298,14 @@ describe("FxAdapterV2", () => {
 
   // fx 0.0.13's gateway takes any model id (src/acp/server.zig
   // handleSetConfigOption) and lists the current one even when its catalog
-  // does not, so a custom model reaches fx instead of running on another.
-  it.effect("sends a custom model fx does not list", () =>
+  // does not, so a custom model reaches fx instead of running on another,
+  // and switching back afterwards leaves it again.
+  it.effect("sends a custom model fx does not list, and leaves it for Default", () =>
     openFxSession({
       scenario: "custom-model",
       runtimeMode: "approval-required",
       model: CUSTOM_MODEL,
+      turnModel: "default",
       frames: [
         ...initialize,
         outbound("session/new"),
@@ -252,6 +316,15 @@ describe("FxAdapterV2", () => {
           fxConfig({ model: CUSTOM_MODEL, modes: FX_0_0_13_MODES }),
         ),
         ...setConfig("mode", "ask", fxConfig({ model: CUSTOM_MODEL, modes: FX_0_0_13_MODES })),
+        // Back on Default, which the session started on: fx runs the custom
+        // model now, so the write must go out again.
+        ...setConfig(
+          "model",
+          FX_DEFAULT_MODEL,
+          fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+        ),
+        outbound("session/prompt"),
+        answer("session/prompt", { stopReason: "end_turn" }),
       ],
     }).pipe(Effect.provide(testLayer), Effect.scoped),
   );

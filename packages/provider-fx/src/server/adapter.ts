@@ -97,13 +97,10 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
     runtimeHarness: "fx",
     capabilities: FxProviderCapabilitiesV2,
     makeRuntime: (input) => makeRuntime(input).pipe(Effect.map(withFxSessionMode)),
-    applyModelSelection: ({ runtime, startResult, modelSelection }) =>
-      applyFxModelSelection(
-        runtime,
-        startResult.sessionId,
-        modelSelection,
-        options.defaultModel,
-      ).pipe(Effect.tap(() => applyFxEffortDefault(runtime, modelSelection))),
+    applyModelSelection: ({ runtime, modelSelection }) =>
+      applyFxModelSelection(runtime, modelSelection, options.defaultModel).pipe(
+        Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)),
+      ),
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),

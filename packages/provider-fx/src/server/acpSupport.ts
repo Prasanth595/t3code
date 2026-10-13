@@ -162,13 +162,12 @@ export function withFxSessionMode(
  * so the write goes to config id `model`. "Default" selects the model `fx
  * status` reports, which the provider snapshot carries; without one (the bare
  * adapter registry) the session keeps its model. A model the session does not
- * list (a custom model) is still sent, bypassing the runtime's list check:
- * fx's gateway takes any id, and its other backends refuse an unknown one
- * with their own error, so a thread never runs on a model it did not pick.
+ * list (a custom model) is still sent: fx's gateway takes any id, and its
+ * other backends refuse an unknown one with their own error, so a thread
+ * never runs on a model it did not pick.
  */
 export const applyFxModelSelection = (
   runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
-  sessionId: string,
   modelSelection: ModelSelection,
   defaultModel: Effect.Effect<string | undefined> | undefined,
 ): Effect.Effect<string | undefined, EffectAcpErrors.AcpError> =>
@@ -183,15 +182,7 @@ export const applyFxModelSelection = (
         ? defaultModel && (yield* defaultModel)
         : requested;
     if (target === undefined || target === current) return current;
-    if (option !== undefined && collectSessionConfigOptionValues(option).includes(target)) {
-      yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target);
-      return target;
-    }
-    yield* runtime.request("session/set_config_option", {
-      sessionId,
-      configId: FX_MODEL_CONFIG_ID,
-      value: target,
-    });
+    yield* runtime.setConfigOption(FX_MODEL_CONFIG_ID, target, { allowUnlistedValue: true });
     return target;
   });
 
