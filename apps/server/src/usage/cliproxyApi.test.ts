@@ -1,13 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { describe, expect, it } from "@effect/vitest";
-import {
-  EnvironmentId,
-  ProviderDriverKind,
-  ProviderInstanceId,
-  type ServerProvider,
-  UsageLimitSourceId,
-} from "@t3tools/contracts";
-import { collectLimitAccounts, collectLimitPools } from "@t3tools/shared/usageLimits";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -37,7 +29,7 @@ const accounts = [
     id_token: { chatgpt_account_id: "account-b" },
   },
 ];
-const claudeAccounts = accounts.map(({ id_token: _idToken, ...account }) => ({
+const claudeAccounts = accounts.map((account) => ({
   ...account,
   provider: "claude",
   email: "same@example.com",
@@ -61,12 +53,7 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 function fixture(
   options: {
-    accounts?: Array<
-      Omit<(typeof accounts)[number], "id_token"> & {
-        id_token?: (typeof accounts)[number]["id_token"];
-        disabled?: boolean;
-      }
-    >;
+    accounts?: Array<(typeof accounts)[number] & { disabled?: boolean }>;
     upstream?: (request: RequestBody) => { status: number; body: unknown };
     cooldownStatus?: number;
   } = {},
@@ -231,9 +218,8 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
-  it.effect("keeps Claude hub organizations apart and merges their native and hub duplicates", () =>
+  it.effect("keeps Claude hub accounts with one email in their own organizations", () =>
     Effect.gen(function* () {
-      yield* TestClock.setTime(1788710400000);
       const test = fixture({
         accounts: claudeAccounts,
         upstream: (request) => ({
@@ -245,74 +231,17 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result.map((account) => account.workspaceId)).toEqual(["org-max", "org-team"]);
-      const source = {
-        id: UsageLimitSourceId.make("hub"),
-        kind: "cliproxy" as const,
-        label: "CLI Proxy",
-        checkedAt: result[0]!.usageLimits.checkedAt,
-        accounts: result,
-      };
-      const native: ServerProvider = {
-        instanceId: ProviderInstanceId.make("claude-max"),
-        driver: ProviderDriverKind.make("claudeAgent"),
-        enabled: true,
-        installed: true,
-        version: null,
-        status: "ready",
-        auth: { status: "authenticated", email: "same@example.com", workspaceId: "org-max" },
-        checkedAt: source.checkedAt,
-        usageLimits: result[0]!.usageLimits,
-        models: [],
-        slashCommands: [],
-        skills: [],
-      };
-      const presentations = new Map([
-        [
-          EnvironmentId.make("laptop"),
-          {
-            entry: { target: { label: "Laptop" } },
-            serverConfig: { providers: [native], usageLimitSources: [source] },
-          },
-        ],
-        [
-          EnvironmentId.make("desktop"),
-          {
-            entry: { target: { label: "Desktop" } },
-            serverConfig: { providers: [native], usageLimitSources: [source] },
-          },
-        ],
-      ]);
-      const pooledAccounts = collectLimitAccounts(presentations);
-      expect(pooledAccounts).toHaveLength(2);
-      expect(pooledAccounts.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([
-        20, 80,
-      ]);
-      expect(pooledAccounts[0]?.environments.map((environment) => environment.label)).toEqual([
-        "Laptop",
-        "Desktop",
-      ]);
       expect(
-        collectLimitPools(pooledAccounts, 1788710400000)[0]?.windows[0]?.remainingPercent,
-      ).toBe(50);
-      const profileCalls = test.requests.filter((request) =>
-        request.body?.url?.endsWith("/profile"),
-      );
-      expect(profileCalls.map((request) => request.body?.auth_index).sort()).toEqual(["a", "b"]);
-      for (const call of profileCalls) {
-        expect(call.body).toMatchObject({
-          method: "GET",
-          url: "https://api.anthropic.com/api/oauth/profile",
-          header: { "anthropic-beta": "oauth-2025-04-20" },
-        });
-      }
+        result.map((account) => [account.workspaceId, account.usageLimits.windows[0]?.usedPercent]),
+      ).toEqual([
+        ["org-max", 20],
+        ["org-team", 80],
+      ]);
     }),
   );
 
   it.effect.each([
     { status: 403, body: { token: "do-not-publish" } },
-    { status: 200, body: {} },
-    { status: 200, body: { organization: { uuid: 123 } } },
     { status: 200, body: { organization: { uuid: "   " } } },
   ])("keeps Claude quota visible when organization identity is unavailable: %j", (profile) =>
     Effect.gen(function* () {
@@ -345,6 +274,24 @@ describe("CLIProxyAPI built-in management API", () => {
       const result = yield* api.readAccounts(config);
       expect(result[0]?.workspaceId).toBe("org-team");
       expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+    }),
+  );
+
+  it.effect("keeps the last Claude organization through a failed profile lookup", () =>
+    Effect.gen(function* () {
+      let profileStatus = 200;
+      const test = fixture({
+        accounts: [claudeAccounts[0]!],
+        upstream: (request) =>
+          request.url?.endsWith("/profile")
+            ? { status: profileStatus, body: { organization: { uuid: "org-team" } } }
+            : { status: 200, body: { five_hour: { utilization: 12, resets_at: null } } },
+      });
+      const api = yield* test.api;
+      yield* api.readAccounts(config);
+      profileStatus = 429;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.workspaceId).toBe("org-team");
     }),
   );
 

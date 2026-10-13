@@ -210,13 +210,25 @@ export const makeCliproxyApi = Effect.gen(function* () {
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
 
+  // A failed lookup keeps the last organization seen, so one bad poll cannot
+  // merge an account into another organization signed in with the same email.
+  const claudeOrganizations = new Map<string, string>();
   const claudeWorkspaceId = Effect.fn("CliproxyApi.claudeWorkspaceId")(function* (
     config: UsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
-    const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/profile");
-    const profile = yield* decodeClaudeProfile(body);
-    return profile.organization.uuid.trim() || undefined;
+    const key = `${config.url} ${account.id}`;
+    const workspaceId = yield* apiCall(
+      config,
+      account,
+      "https://api.anthropic.com/api/oauth/profile",
+    ).pipe(
+      Effect.flatMap(decodeClaudeProfile),
+      Effect.map((profile) => profile.organization.uuid.trim() || undefined),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (workspaceId) claudeOrganizations.set(key, workspaceId);
+    return workspaceId ?? claudeOrganizations.get(key);
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
@@ -224,16 +236,10 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    const workspaceId =
+    const workspace =
       account.provider === "claude"
-        ? yield* claudeWorkspaceId(config, account).pipe(Effect.orElseSucceed(() => undefined))
-        : account.id_token?.chatgpt_account_id?.trim();
-    const base = {
-      id: account.id,
-      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
-      ...(account.email ? { email: account.email } : {}),
-      ...(workspaceId ? { workspaceId } : {}),
-    };
+        ? claudeWorkspaceId(config, account)
+        : Effect.succeed(account.id_token?.chatgpt_account_id?.trim());
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
         const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/usage");
@@ -250,7 +256,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
             : [],
         );
         return {
-          ...base,
           plan: "Claude Subscription",
           usageLimits: claudeUsageResponseToLimits({
             checkedAt,
@@ -281,7 +286,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
       const available = yield* credits(config, account).pipe(Effect.orElseSucceed(() => undefined));
       const next = available?.[0];
       return {
-        ...base,
         plan: codexPlanLabel(usage.plan_type ?? account.id_token?.chatgpt_plan_type),
         usageLimits: {
           ...codexRateLimitsToLimits({
@@ -308,16 +312,28 @@ export const makeCliproxyApi = Effect.gen(function* () {
         },
       };
     });
-    return yield* read.pipe(
-      Effect.orElseSucceed(() => ({
-        ...base,
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
-        }),
-      })),
+    const [workspaceId, usage] = yield* Effect.all(
+      [
+        workspace,
+        read.pipe(
+          Effect.orElseSucceed(() => ({
+            usageLimits: makeUnavailableUsageLimits({
+              checkedAt,
+              reason: "probeFailed",
+              message: "The hub could not read this account's usage.",
+            }),
+          })),
+        ),
+      ],
+      { concurrency: 2 },
     );
+    return {
+      id: account.id,
+      driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
+      ...(account.email ? { email: account.email } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+      ...usage,
+    };
   });
 
   const readAccounts = Effect.fn("CliproxyApi.readAccounts")(function* (
