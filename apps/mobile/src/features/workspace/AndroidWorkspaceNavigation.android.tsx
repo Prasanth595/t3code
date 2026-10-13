@@ -24,6 +24,7 @@ interface NativeNavigationProps extends ViewProps {
   readonly selectedTab: WorkspaceTab;
   readonly dark: boolean;
   readonly textScale: number;
+  readonly iconSize: number;
   readonly containerColor: number;
   readonly selectedColor: number;
   readonly indicatorColor: number;
@@ -47,7 +48,7 @@ export function AndroidWorkspaceNavigation(props: {
   const insets = useSafeAreaInsets();
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
-  const { scale, fabSize } = useAndroidControlSizing();
+  const { scale, iconSize, fabSize } = useAndroidControlSizing();
   const rail = Boolean(props.rail);
   const { containerColor, indicatorColor, selectedColor, unselectedColor } =
     androidWorkspaceNavigationColors(colors, rail);
@@ -72,6 +73,7 @@ export function AndroidWorkspaceNavigation(props: {
         selectedTab={workspace.state.selectedTab}
         dark={themeAppearance === "dark"}
         textScale={scale}
+        iconSize={iconSize}
         containerColor={nativeColor(containerColor)}
         selectedColor={nativeColor(selectedColor)}
         indicatorColor={nativeColor(indicatorColor)}

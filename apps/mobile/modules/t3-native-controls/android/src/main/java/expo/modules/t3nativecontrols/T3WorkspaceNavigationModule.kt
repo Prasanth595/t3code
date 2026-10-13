@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
@@ -53,6 +54,7 @@ class T3WorkspaceNavigationModule : Module() {
       Prop("rail") { view: T3WorkspaceNavigationView, value: Boolean -> view.rail = value }
       Prop("dark") { view: T3WorkspaceNavigationView, value: Boolean -> view.dark = value }
       Prop("textScale") { view: T3WorkspaceNavigationView, value: Float -> view.textScale = value }
+      Prop("iconSize") { view: T3WorkspaceNavigationView, value: Float -> view.iconSize = value }
       Prop("containerColor") { view: T3WorkspaceNavigationView, value: Int ->
         view.containerColor = value
       }
@@ -83,6 +85,7 @@ class T3WorkspaceNavigationView(
   var rail by mutableStateOf(false)
   var dark by mutableStateOf(false)
   var textScale by mutableStateOf(1f)
+  var iconSize by mutableStateOf(24f)
   var containerColor by mutableStateOf(0)
   var selectedColor by mutableStateOf(0)
   var indicatorColor by mutableStateOf(0)
@@ -181,7 +184,11 @@ class T3WorkspaceNavigationView(
                         ),
                       contentAlignment = Alignment.Center,
                     ) {
-                      tabIcon(tab, Color(if (selected) selectedColor else unselectedColor))
+                      tabIcon(
+                        tab,
+                        Color(if (selected) selectedColor else unselectedColor),
+                        Modifier.size(iconSize.dp),
+                      )
                     }
                   }
                 }
@@ -195,7 +202,11 @@ class T3WorkspaceNavigationView(
   }
 
   @Composable
-  private fun tabIcon(tab: String, tint: Color = LocalContentColor.current) {
+  private fun tabIcon(
+    tab: String,
+    tint: Color = LocalContentColor.current,
+    modifier: Modifier = Modifier,
+  ) {
     val drawable = if (tab == "threads") {
       R.drawable.t3_chats
     } else {
@@ -204,6 +215,7 @@ class T3WorkspaceNavigationView(
     Icon(
       painter = painterResource(drawable),
       contentDescription = if (tab == "threads") "Chats" else "Pull requests",
+      modifier = modifier,
       tint = tint,
     )
   }
