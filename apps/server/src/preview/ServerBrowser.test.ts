@@ -441,7 +441,7 @@ it.live("a click whose caller timed out never dispatches when the tab queue resu
 );
 
 it.live.each([false, true])(
-  "a queued click with expired budget %s reports the operation timeout",
+  "a queued click (budget expired: %s) runs only before its deadline",
   (expired) =>
     Effect.scoped(
       Effect.gen(function* () {
