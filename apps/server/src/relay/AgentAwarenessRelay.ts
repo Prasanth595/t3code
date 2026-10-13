@@ -105,10 +105,10 @@ export function shouldPublishAgentAwarenessEvent(
     case "runtime-request.updated":
     case "subagent.updated":
     case "provider-thread.updated":
-      return true;
     case "thread.settle-when-idle-set":
     case "thread.settled":
     case "thread.unsettled":
+      return true;
     case "thread.snoozed":
     case "thread.unsnoozed":
     case "thread.auto-settle-set":
@@ -379,6 +379,10 @@ export const make = Effect.gen(function* () {
   // Holds at most one pending wake, so a burst of requests costs one retry.
   const catchUpRequests = yield* Queue.dropping<void>(1);
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
+  // A tombstone forgets the published state, but must not turn Un-settle into
+  // a new completion. Keep the completed run's identity until work resumes.
+  // Connection resets retain it; process restarts use terminalWorkSinceStart.
+  const quietCompletionByThread = new Map<ThreadId, string>();
 
   const readSecretString = (name: string) =>
     secrets
@@ -542,12 +546,34 @@ export const make = Effect.gen(function* () {
     const project = Option.isSome(thread)
       ? yield* projects.getById(thread.value.projectId)
       : Option.none<Project>();
-    const snapshot = resolveAgentAwarenessRelayPublishSnapshot({
+    let snapshot = resolveAgentAwarenessRelayPublishSnapshot({
       environmentId,
       threadId,
       thread,
       project,
     });
+    const completionIdentity =
+      threadShell?.latestRunCompletedAt == null
+        ? null
+        : `${threadShell.latestRunId ?? ""}:${DateTime.toEpochMillis(threadShell.latestRunCompletedAt)}`;
+    if (threadShell === null || (snapshot.state !== null && snapshot.state.phase !== "completed")) {
+      quietCompletionByThread.delete(threadId);
+    } else if (
+      snapshot.reason === "snapshot" &&
+      snapshot.state === null &&
+      threadShell.status === "completed" &&
+      (threadShell.settledOverride === "settled" || threadShell.settleWhenIdleAt != null) &&
+      completionIdentity !== null
+    ) {
+      quietCompletionByThread.set(threadId, completionIdentity);
+    }
+    if (
+      snapshot.state?.phase === "completed" &&
+      completionIdentity !== null &&
+      quietCompletionByThread.get(threadId) === completionIdentity
+    ) {
+      snapshot = { ...snapshot, state: null };
+    }
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
     if (
@@ -636,7 +662,7 @@ export const make = Effect.gen(function* () {
     publishConfirmDeadlines.delete(threadId);
     yield* Ref.update(publishedStateByThreadRef, (publishedStates) => {
       const nextPublishedStates = new Map(publishedStates);
-      if (snapshot.state === null) {
+      if (snapshot.state === null && !quietCompletionByThread.has(threadId)) {
         nextPublishedStates.delete(threadId);
       } else {
         nextPublishedStates.set(threadId, publishIdentity);

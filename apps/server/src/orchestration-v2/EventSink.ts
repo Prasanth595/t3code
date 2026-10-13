@@ -203,7 +203,9 @@ const carriesThread = (event: OrchestrationV2DomainEvent): event is ThreadRowEve
     the user, including Stop before a run starts or during background work.
     A queued run the server drops before it starts does not. */
 const returnsFiledThread = (event: OrchestrationV2DomainEvent): boolean =>
-  (event.type === "turn-item.updated" && event.payload.type === "run_interrupt_request") ||
+  (event.type === "turn-item.updated" &&
+    (event.payload.type === "run_interrupt_request" ||
+      (event.payload.type === "secret_request" && event.payload.secretStatus === "pending"))) ||
   (event.type === "runtime-request.updated" && event.payload.status === "pending") ||
   (event.type === "provider-session.updated" && event.payload.status === "error") ||
   (event.type === "run.updated" &&

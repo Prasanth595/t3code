@@ -305,6 +305,9 @@ describe("AgentAwarenessRelay", () => {
       // Pending background work changes can release a held completion.
       "subagent.updated",
       "provider-thread.updated",
+      "thread.settle-when-idle-set",
+      "thread.settled",
+      "thread.unsettled",
       "thread.metadata-updated",
       "thread.model-selection-updated",
       "thread.provider-switched",
@@ -717,6 +720,103 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.length, 1);
+    }),
+  );
+
+  it.effect.each([
+    { filed: true, undoBeforeConfirmation: true },
+    { filed: true, undoBeforeConfirmation: false },
+    { filed: false, undoBeforeConfirmation: true },
+    { filed: false, undoBeforeConfirmation: false },
+  ])(
+    "keeps completion quiet through Un-settle ($filed, $undoBeforeConfirmation)",
+    ({ filed, undoBeforeConfirmation }) =>
+      Effect.gen(function* () {
+        const { relay, currentShell, publications } = yield* makeTestRelay();
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("1 second");
+        const completedAt = yield* DateTime.now;
+        const completed = shell({
+          status: "completed",
+          latestRunId: RunId.make("quiet-run"),
+          latestRunCompletedAt: completedAt,
+          updatedAt: completedAt,
+          settleWhenIdleAt: filed ? completedAt : null,
+          settledOverride: filed ? null : "settled",
+        });
+        yield* Ref.set(currentShell, completed);
+        yield* relay.publishThread(THREAD_ID);
+        if (!undoBeforeConfirmation) {
+          yield* TestClock.adjust("1 hour");
+          yield* relay.drain;
+          assert.isNull(publications.at(-1)?.state);
+        }
+        yield* Ref.set(currentShell, {
+          ...completed,
+          settleWhenIdleAt: null,
+          settledOverride: "active",
+          updatedAt: yield* DateTime.now,
+        });
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.deepEqual(
+          publications.map(({ state }) => state?.phase ?? null),
+          ["running", null],
+        );
+
+        // The next run may finish between reads; its completion must still alert.
+        yield* TestClock.adjust("1 second");
+        const nextCompletedAt = yield* DateTime.now;
+        yield* Ref.set(
+          currentShell,
+          shell({
+            status: "completed",
+            latestRunId: RunId.make("next-run"),
+            latestRunCompletedAt: nextCompletedAt,
+            updatedAt: nextCompletedAt,
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("5 seconds");
+        yield* relay.drain;
+        assert.equal(publications.at(-1)?.state?.phase, "completed");
+      }),
+  );
+
+  it.effect("Un-settle during background work restores its eventual completion alert", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("1 second");
+      const completedAt = yield* DateTime.now;
+      const working = shell({
+        status: "completed",
+        latestRunId: RunId.make("background-run"),
+        latestRunCompletedAt: completedAt,
+        updatedAt: completedAt,
+        settleWhenIdleAt: completedAt,
+        pendingBackgroundTasks: [{ taskId: "child", kind: "subagent" }],
+      });
+      yield* Ref.set(currentShell, working);
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, {
+        ...working,
+        settleWhenIdleAt: null,
+        settledOverride: "active",
+      });
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, {
+        ...working,
+        settleWhenIdleAt: null,
+        settledOverride: "active",
+        pendingBackgroundTasks: [],
+      });
+      yield* relay.publishThread(THREAD_ID);
+      assert.deepEqual(
+        publications.map(({ state }) => state?.phase),
+        ["running", "completed"],
+      );
     }),
   );
   it.effect("publishes a held completion when its background item ends, not on tool output", () =>

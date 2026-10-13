@@ -375,6 +375,76 @@ it.effect("a dev server left running does not keep an idle thread from settling"
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect.each([false, true])("a pending secret requires attention (already filed: %s)", (filed) =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    const nodeId = NodeId.make("secret-root");
+    yield* f.sink.write({
+      events: [
+        {
+          id: EventId.make("secret-root-binding"),
+          type: "run.updated",
+          threadId: f.threadId,
+          occurredAt: f.now,
+          payload: { ...f.run, rootNodeId: nodeId },
+        },
+      ],
+    });
+    if (filed) yield* f.settle();
+    const secretRequest = {
+      type: "secret_request.record" as const,
+      threadId: f.threadId,
+      runId: f.run.id,
+      nodeId,
+      turnItemId: TurnItemId.make("secret-request"),
+      label: "Token",
+      reason: "Needed to continue",
+    };
+    yield* f.orchestrator.dispatch({
+      ...secretRequest,
+      commandId: f.commandId(),
+      secretStatus: "pending",
+    });
+    assert.notExists((yield* f.read()).settleWhenIdleAt);
+    assert.equal(
+      (yield* f.projections.getThreadShell(f.threadId))?.pendingRuntimeRequest?.kind,
+      "user_input",
+    );
+    assert.equal((yield* Effect.exit(f.settle()))._tag, "Failure");
+    yield* f.orchestrator.dispatch({
+      ...secretRequest,
+      commandId: f.commandId(),
+      secretStatus: "saved",
+    });
+    yield* f.settle();
+    assert.isNotNull((yield* f.read()).settleWhenIdleAt);
+  }).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("a fork stays active when its source is filed and still has background work", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture();
+    yield* f.settle();
+    yield* f.setRun("completed");
+    yield* f.setBackground("dynamic_tool", "running");
+    const targetThreadId = ThreadId.make("fork-from-filed");
+    yield* f.orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: f.commandId(),
+      sourceThreadId: f.threadId,
+      targetThreadId,
+      sourcePoint: { type: "run", runId: f.run.id },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const fork = yield* f.projections.getThread(targetThreadId);
+    assert.isNull(fork.settleWhenIdleAt);
+    assert.isNull(fork.settledOverride);
+    assert.isEmpty(yield* f.projections.getSettlementCandidates(targetThreadId, true));
+    assert.isNotNull((yield* f.read()).settleWhenIdleAt);
+  }).pipe(Effect.provide(testLayer)),
+);
+
 it.effect("background work that wakes the agent keeps a filed thread until it ends", () =>
   Effect.gen(function* () {
     const f = yield* fixture();

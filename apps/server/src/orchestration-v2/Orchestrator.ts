@@ -2634,7 +2634,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command,
         ["runs", "runtimeRequests", "messages", "providerThreads", "turnItems"],
         {
-          turnItemTypes: ["command_execution", "dynamic_tool", "subagent"],
+          turnItemTypes: ["command_execution", "dynamic_tool", "subagent", "secret_request"],
           turnItemStatuses: ["pending", "running", "waiting"],
           messageRoles: ["user"],
         },
@@ -2670,9 +2670,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingRequests = projection.runtimeRequests.filter(
         (request) => request.status === "pending",
       );
-      const blockingRequestExists = pendingRequests.some(
-        (request) => request.kind !== "user_input" || request.responseCapability.type !== "message",
+      // Secret cards have no runtime-request row. Only a live owning run can
+      // still receive the secret; stale cards from finished runs do not block.
+      const pendingSecretRequest = projection.turnItems.some(
+        (item) =>
+          item.type === "secret_request" &&
+          item.secretStatus === "pending" &&
+          projection.runs.some(
+            (run) =>
+              run.id === item.runId &&
+              ["preparing", "starting", "running", "waiting"].includes(run.status),
+          ),
       );
+      const blockingRequestExists =
+        pendingSecretRequest ||
+        pendingRequests.some(
+          (request) =>
+            request.kind !== "user_input" || request.responseCapability.type !== "message",
+        );
       // Work that finishes on its own files the thread instead of settling it:
       // a live run, or background work that wakes the agent. A dev server the
       // agent left running does not count, the same as for completion alerts.
