@@ -205,7 +205,7 @@ class T3WorkspaceNavigationView(
   private fun tabIcon(
     tab: String,
     tint: Color = LocalContentColor.current,
-    modifier: Modifier = Modifier,
+    modifier: Modifier = Modifier
   ) {
     val drawable = if (tab == "threads") {
       R.drawable.t3_chats
