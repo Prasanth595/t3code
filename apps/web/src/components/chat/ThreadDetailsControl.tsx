@@ -42,7 +42,6 @@ export function ThreadDetailsControl({
   multiline?: boolean;
   tone?: "default" | "muted" | "primary" | "destructive";
 }) {
-  // Keep press scaling on the same composited layer so glyphs do not snap at fractional zoom.
   const control = useRender({
     defaultTagName: "button",
     render,
