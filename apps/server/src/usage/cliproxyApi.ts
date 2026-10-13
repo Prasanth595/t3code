@@ -224,8 +224,6 @@ export const makeCliproxyApi = Effect.gen(function* () {
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    // Email alone cannot distinguish personal and team organizations. A failed
-    // identity probe must not hide quota, and a failed quota probe must keep its identity.
     const workspaceId =
       account.provider === "claude"
         ? yield* claudeWorkspaceId(config, account).pipe(Effect.orElseSucceed(() => undefined))
