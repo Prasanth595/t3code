@@ -4,6 +4,9 @@ name: Fork CI
 # Blacksmith runners, which this fork does not have, so the fork disables it.
 # Limit: this file copies the ci.yml commands by hand. When upstream changes
 # them, update this file. A failure on main calls the repair agent. See docs/fork.md.
+#
+# The heavy jobs run only when the push changes code. The changes job compares the
+# push with the last green run, so a cancelled or failed run never hides a change.
 
 on:
   push:
@@ -19,13 +22,53 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch cancels the older run. A manual run waits instead.
 concurrency:
-  group: fork-ci-${{ github.sha }}
-  cancel-in-progress: false
+  group: fork-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+      files: ${{ steps.classify.outputs.files }}
+    steps:
+      - name: Classify the changed files
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          code() { echo "code=true" >>"$GITHUB_OUTPUT"; echo "$1: the heavy jobs run."; exit 0; }
+          [[ "$GITHUB_EVENT_NAME" == "push" ]] || code "Manual run"
+          base="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow fork-ci.yml --branch "$GITHUB_REF_NAME" \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // empty')"
+          [[ -n "$base" ]] || code "No green run to compare with"
+          # The compare API lists at most 300 files. A longer list counts as code.
+          files="$(gh api "repos/$GITHUB_REPOSITORY/compare/$base...$GITHUB_SHA" --jq '.files[].filename')" ||
+            code "The compare with $base failed"
+          (($(wc -l <<<"$files") < 300)) || code "300 or more changed files"
+          while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            case "$file" in
+              # apps/machine-map is not on main yet. When it lands, add a job for its tests, typecheck and lint.
+              docs/* | *.md | apps/machine-map/*) ;;
+              *) code "$file changed since $base" ;;
+            esac
+          done <<<"$files"
+          echo "code=false" >>"$GITHUB_OUTPUT"
+          { echo "files<<EOF"; echo "$files"; echo "EOF"; } >>"$GITHUB_OUTPUT"
+          echo "Only docs, markdown or apps/machine-map changed since $base: only lint runs."
+
   lint:
     name: Lint
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -40,12 +83,32 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
-      - run: vp run --filter @t3tools/desktop ensure:electron
-      - run: vp run knip:check
-      - run: vp check
+      - if: needs.changes.outputs.code == 'true'
+        run: vp run --filter @t3tools/desktop ensure:electron
+      - if: needs.changes.outputs.code == 'true'
+        run: vp run knip:check
+      - if: needs.changes.outputs.code == 'true'
+        run: vp check
+      - name: Check the changed files
+        if: needs.changes.outputs.code != 'true'
+        env:
+          FILES: ${{ needs.changes.outputs.files }}
+        run: |
+          existing=()
+          scripts=()
+          while IFS= read -r file; do
+            [[ -f "$file" ]] || continue
+            existing+=("$file")
+            case "$file" in *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs) scripts+=("$file") ;; esac
+          done <<<"$FILES"
+          # vp check fails when no file is lintable, so markdown gets only the format check.
+          if ((${#existing[@]} > 0)); then vp fmt --check "${existing[@]}"; fi
+          if ((${#scripts[@]} > 0)); then vp check "${scripts[@]}"; fi
 
   typecheck:
     name: Typecheck
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -65,6 +128,8 @@ jobs:
 
   build:
     name: Build
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -85,9 +150,22 @@ jobs:
       - run: node apps/desktop/scripts/verify-preload-bundle.mjs
 
   test:
-    name: Test
+    name: Test ${{ matrix.group }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # Two runners: on one runner, the slowest packages wait for each other.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: apps
+            filters: --filter @t3tools/mobile --filter @t3tools/desktop --filter @t3tools/oxlint-plugin-t3code
+          - group: packages
+            filters: >-
+              --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web'
+              --filter '!@t3tools/mobile' --filter '!@t3tools/desktop' --filter '!@t3tools/oxlint-plugin-t3code'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -102,12 +180,16 @@ jobs:
           cache: true
           run-install: true
       - run: vp run --filter @t3tools/desktop ensure:electron
-      - run: python3 -B .github/scripts/stage-preview-bundle.test.py
-      - run: node --test .github/scripts/check-nightly-release.test.cjs
-      - run: vp run --parallel --concurrency-limit 4 --filter '!t3' --filter '!@t3tools/monorepo' --filter '!@t3tools/web' test
+      - if: matrix.group == 'packages'
+        run: python3 -B .github/scripts/stage-preview-bundle.test.py
+      - if: matrix.group == 'packages'
+        run: node --test .github/scripts/check-nightly-release.test.cjs
+      - run: vp run --parallel --concurrency-limit 4 ${{ matrix.filters }} test
 
   test_web:
     name: Test Web
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -126,12 +208,14 @@ jobs:
 
   test_server:
     name: Test Server ${{ matrix.shard }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v6
         with:
@@ -149,6 +233,8 @@ jobs:
 
   rust:
     name: Rust
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -172,7 +258,7 @@ jobs:
   # main goes unnoticed. Off until the T3_AGENT_WEBHOOK_URL secret is set.
   notify_agent:
     name: Notify repair agent
-    needs: [lint, typecheck, build, test, test_web, test_server, rust]
+    needs: [changes, lint, typecheck, build, test, test_web, test_server, rust]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
