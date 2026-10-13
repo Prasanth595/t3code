@@ -690,7 +690,13 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     }
     val handled = super.onTouchEvent(event)
     if (scrollX != touchScrollX || scrollY != touchScrollY) touchScrolled = true
-    if (event.actionMasked == MotionEvent.ACTION_UP && touchScrolled && touchSelectionStart >= 0) {
+    val restoresCaret =
+      event.actionMasked == MotionEvent.ACTION_UP &&
+        touchScrolled &&
+        touchSelectionStart >= 0 &&
+        touchSelectionStart == touchSelectionEnd &&
+        selectionStart == selectionEnd
+    if (restoresCaret) {
       setSelection(
         touchSelectionStart.coerceIn(0, length()),
         touchSelectionEnd.coerceIn(0, length()),
