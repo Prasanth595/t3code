@@ -1121,8 +1121,6 @@ export interface DesktopBridge {
   getPathForFile?: (file: File) => string;
   /** The desktop client's OS platform, read from Electron's preload process. */
   getClientPlatform?: () => string;
-  /** Reveals and focuses the main desktop window. */
-  revealMainWindow?: () => Promise<void>;
   setNotificationBadge?: (badge: { count: number; image: string | null }) => Promise<void>;
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;

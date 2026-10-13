@@ -35,7 +35,6 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
-import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
@@ -88,23 +87,6 @@ export const getWindowFullscreenState = DesktopIpc.makeSyncIpcMethod({
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const window = yield* electronWindow.currentMainOrFirst;
     return Option.isSome(window) && window.value.isFullScreen();
-  }),
-});
-
-export const revealMainWindow = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.REVEAL_MAIN_WINDOW_CHANNEL,
-  payload: Schema.Void,
-  result: Schema.Void,
-  handler: Effect.fn("desktop.ipc.window.revealMainWindow")(function* (_input, event) {
-    const main = yield* (yield* ElectronWindow.ElectronWindow).main;
-    if (
-      event === undefined ||
-      Option.isNone(main) ||
-      main.value.webContents.id !== event.sender.id
-    ) {
-      return;
-    }
-    yield* (yield* DesktopWindow.DesktopWindow).activate;
   }),
 });
 

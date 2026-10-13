@@ -548,26 +548,6 @@ describe("ElectronWindow", () => {
     }).pipe(Effect.provide(layerTestFor("win32"))),
   );
 
-  it.effect("restores, shows, and focuses a minimized hidden window on Windows", () =>
-    Effect.gen(function* () {
-      const operations: string[] = [];
-      const window = {
-        ...makeWindowsRevealWindow(),
-        isMinimized: vi.fn(() => true),
-        isVisible: vi.fn(() => false),
-        restore: vi.fn(() => operations.push("restore")),
-        show: vi.fn(() => operations.push("show")),
-        focus: vi.fn(() => operations.push("focus")),
-      };
-      const electronWindow = yield* ElectronWindow.ElectronWindow;
-
-      yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow);
-
-      assert.deepEqual(operations, ["restore", "show", "focus"]);
-      assert.lengthOf(activateWindowsForegroundMock.mock.calls, 0);
-    }).pipe(Effect.provide(layerTestFor("win32"))),
-  );
-
   it.effect("a capture reveal on Windows uses the Win32 path only once", () =>
     Effect.gen(function* () {
       const window = makeWindowsRevealWindow();

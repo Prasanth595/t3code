@@ -338,7 +338,6 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     expect(state.badge).toHaveBeenLastCalledWith(1);
     const notification = TestNotification.sent[0]!;
     notification.dispatchEvent(new Event("click"));
-    expect(window.focus).toHaveBeenCalledOnce();
     expect(state.navigate).toHaveBeenCalledWith({
       to: "/$environmentId/$threadId",
       params: { environmentId: EnvironmentId.make("one"), threadId: "thread" },
@@ -349,23 +348,6 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     expect(notification.close).toHaveBeenCalled();
   },
 );
-
-it("asks the desktop app to reveal its window and still opens the notified thread", async () => {
-  await render();
-  state.shells.set("one", shell({ latestTurn: { ...thread.latestTurn, state: "completed" } }));
-  await render();
-  const revealMainWindow = vi.fn().mockRejectedValue(new Error("window reveal failed"));
-  Object.assign(window, { desktopBridge: { revealMainWindow } });
-
-  TestNotification.sent[0]!.dispatchEvent(new Event("click"));
-  await Promise.resolve();
-
-  expect(revealMainWindow).toHaveBeenCalledOnce();
-  expect(state.navigate).toHaveBeenCalledWith({
-    to: "/$environmentId/$threadId",
-    params: { environmentId: EnvironmentId.make("one"), threadId: "thread" },
-  });
-});
 
 it("shows in-app alerts without adding a badge while focused", async () => {
   state.inApp = true;
