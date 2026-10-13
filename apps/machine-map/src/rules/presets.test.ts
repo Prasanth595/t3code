@@ -5,7 +5,9 @@ import { applyChanges, findArrow } from "./map.ts";
 import {
   applyPresetChanges,
   lockdownChanges,
+  pausedAccess,
   restoreChanges,
+  resumeChanges,
   savePresetChange,
 } from "./presets.ts";
 import { MAC, machine, threeMachines, VPS, WIN } from "./testMap.ts";
@@ -96,5 +98,35 @@ describe("restoreChanges (MM-704)", () => {
     const now = { ...busyMap(), machines: [...busyMap().machines, machine(MachineId.make("new"))] };
     const restored = applyChanges(now, restoreChanges(now, old)).map;
     expect(restored.machines.map((m) => m.id)).toContain("new");
+  });
+});
+
+describe("emergency pause and resume (MM-710, MM-712)", () => {
+  it("resume returns the arrows and map roles from before the pause", () => {
+    const map = busyMap();
+    const before = pausedAccess(map);
+    const paused = applyChanges(map, lockdownChanges(map)).map;
+    const resumed = applyChanges(paused, resumeChanges(paused, before)).map;
+    expect(resumed.arrows).toEqual(map.arrows);
+    expect(resumed.machines).toEqual(map.machines);
+    expect(resumeChanges(resumed, before)).toEqual([]);
+  });
+
+  it("keeps a machine that joined during the pause at none, and skips one that left", () => {
+    const map = busyMap();
+    const before = pausedAccess(map);
+    const NEW = MachineId.make("new");
+    const paused = applyChanges(map, [
+      ...lockdownChanges(map),
+      { _tag: "removeMachine", machineId: VPS },
+      { _tag: "putMachine", machine: machine(NEW) },
+    ]).map;
+    const resumed = applyChanges(paused, resumeChanges(paused, before)).map;
+    expect(resumed.machines.map((m) => m.id)).toEqual([MAC, WIN, NEW]);
+    expect(resumed.machines.find((m) => m.id === MAC)?.mapRole).toBe("edit");
+    expect(resumed.machines.find((m) => m.id === NEW)?.mapRole).toBe("none");
+    expect(findArrow(resumed, WIN, MAC)).toEqual(findArrow(map, WIN, MAC));
+    expect(findArrow(resumed, NEW, MAC).level).toBe("none");
+    expect(resumed.arrows.some((a) => a.from === VPS || a.to === VPS)).toBe(false);
   });
 });

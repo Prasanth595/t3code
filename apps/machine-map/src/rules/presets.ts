@@ -1,14 +1,16 @@
 /**
- * Pure rules for presets (MM-705), lockdown (MM-706) and restore (MM-704). Each returns map
- * changes, so the result is one revision that can be undone.
+ * Pure rules for presets (MM-705), lockdown (MM-706), restore (MM-704) and the emergency pause
+ * (MM-710, MM-712). Each returns map changes, so the result is one revision that can be undone.
  */
-import type {
+import * as Schema from "effect/Schema";
+import {
   ArrowRecord,
-  MachineId,
-  MachineMapDocument,
-  MapChange,
-  MapPreset,
-  SettingScope,
+  MachineMapRole,
+  type MachineId,
+  type MachineMapDocument,
+  type MapChange,
+  type MapPreset,
+  type SettingScope,
 } from "@t3tools/contracts/machineMap";
 
 import { defaultArrow, findArrow, findMachine, isManaged, sameArrow } from "./map.ts";
@@ -171,5 +173,42 @@ function settingValueChanges(
       target.settings.overrides[id]?.[scope],
     );
   }
+  return changes;
+}
+
+/** MM-710: the arrows and map roles before an emergency pause. Resume returns to them. */
+export const PausedAccess = Schema.Struct({
+  arrows: Schema.Array(ArrowRecord),
+  /** Every machine on the map at the pause, by machine id. */
+  mapRoles: Schema.Record(Schema.String, MachineMapRole),
+});
+export type PausedAccess = typeof PausedAccess.Type;
+
+export const pausedAccess = (map: MachineMapDocument): PausedAccess => ({
+  arrows: map.arrows,
+  mapRoles: Object.fromEntries(map.machines.map((machine) => [machine.id, machine.mapRole])),
+});
+
+/**
+ * MM-712: the changes that return the arrows and map roles to `before`. A machine that joined
+ * during the pause keeps `none`, and so do the arrows that touch it. Machines that left are skipped.
+ */
+export function resumeChanges(map: MachineMapDocument, before: PausedAccess): Array<MapChange> {
+  const changes: Array<MapChange> = [];
+  for (const machine of map.machines) {
+    const role = before.mapRoles[machine.id];
+    if (role !== undefined && role !== machine.mapRole) {
+      changes.push({ _tag: "putMachine", machine: { ...machine, mapRole: role } });
+    }
+  }
+  const wasThere = (id: MachineId) => Object.hasOwn(before.mapRoles, id);
+  changes.push(
+    ...arrowChanges(map, (from, to) =>
+      wasThere(from) && wasThere(to)
+        ? (before.arrows.find((arrow) => arrow.from === from && arrow.to === to) ??
+          defaultArrow(from, to))
+        : findArrow(map, from, to),
+    ),
+  );
   return changes;
 }

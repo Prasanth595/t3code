@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { MachineMapDocument } from "@t3tools/contracts/machineMap";
 
-import { arrowChange, arrowRaises, decideAgentWrite, gateTool, raisesOwnAccess } from "./access.ts";
+import {
+  arrowChange,
+  arrowRaises,
+  decideAgentWrite,
+  gateTool,
+  raisesAnyAccess,
+  raisesOwnAccess,
+} from "./access.ts";
 import { applyChanges, findArrow } from "./map.ts";
 import { MAC, machine, threeMachines, VPS } from "./testMap.ts";
 
@@ -94,5 +101,31 @@ describe("gateTool (MM-802)", () => {
     expect(gateTool(withRole("propose"), MAC, "machines_set_access")._tag).toBe("allow");
     expect(gateTool(withRole("propose"), MAC, "machines_command")._tag).toBe("refuse");
     expect(gateTool(withRole("edit"), MAC, "machines_command")._tag).toBe("allow");
+  });
+});
+
+describe("raisesAnyAccess (MM-711)", () => {
+  it("flags a raise on any arrow or map role, and lets lower changes through", () => {
+    const map = withRole("edit");
+    const raiseOther = {
+      _tag: "setArrow" as const,
+      arrow: { ...findArrow(map, VPS, MAC), level: "read" as const },
+    };
+    const raiseRole = {
+      _tag: "putMachine" as const,
+      machine: { ...machine(VPS), mapRole: "read" as const },
+    };
+    const lowerRole = {
+      _tag: "putMachine" as const,
+      machine: { ...machine(MAC), mapRole: "read" as const },
+    };
+    expect(raisesAnyAccess(map, [raiseOther])).toBe(true);
+    expect(raisesAnyAccess(map, [raiseRole])).toBe(true);
+    expect(raisesAnyAccess(map, [lowerRole])).toBe(false);
+    expect(
+      raisesAnyAccess(map, [
+        { _tag: "manageSetting", scope: "server", key: "theme", managed: true },
+      ]),
+    ).toBe(false);
   });
 });

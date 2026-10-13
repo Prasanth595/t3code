@@ -5,20 +5,23 @@ import { useEffect, useState } from "react";
 import * as Schema from "effect/Schema";
 import { MachineId, PortalEvent, type PortalSnapshot } from "@t3tools/contracts/machineMap";
 
-import type { PendingRotation, RotationsEvent } from "../api.ts";
+import { PauseEvent, type PauseState, type PendingRotation, type RotationsEvent } from "../api.ts";
 
 export interface PortalState {
   readonly snapshot: PortalSnapshot | null;
   readonly rotations: ReadonlyArray<PendingRotation>;
+  /** MM-713: null when nothing is paused. */
+  readonly pause: PauseState | null;
 }
 
-export type PageEvent = PortalEvent | RotationsEvent;
+export type PageEvent = PortalEvent | RotationsEvent | PauseEvent;
 
-export const INITIAL_STATE: PortalState = { snapshot: null, rotations: [] };
+export const INITIAL_STATE: PortalState = { snapshot: null, rotations: [], pause: null };
 
 export function reduce(state: PortalState, event: PageEvent): PortalState {
   if (event._tag === "snapshot") return { ...state, snapshot: event.snapshot };
   if (event._tag === "rotations") return { ...state, rotations: event.rotations };
+  if (event._tag === "pause") return { ...state, pause: event.pause };
   const snapshot = state.snapshot;
   // Events before the first snapshot cannot happen: the portal sends the snapshot first.
   if (!snapshot) return state;
@@ -65,7 +68,9 @@ const RotationsEventSchema = Schema.TaggedStruct("rotations", {
     Schema.Struct({ machineId: MachineId, createdAt: Schema.String, expiresAt: Schema.String }),
   ),
 });
-const decodeEvent = Schema.decodeUnknownSync(Schema.Union([PortalEvent, RotationsEventSchema]));
+const decodeEvent = Schema.decodeUnknownSync(
+  Schema.Union([PortalEvent, RotationsEventSchema, PauseEvent]),
+);
 
 export type Connection = "connecting" | "live" | "offline";
 

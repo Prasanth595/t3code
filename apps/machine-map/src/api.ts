@@ -10,6 +10,7 @@ import {
   MachineCommandInput,
   MachineId,
   MachineKind,
+  MapActor,
   MapChange,
   type MachineCommand,
   type MachineMapDocument,
@@ -155,6 +156,32 @@ export interface PendingRotation {
 export interface RotationsEvent {
   readonly _tag: "rotations";
   readonly rotations: ReadonlyArray<PendingRotation>;
+}
+
+/**
+ * MM-713: the emergency pause as every page shows it. Only the owner pauses, so `by` is always
+ * an owner. `revision` is null when the map was already locked down.
+ */
+export const PauseState = Schema.Struct({
+  pausedAt: Text,
+  by: MapActor,
+  revision: Schema.NullOr(NonNegativeInt),
+});
+export type PauseState = typeof PauseState.Type;
+
+/** Page event: the pause began (`pause` set) or ended (`pause` null). */
+export const PauseEvent = Schema.TaggedStruct("pause", { pause: Schema.NullOr(PauseState) });
+export type PauseEvent = typeof PauseEvent.Type;
+
+/** POST /api/pause (MM-708 to MM-710). */
+export interface PauseResponse {
+  readonly pause: PauseState;
+  readonly stopCommands: number;
+}
+
+/** POST /api/resume (MM-712). `revision` is null when nothing had to change. */
+export interface ResumeResponse {
+  readonly revision: number | null;
 }
 
 /** Every error response has this shape. */

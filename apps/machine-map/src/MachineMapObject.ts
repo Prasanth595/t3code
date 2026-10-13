@@ -38,18 +38,22 @@ import type {
   JoinCodeRequest,
   JoinCodeResponse,
   MapToolResult,
+  PauseEvent,
+  PauseResponse,
   PendingRotation,
   PortalSignIn,
   RemoveMachineResponse,
+  ResumeResponse,
   RotationResponse,
   RotationsEvent,
   SignOutEverywhereResponse,
   WriteResult,
 } from "./api.ts";
+import { PauseState } from "./api.ts";
 import { configured } from "./access.ts";
 import { CloudflareApi } from "./cloudflare.ts";
 import type { Env } from "./env.ts";
-import { arrowChange, decideAgentWrite, gateTool } from "./rules/access.ts";
+import { arrowChange, decideAgentWrite, gateTool, raisesAnyAccess } from "./rules/access.ts";
 import {
   applyChanges,
   checkEditableChanges,
@@ -62,7 +66,10 @@ import {
 import {
   applyPresetChanges,
   lockdownChanges,
+  PausedAccess,
+  pausedAccess,
   restoreChanges,
+  resumeChanges,
   savePresetChange,
 } from "./rules/presets.ts";
 import {
@@ -128,6 +135,11 @@ const decodePresence = decodeJson(MachinePresence);
 const decodeSettings = decodeJson(ScopedSettingValues);
 const decodeMachineMessage = decodeJson(MachineToPortal);
 const decodeAttachment = Schema.decodeUnknownSync(Attachment);
+
+/** MM-713: the stored pause. Pages get `state` only. */
+const PauseRecord = Schema.Struct({ state: PauseState, before: PausedAccess });
+type PauseRecord = typeof PauseRecord.Type;
+const decodePause = decodeJson(PauseRecord);
 const decodeHelloProtocol = Schema.decodeUnknownOption(
   Schema.TaggedStruct("hello", { protocol: Schema.Number }),
 );
@@ -166,6 +178,8 @@ const SNAPSHOT_HISTORY = 100;
 const SNAPSHOT_FINISHED_COMMANDS = 100;
 /** A page records the same sign-in at most once a minute. */
 const SIGN_IN_WRITE_MS = 60_000;
+/** MM-709: an offline machine stops its agents if it connects within 7 days of the pause. */
+const PAUSE_STOP_MINUTES = 7 * 24 * 60;
 
 const nowIso = () => new Date().toISOString();
 
@@ -210,6 +224,8 @@ const errorMessage = (error: unknown): string =>
 
 export class MachineMapObject extends DurableObject<Env> {
   #map: MachineMapDocument;
+  /** MM-711: null when nothing is paused. */
+  #pause: PauseRecord | null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -218,6 +234,8 @@ export class MachineMapObject extends DurableObject<Env> {
     this.#migrate();
     const row = this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'map'")[0];
     this.#map = row ? decodeMap(row.value) : emptyMap();
+    const pause = this.#sql<{ value: string }>("SELECT value FROM meta WHERE key = 'pause'")[0];
+    this.#pause = pause ? decodePause(pause.value) : null;
   }
 
   // ---------------------------------------------------------------- storage
@@ -344,9 +362,27 @@ export class MachineMapObject extends DurableObject<Env> {
     }));
   }
 
+  /** MM-713: stores the pause, so it survives a restart, and shows it on every page. */
+  #savePause(record: PauseRecord | null): void {
+    if (record) {
+      this.#sql(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('pause', ?)",
+        JSON.stringify(record),
+      );
+    } else {
+      this.#sql("DELETE FROM meta WHERE key = 'pause'");
+    }
+    this.#pause = record;
+    this.#broadcast(this.#pauseEvent());
+  }
+
+  #pauseEvent(): PauseEvent {
+    return { _tag: "pause", pause: this.#pause?.state ?? null };
+  }
+
   // ---------------------------------------------------------------- sockets
 
-  #broadcast(event: PortalEvent | RotationsEvent): void {
+  #broadcast(event: PortalEvent | RotationsEvent | PauseEvent): void {
     const text = JSON.stringify(event);
     for (const ws of this.ctx.getWebSockets(PAGE_TAG)) {
       try {
@@ -411,6 +447,7 @@ export class MachineMapObject extends DurableObject<Env> {
         JSON.stringify({ _tag: "snapshot", snapshot: this.#snapshot() } satisfies PortalEvent),
       );
       server.send(JSON.stringify(this.#rotationsEvent()));
+      server.send(JSON.stringify(this.#pauseEvent()));
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === "/connect") {
@@ -626,9 +663,23 @@ export class MachineMapObject extends DurableObject<Env> {
 
   // ---------------------------------------------------------------- writes
 
-  /** MM-701: one revision. Pushes the new desired state to every touched online machine. */
-  #commit(actor: MapActor, summary: string, changes: ReadonlyArray<MapChange>): MapRevision {
+  /**
+   * MM-701: one revision. Pushes the new desired state to every touched online machine.
+   * MM-711: while paused, only `resume` may raise an arrow or a map role.
+   */
+  #commit(
+    actor: MapActor,
+    summary: string,
+    changes: ReadonlyArray<MapChange>,
+    purpose: "change" | "resume" = "change",
+  ): MapRevision {
     if (changes.length === 0) throw new PortalError(409, "Nothing changes.");
+    if (this.#pause && purpose !== "resume" && raisesAnyAccess(this.#map, changes)) {
+      throw new PortalError(
+        423,
+        "Everything is paused. Resume first, then raise an arrow or a map role.",
+      );
+    }
     const applied = applyChanges(this.#map, changes);
     const map = { ...applied.map, revision: this.#map.revision + 1 };
     const revision: MapRevision = {
@@ -718,6 +769,17 @@ export class MachineMapObject extends DurableObject<Env> {
     if (input._tag === "testArrow" && !findMachine(this.#map, input.to)) {
       throw new PortalError(404, `Unknown machine ${input.to}.`);
     }
+    return this.#queueCommand(actor, machineId, input, delivery, expiresInMinutes);
+  }
+
+  /** Queues a command without the checks of `#createCommand`, and delivers it when it can. */
+  #queueCommand(
+    actor: MapActor,
+    machineId: MachineId,
+    input: MachineCommandInput,
+    delivery: CommandDelivery,
+    expiresInMinutes: number,
+  ): MachineCommand {
     const now = Date.now();
     const command: MachineCommand = {
       id: crypto.randomUUID(),
@@ -791,6 +853,13 @@ export class MachineMapObject extends DurableObject<Env> {
     tool: MapToolName,
     input: unknown,
   ): MapToolResult {
+    // MM-711: no agent uses the map while everything is paused, not even to read it.
+    if (this.#pause) {
+      throw new PortalError(
+        423,
+        `Everything is paused since ${this.#pause.state.pausedAt}. The owner pressed the emergency pause. Only the owner can resume, in the portal.`,
+      );
+    }
     const gate = gateTool(this.#map, actor.machineId, tool);
     if (gate._tag === "refuse") throw new PortalError(403, gate.error);
     const name = (id: MachineId) => findMachine(this.#map, id)?.name ?? id;
@@ -1319,6 +1388,50 @@ export class MachineMapObject extends DurableObject<Env> {
         _tag: "applied",
         revision: this.#commit(ownerActor(owner), preset.summary, preset.changes).revision,
       };
+    });
+  }
+
+  /**
+   * MM-708 to MM-710: lock down every arrow and map role, remember them, and stop every agent.
+   * Owner access through Cloudflare Access stays (MM-308).
+   */
+  pause(owner: OwnerContext) {
+    return this.#run(owner, (): PauseResponse => {
+      if (this.#pause) throw new PortalError(409, "Everything is already paused.");
+      const actor = ownerActor(owner);
+      const before = pausedAccess(this.#map);
+      const changes = lockdownChanges(this.#map);
+      const revision =
+        changes.length > 0 ? this.#commit(actor, "Emergency pause", changes).revision : null;
+      const record: PauseRecord = { state: { pausedAt: nowIso(), by: actor, revision }, before };
+      this.#savePause(record);
+      // MM-709: every machine, also one that did not report the command yet (no MM-502 check).
+      for (const machine of this.#map.machines) {
+        this.#queueCommand(
+          actor,
+          machine.id,
+          { _tag: "stopAllAgents" },
+          "online",
+          PAUSE_STOP_MINUTES,
+        );
+      }
+      return { pause: record.state, stopCommands: this.#map.machines.length };
+    });
+  }
+
+  /** MM-712: return the arrows and map roles from before the pause. Agents do not start again. */
+  resume(owner: OwnerContext) {
+    return this.#run(owner, (): ResumeResponse => {
+      const pause = this.#pause;
+      if (!pause) throw new PortalError(409, "Nothing is paused.");
+      const changes = resumeChanges(this.#map, pause.before);
+      const revision =
+        changes.length > 0
+          ? this.#commit(ownerActor(owner), "Resume after emergency pause", changes, "resume")
+              .revision
+          : null;
+      this.#savePause(null);
+      return { revision };
     });
   }
 

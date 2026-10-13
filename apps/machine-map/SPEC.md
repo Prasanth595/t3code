@@ -103,6 +103,12 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-705** A preset is a named copy of all arrows. "Save as preset" stores the current arrows. "Apply" makes one revision.
 - **MM-706** "Lockdown" is a built-in preset: every arrow becomes `none` and every map role becomes `none`. It is one click with a confirmation.
 - **MM-707** "Hold changes" collects changes as a draft. "Apply" makes one revision from the draft. "Discard" drops it.
+- **MM-708** "Emergency pause" is a big red button under a flip-up cover. Lifting the cover is the confirmation. One press then does MM-709 and MM-710 in one step. The command palette also opens the button.
+- **MM-709** Emergency pause sends "stop all agents" to every machine, with delivery "when online" and an expiry of 7 days. An offline machine stops its agents when it connects again. The pause skips the check of MM-502: a machine without the command reports a failure.
+- **MM-710** Emergency pause makes one revision with the summary "Emergency pause": every arrow and every map role becomes `none`, as in lockdown. The portal keeps the arrows and map roles from before the pause. If the map is already locked down, the pause makes no revision. Owner access through Cloudflare Access stays (MM-308).
+- **MM-711** While paused, the portal refuses every agent tool call, `machines_read` too. It also refuses every change that raises an arrow or a map role, from any actor. Changes that lower access, settings and commands still work.
+- **MM-712** "Resume" is for the owner only and asks for confirmation. It makes one revision that returns the arrows and map roles from before the pause, and ends the pause. It does not start agents again, and queued stop commands stay in the queue. A machine that joined during the pause keeps `none`.
+- **MM-713** Every open page shows the pause at once: a hazard frame, the banner "Everything is paused" with who paused and when, and "Resume". The Durable Object stores the pause, so it survives a restart.
 
 ## 8. Agents
 

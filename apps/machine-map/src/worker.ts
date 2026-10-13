@@ -154,6 +154,10 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.applyPreset(owner, id));
     case "POST /lockdown":
       return toResponse(await stub.lockdown(owner));
+    case "POST /pause":
+      return toResponse(await stub.pause(owner));
+    case "POST /resume":
+      return toResponse(await stub.resume(owner));
     case "GET /devices":
       return toResponse(await stub.devices(owner));
     case "POST /devices/sign-out-everywhere":
