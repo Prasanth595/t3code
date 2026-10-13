@@ -1804,6 +1804,7 @@ function SavedBackendListRow({
           open
           onOpenChange={setGrokBotSetupOpen}
           environmentLabel={environment.label}
+          machineKind={machineKind}
           mcpUrl={hostedMcpUrl}
         />
       ) : null}
@@ -3678,6 +3679,11 @@ export function ConnectionsSettings() {
                 open
                 onOpenChange={setGrokBotSetupOpen}
                 environmentLabel={primaryEnvironment?.label ?? "this environment"}
+                machineKind={
+                  primaryServerConfig
+                    ? resolveEnvironmentMachineKind(primaryServerConfig)
+                    : "desktop"
+                }
                 mcpUrl={environmentHostedMcpUrl({
                   entry: primaryEnvironment?.entry,
                   relayHttpBaseUrl:
