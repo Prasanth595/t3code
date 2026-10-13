@@ -127,6 +127,17 @@ function boundedId(value: unknown): string | undefined {
   return Array.from(value).join("");
 }
 
+/**
+ * A Code Mode script can return `html_render`'s reference on its own
+ * (`return out.htmlRender`). Only ids `html_render` mints end in `-html`, so
+ * an unrelated object with the same fields is not taken for a page.
+ */
+function readBareHtmlRenderReference(data: Record<PropertyKey, unknown>) {
+  return typeof data.attachmentId === "string" && data.attachmentId.endsWith("-html")
+    ? readHtmlRenderReference(data)
+    : undefined;
+}
+
 /** Keeps only IDs and failure metadata used by T3's grouped tool summaries. */
 export function compactDynamicToolOutput(value: unknown): CompactToolOutput | undefined {
   const budget: ResultReadBudget = {
@@ -143,7 +154,8 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       if (id !== undefined) output[key] = id;
     }
     if (data.status === "rolled_back") output.status = "rolled_back";
-    const htmlRender = readHtmlRenderReference(data.htmlRender);
+    const htmlRender =
+      readHtmlRenderReference(data.htmlRender) ?? readBareHtmlRenderReference(data);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
     const mcpApp = readMcpAppReference(data[MCP_APP_OUTPUT_KEY]);
     // Kept under its stored key, so the compact wire output reads back the same way.
