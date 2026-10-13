@@ -5,6 +5,7 @@ import {
   latestProviderTurnForAttempt,
   MessageId,
   type OrchestrationV2Run,
+  type ProviderThreadId,
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -16,20 +17,23 @@ import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
+  isRestartContinuable,
   isRestartNoteSource,
   restartCancelledBackgroundWorkNote,
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
 
 const CONTINUE_PROMPT = "Continue where you left off.";
+const RESUME_SUBAGENTS_PROMPT = "Resume any of this work that is still needed.";
 
 /** Consecutive automatic continuations allowed before a person has to step in. */
 const MAX_CONTINUATION_CHAIN = 3;
 
 /**
  * Whether a restart must leave this run for the user: the thread is put away,
- * the provider turn already ended, or the user owes an answer. Checked when
- * intent is recorded and again when the continuation is delivered.
+ * the provider turn already ended (unless it settled with subagents to
+ * resume), or the user owes an answer. Checked when intent is recorded and
+ * again when the continuation is delivered.
  */
 function restartContinuationBlocked(
   projection: Pick<
@@ -38,6 +42,7 @@ function restartContinuationBlocked(
   >,
   source: OrchestrationV2Run,
   now: DateTime.Utc,
+  resumesSubagents: boolean,
 ): boolean {
   const { thread } = projection;
   if (
@@ -50,7 +55,9 @@ function restartContinuationBlocked(
   const turn = latestProviderTurnForAttempt(projection.providerTurns, source.activeAttemptId);
   if (
     turn !== undefined &&
-    (turn.status === "completed" || turn.status === "failed" || turn.status === "interrupted")
+    ((turn.status === "completed" && !resumesSubagents) ||
+      turn.status === "failed" ||
+      turn.status === "interrupted")
   )
     return true;
   const waitingRequest = projection.runtimeRequests.some(
@@ -82,8 +89,11 @@ function restartContinuationBlocked(
 }
 
 /**
- * Resume only an unfinished root turn. Leftover background work is cleaned up
- * separately and reported on the next user turn; it must not wake a settled run.
+ * Resume an unfinished root turn, or a settled one whose subagents the restart
+ * stopped (`subagentProviderThreadIds`: provider threads losing subagents), so
+ * the agent can resume them as it would a cut turn. Other leftover background
+ * work is cleaned up separately and reported on the next user turn; it must
+ * not wake a settled run.
  */
 export function restartContinuationRun(
   projection: Pick<
@@ -97,6 +107,7 @@ export function restartContinuationRun(
     | "turnItems"
   >,
   now: DateTime.Utc,
+  subagentProviderThreadIds: ReadonlySet<ProviderThreadId> = new Set(),
 ): OrchestrationV2Run | undefined {
   // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
@@ -109,9 +120,13 @@ export function restartContinuationRun(
   if (!run) return;
   const preparedContinuation =
     run.status === "starting" && run.restartContinuationOfRunId !== undefined;
-  if (run.status !== "running" && !preparedContinuation) return;
-  if (restartContinuationBlocked(projection, run, now)) return;
-  const liveTurnRequired = !preparedContinuation;
+  const settledWithSubagents =
+    (run.status === "completed" || run.status === "waiting") &&
+    run.providerThreadId !== null &&
+    subagentProviderThreadIds.has(run.providerThreadId);
+  if (run.status !== "running" && !preparedContinuation && !settledWithSubagents) return;
+  if (restartContinuationBlocked(projection, run, now, settledWithSubagents)) return;
+  const liveTurnRequired = !preparedContinuation && !settledWithSubagents;
   if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === run.providerThreadId,
@@ -132,13 +147,16 @@ export function restartContinuationRun(
   const session = projection.providerSessions.find(
     (candidate) => candidate.id === providerThread.providerSessionId,
   );
+  // A settled thread's session may already be stopped and out of the recovery
+  // read; the continuation reopens it from the provider thread's native ref.
   // Most adapters keep a live session "ready" through its turns, so only a
   // stopped or failed session rules out a live turn.
   if (
-    session === undefined ||
-    session.providerInstanceId !== run.providerInstanceId ||
-    session.driver !== providerThread.driver ||
-    (liveTurnRequired && (session.status === "stopped" || session.status === "error"))
+    session === undefined
+      ? !settledWithSubagents
+      : session.providerInstanceId !== run.providerInstanceId ||
+        session.driver !== providerThread.driver ||
+        (liveTurnRequired && (session.status === "stopped" || session.status === "error"))
   )
     return;
   if (
@@ -173,13 +191,17 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       return;
     if (projection.messages.some((message) => message.id === messageId)) return;
     const source = projection.runs.find((run) => run.id === input.sourceRunId);
-    // Pending effects from older versions may target settled background work,
-    // including waiting runs that reconciliation subsequently cancelled.
+    // Settled background work other than subagents waits for the next user
+    // turn, including on waiting runs that reconciliation subsequently cancelled.
     if (
       !source ||
-      source.status !== "cancelled" ||
-      isRestartNoteSource(source, projection.providerTurns) ||
-      restartContinuationBlocked(projection, source, yield* DateTime.now)
+      !isRestartContinuable(source, projection.providerTurns) ||
+      restartContinuationBlocked(
+        projection,
+        source,
+        yield* DateTime.now,
+        isRestartNoteSource(source, projection.providerTurns),
+      )
     )
       return;
     // A user submission after reconciliation takes precedence over an automatic
@@ -235,11 +257,14 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     );
     const noteText =
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
+    const resumesSubagents = note.settled && note.work.some((work) => work.kind === "subagent");
     const text =
       noteText === undefined
         ? CONTINUE_PROMPT
         : note.settled
-          ? noteText
+          ? resumesSubagents
+            ? `${noteText}\n\n${RESUME_SUBAGENTS_PROMPT}`
+            : noteText
           : `${noteText}\n\n${CONTINUE_PROMPT}`;
     yield* threads
       .dispatch({
@@ -252,9 +277,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         notification: {
           source: { kind: "system" },
           outcome: "updated",
-          summary: note.settled
-            ? "T3 Code restarted and stopped background work"
-            : "T3 Code restarted and resumed this turn",
+          summary: resumesSubagents
+            ? "T3 Code restarted and asked the agent to resume its subagents"
+            : note.settled
+              ? "T3 Code restarted and stopped background work"
+              : "T3 Code restarted and resumed this turn",
           detail: text,
         },
         attachments: [],

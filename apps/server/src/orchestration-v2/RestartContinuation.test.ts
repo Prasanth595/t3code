@@ -380,7 +380,7 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
   }),
 );
 
-it.effect("prepares no continuation for background work another provider thread launched", () =>
+it.effect("prepares no continuation for subagents another provider thread launched", () =>
   Effect.gen(function* () {
     const base = makeProjection();
     const claudeThreadId = ProviderThreadId.make("provider-thread:claude");
@@ -424,7 +424,7 @@ it.effect("prepares no continuation for background work another provider thread 
     );
     yield* recovery.prepareForShutdown;
     assert.lengthOf(writes, 0);
-    // Work on the settled run's own provider thread must not wake it either.
+    // Subagents on the settled run's own provider thread do wake it.
     const ownWork = {
       ...projection,
       turnItems: [{ ...projection.turnItems[0]!, providerThreadId }],
@@ -451,9 +451,99 @@ it.effect("prepares no continuation for background work another provider thread 
       ),
     );
     yield* ownRecovery.prepareForShutdown;
-    assert.lengthOf(writes, 0);
+    assert.lengthOf(writes, 1);
   }),
 );
+
+const settledRecovery = (
+  status: "completed" | "waiting",
+  projectId: ProjectId,
+  background: "shell" | "subagent",
+) => {
+  const base = makeProjection();
+  const projection = {
+    ...base,
+    thread: { ...base.thread, projectId },
+    runs: [{ ...base.runs[0]!, status }],
+    providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+    turnItems: [
+      background === "subagent"
+        ? {
+            id: "turn-item:background-subagent",
+            runId,
+            nodeId: null,
+            providerThreadId,
+            providerInstanceId: instanceId,
+            type: "subagent",
+            origin: "provider_native",
+            childThreadId: null,
+            subagentId: "subagent:background",
+            title: "Background reviewer",
+            status: "running",
+          }
+        : {
+            id: "turn-item:background-shell",
+            runId,
+            nodeId: null,
+            providerThreadId,
+            providerInstanceId: instanceId,
+            type: "command_execution",
+            input: "sleep 25",
+            title: null,
+            status: "running",
+          },
+    ],
+    subagents:
+      background === "subagent"
+        ? [
+            {
+              id: "subagent:background",
+              runId,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: instanceId,
+              status: "running",
+            },
+          ]
+        : [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  return Effect.gen(function* () {
+    const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
+    const writes: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0][] = [];
+    const recovery = yield* ProviderRuntimeRecovery.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getRecoveryThreadIds: () => Effect.succeed([threadId]),
+            getRuntimeRecoveryProjection: () => Effect.succeed(projection),
+          }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeWithEffects: (input) =>
+              Effect.sync(() => {
+                writes.push(input);
+                return [];
+              }),
+            commitCommand: (input) =>
+              Effect.sync(() => {
+                commits.push(input);
+                return { committed: true, cancelledEffectCount: 0 } as never;
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
+            runRecoveryOnce: Effect.succeed(false),
+          }),
+          Layer.mock(EffectOutbox.EffectOutboxV2)({
+            listByCommandId: () => Effect.succeed([]),
+            reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
+          }),
+        ),
+      ),
+    );
+    return { recovery, commits, writes };
+  });
+};
 
 it.effect.each([
   ["completed", scratchProjectId],
@@ -464,88 +554,54 @@ it.effect.each([
   "cleans up background work without waking a %s run in project %s",
   ([status, projectId]) =>
     Effect.gen(function* () {
-      const base = makeProjection();
-      const projection = {
-        ...base,
-        thread: { ...base.thread, projectId },
-        runs: [{ ...base.runs[0]!, status }],
-        providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
-        turnItems: [
-          {
-            id: "turn-item:background-subagent",
-            runId,
-            nodeId: null,
-            providerThreadId,
-            providerInstanceId: instanceId,
-            type: "subagent",
-            subagentId: "subagent:background",
-            title: "Background reviewer",
-            status: "running",
-          },
-        ],
-        subagents: [
-          {
-            id: "subagent:background",
-            runId,
-            origin: "provider_native",
-            driver,
-            providerInstanceId: instanceId,
-            status: "running",
-          },
-        ],
-      } as unknown as OrchestrationV2ThreadProjection;
       for (const trigger of ["startup", "shutdown"] as const) {
-        const commits: Parameters<EventSink.EventSinkV2["Service"]["commitCommand"]>[0][] = [];
-        const writes: Parameters<EventSink.EventSinkV2["Service"]["writeWithEffects"]>[0][] = [];
-        const recovery = yield* ProviderRuntimeRecovery.make.pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
-              Layer.mock(ProjectionStore.ProjectionStoreV2)({
-                getRecoveryThreadIds: () => Effect.succeed([threadId]),
-                getRuntimeRecoveryProjection: () => Effect.succeed(projection),
-              }),
-              Layer.mock(EventSink.EventSinkV2)({
-                writeWithEffects: (input) =>
-                  Effect.sync(() => {
-                    writes.push(input);
-                    return [];
-                  }),
-                commitCommand: (input) =>
-                  Effect.sync(() => {
-                    commits.push(input);
-                    return { committed: true, cancelledEffectCount: 0 } as never;
-                  }),
-              }),
-              IdAllocator.layer,
-              Layer.mock(EffectWorker.OrchestrationEffectWorkerV2)({
-                runRecoveryOnce: Effect.succeed(false),
-              }),
-              Layer.mock(EffectOutbox.EffectOutboxV2)({
-                listByCommandId: () => Effect.succeed([]),
-                reconcileAfterProcessLoss: Effect.succeed({ requeued: 0, cancelled: 0 }),
-              }),
-            ),
-          ),
-        );
+        const { recovery, commits, writes } = yield* settledRecovery(status, projectId, "shell");
         if (trigger === "shutdown") yield* recovery.prepareForShutdown;
         yield* recovery.reconcile(trigger);
         assert.lengthOf(writes, 0);
         assert.lengthOf(commits, 1);
         assert.lengthOf(commits[0]!.effects, 0);
         const events = commits[0]!.events;
-        for (const type of ["turn-item.updated", "subagent.updated"] as const)
-          assert.isTrue(
-            events.some((event) => event.type === type && event.payload.status === "cancelled"),
-          );
+        assert.isTrue(
+          events.some(
+            (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
+          ),
+        );
         const note = events.find((event) => event.type === "run.background-work-cancelled");
         assert.equal(note?.runId, runId);
         assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [
-          { kind: "subagent", label: "Background reviewer", id: "turn-item:background-subagent" },
+          { kind: "shell", label: "sleep 25", id: "turn-item:background-shell" },
         ]);
         if (status === "completed")
           assert.isFalse(events.some((event) => event.type === "run.updated"));
       }
+    }),
+);
+
+it.effect.each(["completed", "waiting"] as const)(
+  "continues a %s run whose subagents a restart stopped, as it would a cut turn",
+  (status) =>
+    Effect.gen(function* () {
+      const continuation = {
+        id: `effect:restart-continuation:${runId}`,
+        threadId,
+        request: { type: "provider-runtime.continue" as const, sourceRunId: runId },
+      };
+      const startup = yield* settledRecovery(status, scratchProjectId, "subagent");
+      yield* startup.recovery.reconcile("startup");
+      assert.lengthOf(startup.commits, 1);
+      assert.deepInclude(startup.commits[0]!.effects[0], continuation);
+      const note = startup.commits[0]!.events.find(
+        (event) => event.type === "run.background-work-cancelled",
+      );
+      assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [
+        { kind: "subagent", label: "Background reviewer", id: "turn-item:background-subagent" },
+      ]);
+      // A graceful restart records intent before it stops the subagents.
+      const shutdown = yield* settledRecovery(status, scratchProjectId, "subagent");
+      yield* shutdown.recovery.prepareForShutdown;
+      assert.lengthOf(shutdown.writes, 1);
+      assert.deepInclude(shutdown.writes[0]!.effects[0], continuation);
     }),
 );
 
@@ -744,6 +800,37 @@ it.effect("does not continue a cut /compact or /logout turn", () =>
     } as unknown as OrchestrationV2ThreadProjection);
     assert.lengthOf(texts, 1);
   }),
+);
+
+it.effect.each(["completed", "waiting", "cancelled"] as const)(
+  "asks the agent to resume subagents a restart stopped after its %s turn",
+  (status) =>
+    Effect.gen(function* () {
+      const base = makeProjection();
+      const projection = {
+        ...base,
+        runs: [
+          {
+            ...base.runs[0]!,
+            status,
+            restartCancelledBackgroundWork: [
+              { kind: "subagent" as const, label: "Background reviewer" },
+              { kind: "shell" as const, label: "sleep 25" },
+            ],
+          },
+        ],
+        providerTurns: [{ ...base.providerTurns[0]!, status: "completed" }],
+      } as unknown as OrchestrationV2ThreadProjection;
+      const [resumed, ...rest] = yield* continuationDispatches(projection);
+      assert.lengthOf(rest, 0);
+      assert.equal(
+        resumed?.notification?.summary,
+        "T3 Code restarted and asked the agent to resume its subagents",
+      );
+      assert.include(resumed!.text, "- subagent: Background reviewer");
+      assert.include(resumed!.text, "- shell: sleep 25");
+      assert.isTrue(resumed!.text.endsWith("Resume any of this work that is still needed."));
+    }),
 );
 
 it.effect("tells a turn cut mid-way about the background work it lost", () =>

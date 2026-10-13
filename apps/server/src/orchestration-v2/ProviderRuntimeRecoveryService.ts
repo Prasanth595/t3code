@@ -121,6 +121,36 @@ function providerThreadHasPendingBackgroundTasks(
 }
 
 /**
+ * Provider threads whose subagents are still open. A restart stops them, so a
+ * settled run on one of these threads is continued to let the agent resume them.
+ */
+function providerThreadsWithOpenSubagents(
+  projection: ProjectionStore.ProjectionRuntimeRecoveryState,
+): ReadonlySet<ProviderThreadId> {
+  const ids = new Set<ProviderThreadId>();
+  for (const item of projection.turnItems ?? []) {
+    if (
+      item.type !== "subagent" ||
+      !isNonterminalTurnItemStatus(item.status) ||
+      isAppOwnedDelegationItem(item)
+    )
+      continue;
+    const providerThreadId =
+      item.providerThreadId ??
+      projection.runs.find((run) => run.id === item.runId)?.providerThreadId;
+    if (providerThreadId != null) ids.add(providerThreadId);
+  }
+  for (const thread of projection.providerThreads ?? []) {
+    if (
+      thread.ownerNodeId === null &&
+      (thread.pendingBackgroundTasks ?? []).some((task) => task.kind === "subagent")
+    )
+      ids.add(thread.id);
+  }
+  return ids;
+}
+
+/**
  * Resolve providerInstanceId for a stale background-capable turn item whose
  * run is missing/null (or not found). Prefer an existing run, then a subagent
  * item's own instance id, then the item's provider thread, then a last-resort
@@ -587,7 +617,7 @@ export const make = Effect.gen(function* () {
       }
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(projection, now)
+          ? restartContinuationRun(projection, now, providerThreadsWithOpenSubagents(projection))
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -723,7 +753,13 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
-        const run = restartContinuationRun(projection, yield* DateTime.now);
+        // Shutdown reconciliation cancels the subagents below, so a settled
+        // thread's continuation must be captured while they are still open.
+        const run = restartContinuationRun(
+          projection,
+          yield* DateTime.now,
+          providerThreadsWithOpenSubagents(projection),
+        );
         if (!run) return;
         const commandId = CommandId.make(`command:restart-prepare:${run.id}`);
         yield* eventSink.writeWithEffects({

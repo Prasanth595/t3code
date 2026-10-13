@@ -31,8 +31,9 @@ terminal commands. Saved threads, settings, and project files remain.
 
 **Settings → General → Continue threads after restarts** is on by default.
 It resumes supported active threads after an update, crash, or machine
-restart. Changes are saved to connected environments that support this setting;
-update older servers first. If a supported environment was offline or has a
+restart, and wakes threads whose subagents were still running so the agent can
+resume them. Changes are saved to connected environments that support this
+setting; update older servers first. If a supported environment was offline or has a
 different value, use **Apply to all** in Settings after it connects.
 T3 Code must start again on that machine;
 the setting does not enable automatic startup. Terminal commands may still be

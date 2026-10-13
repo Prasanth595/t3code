@@ -124,6 +124,19 @@ export function isRestartNoteSource(
 }
 
 /**
+ * Whether a restart continuation may resume `source`: a run the restart cut
+ * mid-turn, or a settled one whose subagents the restart stopped, so the agent
+ * can resume them. Other lost background work waits for the next user turn.
+ */
+export function isRestartContinuable(
+  source: Pick<OrchestrationV2Run, "status" | "activeAttemptId" | "restartCancelledBackgroundWork">,
+  providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
+): boolean {
+  if (!isRestartNoteSource(source, providerTurns)) return source.status === "cancelled";
+  return (source.restartCancelledBackgroundWork ?? []).some((work) => work.kind === "subagent");
+}
+
+/**
  * The note a restart continuation of `source` carries, and whether the turn it
  * continues had settled (the note is then the whole prompt). A continuation cut
  * before its provider turn completed may not have delivered its own note:

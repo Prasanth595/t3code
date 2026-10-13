@@ -88,7 +88,7 @@ import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.t
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
 import { notificationTurnItem } from "@t3tools/provider-core/server/notification";
-import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
+import { isRestartContinuable } from "./RestartBackgroundNote.ts";
 import {
   isBufferedProviderNotification,
   isUndeliveredMailboxSteer,
@@ -4605,8 +4605,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
         if (
           !source ||
-          source.status !== "cancelled" ||
-          isRestartNoteSource(source, projection.providerTurns) ||
+          !isRestartContinuable(source, projection.providerTurns) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||

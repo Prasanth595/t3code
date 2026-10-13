@@ -30,6 +30,7 @@ const SCENARIO = "claude_background_subagent_after_root";
 const SESSION_ID = "cca274e4-25ae-4171-b972-bbb31118517e";
 const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
+const RESUME_SUBAGENTS = "Resume any of this work that is still needed.";
 const NOTE = [
   "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back:",
   "- subagent: Background subagent test",
@@ -43,6 +44,8 @@ const NOTE = [
  */
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
   resumedPrompts: ReadonlyArray<string>,
+  /** Prompts the restarted server sends itself; the user's turns run on a later runtime. */
+  continuationPrompts: ReadonlyArray<string>,
 ) {
   const recorded = yield* readProviderReplayTranscript(
     new URL(`./fixtures/${SCENARIO}/claude_transcript.ndjson`, import.meta.url),
@@ -61,6 +64,11 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
     throw new Error(`${SCENARIO} must open with a recorded query.open frame.`);
   }
   const { sessionId: _sessionId, ...resumeOptions } = queryOptions as Record<string, unknown>;
+  const resumeQuery = (label: string): ProviderReplayEntry => ({
+    type: "expect_outbound",
+    label: `query.open:resume:${label}`,
+    frame: { type: "query.open", options: { ...resumeOptions, resume: SESSION_ID } },
+  });
   const resumedTurn = (label: string, text: string): ReadonlyArray<ProviderReplayEntry> => [
     {
       type: "expect_outbound",
@@ -121,11 +129,16 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
       ...recorded.entries.slice(0, rootResult + 1),
       // The server dies here, with the background subagent still running.
       { type: "runtime_exit", status: "success" },
-      {
-        type: "expect_outbound",
-        label: "query.open:resume",
-        frame: { type: "query.open", options: { ...resumeOptions, resume: SESSION_ID } },
-      },
+      ...(continuationPrompts.length === 0
+        ? []
+        : [
+            resumeQuery("continuation"),
+            ...continuationPrompts.flatMap((prompt, index) =>
+              resumedTurn(`continuation:${index + 1}`, prompt),
+            ),
+            { type: "runtime_exit" as const, status: "success" as const },
+          ]),
+      resumeQuery("user"),
       ...resumedPrompts.flatMap((prompt, index) => resumedTurn(String(index + 1), prompt)),
     ],
   });
@@ -133,10 +146,14 @@ const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
 
 const runRestart = Effect.fn("runRestart")(function* (input: {
   readonly resumedPrompts: ReadonlyArray<string>;
+  readonly continuationPrompts?: ReadonlyArray<string>;
   readonly userMessagesAfterRestart: ReadonlyArray<string>;
   readonly continueThreadsAfterServerUpdate: boolean;
 }) {
-  const transcript = yield* readRestartTranscript(input.resumedPrompts);
+  const transcript = yield* readRestartTranscript(
+    input.resumedPrompts,
+    input.continuationPrompts ?? [],
+  );
   const workspace = yield* checkpointWorkspace(SCENARIO);
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -183,7 +200,8 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
 
   // Drain recovery before submitting any user work, which would otherwise
   // take precedence over an incorrectly queued automatic continuation.
-  const restartScenario = scenario("restarted", []);
+  // The idle wait lets a continuation turn finish before phase 2 starts.
+  const restartScenario = scenario("restarted", phase1Steps.slice(firstIdle));
   const restarted = yield* Effect.scoped(
     Effect.gen(function* () {
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -200,9 +218,10 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     ),
   );
   const recovered = projectionFor(restarted, SCENARIO);
+  // With continuation on, the restart wakes the agent to resume its subagent.
   assert.deepEqual(
     recovered.runs.map((run) => run.status),
-    ["completed"],
+    input.continueThreadsAfterServerUpdate ? ["completed", "completed"] : ["completed"],
   );
   assert.equal(recovered.subagents[0]?.status, "cancelled");
   assert.equal(recovered.runs[0]?.restartCancelledBackgroundWork?.[0]?.kind, "subagent");
@@ -224,7 +243,34 @@ const userTexts = (projection: ReturnType<typeof projectionFor>) =>
   projection.turnItems.flatMap((item) => (item.type === "user_message" ? [item.text] : []));
 
 describe("restart-cancelled background work", () => {
-  it.effect.each([false, true])(
+  it.effect("asks the agent to resume its subagent when continuation is on", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const projection = yield* runRestart({
+          // The continuation carries the note, so the user's turns do not.
+          continuationPrompts: [`${NOTE}\n\n${RESUME_SUBAGENTS}`],
+          resumedPrompts: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
+          userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate: true,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed", "completed"],
+        );
+        assert.equal(projection.runs[1]?.restartContinuationOfRunId, projection.runs[0]?.id);
+        assert.deepEqual(userTexts(projection), [
+          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
+          FIRST_AFTER_RESTART,
+          SECOND_AFTER_RESTART,
+        ]);
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+      ),
+    ),
+  );
+
+  it.effect.each([false])(
     "keeps the thread settled and tells the next user turn once when continuation is %s",
     (continueThreadsAfterServerUpdate) =>
       Effect.scoped(
