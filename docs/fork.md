@@ -201,11 +201,12 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is off by default. Turn it on in Settings > General > Repository owner filters.
 
 - The owner comes from the repository that groups the project in the sidebar. A fork checkout counts under the owner of the fork.
+- The menus offer only owners whose projects have threads. The owner of a cloned repository without threads does not show.
 - Pull request page: open Filters > Owner. Pick "Show only selected" or "Hide selected", then pick the owners.
 - In the pull request search, type `org:` or `owner:` to show only an owner, and `-org:` or `-owner:` to hide an owner. A typed owner replaces the menu choice.
 - Sidebar: click the building icon next to the project scope, pick "Show only" or "Hide", then pick the owners.
 - While the sidebar filter is on, a chip under the header names it and counts the hidden projects. Click "is" or "is not" on the chip to flip it. Click × to clear it.
-- The sidebar keeps a thread visible while it runs, waits for its subagents or monitors, or waits for you. This also applies when the filter hides its project.
+- The filter hides every thread of a hidden project. When a hidden thread waits for an approval or an answer, the chip shows how many, for example "2 need you".
 - A project without a remote has no owner. "Show only" hides it, and "Hide" keeps it. In the sidebar, pick "No repository owner" to filter these projects.
 
 ## Pull request filter chips

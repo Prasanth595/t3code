@@ -41,28 +41,39 @@ export function resolveSidebarOwnerFilter(input: {
 
 export interface SidebarOwnerOption {
   readonly owner: SidebarOwner;
-  readonly projectCount: number;
+  readonly threadCount: number;
 }
 
+const projectKeyOf = (thread: { readonly environmentId: string; readonly projectId: string }) =>
+  `${thread.environmentId}:${thread.projectId}`;
+
 /**
- * The menu entries: each owner of the groups with its project count. A selected owner that no
- * group has stays in the list with a zero count, so the user can clear it. Owners sort by name,
- * and the entry for projects without an owner comes last.
+ * The menu entries: the owners that have threads, each with its thread count. An owner of cloned
+ * repositories without threads is not offered. A selected owner stays in the list, also with no
+ * threads, so the user can clear it. Owners sort by name, and the entry for projects without an
+ * owner comes last.
  */
 export function buildSidebarOwnerOptions(
-  groups: ReadonlyArray<Pick<SidebarProjectSnapshot, "repositoryIdentity">>,
+  groups: ReadonlyArray<Pick<SidebarProjectSnapshot, "repositoryIdentity" | "memberProjectRefs">>,
+  threads: ReadonlyArray<{ readonly environmentId: string; readonly projectId: string }>,
   selected: readonly SidebarOwner[],
 ): SidebarOwnerOption[] {
-  const projectCountByOwner = new Map<SidebarOwner, number>();
+  const ownerByProjectKey = new Map<string, SidebarOwner>();
   for (const group of groups) {
     const owner = sidebarProjectGroupOwner(group);
-    projectCountByOwner.set(owner, (projectCountByOwner.get(owner) ?? 0) + 1);
+    for (const ref of group.memberProjectRefs) ownerByProjectKey.set(projectKeyOf(ref), owner);
+  }
+  const threadCountByOwner = new Map<SidebarOwner, number>();
+  for (const thread of threads) {
+    const owner = ownerByProjectKey.get(projectKeyOf(thread));
+    if (owner === undefined) continue;
+    threadCountByOwner.set(owner, (threadCountByOwner.get(owner) ?? 0) + 1);
   }
   for (const owner of selected) {
-    if (!projectCountByOwner.has(owner)) projectCountByOwner.set(owner, 0);
+    if (!threadCountByOwner.has(owner)) threadCountByOwner.set(owner, 0);
   }
-  return [...projectCountByOwner]
-    .map(([owner, projectCount]) => ({ owner, projectCount }))
+  return [...threadCountByOwner]
+    .map(([owner, threadCount]) => ({ owner, threadCount }))
     .toSorted((left, right) =>
       left.owner === null ? 1 : right.owner === null ? -1 : left.owner.localeCompare(right.owner),
     );
@@ -100,30 +111,26 @@ type OwnerFilterThread = Pick<
   "environmentId" | "projectId" | "hasPendingApprovals" | "hasPendingUserInput" | "runtime"
 >;
 
-/**
- * A thread that runs, waits for its own background work, or waits for an approval or an answer
- * keeps its row while the filter hides its project, so that work does not stop out of sight.
- * When it is done, the filter hides it.
- */
-function keepsSidebarRowUnderOwnerFilter(thread: OwnerFilterThread): boolean {
-  const status = resolveSidebarThreadStatus(thread);
-  return (
-    status === "approval" || status === "input" || status === "working" || status === "waiting"
-  );
+/** The threads in the visible projects. Null keys mean no filter and return the same array. */
+export function filterSidebarThreadsByOwner<
+  T extends Pick<OwnerFilterThread, "environmentId" | "projectId">,
+>(threads: readonly T[], visibleProjectKeys: ReadonlySet<string> | null): readonly T[] {
+  if (visibleProjectKeys === null) return threads;
+  return threads.filter((thread) => visibleProjectKeys.has(projectKeyOf(thread)));
 }
 
 /**
- * The threads in the visible projects, plus the threads that `keepsSidebarRowUnderOwnerFilter`
- * keeps. Null keys mean no filter and return the same array.
+ * The hidden threads that wait for an approval or an answer from the user. The filter chip shows
+ * this count, so that the filter never hides a thread that needs the user without a trace.
  */
-export function filterSidebarThreadsByOwner<T extends OwnerFilterThread>(
-  threads: readonly T[],
+export function countHiddenThreadsNeedingUser(
+  threads: ReadonlyArray<OwnerFilterThread>,
   visibleProjectKeys: ReadonlySet<string> | null,
-): readonly T[] {
-  if (visibleProjectKeys === null) return threads;
-  return threads.filter(
-    (thread) =>
-      visibleProjectKeys.has(`${thread.environmentId}:${thread.projectId}`) ||
-      keepsSidebarRowUnderOwnerFilter(thread),
-  );
+): number {
+  if (visibleProjectKeys === null) return 0;
+  return threads.filter((thread) => {
+    if (visibleProjectKeys.has(projectKeyOf(thread))) return false;
+    const status = resolveSidebarThreadStatus(thread);
+    return status === "approval" || status === "input";
+  }).length;
 }

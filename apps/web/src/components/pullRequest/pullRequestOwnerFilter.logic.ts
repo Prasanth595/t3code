@@ -48,12 +48,22 @@ function ownerOf(project: OwnedProject): string | null {
   return repositoryOwnerOf(project.repositoryIdentity)?.toLowerCase() ?? null;
 }
 
-/** Fork: the distinct owners of these projects, sorted, for the owner menu. */
+/**
+ * Fork: the owners for the owner menu: the distinct owners of the projects that have threads,
+ * sorted. An owner of cloned repositories without threads is not offered.
+ */
 export function pullRequestProjectOwners(
   projects: ReadonlyArray<OwnedProject>,
+  threads: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly projectId: ProjectId }>,
 ): ReadonlyArray<string> {
+  const withThreads = new Set(
+    threads.map((thread) =>
+      pullRequestProjectKey({ id: thread.projectId, environmentId: thread.environmentId }),
+    ),
+  );
   const owners = new Set<string>();
   for (const project of projects) {
+    if (!withThreads.has(pullRequestProjectKey(project))) continue;
     const owner = ownerOf(project);
     if (owner !== null) owners.add(owner);
   }

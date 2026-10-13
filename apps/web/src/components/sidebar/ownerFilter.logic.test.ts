@@ -13,6 +13,7 @@ import type { Project } from "../../types";
 import type { FilterOperator } from "../filters/FilterChip";
 import {
   buildSidebarOwnerOptions,
+  countHiddenThreadsNeedingUser,
   filterSidebarProjectGroupsByOwner,
   filterSidebarThreadsByOwner,
   resolveSidebarOwnerFilter,
@@ -99,19 +100,36 @@ describe("resolveSidebarOwnerFilter", () => {
 });
 
 describe("buildSidebarOwnerOptions", () => {
-  it("counts projects per owner, a fork under its own owner, and projects without an owner last", () => {
-    expect(buildSidebarOwnerOptions(groups, [])).toEqual([
-      { owner: "qlik-trial", projectCount: 1 },
-      { owner: "yarden-zamir", projectCount: 2 },
-      { owner: null, projectCount: 1 },
+  const threadIn = (environmentId: EnvironmentId, projectId: string) => ({
+    environmentId,
+    projectId: ProjectId.make(projectId),
+  });
+
+  it("counts threads per owner, a fork under its own owner, and projects without an owner last", () => {
+    const threads = [
+      threadIn(vps, "work-vps"),
+      threadIn(mac, "dotfiles"),
+      threadIn(mac, "t3code"),
+      threadIn(mac, "t3code"),
+      threadIn(mac, "notes"),
+    ];
+    expect(buildSidebarOwnerOptions(groups, threads, [])).toEqual([
+      { owner: "qlik-trial", threadCount: 1 },
+      { owner: "yarden-zamir", threadCount: 3 },
+      { owner: null, threadCount: 1 },
     ]);
   });
 
-  it("keeps a selected owner that no project has, so the user can clear it", () => {
-    expect(buildSidebarOwnerOptions(groups, ["gone-org"])).toContainEqual({
-      owner: "gone-org",
-      projectCount: 0,
-    });
+  it("leaves out owners without threads, such as the owner of a cloned repository", () => {
+    expect(buildSidebarOwnerOptions(groups, [threadIn(mac, "dotfiles")], [])).toEqual([
+      { owner: "yarden-zamir", threadCount: 1 },
+    ]);
+  });
+
+  it("keeps a selected owner without threads, so the user can clear it", () => {
+    expect(buildSidebarOwnerOptions(groups, [], ["gone-org"])).toEqual([
+      { owner: "gone-org", threadCount: 0 },
+    ]);
   });
 });
 
@@ -144,7 +162,7 @@ describe("owner filter project keys", () => {
   });
 });
 
-describe("filterSidebarThreadsByOwner", () => {
+describe("owner filter threads", () => {
   const runtime = {
     activeRunId: null,
     providerInstanceId: ProviderInstanceId.make("codex"),
@@ -174,33 +192,28 @@ describe("filterSidebarThreadsByOwner", () => {
     thread("question-personal", "dotfiles", { hasPendingUserInput: true }),
   ];
 
-  it("hides threads of hidden projects but keeps the ones that run or wait", () => {
+  it("shows only the threads of visible projects, also when they run or need the user", () => {
     expect(
       filterSidebarThreadsByOwner(threads, visibleProjectKeys("is", ["qlik-trial"])).map(
         (candidate) => candidate.id,
       ),
-    ).toEqual([
-      "work",
-      "running-personal",
-      "waiting-personal",
-      "approval-personal",
-      "question-personal",
-    ]);
-  });
-
-  it("keeps the same threads when the filter hides the other owners instead", () => {
+    ).toEqual(["work"]);
     expect(
       filterSidebarThreadsByOwner(
         threads,
         visibleProjectKeys("is_not", ["yarden-zamir", null]),
       ).map((candidate) => candidate.id),
-    ).toEqual([
-      "work",
-      "running-personal",
-      "waiting-personal",
-      "approval-personal",
-      "question-personal",
-    ]);
+    ).toEqual(["work"]);
+  });
+
+  it("counts the hidden threads that wait for an approval or an answer", () => {
+    expect(countHiddenThreadsNeedingUser(threads, visibleProjectKeys("is", ["qlik-trial"]))).toBe(
+      2,
+    );
+    expect(countHiddenThreadsNeedingUser(threads, visibleProjectKeys("is", ["yarden-zamir"]))).toBe(
+      0,
+    );
+    expect(countHiddenThreadsNeedingUser(threads, null)).toBe(0);
   });
 
   it("returns the same array without a filter", () => {

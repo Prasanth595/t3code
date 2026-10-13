@@ -18,15 +18,19 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "../ui/menu";
+import { useMemo } from "react";
+
+import { useThreadShells } from "../../state/entities";
 import { MAX_PULL_REQUEST_LIST_OWNERS } from "./pullRequestListPreferences";
+import { pullRequestProjectOwners } from "./pullRequestOwnerFilter.logic";
 
 export interface PullRequestOwnerSubmenuProps {
   /** Lowercase owners, as `repositoryOwnerOf` gives them. Empty means every owner. */
   readonly selected: ReadonlyArray<string>;
   /** "is" shows only the selected owners, "is_not" hides them. */
   readonly operator: FilterOperator;
-  /** The owners of the projects that feed the list. */
-  readonly options: ReadonlyArray<string>;
+  /** The projects that feed the list. The menu offers the owners of those with threads. */
+  readonly projects: Parameters<typeof pullRequestProjectOwners>[0];
   readonly onChange: (owners: ReadonlyArray<string>) => void;
   readonly onOperator: (operator: FilterOperator) => void;
 }
@@ -41,10 +45,14 @@ function ownerFilterSummary(selected: ReadonlyArray<string>, operator: FilterOpe
 export function PullRequestOwnerSubmenu({
   selected,
   operator,
-  options,
+  projects,
   onChange,
   onOperator,
 }: PullRequestOwnerSubmenuProps) {
+  // Read here, not on the page: the submenu renders only while the Filters menu is open, so
+  // thread updates do not re-render the whole page.
+  const threads = useThreadShells();
+  const options = useMemo(() => pullRequestProjectOwners(projects, threads), [projects, threads]);
   // A selected owner with no project here stays in the list, so that the reader can clear it.
   const visible = [...selected.filter((owner) => !options.includes(owner)), ...options];
   const full = selected.length >= MAX_PULL_REQUEST_LIST_OWNERS;

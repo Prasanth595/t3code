@@ -15,6 +15,7 @@ import {
 import { useUiStateStore } from "../../uiStateStore";
 import {
   buildSidebarOwnerOptions,
+  countHiddenThreadsNeedingUser,
   filterSidebarProjectGroupsByOwner,
   resolveSidebarOwnerFilter,
   sidebarProjectGroupMemberKeys,
@@ -29,8 +30,9 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
   /** The sorted groups, for the project scope menu. */
   readonly projectGroups: ReadonlyArray<Group>;
   readonly projectGroupingSettings: ProjectGroupingSettings;
+  readonly threads: ReadonlyArray<Parameters<typeof countHiddenThreadsNeedingUser>[0][number]>;
 }) {
-  const { unsortedProjectGroups, projectGroups, projectGroupingSettings } = input;
+  const { unsortedProjectGroups, projectGroups, projectGroupingSettings, threads } = input;
   const repositoryOwnerFiltersEnabled = useClientSettings((s) => s.repositoryOwnerFilters);
   const savedOwnerFilter = useClientSettings((s) => s.sidebarOwnerFilter);
   const updateClientSettings = useUpdateClientSettings();
@@ -45,9 +47,9 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
   const ownerOptions = useMemo(
     () =>
       repositoryOwnerFiltersEnabled
-        ? buildSidebarOwnerOptions(unsortedProjectGroups, savedOwnerFilter.owners)
+        ? buildSidebarOwnerOptions(unsortedProjectGroups, threads, savedOwnerFilter.owners)
         : [],
-    [repositoryOwnerFiltersEnabled, savedOwnerFilter.owners, unsortedProjectGroups],
+    [repositoryOwnerFiltersEnabled, savedOwnerFilter.owners, threads, unsortedProjectGroups],
   );
   const ownerVisibleGroups = useMemo(
     () => filterSidebarProjectGroupsByOwner(unsortedProjectGroups, ownerFilter),
@@ -95,6 +97,7 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
     ownerVisibleProjectKeys,
     visibleProjectGroups,
     ownerHiddenProjectCount: unsortedProjectGroups.length - ownerVisibleGroups.length,
+    ownerHiddenThreadsNeedingUser: countHiddenThreadsNeedingUser(threads, ownerVisibleProjectKeys),
     setOwnerFilter,
   };
 }
