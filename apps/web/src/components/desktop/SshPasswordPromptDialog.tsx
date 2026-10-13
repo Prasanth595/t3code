@@ -1,3 +1,4 @@
+import { isSshNetworkAddress } from "@t3tools/client-runtime/connection";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -12,6 +13,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
@@ -160,8 +162,20 @@ function ActiveSshPasswordPrompt({
         <DialogHeader>
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
-            T3 needs your SSH password to connect to <code>{target}</code>. The password is passed
-            to the local SSH process for this connection attempt and is not saved by T3 Code.
+            T3 needs your SSH password to connect to{" "}
+            {isSshNetworkAddress(target) ? (
+              <RedactedSensitiveText
+                value={target}
+                ariaLabel="Toggle SSH address visibility"
+                revealTooltip="Click to reveal address"
+                hideTooltip="Click to hide address"
+                className="text-sm"
+              />
+            ) : (
+              <code>{target}</code>
+            )}
+            . The password is passed to the local SSH process for this connection attempt and is not
+            saved by T3 Code.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>

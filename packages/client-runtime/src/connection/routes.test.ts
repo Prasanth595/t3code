@@ -16,9 +16,12 @@ import {
   credentialConnectionId,
   insertRoute,
   entryWithRoutes,
+  isSshNetworkAddress,
   mergeLearnedRoutes,
+  redactSshAddresses,
   removedWithRelay,
   routesAfterRemoving,
+  sshTargetLabel,
   upsertRoute,
 } from "./routes.ts";
 
@@ -360,5 +363,60 @@ describe("learned routes", () => {
     });
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
+  });
+});
+
+describe("SSH addresses", () => {
+  const devbox = { alias: "devbox", hostname: "203.0.113.42", username: "deploy", port: 2222 };
+  const bare = { alias: "198.51.100.7", hostname: "198.51.100.7", username: null, port: null };
+
+  it("tells an address from an alias the user chose", () => {
+    for (const address of [
+      "203.0.113.42",
+      "2001:db8::1",
+      "[2001:db8::1]",
+      "build.example.com",
+      "deploy@devbox",
+    ]) {
+      expect(isSshNetworkAddress(address)).toBe(true);
+    }
+    for (const alias of ["devbox", "vectr", "build-box_2", " devbox "]) {
+      expect(isSshNetworkAddress(alias)).toBe(false);
+    }
+  });
+
+  it("labels a target by its alias, never its address", () => {
+    expect(sshTargetLabel(devbox)).toBe("SSH devbox");
+    expect(sshTargetLabel(bare)).toBe("SSH");
+    expect(sshTargetLabel({ ...devbox, alias: "build.example.com" })).toBe("SSH");
+  });
+
+  it("hides the target's address in error text", () => {
+    expect(redactSshAddresses("deploy@203.0.113.42: Permission denied (publickey).", devbox)).toBe(
+      "devbox: Permission denied (publickey).",
+    );
+    expect(
+      redactSshAddresses("ssh: connect to host 203.0.113.42 port 2222: timed out", devbox),
+    ).toBe("ssh: connect to host devbox port 2222: timed out");
+    expect(redactSshAddresses("ssh: connect to host 198.51.100.7 port 22: refused", bare)).toBe(
+      "ssh: connect to host ••• port 22: refused",
+    );
+    expect(
+      redactSshAddresses("Could not resolve hostname build.example.com: Name not known", {
+        ...bare,
+        alias: "build.example.com",
+        hostname: "build.example.com",
+      }),
+    ).toBe("Could not resolve hostname •••: Name not known");
+  });
+
+  it("masks IP literals the target does not name", () => {
+    // ssh resolves an alias to an address the client never saw.
+    expect(
+      redactSshAddresses("connect to host 192.0.2.9 port 22 via 2001:db8::5: refused", {
+        ...devbox,
+        hostname: "devbox",
+      }),
+    ).toBe("connect to host ••• port 22 via •••: refused");
   });
 });

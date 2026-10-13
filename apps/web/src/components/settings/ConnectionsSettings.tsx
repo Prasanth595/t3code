@@ -52,6 +52,8 @@ import {
   connectionRoutes,
   connectionStatusText,
   environmentMcpUrl,
+  isSshNetworkAddress,
+  sshTargetLabel,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
@@ -90,6 +92,7 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { redactedPlaceholder } from "./RedactedSensitiveText";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -267,6 +270,17 @@ function AccessScopeSummary({
         </div>
       </PopoverPopup>
     </Popover>
+  );
+}
+
+function HiddenSshAddress({ address }: { readonly address: string }) {
+  return (
+    <>
+      <span className="select-none blur-xs" aria-hidden>
+        {redactedPlaceholder(address)}
+      </span>
+      <span className="sr-only">Hidden address</span>
+    </>
   );
 }
 
@@ -2571,8 +2585,8 @@ export function ConnectionsSettings() {
         type: "success",
         title: routeTarget ? "Route added" : "Environment connected",
         description: routeTarget
-          ? `${routeTarget.label} can now be reached over SSH ${target.alias}.`
-          : `${target.alias} is ready over an SSH-managed tunnel.`,
+          ? `${routeTarget.label} can now be reached over ${sshTargetLabel(target)}.`
+          : `${isSshNetworkAddress(target.alias) ? "The host" : target.alias} is ready over an SSH-managed tunnel.`,
       });
       setIsAddingSavedBackend(false);
     },
@@ -3070,11 +3084,15 @@ export function ConnectionsSettings() {
                           className="h-8 min-h-8 whitespace-nowrap"
                         >
                           <span className="min-w-0 truncate text-sm font-medium">
-                            {target.alias}
+                            {isSshNetworkAddress(target.alias) ? (
+                              <HiddenSshAddress address={target.alias} />
+                            ) : (
+                              target.alias
+                            )}
                           </span>
                           {address !== target.alias ? (
                             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                              {address}
+                              <HiddenSshAddress address={address} />
                             </span>
                           ) : (
                             <span className="flex-1" />

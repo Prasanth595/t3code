@@ -194,21 +194,19 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
       return "VPN";
     case "ssh": {
       const profile = Option.getOrNull(route.profile);
-      return profile?._tag === "SshConnectionProfile"
-        ? `SSH ${profile.target.username ? `${profile.target.username}@` : ""}${profile.target.hostname}`
-        : "SSH";
+      return profile?._tag === "SshConnectionProfile" ? sshTargetLabel(profile.target) : "SSH";
     }
     case "public":
       return routeHostname(route) ?? "Remote link";
   }
 }
 
-/** The address shown under a route, or null for T3 Connect. */
+/**
+ * The address shown under a route, or null for T3 Connect and SSH. An SSH
+ * route's label carries its alias; its address stays hidden until revealed.
+ */
 export function connectionRouteAddress(route: ConnectionRoute): string | null {
-  if (route.target._tag === "SshConnectionTarget") {
-    const profile = Option.getOrNull(route.profile);
-    return profile?._tag === "SshConnectionProfile" ? profile.target.alias : null;
-  }
+  if (route.target._tag === "SshConnectionTarget") return null;
   return routeHttpBaseUrl(route);
 }
 
@@ -424,6 +422,41 @@ export function routesAfterRemoving(
  */
 export function removedWithRelay(entry: ConnectionCatalogEntry): boolean {
   return routesAfterRemoving(connectionRoutes(entry), RELAY_ROUTE_ID).length === 0;
+}
+
+/**
+ * Whether an SSH alias or destination is a network address (an IP, a dotted
+ * hostname, or user@host) rather than a name the user chose, like `devbox`.
+ * Addresses are hidden until clicked, the way account emails are.
+ */
+export function isSshNetworkAddress(value: string): boolean {
+  return /[.:@]/u.test(value.trim());
+}
+
+/** "SSH" plus the target's alias, unless the alias is itself the address. */
+export function sshTargetLabel(target: DesktopSshEnvironmentTarget): string {
+  return isSshNetworkAddress(target.alias) ? "SSH" : `SSH ${target.alias}`;
+}
+
+const IPV4_LITERAL = /\b(?:\d{1,3}\.){3}\d{1,3}\b/gu;
+const IPV6_LITERAL = /\[?(?:[0-9a-f]{1,4})?(?::[0-9a-f]{0,4}){1,6}:[0-9a-f]{1,4}\]?/giu;
+
+/**
+ * Hides an SSH target's address in text shown to the user, such as an ssh
+ * error: its user@host and host become the alias (or a mask when the alias is
+ * the address), and any other IP literal is masked.
+ */
+export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTarget): string {
+  const replacement = isSshNetworkAddress(target.alias) ? "•••" : target.alias;
+  const secrets = [
+    target.username ? `${target.username}@${target.hostname}` : null,
+    isSshNetworkAddress(target.hostname) ? target.hostname : null,
+    isSshNetworkAddress(target.alias) ? target.alias : null,
+  ].filter((secret): secret is string => secret !== null);
+  return secrets
+    .reduce((redacted, secret) => redacted.split(secret).join(replacement), text)
+    .replace(IPV4_LITERAL, "•••")
+    .replace(IPV6_LITERAL, "•••");
 }
 
 /** One SSH target, as desktop keys its tunnels: alias, host, user, and port. */

@@ -1,5 +1,6 @@
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { isSshNetworkAddress } from "@t3tools/client-runtime/connection";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { AppleIcon, AndroidIcon } from "../Icons";
@@ -19,6 +20,7 @@ import { useSettingsScope } from "./SettingsScopeContext";
 import { toastManager } from "../ui/toast";
 import { updateDeviceHosts } from "./deviceHostsSettings.logic";
 import { DeviceHostEditor } from "./DeviceHostEditor";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 
@@ -220,7 +222,17 @@ function DeviceHostList({
           <div key={host.id} className="flex items-center gap-2 border-t border-border/50 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
-                <p className="truncate text-sm font-medium">{host.label}</p>
+                {isSshNetworkAddress(host.label) ? (
+                  <RedactedSensitiveText
+                    value={host.label}
+                    ariaLabel="Toggle device host visibility"
+                    revealTooltip="Click to reveal host"
+                    hideTooltip="Click to hide host"
+                    className="truncate font-sans text-sm font-medium text-foreground"
+                  />
+                ) : (
+                  <p className="truncate text-sm font-medium">{host.label}</p>
+                )}
                 {platforms
                   .filter((platform) => platform.available)
                   .map((platform) => (
@@ -250,7 +262,17 @@ function DeviceHostList({
                     </Tooltip>
                   ))}
               </div>
-              <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              {isSshNetworkAddress(host.target) ? (
+                <RedactedSensitiveText
+                  value={host.target}
+                  ariaLabel="Toggle SSH target visibility"
+                  revealTooltip="Click to reveal target"
+                  hideTooltip="Click to hide target"
+                  className="block max-w-full truncate text-left font-sans text-xs"
+                />
+              ) : (
+                <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              )}
               <DeviceToolVersions
                 owner={environmentLabel}
                 error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}
