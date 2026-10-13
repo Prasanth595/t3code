@@ -926,6 +926,20 @@ export const PullRequestWatchRemarkFilter = Schema.Struct({
 });
 export type PullRequestWatchRemarkFilter = typeof PullRequestWatchRemarkFilter.Type;
 
+export const DEFAULT_MACHINE_MAP_PORTAL_URL = "https://t3.yarden-zamir.com";
+
+/**
+ * Fork: machine map (`apps/machine-map/SPEC.md`, MM-1301). Off means no portal connection and no
+ * change to auth. The machine token lives in the server secret store, never here (MM-1302).
+ */
+export const MachineMapSettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  portalUrl: TrimmedNonEmptyString.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MACHINE_MAP_PORTAL_URL)),
+  ),
+});
+export type MachineMapSettings = typeof MachineMapSettings.Type;
+
 export const BranchNamingMode = Schema.Literals(["static", "semantic", "custom"]);
 export type BranchNamingMode = typeof BranchNamingMode.Type;
 
@@ -1416,6 +1430,8 @@ export const ServerSettings = Schema.Struct({
    * checkout then lists, reads and watches the pull requests of the fork, not of upstream.
    */
   preferOriginRemote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: machine map connection. See `MachineMapSettings`. */
+  machineMap: MachineMapSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -1728,6 +1744,13 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   preferOriginRemote: Schema.optionalKey(Schema.Boolean),
+  /** Merges per field: a patched field replaces the saved one. */
+  machineMap: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      portalUrl: Schema.optionalKey(TrimmedNonEmptyString),
+    }),
+  ),
   /** Merges per field: a patched field replaces the saved one. */
   pullRequestWatchRemarkFilter: Schema.optionalKey(
     Schema.Struct({

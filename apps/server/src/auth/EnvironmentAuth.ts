@@ -45,6 +45,7 @@ import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
 import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
+import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -1199,21 +1200,36 @@ export const make = Effect.gen(function* () {
     config.cloudflareAccess === undefined
       ? undefined
       : makeCloudflareAccessVerifier(config.cloudflareAccess);
+  // Fork: machine map (MM-1305). Absent outside the server, so other machines get nothing.
+  const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
 
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>
       verifyCloudflareAccess === undefined
         ? Effect.succeed(undefined)
         : verifyCloudflareAccess(request).pipe(
-            Effect.flatMap((subject) =>
-              subject === undefined
+            Effect.flatMap((identity) =>
+              identity === undefined
                 ? Effect.succeed(undefined)
-                : issuePairingCredentialForSubject({
-                    scopes: AuthStandardClientScopes,
-                    subject: "one-time-token",
-                    label: `cloudflare-access ${subject}`,
-                    ttl: Duration.minutes(2),
-                  }),
+                : identity.kind === "owner"
+                  ? issuePairingCredentialForSubject({
+                      scopes: AuthStandardClientScopes,
+                      subject: "one-time-token",
+                      label: `cloudflare-access ${identity.subject}`,
+                      ttl: Duration.minutes(2),
+                    })
+                  : Option.isNone(machineMap)
+                    ? Effect.succeed(undefined)
+                    : machineMap.value.machineGrant(identity.commonName).pipe(
+                        Effect.flatMap((grant) =>
+                          grant === undefined
+                            ? Effect.succeed(undefined)
+                            : issuePairingCredentialForSubject({
+                                ...grant,
+                                ttl: Duration.minutes(2),
+                              }),
+                        ),
+                      ),
             ),
             Effect.withSpan("EnvironmentAuth.issueCloudflareAccessPairingCredential"),
           );

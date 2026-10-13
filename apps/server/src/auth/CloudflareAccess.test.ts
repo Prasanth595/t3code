@@ -47,8 +47,23 @@ it.effect("accepts an Access JWT whose email or service token name is allowed", 
     const verify = makeCloudflareAccessVerifier(config, getKey);
     const user = yield* sign(privateKey, { email: "dev@example.com" });
     const serviceToken = yield* sign(privateKey, { common_name: "client.access" });
-    expect(yield* verify(requestWith(user))).toBe("dev@example.com");
-    expect(yield* verify(requestWith(serviceToken))).toBe("client.access");
+    expect(yield* verify(requestWith(user))).toEqual({ kind: "owner", subject: "dev@example.com" });
+    expect(yield* verify(requestWith(serviceToken))).toEqual({
+      kind: "owner",
+      subject: "client.access",
+    });
+  }),
+);
+
+it.effect("names another service token without making it an owner", () =>
+  Effect.gen(function* () {
+    const { privateKey, getKey } = yield* makeKeys;
+    const verify = makeCloudflareAccessVerifier(config, getKey);
+    const machineToken = yield* sign(privateKey, { common_name: "machine.access" });
+    expect(yield* verify(requestWith(machineToken))).toEqual({
+      kind: "service-token",
+      commonName: "machine.access",
+    });
   }),
 );
 

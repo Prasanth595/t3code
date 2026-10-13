@@ -30,6 +30,8 @@ import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
+import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
+import { machineRequestNamespace } from "../fork/machineMap/machineAccess.ts";
 import {
   base64UrlDecodeUtf8,
   base64UrlEncode,
@@ -564,14 +566,34 @@ export const layerMcpClientAuthenticator = Layer.effect(
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
+    // Fork: machine map (MM-1307). A session of another machine whose arrow has agent tools.
+    const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
+    const machineClient = (
+      request: HttpServerRequest.HttpServerRequest,
+      error: EnvironmentAuth.ServerAuthCredentialError,
+    ) =>
+      Option.isNone(machineMap)
+        ? Effect.fail(error)
+        : environmentAuth.authenticateHttpRequest(request).pipe(
+            Effect.flatMap(machineMap.value.mcpClient),
+            Effect.flatMap((client) =>
+              client === undefined
+                ? Effect.fail(error)
+                : Effect.succeed({ client, requestNamespace: machineRequestNamespace(client) }),
+            ),
+          );
     return McpHttpServer.McpClientAuthenticator.of({
       authenticate: (request) =>
         environmentAuth.authenticateMcpClient(request).pipe(
-          Effect.flatMap((client) =>
+          Effect.map((client) => ({ client, requestNamespace: `client:${client.sessionId}` })),
+          Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
+            machineClient(request, error),
+          ),
+          Effect.flatMap(({ client, requestNamespace }) =>
             Clock.currentTimeMillis.pipe(
               Effect.map((issuedAt): McpInvocationContext.McpInvocationScope => ({
                 environmentId,
-                requestNamespace: `client:${client.sessionId}`,
+                requestNamespace,
                 thread: undefined,
                 client: {
                   sessionId: client.sessionId,
