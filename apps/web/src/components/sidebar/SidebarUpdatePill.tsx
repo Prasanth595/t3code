@@ -14,8 +14,8 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateDownloadedVersion,
   getDesktopUpdateInstallConfirmationMessage,
+  getUpdateEverythingLocalVersion,
   isLiveServerUpdate,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
@@ -235,10 +235,10 @@ function SidebarUpdateControl() {
   const isDownloading = state?.status === "downloading";
   const idleInstallArmed = useIdleInstallArmed() && action === "install";
   // Remote servers follow this app to the version it is about to install.
-  const localUpdateVersion =
-    state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
+  const localUpdateVersion = getUpdateEverythingLocalVersion(state);
   const everything = useUpdateEverything(localUpdateVersion);
-  const runsEverything = everything.hasUpdates && !isDownloading;
+  // Fork: a waiting live server update keeps its own offer. The pass follows it.
+  const runsEverything = everything.hasUpdates && !isDownloading && !isServerOnlyUpdate;
   // Providers leave the list once queued, so the run keeps its own state.
   const isRunningEverything = isUpdatingEverything && !isDownloading;
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
@@ -376,7 +376,13 @@ function SidebarUpdateControl() {
         ...(bridge && action === "download"
           ? { downloadLocal: () => downloadLocalUpdate(bridge, { notifyDownloaded: false }) }
           : {}),
-        ...(bridge && action !== "none" ? { installLocal: () => installLocalUpdate(bridge) } : {}),
+        ...(bridge && action !== "none"
+          ? {
+              // Fork: while agents run, this app's restart offers "Install when idle".
+              installLocal: () =>
+                openIdleInstallPromptIfAgentsRun() ? Promise.resolve() : installLocalUpdate(bridge),
+            }
+          : {}),
       });
     } catch (error) {
       toastManager.add(
