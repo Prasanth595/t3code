@@ -40,6 +40,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-207** "Rotate token" makes a new secret for a machine token. An online machine gets the new secret on its connection, saves it, and confirms. Then the old secret stops working. An offline machine gets the rotation as a queued command.
 - **MM-208** "Remove machine" deletes the machine token, removes its arrows and its settings overrides, and drops its queue. A removed machine cannot connect again with its old secret.
 - **MM-209** Each machine reports its tunnel hostname. Arrows out of other machines use it to connect.
+- **MM-210** Without the Cloudflare API token of MM-1205, "Add machine" takes the client id and secret of an existing machine token, instead of creating one. The join code then delivers that secret.
 
 ## 3. Arrows
 
@@ -150,7 +151,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 ## 12. Security
 
-- **MM-1201** The Durable Object stores no token secret. During a rotation it keeps the new secret encrypted with a Worker secret, and deletes it after the machine confirms.
+- **MM-1201** The Durable Object stores no token secret at rest. During a join (MM-204) and a rotation (MM-207), it keeps the secret encrypted with a Worker secret. It deletes the secret when the machine takes it, or when the code or rotation expires.
 - **MM-1202** A machine gets only its own desired state, its own queue and the public facts of other machines: name, kind, hostname, presence and the arrows that touch it.
 - **MM-1203** Every write records its actor. The portal refuses writes from a machine without the map role for them.
 - **MM-1204** `/enroll` limits attempts per address and refuses expired or used codes.

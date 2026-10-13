@@ -389,3 +389,43 @@ export const PortalEvent = Schema.Union([
   Schema.TaggedStruct("proposals", { proposals: Schema.Array(MapProposal) }),
 ]);
 export type PortalEvent = typeof PortalEvent.Type;
+
+const PositiveInt = NonNegativeInt.check(Schema.isGreaterThan(0));
+
+/**
+ * Inputs of the agent tools that run through the portal (MM-801). The T3 server declares its MCP
+ * tools with these schemas, and the portal decodes `toolCall.input` with the same ones.
+ */
+export const MapToolInputs = {
+  machines_read: Schema.Struct({}),
+  machines_set_access: Schema.Struct({
+    from: MachineId,
+    to: MachineId,
+    level: MachineLevel,
+    agentTools: Schema.optionalKey(Schema.Boolean),
+    /** MM-304: the arrow returns to its current level after this many minutes. */
+    expiresInMinutes: Schema.optionalKey(PositiveInt),
+  }),
+  machines_set_setting: Schema.Struct({
+    /** Omit to set the shared value. */
+    machineId: Schema.optionalKey(MachineId),
+    scope: SettingScope,
+    key: TrimmedNonEmptyString,
+    /** Omit, or set `clear`, to remove the value. */
+    value: Schema.optionalKey(Schema.Unknown),
+    clear: Schema.optionalKey(Schema.Boolean),
+  }),
+  machines_command: Schema.Struct({
+    machineId: MachineId,
+    command: MachineCommandInput,
+    delivery: Schema.optionalKey(CommandDelivery),
+    expiresInMinutes: Schema.optionalKey(PositiveInt),
+  }),
+  machines_queue_cancel: Schema.Struct({ commandId: TrimmedNonEmptyString }),
+  machines_undo: Schema.Struct({ revision: NonNegativeInt }),
+  machines_preset: Schema.Struct({
+    action: Schema.Literals(["save", "apply", "lockdown"]),
+    /** Required for `save` and `apply`. */
+    name: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+} satisfies Record<MapToolName, Schema.Top>;
