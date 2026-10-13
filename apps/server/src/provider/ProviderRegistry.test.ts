@@ -506,6 +506,7 @@ it.layer(
           status.message,
           "Codex CLI is not authenticated. Run `codex login` and try again.",
         );
+        assert.strictEqual(status.usageLimits?.unavailable?.reason, "probeFailed");
       }),
     );
 
