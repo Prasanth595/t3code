@@ -10109,7 +10109,9 @@ describe("AcpAdapterV2", () => {
             deferFinalizeForBackgroundWork: true,
             enablePostSettleContinuation: true,
             extractBackgroundTaskId: (toolCall) =>
-              toolCall.toolCallId === "tool-call-monitor-1" ? "task-monitor-1" : undefined,
+              toolCall.toolCallId.startsWith("tool-call-monitor-")
+                ? toolCall.toolCallId.replace("tool-call-", "task-")
+                : undefined,
             extractBackgroundToolMutation: (text) =>
               text.includes('Monitor "task-monitor-1" ended')
                 ? [{ taskId: "task-monitor-1", status: "completed", appendOutput: "" }]
@@ -10205,6 +10207,16 @@ describe("AcpAdapterV2", () => {
           taskId: "task-monitor-1",
           status: "running",
         });
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: "tool-call-monitor-2",
+            title: "Monitor: hold while the first report arrives",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
         // Completion ext PRE-settle: arms midTurnUnreportedCompletedTaskIds.
         yield* applyMutation({
           sessionId: "mock-session-1",
@@ -10217,8 +10229,8 @@ describe("AcpAdapterV2", () => {
           "pre-settle unhandled completion must not offer while the turn is active",
         );
 
-        // Settle without reporting. Tool stays in_progress so deferred finalize
-        // holds the turn open for the injected report.
+        // The completed monitor no longer blocks settlement. The other monitor
+        // is still running, so the injected report races into the held turn.
         yield* Deferred.succeed(promptGate, { stopReason: "end_turn" });
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
@@ -10280,7 +10292,15 @@ describe("AcpAdapterV2", () => {
         }
         assert.isTrue(reportSeen, "injected report must project into the held turn");
 
-        // Hydration safety (60s) force-completes the monitor tool, then the 3s
+        yield* sessionUpdateHandler!({
+          sessionId: "mock-session-1",
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-call-monitor-2",
+            status: "completed",
+          },
+        });
+        // Hydration safety (60s) clears the text-notice hold, then the 3s
         // quiet window finalizes. No TaskOutput path: that would also clear
         // midTurn and hide the agent_message_chunk consumption site under test.
         yield* TestClock.adjust("60 seconds");
