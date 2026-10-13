@@ -4,6 +4,7 @@ import {
   resetVoiceInputGlobalsForTests,
   resolveTranscriptCommit,
   VoiceInputController,
+  VOICE_NATIVE_OPERATION_TIMEOUT_MS,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
   type VoiceDraftSnapshot,
@@ -537,6 +538,73 @@ describe("VoiceInputController", () => {
     await next.controller.start();
     expect(next.controller.currentState.phase).toBe("recording");
     await next.controller.interruptRecording();
+  });
+
+  it("frees later recordings when audio-session release hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const hanging = deferred<void>();
+      const harness = createHarness({ releaseRecording: () => hanging.promise });
+      await harness.controller.start();
+      expect(harness.controller.currentState.phase).toBe("recording");
+
+      const stopping = harness.controller.stop();
+      await vi.advanceTimersByTimeAsync(2 * VOICE_NATIVE_OPERATION_TIMEOUT_MS);
+      await stopping;
+      expect(harness.commits).toEqual([
+        { text: "hello new text", selection: { start: 14, end: 14 } },
+      ]);
+
+      const next = createHarness();
+      await next.controller.start();
+      expect(next.controller.currentState.phase).toBe("recording");
+      await next.controller.interruptRecording();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails the start when audio-session setup hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const hanging = deferred<void>();
+      const harness = createHarness({ configureRecording: () => hanging.promise });
+
+      const starting = harness.controller.start();
+      await vi.advanceTimersByTimeAsync(VOICE_NATIVE_OPERATION_TIMEOUT_MS);
+      await starting;
+      expect(harness.controller.currentState.phase).toBe("error");
+      expect(harness.recorder.record).not.toHaveBeenCalled();
+
+      const next = createHarness();
+      await next.controller.start();
+      expect(next.controller.currentState.phase).toBe("recording");
+      await next.controller.interruptRecording();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("settles cancellation when the native recorder stop hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const hanging = deferred<undefined>();
+      const harness = createHarness();
+      harness.recorder.stop.mockImplementation(() => hanging.promise);
+      await harness.controller.start();
+      expect(harness.controller.currentState.phase).toBe("recording");
+
+      harness.controller.cancel();
+      await vi.advanceTimersByTimeAsync(VOICE_NATIVE_OPERATION_TIMEOUT_MS);
+      expect(harness.controller.currentState.phase).toBe("idle");
+
+      const next = createHarness();
+      await next.controller.start();
+      expect(next.controller.currentState.phase).toBe("recording");
+      await next.controller.interruptRecording();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps the new abort controller when restarting the same composer after cancellation", async () => {

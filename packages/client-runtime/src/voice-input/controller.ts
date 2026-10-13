@@ -1,8 +1,42 @@
+// @effect-diagnostics globalTimers:off - Bounds hung native audio calls with a raced timeout, outside an Effect runtime.
 import { replaceTextRange } from "@t3tools/shared/composerTrigger";
 
 import type { PreparedVoiceTranscription, VoiceTranscriber } from "./transcription.ts";
 
 export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
+
+// Native audio calls (AVAudioSession mode switches, recorder stop) can hang
+// under route interruptions instead of settling. Without a bound the global
+// session stays held and every later recording fails with "already active".
+export const VOICE_NATIVE_OPERATION_TIMEOUT_MS = 10_000;
+
+function withVoiceNativeTimeout<T>(operation: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error("voice-native-timeout")),
+      VOICE_NATIVE_OPERATION_TIMEOUT_MS,
+    );
+    const maybeUnref = (timer as unknown as { unref?: () => void }).unref;
+    if (typeof maybeUnref === "function") maybeUnref.call(timer);
+  });
+  const settle = () => {
+    if (timer !== undefined) clearTimeout(timer);
+  };
+  return Promise.race([
+    operation.then(
+      (value) => {
+        settle();
+        return value;
+      },
+      (error) => {
+        settle();
+        throw error;
+      },
+    ),
+    timeout,
+  ]);
+}
 
 export type VoiceInputPhase = "idle" | "preparing" | "recording" | "transcribing" | "error";
 
@@ -259,7 +293,7 @@ export class VoiceInputController {
       }
       if (!this.isCurrent(operationToken)) return;
 
-      await this.dependencies.configureRecording();
+      await withVoiceNativeTimeout(this.dependencies.configureRecording());
       this.recordingConfigured = true;
       if (!this.isCurrent(operationToken)) return;
       await this.dependencies.recorder.prepareToRecordAsync();
@@ -376,7 +410,7 @@ export class VoiceInputController {
     this.setState({ phase: "transcribing", error: null, errorAction: null });
 
     try {
-      if (!alreadyStopped) await this.dependencies.recorder.stop();
+      if (!alreadyStopped) await withVoiceNativeTimeout(this.dependencies.recorder.stop());
       await this.releaseAudioSession();
       this.recordingUri = completedUri ?? this.dependencies.recorder.uri ?? this.recordingUri;
       this.rememberRecordingUri(this.recordingUri);
@@ -446,7 +480,7 @@ export class VoiceInputController {
         : { phase: "idle", error: null, errorAction: null },
     );
     try {
-      await this.dependencies.recorder.stop();
+      await withVoiceNativeTimeout(this.dependencies.recorder.stop());
     } catch {
     } finally {
       await this.releaseResources();
@@ -482,7 +516,7 @@ export class VoiceInputController {
   private async releaseAudioSession(): Promise<void> {
     if (!this.recordingConfigured) return;
     try {
-      await this.dependencies.releaseRecording();
+      await withVoiceNativeTimeout(this.dependencies.releaseRecording());
       this.recordingConfigured = false;
     } catch {
       // Final cleanup retries if the prompt release before transcription fails.
