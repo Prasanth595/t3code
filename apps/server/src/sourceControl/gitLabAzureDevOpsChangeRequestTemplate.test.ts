@@ -9,8 +9,11 @@ import * as Path from "effect/Path";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
-import * as AzureDevOpsChangeRequestTemplate from "@t3tools/source-control-azure-devops/server/azureDevOpsChangeRequestTemplate";
-import * as GitLabChangeRequestTemplate from "@t3tools/source-control-gitlab/server/gitLabChangeRequestTemplate";
+import * as AzureDevOpsCli from "@t3tools/source-control-azure-devops/server/AzureDevOpsCli";
+import * as AzureDevOpsSourceControlProvider from "@t3tools/source-control-azure-devops/server/AzureDevOpsSourceControlProvider";
+import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
+import * as GitLabSourceControlProvider from "@t3tools/source-control-gitlab/server/GitLabSourceControlProvider";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 
 const layerTest = GitVcsDriver.layer.pipe(
   Layer.provide(
@@ -61,20 +64,34 @@ const commitAll = (cwd: string) =>
     yield* runGit(cwd, ["commit", "--allow-empty", "-m", "Add templates"]);
   });
 
+// Each provider is built with test layers for its CLI and host only. The host's git is the real
+// driver, so templates are read from real commits.
 const detectGitLab = (cwd: string, treeish = "HEAD") =>
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    return Option.getOrUndefined(
-      yield* GitLabChangeRequestTemplate.detect(cwd, treeish, git.execute),
+    const provider = yield* GitLabSourceControlProvider.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(GitLabCli.GitLabCli)({}),
+          TestSourceControlHost.layer({ git: { execute: git.execute } }),
+        ),
+      ),
     );
+    return Option.getOrUndefined(yield* provider.readChangeRequestTemplate!({ cwd, treeish }));
   });
 
 const detectAzureDevOps = (cwd: string, treeish = "HEAD") =>
   Effect.gen(function* () {
     const git = yield* GitVcsDriver.GitVcsDriver;
-    return Option.getOrUndefined(
-      yield* AzureDevOpsChangeRequestTemplate.detect(cwd, treeish, git.execute),
+    const provider = yield* AzureDevOpsSourceControlProvider.make.pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
+          TestSourceControlHost.layer({ git: { execute: git.execute } }),
+        ),
+      ),
     );
+    return Option.getOrUndefined(yield* provider.readChangeRequestTemplate!({ cwd, treeish }));
   });
 
 const MERGE_REQUEST_TEMPLATES = ".gitlab/merge_request_templates";
