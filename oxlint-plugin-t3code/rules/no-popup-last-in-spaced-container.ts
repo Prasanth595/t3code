@@ -109,6 +109,10 @@ function returnedBy(body: ESTree.Node): ESTree.Node[] {
   return found;
 }
 
+const rendersNothing = (branch: ESTree.Node) =>
+  (branch.type === "Literal" && (branch.value === null || branch.value === false)) ||
+  (branch.type === "Identifier" && branch.name === "undefined");
+
 /** Whether a child can render nothing, letting an earlier sibling end up last. */
 function mayRenderNothing(child: JsxChild) {
   if (child.type !== "JSXExpressionContainer") return false;
@@ -116,9 +120,7 @@ function mayRenderNothing(child: JsxChild) {
   if (expression.type === "LogicalExpression" || expression.type === "CallExpression") return true;
   return (
     expression.type === "ConditionalExpression" &&
-    [expression.consequent, expression.alternate].some(
-      (branch) => branch.type === "Literal" && branch.value === null,
-    )
+    [expression.consequent, expression.alternate].some(rendersNothing)
   );
 }
 
@@ -132,9 +134,7 @@ function possiblyLast(children: ReadonlyArray<JsxChild>): ESTree.Node[] {
   const found: ESTree.Node[] = [];
   for (let index = meaningful.length - 1; index >= 0; index--) {
     const child = meaningful[index]!;
-    found.push(
-      ...(child.type === "JSXExpressionContainer" ? renderedBy(child.expression) : [child]),
-    );
+    found.push(...renderedBy(child.type === "JSXExpressionContainer" ? child.expression : child));
     if (!mayRenderNothing(child)) break;
   }
   return found;

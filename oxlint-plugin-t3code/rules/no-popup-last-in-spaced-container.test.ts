@@ -91,6 +91,27 @@ const el = <div className="space-y-2"><Popover />{error ? <p>{error}</p> : null}
   );
 
   rule.invalid(
+    "reports a popup last when a later ternary renders false or undefined",
+    `${imports}
+const a = <div className="space-y-2"><Popover />{error ? <p>{error}</p> : false}</div>;
+const b = <div className="space-y-2"><Popover />{error ? <p>{error}</p> : undefined}</div>;`,
+    (output) => {
+      assert.strictEqual(output.match(/<Popover> can be the last child/g)?.length, 2);
+    },
+  );
+
+  rule.invalid(
+    "reports a popup last inside a direct or nested fragment",
+    `${imports}
+const a = <div className="space-y-3"><p>Before</p><><Menu /></></div>;
+const b = <div className="space-y-3"><p>Before</p><><p /><><Popover /></></></div>;`,
+    (output) => {
+      assert.match(output, /<Menu> can be the last child/);
+      assert.match(output, /<Popover> can be the last child/);
+    },
+  );
+
+  rule.invalid(
     "reports a local component that renders a popup",
     `${imports}
 function CommandPicker() {
