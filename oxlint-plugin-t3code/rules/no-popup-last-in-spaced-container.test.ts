@@ -101,6 +101,40 @@ const b = <div className="space-y-2"><Popover />{error ? <p>{error}</p> : undefi
   );
 
   rule.invalid(
+    "reports a popup followed only by children that render nothing",
+    `${imports}
+const a = <div className="space-y-2"><Popover />{null}</div>;
+const b = <div className="space-y-2"><Popover />{false}{undefined}</div>;`,
+    (output) => {
+      assert.strictEqual(output.match(/<Popover> can be the last child/g)?.length, 2);
+    },
+  );
+
+  rule.invalid(
+    "reports a popup last when a nested branch may render nothing",
+    `${imports}
+const el = <div className="space-y-2"><Popover />{show ? (ready && <p />) : <p />}</div>;`,
+  );
+
+  rule.invalid(
+    "reports a popup followed by a fragment that may render nothing",
+    `${imports}
+const el = <div className="space-y-2"><Popover /><>{visible && <p />}</></div>;`,
+  );
+
+  rule.valid(
+    "allows a popup followed by a fragment that always renders",
+    `${imports}
+const el = <div className="space-y-2"><Popover /><>{visible && <p />}<span /></></div>;`,
+  );
+
+  rule.valid(
+    "allows a popup followed by a ternary that always renders",
+    `${imports}
+const el = <div className="space-y-2"><Popover />{null}{show ? (<p />) : <span />}</div>;`,
+  );
+
+  rule.invalid(
     "reports a popup last inside a direct or nested fragment",
     `${imports}
 const a = <div className="space-y-3"><p>Before</p><><Menu /></></div>;

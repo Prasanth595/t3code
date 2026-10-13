@@ -109,19 +109,30 @@ function returnedBy(body: ESTree.Node): ESTree.Node[] {
   return found;
 }
 
-const rendersNothing = (branch: ESTree.Node) =>
-  (branch.type === "Literal" && (branch.value === null || branch.value === false)) ||
-  (branch.type === "Identifier" && branch.name === "undefined");
-
-/** Whether a child can render nothing, letting an earlier sibling end up last. */
-function mayRenderNothing(child: JsxChild) {
-  if (child.type !== "JSXExpressionContainer") return false;
-  const { expression } = child;
-  if (expression.type === "LogicalExpression" || expression.type === "CallExpression") return true;
-  return (
-    expression.type === "ConditionalExpression" &&
-    [expression.consequent, expression.alternate].some(rendersNothing)
-  );
+/** Whether an expression can render nothing, letting an earlier sibling end up last. */
+function mayRenderNothing(expression: ESTree.Node | JsxChild): boolean {
+  switch (expression.type) {
+    case "JSXText":
+      return expression.value.trim() === "";
+    case "JSXEmptyExpression":
+      return true;
+    case "JSXExpressionContainer":
+    case "ParenthesizedExpression":
+      return mayRenderNothing(expression.expression);
+    case "Literal":
+      return expression.value === null || expression.value === false;
+    case "Identifier":
+      return expression.name === "undefined";
+    case "LogicalExpression":
+    case "CallExpression":
+      return true;
+    case "ConditionalExpression":
+      return mayRenderNothing(expression.consequent) || mayRenderNothing(expression.alternate);
+    case "JSXFragment":
+      return expression.children.every(mayRenderNothing);
+    default:
+      return false;
+  }
 }
 
 /** Nodes that can end up as the last rendered child. */
