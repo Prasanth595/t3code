@@ -16,6 +16,8 @@ import { usesText } from "../rules/access.ts";
 import { effectiveSettings, findArrow, MAP_ROLES, roleRank } from "../rules/map.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
+import { buildStandings } from "./build.ts";
+import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import { machineQueue } from "./derive.ts";
 import {
   actorText,
@@ -104,6 +106,7 @@ function Item({
 export function TableView() {
   const portal = usePortalContext();
   const { map, snapshot, route, now } = portal;
+  const standings = buildStandings(snapshot.presence);
   const selected = route.selection;
   if (map.machines.length === 0)
     return (
@@ -206,7 +209,10 @@ export function TableView() {
                       </div>
                     )}
                   </td>
-                  <td className="mono">{presence?.status?.build ?? "—"}</td>
+                  <td>
+                    {presence?.status ? <BuildLabel status={presence.status} /> : "—"}{" "}
+                    <BuildSticker standing={standings.get(machine.id)} />
+                  </td>
                   <td className="mono">
                     {applied === null ? "—" : `${applied} of ${map.revision}`}
                   </td>
@@ -942,6 +948,7 @@ export function InboxView() {
 export function DevicesView() {
   const portal = usePortalContext();
   const { map, snapshot, now } = portal;
+  const standings = buildStandings(snapshot.presence);
   const [devices, setDevices] = useState<DevicesResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1080,6 +1087,13 @@ export function DevicesView() {
           <div key={machine.id} className="stack tight">
             <div className="section">
               {machine.name} · {presenceText(presence, now)}
+              {presence?.status && (
+                <>
+                  {" · "}
+                  <BuildLabel status={presence.status} />
+                </>
+              )}{" "}
+              <BuildSticker standing={standings.get(machine.id)} />
             </div>
             {clients.length === 0 ? (
               <p className="small muted">No sessions reported.</p>

@@ -234,7 +234,7 @@ it.layer(NodeServices.layer)("MachineHost", (it) => {
       }).pipe(Effect.provide(makeLayer({ interrupted, enabledTasks, revoked })));
       expect(status).toMatchObject({
         t3Version: "1.2.3",
-        build: "release 1.2.3",
+        build: "release",
         runningTurns: 1,
         waitingThreads: 1,
         scheduledTasks: 1,
@@ -244,4 +244,23 @@ it.layer(NodeServices.layer)("MachineHost", (it) => {
       });
     }),
   );
+});
+
+it("names the build by where the server runs from (MM-1002)", () => {
+  const commit = "5abed5f44f97";
+  const label = (modulePath: string, liveServerDir: string | null = null) =>
+    MachineHost.buildLabel({ modulePath, liveServerDir, commit });
+  const server = "apps/server/dist/bin.mjs";
+
+  expect(label(`/Users/me/t3/live/b/${server}`, "/Users/me/t3/live/")).toBe("live 5abed5f");
+  expect(label(`/Users/me/Github/t3code/live/a/${server}`)).toBe("live 5abed5f");
+  expect(label(`/opt/t3code-main/${server}`)).toBe("deploy 5abed5f");
+  expect(label(`/Users/me/Github/t3code/main/${server}`, "/Users/me/t3/live")).toBe("dev 5abed5f");
+  expect(
+    MachineHost.buildLabel({
+      modulePath: `/Applications/T3.app/${server}`,
+      liveServerDir: null,
+      commit: null,
+    }),
+  ).toBe("release");
 });

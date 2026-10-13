@@ -21,6 +21,8 @@ import { usesText } from "../rules/access.ts";
 import { findArrow, findNote, pairOffset } from "../rules/map.ts";
 import { NO_SELECTION } from "./route.ts";
 import { usePortalContext } from "./context.ts";
+import { buildStandings } from "./build.ts";
+import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import { arrowEndWait, arrowEnds, machineQueue } from "./derive.ts";
 import {
   LEVEL_LABEL,
@@ -185,6 +187,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   /** MM-1108: pair offsets beside the line scale with the shorter side of the map. */
   const scale = Math.min(width, size.height);
   const machines = map.machines;
+  const standings = buildStandings(snapshot.presence);
   const selection = route.selection;
   const focus = selection._tag === "machine" ? selection.id : null;
   const focusMachine = machines.find((m) => m.id === focus);
@@ -781,11 +784,15 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const on = focus === machine.id;
             const dropTarget = target === machine.id;
             const sub =
-              state === "waiting"
-                ? "Waiting to join"
-                : state === "offline"
-                  ? `Seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`
-                  : (status?.build ?? machine.hostname ?? "No status yet");
+              state === "waiting" ? (
+                "Waiting to join"
+              ) : state === "offline" ? (
+                `Seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`
+              ) : status ? (
+                <BuildLabel status={status} />
+              ) : (
+                (machine.hostname ?? "No status yet")
+              );
             return (
               <div
                 key={machine.id}
@@ -815,22 +822,26 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                     <span className="sub">{sub}</span>
                   </span>
                 </div>
-                {!readOnly && (
-                  <div className="tags">
-                    {status && status.runningTurns > 0 && (
-                      <span className="sticker ok">{status.runningTurns} running</span>
-                    )}
-                    {status && status.waitingThreads > 0 && (
-                      <span className="sticker wait">
-                        {status.waitingThreads} {status.waitingThreads === 1 ? "needs" : "need"} you
-                      </span>
-                    )}
-                    {status?.updateWaiting && <span className="sticker info">update</span>}
-                    {!queue.waitingToJoin && queue.count > 0 && (
-                      <span className="sticker wait">{queue.count} queued</span>
-                    )}
-                  </div>
-                )}
+                <div className="tags">
+                  <BuildSticker standing={standings.get(machine.id)} />
+                  {!readOnly && (
+                    <>
+                      {status && status.runningTurns > 0 && (
+                        <span className="sticker ok">{status.runningTurns} running</span>
+                      )}
+                      {status && status.waitingThreads > 0 && (
+                        <span className="sticker wait">
+                          {status.waitingThreads} {status.waitingThreads === 1 ? "needs" : "need"}{" "}
+                          you
+                        </span>
+                      )}
+                      {status?.updateWaiting && <span className="sticker info">update</span>}
+                      {!queue.waitingToJoin && queue.count > 0 && (
+                        <span className="sticker wait">{queue.count} queued</span>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             );
           })}
