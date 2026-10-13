@@ -327,11 +327,6 @@ export interface ProviderOrchestratorReplayVariant {
    * e.g. the target of a tool call the run was configured to deny.
    */
   readonly expectedAbsentWorkspacePaths?: ReadonlyArray<string>;
-  /**
-   * Permission mode for this provider's thread.create when the shared fixture
-   * input does not set one. Replay does not coerce an unsupported stored mode.
-   */
-  readonly runtimeMode?: RuntimeMode;
   readonly assertOutput: (
     result: OrchestratorV2ScenarioResult,
     transcript: ProviderReplayTranscript,

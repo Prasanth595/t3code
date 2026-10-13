@@ -103,9 +103,7 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     transcriptEntriesThroughLabel(rawTranscript, input.driver.transcriptEntriesThroughLabel),
     { driver: input.driver.driver, model: input.driver.modelSelection.model },
   );
-  const builtInput = input.buildInput();
-  const runtimeMode = builtInput.runtimeMode ?? input.driver.runtimeMode;
-  const fixtureInput = runtimeMode === undefined ? builtInput : { ...builtInput, runtimeMode };
+  const fixtureInput = input.buildInput();
   const workspace = yield* checkpointWorkspace(input.fixtureName, fixtureInput.workspaceFiles);
   const transcript = yield* input.harness.decodeTranscript(
     input.driver.driver === "codex"

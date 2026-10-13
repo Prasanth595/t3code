@@ -631,7 +631,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./simple/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         assertOutput: assertSimpleOutput,
       },
       {
@@ -691,7 +690,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./tool_call_denied_write/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         runtimePolicyOverride: DENIED_WRITE_POLICY,
         expectedAbsentWorkspacePaths: [TOOL_CALL_DENIED_WRITE_TARGET],
         assertOutput: assertToolCallDeniedWriteFxOutput,
@@ -777,7 +775,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
           import.meta.url,
         ),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertToolCallReadOnlyOnRequestFxOutput,
       },
@@ -1241,7 +1238,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./multi_turn/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         assertOutput: assertMultiTurnOutput,
       },
       {
@@ -1399,7 +1395,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./queued_turn/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         assertOutput: assertQueuedTurnOutput,
       },
       {
@@ -1539,7 +1534,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./message_steering/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         assertOutput: assertGrokMessageSteeringOutput,
       },
       {
@@ -1585,7 +1579,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./turn_interrupt/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
@@ -1619,7 +1612,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         driver: ProviderDriverKind.make("fx"),
         transcriptFile: new URL("./fx_early_stop/fx_transcript.ndjson", import.meta.url),
         modelSelection: FX_MODEL_SELECTION,
-        runtimeMode: "approval-required",
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertFxEarlyStopOutput,
       },

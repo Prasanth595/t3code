@@ -333,9 +333,7 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
   }
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const builtInput = fixture.buildInput();
-  const runtimeMode = builtInput.runtimeMode ?? variant.runtimeMode;
-  const fixtureInput = runtimeMode === undefined ? builtInput : { ...builtInput, runtimeMode };
+  const fixtureInput = fixture.buildInput();
   const workspace = yield* checkpointWorkspace(fixtureName, fixtureInput.workspaceFiles);
   const realWorkspace = yield* fs.realPath(workspace);
   const materialized = yield* materializeFixtureInput({
