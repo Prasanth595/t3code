@@ -549,9 +549,9 @@ function toPullRequestError(
 }
 
 /**
- * The account a project's reads go out as. A read batched across projects carries one
- * credential, so projects signed in to one host as different accounts are batched apart. A
- * project whose account cannot be told is kept apart from every other.
+ * The credential a project's reads go out on, or its account where the provider cannot tell the
+ * token. A read batched across projects carries one credential, so projects on different ones
+ * are batched apart. A project whose credential cannot be told is kept apart from every other.
  */
 const accountOf = (project: SupportedProject): Effect.Effect<string> =>
   project.api.getRoutingIdentity === undefined
@@ -559,7 +559,7 @@ const accountOf = (project: SupportedProject): Effect.Effect<string> =>
     : project.api
         .getRoutingIdentity({ cwd: project.project.workspaceRoot, host: project.host })
         .pipe(
-          Effect.map((identity) => identity.accountId),
+          Effect.map((identity) => identity.credentialFingerprint ?? identity.accountId),
           Effect.orElseSucceed(() => project.project.workspaceRoot),
         );
 
@@ -1644,14 +1644,14 @@ export const make = Effect.gen(function* () {
     if (project === undefined || api?.getRoutingIdentity === undefined) {
       return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
     }
-    const identity = yield* api
+    const { accountId, viewer } = yield* api
       .getRoutingIdentity({
         cwd: project.project.workspaceRoot,
         host,
       })
       .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
     // Only GitHub reports a routing identity, and the contract names it.
-    return { ...identity, host, provider: "github" as const };
+    return { accountId, viewer, host, provider: "github" as const };
   });
 
   const withRoutingCredential: PullRequestService["Service"]["withRoutingCredential"] = (
@@ -1691,13 +1691,13 @@ export const make = Effect.gen(function* () {
     if (api?.getRoutingIdentity === undefined) {
       return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
     }
-    const identity = yield* api
+    const { accountId, viewer } = yield* api
       .getRoutingIdentity({
         cwd: project.project.workspaceRoot,
         host: project.host,
       })
       .pipe(Effect.mapError(toPullRequestError("routeIdentity")));
-    if (!identity.viewer.trim() || !identity.accountId.trim()) {
+    if (!viewer.trim() || !accountId.trim()) {
       return yield* new PullRequestOperationError({
         operation: "routeIdentity",
         detail: "The signed-in account could not be verified.",
@@ -1706,7 +1706,8 @@ export const make = Effect.gen(function* () {
     return {
       host: project.host,
       provider: project.api.kind,
-      ...identity,
+      accountId,
+      viewer,
       projectTitle: project.project.title,
       workspaceRoot: project.project.workspaceRoot,
     };

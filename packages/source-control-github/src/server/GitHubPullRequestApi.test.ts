@@ -544,7 +544,7 @@ it.effect(
           .filter((request) => request.url.endsWith("/user"))
           .map((request) => request.authorization),
       ).toEqual(["Bearer broad-credential", "Bearer restricted-credential"]);
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "123",
         viewer: "same-account",
       });
@@ -665,7 +665,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         ),
         { concurrency: 4 },
       );
-      expect(results).toEqual(
+      expect(results).toMatchObject(
         Array.from({ length: 4 }, () => ({ accountId: "123", viewer: "viewer" })),
       );
       expect(mockedExecute).toHaveBeenCalledTimes(1);
@@ -696,7 +696,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         const second = yield* cli.getRoutingIdentity(input).pipe(Effect.forkChild);
         yield* Effect.yieldNow;
         yield* Fiber.interrupt(first);
-        expect(yield* Fiber.join(second)).toEqual({ accountId: "123", viewer: "viewer" });
+        expect(yield* Fiber.join(second)).toMatchObject({ accountId: "123", viewer: "viewer" });
         expect(verifications).toBe(2);
       }),
   );
@@ -3323,7 +3323,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       expect(login).toBe("enterprise-user");
       expect(mockedCredential).toHaveBeenCalledWith("github.acme.com", "/w");
-      expect(callAt(0)).toMatchObject({ kind: "rest", host: "github.acme.com", path: "user" });
+      // From the checkout, so a refusal clears that checkout's token rather than another's.
+      expect(callAt(0)).toMatchObject({
+        kind: "rest",
+        host: "github.acme.com",
+        cwd: "/w",
+        path: "user",
+      });
     }),
   );
 
@@ -3335,13 +3341,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed({ token: Redacted.make("test-credential-a"), fingerprint: `${host}:a` }),
       );
       mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"maria-rcks"}')));
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "123",
         viewer: "maria-rcks",
       });
 
       // The same credential again is answered from what was verified, without asking GitHub.
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "123",
         viewer: "maria-rcks",
       });
@@ -3367,7 +3373,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(mockedExecute).toHaveBeenCalledTimes(2);
 
       mockedExecute.mockReturnValueOnce(Effect.succeed(output('{"id":456,"login":"maria-rcks"}')));
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+      expect(yield* cli.getRoutingIdentity(input)).toMatchObject({
         accountId: "456",
         viewer: "maria-rcks",
       });

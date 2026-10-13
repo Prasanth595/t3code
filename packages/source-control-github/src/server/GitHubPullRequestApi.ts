@@ -465,7 +465,11 @@ export class GitHubPullRequestApi extends Context.Service<
       readonly cwd: string;
       readonly host: string;
     }) => Effect.Effect<
-      { readonly accountId: string; readonly viewer: string },
+      {
+        readonly accountId: string;
+        readonly viewer: string;
+        readonly credentialFingerprint: string;
+      },
       GitHubPullRequestApiError
     >;
     readonly getViewerLogin: (input: {
@@ -1149,7 +1153,13 @@ export const make = Effect.gen(function* () {
                 return { ...credential, ...cached.value };
               // Pin this read so an auth switch cannot poison its cache entry.
               const response = yield* api
-                .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
+                .rest({
+                  host,
+                  cwd: input.cwd,
+                  operation: "getRoutingIdentity",
+                  path: "user",
+                  allowReserve: true,
+                })
                 .pipe(
                   Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
                   Effect.provideService(SourceControlRateLimit.CredentialScope, key),
@@ -1210,7 +1220,11 @@ export const make = Effect.gen(function* () {
     });
   const getRoutingIdentity: GitHubPullRequestApi["Service"]["getRoutingIdentity"] = (input) =>
     captureVerifiedCredential(input).pipe(
-      Effect.map(({ accountId, viewer }) => ({ accountId, viewer })),
+      Effect.map(({ accountId, viewer, credentialFingerprint }) => ({
+        accountId,
+        viewer,
+        credentialFingerprint,
+      })),
     );
 
   /**
