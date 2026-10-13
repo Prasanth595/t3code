@@ -169,11 +169,24 @@ export function appendPullRequestListPage(
   page: PullRequestListResult,
   input: PullRequestListInput,
 ): PullRequestListPages {
+  if (page.errors.some((error) => error.cursorKey === undefined)) {
+    return {
+      ...previous,
+      entries: mergePullRequestListEntries(previous.entries, page.entries),
+      continued: true,
+    };
+  }
+  const nextCursors = { ...page.nextCursors };
+  for (const { cursorKey } of page.errors) {
+    if (cursorKey === undefined) continue;
+    const cursor = previous.nextCursors[cursorKey];
+    if (cursor !== undefined) nextCursors[cursorKey] = cursor;
+  }
   return {
     ...previous,
     entries: mergePullRequestListEntries(previous.entries, page.entries),
-    nextCursors: page.nextCursors,
-    truncated: page.truncated,
+    nextCursors,
+    truncated: page.truncated || Object.keys(nextCursors).length > 0,
     limit: input.limit ?? PR_LIST_PAGE_SIZE,
     continued: true,
   };

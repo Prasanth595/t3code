@@ -163,6 +163,50 @@ describe("mobile PR list pagination", () => {
     expect(nextPullRequestListInput({ ...first, limit: 490 }, { state: "all" })?.limit).toBe(500);
     expect(nextPullRequestListInput({ ...first, limit: 500 }, { state: "all" })).toBeNull();
   });
+  it("advances readable repositories while retaining failed repository cursors", () => {
+    const first = pullRequestListHead(
+      null,
+      page([entry(3)], { readable: "readable-first", failed: "failed-first" }),
+    );
+    const partial = appendPullRequestListPage(
+      first,
+      {
+        ...page([entry(2)], { readable: "readable-second" }),
+        errors: [
+          {
+            projectId: entry(1).projectId,
+            projectTitle: "Failed",
+            message: "Failed could not be read.",
+            cursorKey: "failed",
+          },
+        ],
+      },
+      { state: "open", cursors: first.nextCursors },
+    );
+    expect(partial.nextCursors).toEqual({
+      readable: "readable-second",
+      failed: "failed-first",
+    });
+  });
+  it("keeps the whole continuation when an older server omits failed cursor keys", () => {
+    const first = pullRequestListHead(null, page([entry(2)], { repo: "first" }));
+    const partial = appendPullRequestListPage(
+      first,
+      {
+        ...page([entry(1)], { repo: "second" }),
+        errors: [
+          {
+            projectId: entry(1).projectId,
+            projectTitle: "Project",
+            message: "Project could not be read.",
+          },
+        ],
+      },
+      { state: "open", cursors: first.nextCursors },
+    );
+    expect(partial.entries.map((row) => row.number)).toEqual([2, 1]);
+    expect(partial.nextCursors).toEqual({ repo: "first" });
+  });
 });
 
 describe("all-environment PR list", () => {

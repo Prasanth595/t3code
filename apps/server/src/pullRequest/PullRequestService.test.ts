@@ -4451,6 +4451,7 @@ it.effect("asks on its own for a repository a search answered nothing for", () =
         projectId: "p2" as ProjectId,
         projectTitle: "docs",
         message: "acme/docs could not be read.",
+        cursorKey: "github.com acme/docs",
       },
     ]);
     assert.deepStrictEqual(

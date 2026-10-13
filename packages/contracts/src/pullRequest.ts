@@ -651,6 +651,8 @@ export const PullRequestListProjectError = Schema.Struct({
   projectId: ProjectId,
   projectTitle: TrimmedNonEmptyString,
   message: TrimmedNonEmptyString,
+  /** Opaque repository key whose continuation can be retried after a partial page. */
+  cursorKey: Schema.optional(TrimmedNonEmptyString),
 });
 export type PullRequestListProjectError = typeof PullRequestListProjectError.Type;
 

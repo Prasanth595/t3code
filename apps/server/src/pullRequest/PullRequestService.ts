@@ -1322,10 +1322,11 @@ export const make = Effect.gen(function* () {
       // Reporting them keeps "N repositories were unavailable" honest instead of dropping them.
       const unreadable = selected
         .filter(({ host }) => viewers[host] === undefined)
-        .map(({ project, repository }) => ({
+        .map(({ cursorKey, project, repository }) => ({
           projectId: project.id,
           projectTitle: project.title,
           message: `${repository} could not be read.`,
+          cursorKey,
         }));
       if (readable.length === 0) {
         // No host this request covers can be read, so it is not a per-project problem. An
@@ -1427,6 +1428,7 @@ export const make = Effect.gen(function* () {
                     projectId: project.project.id,
                     projectTitle: project.project.title,
                     message: `${project.repository} could not be read.`,
+                    cursorKey: key,
                   },
                 ],
                 truncated: false,
