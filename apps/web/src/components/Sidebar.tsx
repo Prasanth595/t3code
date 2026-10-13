@@ -2596,8 +2596,14 @@ export default function Sidebar() {
     ownerVisibleProjectKeys,
     visibleProjectGroups,
     ownerHiddenProjectCount,
+    ownerHiddenThreadsNeedingUser,
     setOwnerFilter,
-  } = useSidebarOwnerFilter({ unsortedProjectGroups, projectGroups, projectGroupingSettings });
+  } = useSidebarOwnerFilter({
+    unsortedProjectGroups,
+    projectGroups,
+    projectGroupingSettings,
+    threads,
+  });
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -4716,17 +4722,12 @@ export default function Sidebar() {
                 AuthOrchestrationOperateScope,
               ),
               branch: thread.branch ?? null,
-              // A thread can show while the owner filter hides its project (it runs or waits
-              // for the user). Scoping to that project would show nothing, so the item stays out.
-              projectFilter:
-                threadProjectGroup &&
-                (ownerVisibleProjectKeys === null ||
-                  ownerVisibleProjectKeys.has(`${thread.environmentId}:${thread.projectId}`))
-                  ? {
-                      label: threadProjectGroup.displayName,
-                      isActive: projectScopeKey === threadProjectGroup.projectKey,
-                    }
-                  : null,
+              projectFilter: threadProjectGroup
+                ? {
+                    label: threadProjectGroup.displayName,
+                    isActive: projectScopeKey === threadProjectGroup.projectKey,
+                  }
+                : null,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
@@ -4953,7 +4954,6 @@ export default function Sidebar() {
       handleMultiSelectContextMenu,
       markThreadUnread,
       openProjectSettings,
-      ownerVisibleProjectKeys,
       projectScopeKey,
       projectByKey,
       serverConfigs,
@@ -5258,6 +5258,7 @@ export default function Sidebar() {
               <SidebarOwnerFilterNotice
                 filter={savedOwnerFilter}
                 hiddenProjectCount={ownerHiddenProjectCount}
+                hiddenThreadsNeedingUser={ownerHiddenThreadsNeedingUser}
                 onChange={setOwnerFilter}
               />
             ) : null}

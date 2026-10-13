@@ -90,7 +90,7 @@ export function SidebarOwnerFilterMenu(props: {
               <span className="flex min-w-0 items-center gap-2">
                 <span className="min-w-0 flex-1 truncate">{sidebarOwnerLabel(option.owner)}</span>
                 <span className="text-xs text-muted-foreground tabular-nums">
-                  {option.projectCount}
+                  {option.threadCount}
                 </span>
               </span>
             </MenuCheckboxItem>
@@ -111,9 +111,11 @@ export function SidebarOwnerFilterNotice(props: {
   filter: SidebarOwnerFilter;
   /** The number of project groups that the filter hides. */
   hiddenProjectCount: number;
+  /** The hidden threads that wait for an approval or an answer. */
+  hiddenThreadsNeedingUser: number;
   onChange: (filter: SidebarOwnerFilter) => void;
 }) {
-  const { filter, hiddenProjectCount, onChange } = props;
+  const { filter, hiddenProjectCount, hiddenThreadsNeedingUser, onChange } = props;
   return (
     <div role="status" className="flex h-7 min-w-0 items-center px-2">
       <FilterChip
@@ -121,6 +123,7 @@ export function SidebarOwnerFilterNotice(props: {
         operator={filter.operator}
         value={ownerListLabel(filter.owners)}
         detail={`${hiddenProjectCount} ${hiddenProjectCount === 1 ? "project" : "projects"} hidden`}
+        alert={hiddenThreadsNeedingUser > 0 ? `${hiddenThreadsNeedingUser} need you` : undefined}
         onFlip={() => onChange({ ...filter, operator: flipFilterOperator(filter.operator) })}
         onRemove={() => onChange({ ...filter, owners: [] })}
       />
