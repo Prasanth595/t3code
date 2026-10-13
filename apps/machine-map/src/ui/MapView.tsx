@@ -33,7 +33,15 @@ import {
   towardGlyph,
 } from "./format.ts";
 import { ClockIcon, KindIcon } from "./icons.tsx";
-import { offsetPoint, placePairs, pointOffset, separate, type Box, type Point } from "./layout.ts";
+import {
+  offsetPoint,
+  pairPath,
+  placePairs,
+  pointOffset,
+  separate,
+  type Box,
+  type Point,
+} from "./layout.ts";
 import { NoteCard } from "./NoteCard.tsx";
 import { settleHeld, type Held } from "./store.ts";
 import { AlertStickers, CardMeters } from "./resources.tsx";
@@ -305,6 +313,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     element.style.top = `${p.y}px`;
   };
 
+  /** MM-1108: redraws the line of a pair, through its card when the owner placed the card. */
+  const drawPair = (root: HTMLElement, key: string, a: Point, b: Point, through: Point | null) =>
+    root
+      .querySelector<SVGPathElement>(`path[data-pair="${CSS.escape(key)}"]`)
+      ?.setAttribute("d", pairPath(a, b, through));
+
   /** Writes the place of the dragged card straight to the page, with every line it moves. */
   const paint = (subject: DragSubject, p: Point, element: HTMLElement) => {
     const root = ref.current;
@@ -316,6 +330,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       line?.setAttribute("y1", String(from.y));
       line?.setAttribute("x2", String(p.x));
       line?.setAttribute("y2", String(p.y));
+      return;
+    }
+    if (subject._tag === "pair") {
+      moveElement(element, p);
+      // A card that moves is a placed card, so its line bends through it.
+      drawPair(root, pairKey(subject.a, subject.b), centerOf(subject.a), centerOf(subject.b), p);
       return;
     }
     if (subject._tag !== "machine") {
@@ -331,15 +351,10 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       const pa = at.get(a.id);
       const pb = at.get(b.id);
       const spot = spotByPair.get(pairKey(a, b));
-      const key = CSS.escape(pairKey(a, b));
-      const line = root.querySelector<SVGLineElement>(`line[data-pair="${key}"]`);
-      if (line && pa && pb) {
-        line.setAttribute("x1", String(pa.x));
-        line.setAttribute("y1", String(pa.y));
-        line.setAttribute("x2", String(pb.x));
-        line.setAttribute("y2", String(pb.y));
-      }
-      const card = root.querySelector<HTMLElement>(`.pair[data-pair="${key}"]`);
+      if (pa && pb) drawPair(root, pairKey(a, b), pa, pb, offsetOf(a, b) && spot ? spot : null);
+      const card = root.querySelector<HTMLElement>(
+        `.pair[data-pair="${CSS.escape(pairKey(a, b))}"]`,
+      );
       if (card && spot) moveElement(card, spot);
     }
   };
@@ -572,7 +587,18 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
 
   const onPointerCancel = (event: PointerEvent<HTMLDivElement>) => {
     const finished = endDrag(event);
-    if (finished?.moved) paint(finished.subject, finished.from, finished.element);
+    if (!finished?.moved) return;
+    paint(finished.subject, finished.from, finished.element);
+    const { subject } = finished;
+    // A card in its automatic place goes back to a straight line.
+    if (subject._tag === "pair" && offsetOf(subject.a, subject.b) === null && ref.current)
+      drawPair(
+        ref.current,
+        pairKey(subject.a, subject.b),
+        centerOf(subject.a),
+        centerOf(subject.b),
+        null,
+      );
   };
 
   /** MM-1103: a tap on the empty map ends the focus and closes the add menu. */
@@ -685,21 +711,19 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         onPointerCancel={onPointerCancel}
       >
         <svg aria-hidden>
-          {pairs.map(([a, b]) => {
+          {pairs.map(([a, b], i) => {
             const pa = centerOf(a);
             const pb = centerOf(b);
+            const spot = shown.spots[i];
             const touches = focus === a.id || focus === b.id;
             const empty =
               findArrow(map, a.id, b.id).level === "none" &&
               findArrow(map, b.id, a.id).level === "none";
             return (
-              <line
+              <path
                 key={pairKey(a, b)}
                 data-pair={pairKey(a, b)}
-                x1={pa.x}
-                y1={pa.y}
-                x2={pb.x}
-                y2={pb.y}
+                d={pairPath(pa, pb, offsetOf(a, b) && spot ? spot : null)}
                 className={[empty && "empty", focus && (touches ? "hot" : "dim")]
                   .filter(Boolean)
                   .join(" ")}
