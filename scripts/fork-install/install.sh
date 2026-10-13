@@ -4,8 +4,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --join <code>
 #
-# Linux: Fork Release has no Linux build yet, so the script builds the fork from source, like the
-#   VPS does. It installs the command `t3` in ~/.local/bin and a systemd user service that runs the
+# Linux: the script does not use the Linux server archive of the release yet. It builds the fork
+#   from source, like the VPS does. It installs the command `t3` in ~/.local/bin and a systemd user service that runs the
 #   server on loopback. Run it again to update.
 # macOS: the script installs the newest nightly app from the fork releases. --from-source builds
 #   the server from source instead, without a service.
@@ -245,7 +245,7 @@ install_from_source() {
 }
 
 case "$(uname -s)" in
-  # When Fork Release publishes a Linux build, download it here unless --from-source is set.
+  # To switch Linux to the server archive of the release, download it here unless --from-source is set.
   Linux) install_from_source ;;
   Darwin) if [[ "$from_source" == true ]]; then install_from_source; else install_mac; fi ;;
   *) die "use install.ps1 on Windows: https://raw.githubusercontent.com/$REPO/main/scripts/fork-install/install.ps1" ;;

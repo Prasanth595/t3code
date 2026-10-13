@@ -157,8 +157,8 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - On macOS, `install.sh` downloads the newest nightly `.dmg`, copies the app to `/Applications` and opens it. It keeps an installed app, because the app updates itself. `--force` replaces it. The join code goes to the clipboard for Settings > Machines.
 - On Windows, `install.ps1` downloads and runs the newest nightly `.exe`. The join code goes to the clipboard.
 - Both read the release list of the GitHub API, because the nightlies are pre-releases and `releases/latest` skips them.
-- On Linux, Fork Release has no build yet. `install.sh` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs `~/.local/bin/t3` and the systemd user service `t3code-fork.service` on `127.0.0.1:3773`. Then it runs `t3 machine-map join <code>`. Run it again to update. A restart stops the running agent turns of that server.
-- `--from-source` selects the source build on any system. Keep this path when Linux gets a release build. On macOS it installs no service.
+- On Linux, `install.sh` does not use the Linux server archive of the release yet. It clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs `~/.local/bin/t3` and the systemd user service `t3code-fork.service` on `127.0.0.1:3773`. Then it runs `t3 machine-map join <code>`. Run it again to update. A restart stops the running agent turns of that server.
+- `--from-source` selects the source build on any system. Keep this path when Linux switches to the server archive. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
 - To keep the Linux server running after logout, run `loginctl enable-linger $(id -un)`. To reach it from other machines, publish it with a tunnel, like the VPS.
 - Run `install.sh --help` for the options.
