@@ -262,6 +262,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
           phase: Exit.isSuccess(result) ? "succeeded" : "failed",
           authorizationUrl: null,
           expiresAt: null,
+          inputError: null,
           message: Exit.isSuccess(result)
             ? usesBrowser
               ? "Signed in with Google."
@@ -312,6 +313,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             ...flow.state,
             phase: "verifying",
             authorizationUrl: null,
+            inputError: null,
             message: "Checking Antigravity access and models.",
           });
         }),
@@ -342,6 +344,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               phase,
               authorizationUrl: null,
               expiresAt: null,
+              inputError: null,
               message,
             });
             return true;
@@ -495,6 +498,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                   phase: "cancelled",
                   authorizationUrl: null,
                   expiresAt: null,
+                  inputError: null,
                   message: "Google sign-in was cancelled by sign-out.",
                 });
               }
