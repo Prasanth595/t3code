@@ -61,7 +61,12 @@ export function openIdleInstallPromptIfAgentsRun(): boolean {
   return true;
 }
 
-function installDesktopUpdate(bridge: Pick<DesktopBridge, "installUpdate">): Promise<void> {
+/** Fork machine map (MM-1402): install as soon as no agent runs, without the prompt. */
+export function armIdleInstall(): void {
+  setIdleInstallState({ armed: true });
+}
+
+export function installDesktopUpdate(bridge: Pick<DesktopBridge, "installUpdate">): Promise<void> {
   return bridge
     .installUpdate()
     .then((result) => {

@@ -37,11 +37,18 @@ export function missingSiblingOrigins(input: {
   );
 }
 
-/** A one-use pairing credential from a sibling, or an error when Access has no cookie yet. */
-export async function requestSiblingPairingCredential(origin: string): Promise<string> {
+/**
+ * A one-use pairing credential from a sibling, or an error when Access has no cookie yet. The
+ * machine map sends `omit`: the desktop app adds the machine token headers to the request, and
+ * the target allows the desktop origin only without credentials.
+ */
+export async function requestSiblingPairingCredential(
+  origin: string,
+  credentials: RequestCredentials = "include",
+): Promise<string> {
   const response = await fetch(`${origin}${CLOUDFLARE_ACCESS_PAIRING_PATH}`, {
     method: "POST",
-    credentials: "include",
+    credentials,
   });
   if (!response.ok) {
     throw new Error(`${origin} answered ${response.status}.`);

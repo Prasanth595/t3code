@@ -20,6 +20,7 @@ import {
   PanelsTopLeftIcon,
   KeyboardIcon,
   Link2Icon,
+  NetworkIcon,
   PaletteIcon,
   SearchIcon,
   Settings2Icon,
@@ -89,6 +90,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/source-control": GitBranchIcon,
   "/settings/storage": HardDriveIcon,
   "/settings/connections": Link2Icon,
+  "/settings/machines": NetworkIcon,
   "/settings/archived": ArchiveIcon,
 };
 
