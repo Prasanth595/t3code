@@ -706,12 +706,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         Effect.timeout(options.requestTimeoutMs ?? 30_000),
         Effect.flatMap((value) => decode(MuseTaskList, value)),
         Effect.flatMap(({ tasks }) => {
-          const before = [...registryTasks.keys()].join("\n");
           registryTasks.clear();
           for (const task of tasks)
             if (!observedChildren.has(task.taskId))
               registryTasks.set(task.taskId, task.tool ?? task.kind);
-          return [...registryTasks.keys()].join("\n") === before ? Effect.void : syncBackground();
+          // Compares with the thread's rows, not the last list: a turn starts from the
+          // orchestrator's copy of the thread, which can predate the rows published since.
+          const listed = (thread?.pendingBackgroundTasks ?? []).map((task) => task.taskId);
+          const running = [...observedChildren.keys(), ...registryTasks.keys()];
+          return listed.join("\n") === running.join("\n") ? Effect.void : syncBackground();
         }),
         Effect.catch((cause) => Effect.logWarning("Could not read Muse's background tasks", cause)),
       );

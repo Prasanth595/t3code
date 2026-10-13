@@ -1331,6 +1331,32 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
+  it.effect("lists a running monitor again when a turn starts from an older thread snapshot", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const monitor = { taskId: "monitor-1", kind: "monitor", status: "inProgress" };
+      const first = yield* startConversation(harness, fake);
+      fake.queueResponse("task/list", { tasks: [monitor] });
+      yield* fake.emit("turn/completed", { turnId: first.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      // harness.providerThread predates the monitor, so the second turn starts without its row.
+      const second = yield* startConversation(harness, fake, 2);
+      fake.queueResponse("task/list", { tasks: [monitor] });
+      yield* fake.emit("turn/completed", { turnId: second.nativeId, terminal: "completed" });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      const listed = harness.allEvents
+        .slice(0, harness.allEvents.indexOf(terminal))
+        .findLast((event) => event.type === "provider_thread.updated");
+      assert.deepStrictEqual(
+        listed?.type === "provider_thread.updated"
+          ? listed.providerThread.pendingBackgroundTasks?.map((task) => task.taskId)
+          : undefined,
+        ["monitor-1"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
   it.effect("keeps background tool calls pending after their turn until each one ends", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
