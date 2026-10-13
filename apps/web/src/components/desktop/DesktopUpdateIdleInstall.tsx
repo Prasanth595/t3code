@@ -61,7 +61,7 @@ export function openIdleInstallPromptIfAgentsRun(): boolean {
   return true;
 }
 
-export function installDesktopUpdate(bridge: Pick<DesktopBridge, "installUpdate">): Promise<void> {
+function installDesktopUpdate(bridge: Pick<DesktopBridge, "installUpdate">): Promise<void> {
   return bridge
     .installUpdate()
     .then((result) => {

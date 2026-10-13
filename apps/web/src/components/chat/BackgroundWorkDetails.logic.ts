@@ -26,7 +26,7 @@ export interface BackgroundWorkDetails {
   readonly outputFile: string | undefined;
 }
 
-export const BACKGROUND_WORK_KIND_LABELS: Record<BackgroundWorkKind, string> = {
+const BACKGROUND_WORK_KIND_LABELS: Record<BackgroundWorkKind, string> = {
   subagent: "Agent",
   command: "Shell command",
   monitor: "Monitor",
@@ -101,7 +101,7 @@ function stringField(value: unknown, key: string): string | undefined {
  * tool whose output names the task (a Claude Monitor returns `{ taskId }`), a
  * turn item whose own id is the task id, or the agent's subagent item.
  */
-export function findBackgroundWorkStart(
+function findBackgroundWorkStart(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   ref: Pick<BackgroundWorkRef, "taskId" | "toolUseId" | "childThreadId">,
 ): OrchestrationV2TurnItem | undefined {

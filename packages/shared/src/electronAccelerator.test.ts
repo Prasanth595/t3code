@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isElectronAccelerator } from "./electronAccelerator";
+import { isElectronAccelerator } from "./electronAccelerator.ts";
 
 describe("isElectronAccelerator", () => {
   it("accepts keys Electron registers, with or without modifiers", () => {
