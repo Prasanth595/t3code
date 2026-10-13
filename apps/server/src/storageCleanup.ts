@@ -1,5 +1,6 @@
 import {
   GitCommandError,
+  isProviderNativeSubagentThread,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ProviderSessionJson,
 } from "@t3tools/contracts";
@@ -95,6 +96,14 @@ function sameProjectWorktreePolicies(left: ServerSettings, right: ServerSettings
       right.projectSettingsOverrides[projectId as ProjectId]?.worktreeCleanup,
     ),
   );
+}
+
+/**
+ * Provider-native subagents run in their parent's checkout and are never
+ * archived or deleted with it, so they do not count as sharing the worktree.
+ */
+function usesWorktree(thread: OrchestrationV2ThreadShell): boolean {
+  return thread.worktreePath !== null && !isProviderNativeSubagentThread(thread);
 }
 
 /** Live sessions keep their cwd even when no turn is currently running. */
@@ -423,9 +432,8 @@ const make = Effect.gen(function* () {
     )).filter((thread) => thread.worktreePath !== null && thread.branch !== null);
     const snapshot = yield* readThreads();
     const refreshedDefaultRefs = new Map<string, Set<string>>();
-    const groups = Map.groupBy(
-      snapshot.threads.filter((thread) => thread.worktreePath !== null),
-      (thread) => path.resolve(thread.worktreePath!),
+    const groups = Map.groupBy(snapshot.threads.filter(usesWorktree), (thread) =>
+      path.resolve(thread.worktreePath!),
     );
     const candidates = [
       ...[...groups.values()].map((group) => group[0]!),
@@ -544,8 +552,7 @@ const make = Effect.gen(function* () {
           if (yield* containsProjectRoot(worktreePath, [project, ...latestSnapshot.projects]))
             return "contains a project checkout";
           const latest = latestSnapshot.threads.filter(
-            (entry) =>
-              entry.worktreePath !== null && path.resolve(entry.worktreePath) === worktreePath,
+            (entry) => usesWorktree(entry) && path.resolve(entry.worktreePath!) === worktreePath,
           );
           if (hasTerminal(worktreePath)) return "open terminal";
           if (deleted) {

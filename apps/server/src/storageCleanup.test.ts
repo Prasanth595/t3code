@@ -510,6 +510,38 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
+  it.live("does not count a provider-native subagent as sharing its parent's worktree", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, setThreads } = yield* cleanupFixture;
+        const parent = shell({ branch: "feature", worktreePath: worktree });
+        const child = (creationSource: "provider" | "mcp") =>
+          shell({
+            id: ThreadId.make(`thread-${creationSource}-child`),
+            branch: "feature",
+            worktreePath: worktree,
+            createdBy: "agent",
+            creationSource,
+            lineage: {
+              rootThreadId: parent.id,
+              parentThreadId: parent.id,
+              relationshipToParent: "subagent",
+            },
+          });
+        setThreads([parent, child("mcp")]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Shared by 2 threads",
+        });
+        setThreads([child("provider"), parent]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({
+          outcome: "removed",
+          threadId: parent.id,
+        });
+        expect(yield* fs.exists(worktree)).toBe(false);
+      }),
+    ),
+  );
   it("decodes reports from servers without size fields", () => {
     const report = decodeCleanupReport({
       trigger: "manual",
