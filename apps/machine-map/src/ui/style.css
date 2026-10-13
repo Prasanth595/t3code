@@ -1064,6 +1064,63 @@ details.more[open] summary {
   z-index: 5;
   cursor: grabbing;
 }
+/* MM-1104: connection handles. They show on hover and focus, and always on a touch screen. */
+.node .handle {
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  translate: -50% -50%;
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: crosshair;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+/* A 44 pixel touch target around the dot. */
+.node .handle::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+}
+.node .handle.top {
+  left: 50%;
+  top: 0;
+}
+.node .handle.right {
+  left: 100%;
+  top: 50%;
+}
+.node .handle.bottom {
+  left: 50%;
+  top: 100%;
+}
+.node .handle.left {
+  left: 0;
+  top: 50%;
+}
+.node:hover .handle,
+.node:focus-visible .handle,
+.node.on .handle,
+.node.linking .handle {
+  opacity: 1;
+}
+@media (hover: none) {
+  .node .handle {
+    opacity: 1;
+  }
+}
+/* The hint of the handle would cover the machine name while the line moves. */
+.node.linking .handle::after {
+  content: none;
+}
+/* MM-1104: the connection line that follows the pointer. */
+.map line.live {
+  stroke: var(--accent);
+  stroke-width: 4;
+  stroke-dasharray: 10 6;
+}
 .node .name {
   display: flex;
   align-items: center;
@@ -1133,10 +1190,6 @@ details.more[open] summary {
   cursor: grabbing;
   box-shadow: 6px 6px 0 0 var(--shadow-ink);
 }
-.pair.quiet {
-  padding: 3px;
-  box-shadow: none;
-}
 .dir {
   display: flex;
   align-items: center;
@@ -1187,14 +1240,6 @@ details.more[open] summary {
 }
 .dir:focus-visible {
   outline-offset: -3px;
-}
-.pair.quiet .dir {
-  min-height: 34px;
-  font-size: 0.88rem;
-  color: var(--muted);
-}
-.pair.quiet .dir.on {
-  color: var(--select-fg);
 }
 .clock {
   width: 18px;
@@ -2327,9 +2372,6 @@ dialog.palette .dialog-body {
   }
   .actions.end .btn {
     flex: 1;
-  }
-  .wide-only {
-    display: none;
   }
   .seg.kinds button {
     flex-direction: column;
