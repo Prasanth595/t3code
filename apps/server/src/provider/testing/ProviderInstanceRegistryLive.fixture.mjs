@@ -1,6 +1,13 @@
 #!/usr/bin/env node
 import * as NodeFS from "node:fs";
 import * as NodeReadline from "node:readline";
+// Opt-in test hook: record the cwd this mock CLI was spawned at so tests can
+// assert which directory auxiliary provider spawns actually ran in.
+if (process.env.T3_FIXTURE_RECORD_CWD) {
+  try {
+    NodeFS.appendFileSync(process.env.T3_FIXTURE_RECORD_CWD, `${process.cwd()}\n`);
+  } catch {}
+}
 if (process.argv.includes("--version")) {
   process.stdout.write("claude 2.1.219\n");
   process.exit(0);

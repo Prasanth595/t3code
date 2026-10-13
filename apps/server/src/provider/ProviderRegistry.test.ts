@@ -229,6 +229,7 @@ function recordingMockSpawnerLayer(
   const commands: Array<{
     readonly args: ReadonlyArray<string>;
     readonly env: NodeJS.ProcessEnv | undefined;
+    readonly cwd: string | undefined;
   }> = [];
   const layer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -237,9 +238,10 @@ function recordingMockSpawnerLayer(
         args: ReadonlyArray<string>;
         options?: {
           readonly env?: NodeJS.ProcessEnv;
+          readonly cwd?: string;
         };
       };
-      commands.push({ args: cmd.args, env: cmd.options?.env });
+      commands.push({ args: cmd.args, env: cmd.options?.env, cwd: cmd.options?.cwd });
       return Effect.succeed(mockHandle(handler(cmd.args)));
     }),
   );
@@ -3434,6 +3436,30 @@ it.layer(
         assert.deepStrictEqual(
           recorded.commands.map((command) => command.env?.CLAUDE_CONFIG_DIR),
           [(yield* Path.Path).resolve(claudeConfigDir)],
+        );
+      }).pipe(Effect.provide(recorded.layer));
+    });
+
+    it.effect("spawns the version probe at an explicitly provided cwd", () => {
+      const recorded = recordingMockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+        throw new Error(`Unexpected args: ${joined}`);
+      });
+
+      return Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+          undefined,
+          "/tmp/t3code-state-dir",
+        );
+        assert.strictEqual(status.status, "ready");
+        // Auxiliary spawns must never inherit the server's process cwd:
+        // packaged builds start the server in $HOME (issue #2867).
+        assert.deepStrictEqual(
+          recorded.commands.map((command) => command.cwd),
+          ["/tmp/t3code-state-dir"],
         );
       }).pipe(Effect.provide(recorded.layer));
     });

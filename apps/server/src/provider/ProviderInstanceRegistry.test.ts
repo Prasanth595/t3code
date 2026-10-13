@@ -437,6 +437,58 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("spawns Claude capability probes at the server state dir, not the startup cwd", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwdLogDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-claude-probe-cwd-" });
+      const cwdLogPath = path.join(cwdLogDir, "probe-cwds.log");
+
+      const claudeId = ProviderInstanceId.make("claude_probe_cwd");
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            environment: [{ name: "T3_FIXTURE_RECORD_CWD", value: cwdLogPath, sensitive: false }],
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      const claudeSnapshot = yield* claude!.snapshot.refresh;
+      expect(claudeSnapshot).toMatchObject({
+        status: "ready",
+        installed: true,
+        version: "2.1.219",
+      });
+
+      // The packaged server's startup cwd is $HOME (DesktopEnvironment's
+      // `backendCwd`), and shimmed `claude` binaries treat their cwd as the
+      // project boundary — so every instance-level auxiliary spawn must land
+      // somewhere explicit (the server's own state dir), never in the
+      // inherited startup cwd (issue #2867).
+      const { stateDir, cwd: serverStartupCwd } = yield* ServerConfig.ServerConfig;
+      expect(stateDir).not.toEqual(serverStartupCwd);
+      // The spawned CLI observes its cwd the way the kernel reports it (real
+      // path), so compare against the resolved state dir.
+      const resolvedStateDir = yield* fs.realPath(stateDir);
+      const recordedCwds = (yield* fs.readFileString(cwdLogPath)).trim().split("\n");
+      expect(recordedCwds.length).toBeGreaterThan(0);
+      for (const recordedCwd of recordedCwds) {
+        expect(recordedCwd).toEqual(resolvedStateDir);
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
