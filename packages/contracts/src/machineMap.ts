@@ -189,20 +189,57 @@ export type MapProposal = typeof MapProposal.Type;
 
 /** MM-501. `rotateToken` is not here: the portal sends it as its own message. */
 export const MachineCommandInput = Schema.Union([
-  Schema.TaggedStruct("restartServer", {}),
-  Schema.TaggedStruct("installUpdate", { whenIdle: Schema.Boolean }),
-  Schema.TaggedStruct("stopAllAgents", {}),
-  Schema.TaggedStruct("pauseScheduledTasks", {}),
-  Schema.TaggedStruct("resumeScheduledTasks", {}),
-  Schema.TaggedStruct("reloadWindows", {}),
-  Schema.TaggedStruct("startThread", {
-    projectId: TrimmedNonEmptyString,
-    title: TrimmedNonEmptyString,
-    message: TrimmedNonEmptyString,
+  Schema.TaggedStruct("restartServer", {}).annotate({
+    description: "Restart the T3 server. Its supervisor starts it again. Running agent turns stop.",
   }),
-  Schema.TaggedStruct("revokeClient", { sessionId: TrimmedNonEmptyString }),
-  Schema.TaggedStruct("collectDiagnostics", {}),
-  Schema.TaggedStruct("testArrow", { to: MachineId }),
+  Schema.TaggedStruct("installUpdate", {
+    whenIdle: Schema.Boolean.annotate({
+      description: "True waits until no agent runs on the machine. False installs now.",
+    }),
+  }).annotate({
+    description:
+      "Install what the desktop update button offers: an app update or a ready live build. Desktop machines only, while the app runs.",
+  }),
+  Schema.TaggedStruct("stopAllAgents", {}).annotate({
+    description: "Interrupt every running agent turn on the machine.",
+  }),
+  Schema.TaggedStruct("pauseScheduledTasks", {}).annotate({
+    description: "Pause every scheduled task on the machine.",
+  }),
+  Schema.TaggedStruct("resumeScheduledTasks", {}).annotate({
+    description: "Resume the scheduled tasks of the machine.",
+  }),
+  Schema.TaggedStruct("reloadWindows", {}).annotate({
+    description: "Reload the desktop app windows. Desktop machines only.",
+  }),
+  Schema.TaggedStruct("startThread", {
+    projectId: TrimmedNonEmptyString.annotate({
+      description: "Project id on the target machine. Read it there with t3_project_list.",
+    }),
+    title: TrimmedNonEmptyString.annotate({ description: "Title of the new thread." }),
+    message: TrimmedNonEmptyString.annotate({ description: "First message to the agent." }),
+  }).annotate({
+    description:
+      "Start a thread on the machine, like t3_thread_launch there. projectId is a project id on that machine (t3_project_list there); title and message are text.",
+  }),
+  Schema.TaggedStruct("revokeClient", {
+    sessionId: TrimmedNonEmptyString.annotate({
+      description: "Client session id from presence.<machineId>.status.clients in machines_read.",
+    }),
+  }).annotate({
+    description:
+      "End one client session on the machine. sessionId comes from presence.<machineId>.status.clients in machines_read.",
+  }),
+  Schema.TaggedStruct("collectDiagnostics", {}).annotate({
+    description:
+      "Collect versions, recent errors, processes and resource use. The bundle is the command result.",
+  }),
+  Schema.TaggedStruct("testArrow", {
+    to: MachineId.annotate({ description: "Target machine id of the arrow to test." }),
+  }).annotate({
+    description:
+      "Connect from the machine to the machine id `to` and report reachability, round trip time and scopes.",
+  }),
 ]);
 export type MachineCommandInput = typeof MachineCommandInput.Type;
 export type MachineCommandKind = MachineCommandInput["_tag"];
@@ -399,33 +436,88 @@ const PositiveInt = NonNegativeInt.check(Schema.isGreaterThan(0));
 export const MapToolInputs = {
   machines_read: Schema.Struct({}),
   machines_set_access: Schema.Struct({
-    from: MachineId,
-    to: MachineId,
-    level: MachineLevel,
-    agentTools: Schema.optionalKey(Schema.Boolean),
-    /** MM-304: the arrow returns to its current level after this many minutes. */
-    expiresInMinutes: Schema.optionalKey(PositiveInt),
+    from: MachineId.annotate({ description: "Id of the machine that gets access." }),
+    to: MachineId.annotate({ description: "Id of the machine that it gets access to." }),
+    level: MachineLevel.annotate({
+      description:
+        "none: no access. read: read threads, files, terminals and diagnostics. standard: a normal client, which also changes settings. admin: standard plus client access and relay management.",
+    }),
+    agentTools: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description:
+          "True lets agents on `from` call T3 tools on `to` with machine_tool_call. Omit to keep the current value.",
+      }),
+    ),
+    expiresInMinutes: Schema.optionalKey(
+      PositiveInt.annotate({
+        description:
+          "Minutes until the arrow returns to its current permanent level. Omit for a permanent change.",
+      }),
+    ),
   }),
   machines_set_setting: Schema.Struct({
-    /** Omit to set the shared value. */
-    machineId: Schema.optionalKey(MachineId),
-    scope: SettingScope,
-    key: TrimmedNonEmptyString,
-    /** Omit, or set `clear`, to remove the value. */
-    value: Schema.optionalKey(Schema.Unknown),
-    clear: Schema.optionalKey(Schema.Boolean),
+    machineId: Schema.optionalKey(
+      MachineId.annotate({
+        description: "Machine to override. Omit to set the shared value of every machine.",
+      }),
+    ),
+    scope: SettingScope.annotate({
+      description:
+        "server: T3 server settings (settings.json). client: desktop app client settings.",
+    }),
+    key: TrimmedNonEmptyString.annotate({
+      description:
+        "Top-level settings key, for example recoverInterruptedTurns. Only a key that the owner manages on the map works.",
+    }),
+    value: Schema.optionalKey(
+      Schema.Unknown.annotate({
+        description:
+          "New value, in the type of the settings schema. Omit to clear: the machine follows the shared value again.",
+      }),
+    ),
+    clear: Schema.optionalKey(
+      Schema.Boolean.annotate({
+        description: "True removes the value, also when `value` is set.",
+      }),
+    ),
   }),
   machines_command: Schema.Struct({
-    machineId: MachineId,
-    command: MachineCommandInput,
-    delivery: Schema.optionalKey(CommandDelivery),
-    expiresInMinutes: Schema.optionalKey(PositiveInt),
+    machineId: MachineId.annotate({ description: "Id of the machine that runs the command." }),
+    command: MachineCommandInput.annotate({
+      description:
+        'The command, tagged by `_tag`, for example {"_tag":"stopAllAgents"}. The machine must list the tag in presence.<machineId>.status.commands.',
+    }),
+    delivery: Schema.optionalKey(
+      CommandDelivery.annotate({
+        description:
+          "online (default): run when the machine is connected. idle: also wait until no agent runs there.",
+      }),
+    ),
+    expiresInMinutes: Schema.optionalKey(
+      PositiveInt.annotate({
+        description: "Minutes until a queued command expires. Default 1440 (24 hours).",
+      }),
+    ),
   }),
-  machines_queue_cancel: Schema.Struct({ commandId: TrimmedNonEmptyString }),
-  machines_undo: Schema.Struct({ revision: NonNegativeInt }),
+  machines_queue_cancel: Schema.Struct({
+    commandId: TrimmedNonEmptyString.annotate({
+      description: "Id of a command with status queued, from `commands` in machines_read.",
+    }),
+  }),
+  machines_undo: Schema.Struct({
+    revision: NonNegativeInt.annotate({
+      description: "Revision number to undo, from `history` in machines_read.",
+    }),
+  }),
   machines_preset: Schema.Struct({
-    action: Schema.Literals(["save", "apply", "lockdown"]),
-    /** Required for `save` and `apply`. */
-    name: Schema.optionalKey(TrimmedNonEmptyString),
+    action: Schema.Literals(["save", "apply", "lockdown"]).annotate({
+      description:
+        "save: store the current arrows as preset `name`. apply: set every arrow from preset `name`. lockdown: set every arrow and map role to none.",
+    }),
+    name: Schema.optionalKey(
+      TrimmedNonEmptyString.annotate({
+        description: "Preset name. Required for save and apply. Ignored for lockdown.",
+      }),
+    ),
   }),
 } satisfies Record<MapToolName, Schema.Top>;
