@@ -2800,6 +2800,11 @@ describe("streamed feed updates", () => {
       ],
       latestRun: settled,
     },
+    // The first run's fold above was timed to the late item; dropping it must reach back too.
+    {
+      items: [...history, reply("a3", 22, runs[2], "Working on it"), shell("s4", 23, runs[2])],
+      latestRun: settled,
+    },
   ];
   // Like the projection reducer, an unchanged item at an unchanged position keeps its row.
   const rowsByItem = new Map<

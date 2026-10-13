@@ -1337,6 +1337,7 @@ export function deriveThreadFeedPresentation(
     }
   }
   const tailStart = result.length;
+  const lastEntryByRun = new Map<RunId, number>();
 
   const retainedFeed: Array<
     Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "thinking" }>
@@ -1374,7 +1375,10 @@ export function deriveThreadFeedPresentation(
       restarts.push({ entry: feedIndex, rowsLength: result.length });
     }
     const runId = feedEntryRunId(entry);
-    if (runId !== null && !firstEntryByRun.has(runId)) firstEntryByRun.set(runId, feedIndex);
+    if (runId !== null) {
+      if (!firstEntryByRun.has(runId)) firstEntryByRun.set(runId, feedIndex);
+      lastEntryByRun.set(runId, feedIndex);
+    }
     // A provider-native subagent works without a run: its null-run tail is
     // live only while that runless work is active.
     const isActiveTailGroup =
@@ -1467,6 +1471,26 @@ export function deriveThreadFeedPresentation(
     }
     result[index] = continued;
   }
+  // A run that crosses a user message made the rows before it from entries
+  // after it, so a later build cannot restart there even once those entries
+  // are gone. Only runs of this build's own entries can cross its restarts.
+  const crossings = Array.from({ length: feed.length - start + 1 }, () => 0);
+  for (const [runId, last] of lastEntryByRun) {
+    const first = firstEntryByRun.get(runId)!;
+    if (first >= last) continue;
+    crossings[first - start + 1]! += 1;
+    crossings[last - start + 1]! -= 1;
+  }
+  let crossingRuns = 0;
+  let crossingIndex = 0;
+  const cleanRestarts = restarts.filter((candidate) => {
+    if (candidate.entry < start) return true;
+    while (crossingIndex <= candidate.entry - start) {
+      crossingRuns += crossings[crossingIndex]!;
+      crossingIndex += 1;
+    }
+    return crossingRuns === 0;
+  });
   lastPresentation = {
     feed,
     latestRun,
@@ -1475,7 +1499,7 @@ export function deriveThreadFeedPresentation(
     activeWorkStartedAt,
     runlessWorkActive,
     rows: result,
-    restarts,
+    restarts: cleanRestarts,
     firstEntryByRun,
   };
   return result;
