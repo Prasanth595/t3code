@@ -42,6 +42,7 @@ import {
   checkClaudeProviderStatus,
   makePendingClaudeProvider,
   probeClaudeCapabilities,
+  probeClaudeOrganizationId,
   probeClaudeWorkspaceSnapshot,
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
@@ -203,10 +204,16 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
         capacity: 1,
         timeToLive: CAPABILITIES_PROBE_TTL,
         lookup: () =>
-          Effect.all([
-            probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
-            ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath),
-          ]).pipe(
+          Effect.all(
+            [
+              probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
+              probeClaudeOrganizationId(effectiveConfig, processEnv).pipe(
+                Effect.timeout(Duration.seconds(10)),
+                Effect.orElse(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
+              ),
+            ],
+            { concurrency: "unbounded" },
+          ).pipe(
             Effect.map(([capabilities, workspaceId]) =>
               capabilities && workspaceId ? { ...capabilities, workspaceId } : capabilities,
             ),

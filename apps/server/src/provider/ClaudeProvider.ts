@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -263,8 +264,8 @@ function nonEmptyProbeString(value: string): string | undefined {
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   /**
-   * The organization UUID from the login's `.claude.json`. The driver reads it
-   * in the same cached probe, so it describes the same login as the rest.
+   * The organization UUID reported by the configured CLI, with the login's
+   * `.claude.json` as a fallback for older CLIs.
    */
   readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
@@ -465,6 +466,31 @@ const runClaudeCommand = Effect.fn("runClaudeCommand")(function* (
     shell: spawnCommand.shell,
   });
   return yield* spawnAndCollect(claudeSettings.binaryPath, command);
+});
+
+const ClaudeAuthStatus = Schema.fromJsonString(
+  Schema.Struct({
+    loggedIn: Schema.Boolean,
+    orgId: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+);
+
+class ClaudeAuthStatusError extends Schema.TaggedError<ClaudeAuthStatusError>()(
+  "ClaudeAuthStatusError",
+  { exitCode: Schema.Number },
+) {}
+
+/** Read identity through the configured binary so account-selecting wrappers apply. */
+export const probeClaudeOrganizationId = Effect.fn("probeClaudeOrganizationId")(function* (
+  claudeSettings: ClaudeSettings,
+  environment?: NodeJS.ProcessEnv,
+) {
+  const result = yield* runClaudeCommand(claudeSettings, ["auth", "status", "--json"], environment);
+  if (result.code !== 0) {
+    return yield* Effect.fail(new ClaudeAuthStatusError({ exitCode: result.code }));
+  }
+  const status = yield* Schema.decodeUnknownEffect(ClaudeAuthStatus)(result.stdout);
+  return status.loggedIn ? status.orgId?.trim() || undefined : undefined;
 });
 
 /** Read commands from the same cwd Claude uses for a workspace session. */
