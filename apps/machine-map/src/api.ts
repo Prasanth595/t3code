@@ -12,6 +12,7 @@ import {
   MachineKind,
   MapActor,
   MapChange,
+  MapPosition,
   type MachineCommand,
   type MachineMapDocument,
   type MachinePresence,
@@ -50,6 +51,8 @@ export type RevisionRequest = typeof RevisionRequest.Type;
 export const AddMachineRequest = Schema.Struct({
   name: Text,
   kind: MachineKind,
+  /** MM-1110: the place that the owner picked. Omit for the free spot of MM-206. */
+  position: Schema.optionalKey(MapPosition),
   tokenClientId: Schema.optionalKey(Text),
   tokenSecret: Schema.optionalKey(Text),
 });

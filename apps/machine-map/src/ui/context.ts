@@ -5,6 +5,7 @@ import type {
   MachineId,
   MachineMapDocument,
   MapChange,
+  MapPosition,
   MapRevision,
   PortalSnapshot,
 } from "@t3tools/contracts/machineMap";
@@ -27,7 +28,8 @@ export interface CommandOptions {
 }
 
 export type Dialog =
-  | { readonly _tag: "addMachine" }
+  /** MM-1110: `position` is the place picked on the map. Without it the portal picks a free spot. */
+  | { readonly _tag: "addMachine"; readonly position?: MapPosition }
   | {
       readonly _tag: "joinCode";
       readonly machineName: string;
