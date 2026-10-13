@@ -155,7 +155,12 @@ checkout_fork() {
 
 build_fork() {
   log "building $(git -C "$dir" rev-parse --short HEAD); this takes a few CPU minutes"
-  (cd "$dir" && CI=1 pnpm install --frozen-lockfile && pnpm exec vp run --filter t3 build)
+  # Node limits its heap to a part of the memory, about 2 GB on a machine with 6 GB. The dependency
+  # check of `pnpm exec` then runs out of heap. Revisit when the build needs more than 4 GB.
+  (
+    export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
+    cd "$dir" && CI=1 pnpm install --frozen-lockfile && pnpm exec vp run --filter t3 build
+  )
 }
 
 install_command() {
