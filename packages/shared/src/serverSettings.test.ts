@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SPEECH_POST_PROCESSING_MODELS,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -59,6 +60,7 @@ describe("serverSettings helpers", () => {
       ["claudeAgent", { model: "claude-haiku-4-5", options: [{ id: "thinking", value: false }] }],
       ["cursor", { model: "composer-2", options: [{ id: "reasoning", value: "low" }] }],
       ["grok", { model: "grok-build", options: [{ id: "reasoningEffort", value: "low" }] }],
+      ["muse", { model: "default", options: [] }],
       ["pi", { model: "default", options: [] }],
       ["opencode", { model: "opencode/big-pickle", options: [{ id: "variant", value: "low" }] }],
       ["antigravity", { model: "antigravity-default", options: [] }],
@@ -208,7 +210,7 @@ describe("serverSettings helpers", () => {
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
       providerInstances: Object.fromEntries(
-        Object.keys(DEFAULT_SERVER_SETTINGS.providers).map((driver) => [
+        Object.keys(DEFAULT_SPEECH_POST_PROCESSING_MODELS).map((driver) => [
           driver,
           { driver: ProviderDriverKind.make(driver), enabled: false, config: {} },
         ]),

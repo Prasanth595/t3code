@@ -1773,7 +1773,12 @@ function startAnnotation(sendEnabled: boolean, voice?: DesktopPreviewAnnotationV
 
 ipcRenderer.on(
   START_PICK_CHANNEL,
-  (_event, theme: DesktopPreviewAnnotationTheme | undefined, sendEnabled?: boolean, voice?: DesktopPreviewAnnotationVoiceConfig) => {
+  (
+    _event,
+    theme: DesktopPreviewAnnotationTheme | undefined,
+    sendEnabled?: boolean,
+    voice?: DesktopPreviewAnnotationVoiceConfig,
+  ) => {
     if (theme) annotationTheme = theme;
     startAnnotation(sendEnabled === true, voice);
   },
