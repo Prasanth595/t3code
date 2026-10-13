@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
-import { Atom } from "effect/unstable/reactivity";
+import { Atom } from "effect/reactivity";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { PixelRatio } from "react-native";
 import { resolveProjectIconGlyph } from "../../lib/projectIcon";
