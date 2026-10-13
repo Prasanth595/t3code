@@ -1,3 +1,5 @@
+import type { PairOffset } from "@t3tools/contracts/machineMap";
+
 /**
  * Pixel layout of the map (MM-1103). Saved positions can overlap, for example on a narrow phone
  * map or for machines that joined close together. The page shows them apart and does not save
@@ -104,9 +106,41 @@ const ASIDE = [0, 0.5, -0.5, 1, -1, 1.5, -1.5];
 /** A pair card on a machine card costs more than a pair card on a pair card. */
 const MACHINE_WEIGHT = 4;
 
+/** The unit normal of the line from `a` to `b`. A line of no length points down. */
+function normal(a: Point, b: Point): Point {
+  const length = Math.hypot(b.x - a.x, b.y - a.y);
+  if (length === 0) return { x: 0, y: 1 };
+  return { x: -(b.y - a.y) / length, y: (b.x - a.x) / length };
+}
+
+const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
+
+/** MM-1108: the center of a pair card from its offset. `scale` is the shorter side of the map. */
+export function offsetPoint(a: Point, b: Point, offset: PairOffset, scale: number): Point {
+  const n = normal(a, b);
+  return {
+    x: a.x + (b.x - a.x) * offset.along + n.x * offset.aside * scale,
+    y: a.y + (b.y - a.y) * offset.along + n.y * offset.aside * scale,
+  };
+}
+
+/** MM-1108: the offset of a pair card center, the inverse of `offsetPoint`, kept in range. */
+export function pointOffset(a: Point, b: Point, p: Point, scale: number): PairOffset {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lengthSquared = dx * dx + dy * dy;
+  const n = normal(a, b);
+  const along = lengthSquared === 0 ? 0.5 : ((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared;
+  const aside = scale === 0 ? 0 : ((p.x - a.x) * n.x + (p.y - a.y) * n.y) / scale;
+  // Four decimals is under a pixel on any screen, and keeps the map small.
+  const round = (value: number) => Math.round(value * 10_000) / 10_000;
+  return { along: round(clamp(along, 0, 1)), aside: round(clamp(aside, -1, 1)) };
+}
+
 /**
- * Places each pair card on its line, at the first spot that covers no machine card and no pair
- * card placed before it. Without a free spot, it takes the spot that covers the least.
+ * Places each pair card on its line. A card with a `fixed` center (MM-1108) stays there. Each
+ * other card takes the first spot that covers no machine card, no note and no pair card placed
+ * before it. Without a free spot, it takes the spot that covers the least.
  */
 export function placePairs(
   pairs: ReadonlyArray<{
@@ -114,19 +148,27 @@ export function placePairs(
     readonly b: Point;
     readonly w: number;
     readonly h: number;
+    readonly fixed: Point | null;
   }>,
   machines: ReadonlyArray<Box>,
   width: number,
   height: number,
+  notes: ReadonlyArray<Box> = [],
 ): Array<Point> {
-  const placed: Array<Box> = [];
   const pad = (box: Box): Box => ({ ...box, w: box.w + GAP, h: box.h + GAP });
   const padded = machines.map(pad);
-  return pairs.map(({ a, b, w, h }) => {
-    const length = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    // The unit normal of the line, for spots beside it.
-    const nx = -(b.y - a.y) / length;
-    const ny = (b.x - a.x) / length;
+  // Cards that the owner placed go first, so automatic cards keep off them.
+  const fixedBoxes = pairs.map(({ fixed, w, h }) =>
+    fixed ? clampBox({ ...fixed, w, h }, width, height) : null,
+  );
+  const placed: Array<Box> = [
+    ...notes.map(pad),
+    ...fixedBoxes.flatMap((box) => (box ? [pad(box)] : [])),
+  ];
+  return pairs.map(({ a, b, w, h }, i) => {
+    const fixedBox = fixedBoxes[i];
+    if (fixedBox) return { x: fixedBox.x, y: fixedBox.y };
+    const { x: nx, y: ny } = normal(a, b);
     // How wide the card is along the normal.
     const across = Math.abs(nx) * w + Math.abs(ny) * h;
     let best: { box: Box; score: number } | null = null;

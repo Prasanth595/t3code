@@ -12,8 +12,10 @@ import type {
   MachineMapRole,
   MachineRecord,
   MapChange,
+  MapNote,
   MapPosition,
   MapPreset,
+  PairOffset,
   ScopedSettingValues,
   SettingScope,
   SettingValues,
@@ -36,6 +38,8 @@ export const emptyMap = (): MachineMapDocument => ({
   arrows: [],
   settings: { managed: [], shared: { server: {}, client: {} }, overrides: {} },
   presets: [],
+  pairPlacements: [],
+  notes: [],
 });
 
 /** MM-301: a pair without a stored arrow is at level `none`. */
@@ -74,6 +78,33 @@ export const findMachine = (map: MachineMapDocument, id: MachineId): MachineReco
 
 export const findArrow = (map: MachineMapDocument, from: MachineId, to: MachineId): ArrowRecord =>
   map.arrows.find((arrow) => arrow.from === from && arrow.to === to) ?? defaultArrow(from, to);
+
+/** The same offset seen from the other end: it runs the other way and lies on the other side. */
+const flipOffset = (offset: PairOffset): PairOffset => ({
+  along: 1 - offset.along,
+  aside: -offset.aside,
+});
+
+/** A pair in stored order: `a` sorts before `b`. */
+function storedPair(
+  a: MachineId,
+  b: MachineId,
+  offset: PairOffset | null,
+): { a: MachineId; b: MachineId; offset: PairOffset | null } {
+  return a < b ? { a, b, offset } : { a: b, b: a, offset: offset && flipOffset(offset) };
+}
+
+/** MM-1108: where the owner put the card of a pair, seen from `a`. Null for the automatic place. */
+export function pairOffset(map: MachineMapDocument, a: MachineId, b: MachineId): PairOffset | null {
+  const key = storedPair(a, b, null);
+  const found = map.pairPlacements.find((p) => p.a === key.a && p.b === key.b);
+  if (!found) return null;
+  const offset = { along: found.along, aside: found.aside };
+  return a === key.a ? offset : flipOffset(offset);
+}
+
+export const findNote = (map: MachineMapDocument, id: string): MapNote | undefined =>
+  map.notes.find((note) => note.id === id);
 
 export const sameArrow = (a: ArrowRecord, b: ArrowRecord): boolean =>
   a.level === b.level &&
@@ -138,6 +169,12 @@ function applyChange(map: MachineMapDocument, change: MapChange): Step {
       return putPreset(map, change.preset);
     case "removePreset":
       return removePreset(map, change.name);
+    case "placePair":
+      return placePair(map, change.a, change.b, change.offset);
+    case "putNote":
+      return putNote(map, change.note);
+    case "removeNote":
+      return removeNote(map, change.id);
   }
 }
 
@@ -285,6 +322,11 @@ function removeMachine(map: MachineMapDocument, machineId: MachineId): Step {
   const own = map.settings.overrides[machineId];
   const inverse: Array<MapChange> = [{ _tag: "putMachine", machine: previous }];
   for (const arrow of removedArrows) inverse.push({ _tag: "setArrow", arrow });
+  const touchesMachine = (p: { a: MachineId; b: MachineId }) =>
+    p.a === machineId || p.b === machineId;
+  for (const { a, b, along, aside } of map.pairPlacements.filter(touchesMachine)) {
+    inverse.push({ _tag: "placePair", a, b, offset: { along, aside } });
+  }
   if (own) {
     for (const scope of ["server", "client"] as const) {
       for (const [key, value] of Object.entries(own[scope])) {
@@ -300,6 +342,7 @@ function removeMachine(map: MachineMapDocument, machineId: MachineId): Step {
       machines: map.machines.filter((m) => m.id !== machineId),
       arrows: map.arrows.filter((a) => a.from !== machineId && a.to !== machineId),
       settings: { ...map.settings, overrides },
+      pairPlacements: map.pairPlacements.filter((p) => !touchesMachine(p)),
     },
     inverse,
   };
@@ -323,6 +366,46 @@ function removePreset(map: MachineMapDocument, name: string): Step {
   return {
     map: { ...map, presets: map.presets.filter((p) => p.name !== name) },
     inverse: [{ _tag: "putPreset", preset: previous }],
+  };
+}
+
+function placePair(
+  map: MachineMapDocument,
+  a: MachineId,
+  b: MachineId,
+  offset: PairOffset | null,
+): Step {
+  if (a === b) throw new MapRuleError("A machine has no pair with itself.");
+  for (const id of [a, b]) {
+    if (!findMachine(map, id)) throw new MapRuleError(`Unknown machine ${id}.`);
+  }
+  const previous = pairOffset(map, a, b);
+  const key = storedPair(a, b, offset);
+  const others = map.pairPlacements.filter((p) => !(p.a === key.a && p.b === key.b));
+  const pairPlacements = key.offset ? [...others, { a: key.a, b: key.b, ...key.offset }] : others;
+  return {
+    map: { ...map, pairPlacements },
+    inverse: [{ _tag: "placePair", a, b, offset: previous }],
+  };
+}
+
+function putNote(map: MachineMapDocument, note: MapNote): Step {
+  const previous = findNote(map, note.id);
+  const notes = previous
+    ? map.notes.map((n) => (n.id === note.id ? note : n))
+    : [...map.notes, note];
+  return {
+    map: { ...map, notes },
+    inverse: [previous ? { _tag: "putNote", note: previous } : { _tag: "removeNote", id: note.id }],
+  };
+}
+
+function removeNote(map: MachineMapDocument, id: string): Step {
+  const previous = findNote(map, id);
+  if (!previous) throw new MapRuleError("This note is gone.");
+  return {
+    map: { ...map, notes: map.notes.filter((n) => n.id !== id) },
+    inverse: [{ _tag: "putNote", note: previous }],
   };
 }
 
@@ -410,6 +493,10 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
       }
       case "putPreset":
       case "removePreset":
+      // MM-1108, MM-1109: display data. No machine applies it.
+      case "placePair":
+      case "putNote":
+      case "removeNote":
         break;
     }
   }

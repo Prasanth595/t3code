@@ -57,6 +57,17 @@ export function ClockIcon({ label }: { label: string }) {
   );
 }
 
+/** MM-715: a change by an agent. */
+export function RobotIcon() {
+  return (
+    <svg viewBox="0 0 24 24" {...STROKE} aria-hidden>
+      <path d="M12 8V4H8" />
+      <rect width="16" height="12" x="4" y="8" rx="2" />
+      <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+    </svg>
+  );
+}
+
 export function CloseIcon() {
   return (
     <svg viewBox="0 0 24 24" {...STROKE} strokeWidth={2.6} aria-hidden>

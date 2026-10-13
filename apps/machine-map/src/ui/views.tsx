@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import type {
   MachineCommand,
   MachineMapDocument,
+  MapActor,
   MapRevision,
 } from "@t3tools/contracts/machineMap";
 
@@ -11,10 +12,11 @@ import type {
   SignOutEverywhereResponse,
   WriteResult,
 } from "../api.ts";
+import { usesText } from "../rules/access.ts";
 import { effectiveSettings, findArrow, MAP_ROLES, roleRank } from "../rules/map.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
-import { describeChange, machineQueue } from "./derive.ts";
+import { machineQueue } from "./derive.ts";
 import {
   actorText,
   COMMAND_LABEL,
@@ -29,7 +31,24 @@ import {
   timeUntil,
   valueText,
 } from "./format.ts";
-import { UndoIcon } from "./icons.tsx";
+import {
+  actorKey,
+  actorLabel,
+  groupHistory,
+  groupSummary,
+  HISTORY_KIND,
+  HISTORY_KINDS,
+  historyEntries,
+  localDay,
+  matchesFilter,
+  NO_FILTER,
+  revisionDiff,
+  type HistoryEntry,
+  type HistoryFilter,
+  type HistoryItem,
+  type HistoryKind,
+} from "./history.ts";
+import { ClockIcon, RobotIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
 
 /** An empty list: a short title, what fills it, and a stamp when the empty state is good news. */
@@ -61,15 +80,18 @@ function Item({
   label,
   children,
   side,
+  kind,
 }: {
   on: boolean;
   open: () => void;
   label: string;
   children: ReactNode;
   side?: ReactNode;
+  /** MM-715: the history colours a row by its meaning. */
+  kind?: HistoryKind;
 }) {
   return (
-    <li className={`item${on ? " on" : ""}`}>
+    <li className={`item${on ? " on" : ""}${kind ? ` hk-${kind}` : ""}`}>
       <button type="button" className="item-main" aria-label={label} onClick={open}>
         {children}
       </button>
@@ -100,7 +122,7 @@ export function TableView() {
           <thead>
             <tr>
               <th className="corner" scope="col">
-                Row → column
+                Row uses column
               </th>
               {map.machines.map((m) => (
                 <th key={m.id} scope="col">
@@ -124,7 +146,7 @@ export function TableView() {
                       <button
                         type="button"
                         className="cell-btn"
-                        aria-label={`${from.name} can use ${to.name}: ${LEVEL_LABEL[arrow.level]}`}
+                        aria-label={`${usesText(from.name, to.name)}: ${LEVEL_LABEL[arrow.level]}`}
                         onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
                       >
                         <span className={`sticker lvl-${arrow.level}`}>
@@ -506,7 +528,7 @@ export function QueueView() {
   );
 }
 
-/** MM-701 to MM-704, MM-503: revisions and commands newest first, with a time slider. */
+/** MM-701 to MM-704, MM-714 to MM-716: revisions and commands newest first, with a time slider. */
 export function HistoryView() {
   const portal = usePortalContext();
   const { map, now, history } = portal;
@@ -514,6 +536,8 @@ export function HistoryView() {
   const [past, setPast] = useState<
     { revision: number; map: MachineMapDocument } | { revision: number; error: string } | null
   >(null);
+  const [filter, setFilter] = useState<HistoryFilter>(NO_FILTER);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const viewing = atRevision !== null && atRevision !== map.revision ? atRevision : null;
 
   // MM-704: the slider shows the map at a revision, read only.
@@ -536,17 +560,163 @@ export function HistoryView() {
   }, [viewing]);
   const shown = past !== null && past.revision === viewing ? past : null;
 
-  const entries: Array<{ at: string; revision?: MapRevision; command?: MachineCommand }> = [
-    ...history.map((revision) => ({ at: revision.at, revision })),
-    ...portal.snapshot.commands.map((command) => ({ at: command.createdAt, command })),
-  ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const entries = historyEntries(history, portal.snapshot.commands);
+  const actors = new Map<string, string>();
+  for (const entry of entries) {
+    const actor = entry._tag === "revision" ? entry.revision.actor : entry.command.actor;
+    actors.set(actorKey(actor), actorLabel(actor, map));
+  }
+  const days = groupHistory(entries.filter((entry) => matchesFilter(entry, filter)));
+  const filtered =
+    filter.machineId !== null ||
+    filter.kind !== null ||
+    filter.actor !== null ||
+    filter.importantOnly;
   const selected = portal.route.selection;
   const oldest = history.at(-1)?.revision ?? 1;
+  const today = localDay(new Date(now).toISOString());
+  const yesterday = localDay(new Date(now - 86_400_000).toISOString());
+  const dayLabel = (day: string) =>
+    day === today
+      ? "Today"
+      : day === yesterday
+        ? "Yesterday"
+        : new Date(`${day}T12:00:00`).toLocaleDateString(undefined, {
+            weekday: "long",
+            day: "numeric",
+            month: "long",
+          });
   const undo = (revision: number) =>
     portal.call(
       () => callApi<WriteResult>("POST", "/api/undo", { revision }),
       `Undid rev ${revision}.`,
     );
+  const when = (at: string) => (
+    <time className="tip" dateTime={at} data-tip={shortTime(at)}>
+      {timeAgo(at, now)}
+    </time>
+  );
+  const kindSticker = (kind: HistoryKind) => (
+    <span className={`sticker hk hk-${kind}`}>
+      {kind === "expiry" && <ClockIcon label="Expiry" />}
+      {HISTORY_KIND[kind].sticker}
+    </span>
+  );
+  const agentSticker = (actor: MapActor) =>
+    actor._tag === "agent" && (
+      <span className="sticker hk hk-agent">
+        <RobotIcon />
+        agent
+      </span>
+    );
+
+  const entryRow = (entry: HistoryEntry) => {
+    if (entry._tag === "revision") {
+      const revision = entry.revision;
+      const diff = revisionDiff(revision, map);
+      return (
+        <Item
+          key={`rev${revision.revision}`}
+          kind={entry.kind}
+          on={selected._tag === "revision" && selected.revision === revision.revision}
+          label={`Rev ${revision.revision}: ${revision.summary}`}
+          open={() => portal.select({ _tag: "revision", revision: revision.revision })}
+          side={
+            <>
+              <button
+                type="button"
+                className="btn small"
+                aria-label={`Undo rev ${revision.revision}`}
+                onClick={() => undo(revision.revision)}
+              >
+                <UndoIcon />
+                Undo
+              </button>
+              {diff.length > 0 && (
+                <details className="diff">
+                  <summary>Before and after</summary>
+                  <table>
+                    <tbody>
+                      {diff.map((row) => (
+                        <tr key={`${row.label}:${row.before}:${row.after}`}>
+                          <th scope="row">{row.label}</th>
+                          <td className="before">{row.before}</td>
+                          <td aria-hidden>→</td>
+                          <td className="after">{row.after}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </details>
+              )}
+            </>
+          }
+        >
+          {kindSticker(entry.kind)}
+          <span className="grow">
+            <b>{revision.summary}</b>
+            <span className="sub">
+              {actorText(revision.actor, map)} · {when(entry.at)} ·{" "}
+              <span className="mono">rev {revision.revision}</span>
+            </span>
+          </span>
+          {agentSticker(revision.actor)}
+        </Item>
+      );
+    }
+    const command = entry.command;
+    return (
+      <Item
+        key={command.id}
+        kind="command"
+        on={selected._tag === "command" && selected.id === command.id}
+        label={`${COMMAND_LABEL[command.input._tag]} on ${machineName(map, command.machineId)}: ${command.status}`}
+        open={() => portal.select({ _tag: "command", id: command.id })}
+      >
+        {kindSticker("command")}
+        <span className="grow">
+          <b>
+            {COMMAND_LABEL[command.input._tag]} on {machineName(map, command.machineId)}
+          </b>
+          <span className="sub">
+            {actorText(command.actor, map)} · {when(entry.at)}
+          </span>
+        </span>
+        {agentSticker(command.actor)}
+        <span className={`sticker ${COMMAND_STICKER[command.status]}`}>{command.status}</span>
+      </Item>
+    );
+  };
+
+  const groupRow = (group: Extract<HistoryItem, { _tag: "group" }>) => {
+    const first = group.entries[0];
+    if (!first) return null;
+    const key = first._tag === "revision" ? `rev${first.revision.revision}` : first.command.id;
+    const open = expanded.has(key);
+    const actor = first._tag === "revision" ? first.revision.actor : first.command.actor;
+    const toggle = () =>
+      setExpanded((current) => {
+        const next = new Set(current);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      });
+    return (
+      <li key={`group:${key}`} className={`item group hk-${group.kind}`}>
+        <button type="button" className="item-main" aria-expanded={open} onClick={toggle}>
+          {kindSticker(group.kind)}
+          <span className="grow">
+            <b>{groupSummary(group, map)}</b>
+            <span className="sub">
+              {actorText(actor, map)} · {when(first.at)}
+            </span>
+          </span>
+          {agentSticker(actor)}
+          <span className="more-toggle">{open ? "Hide" : `Show ${group.entries.length}`}</span>
+        </button>
+        {open && <ul className="list nested">{group.entries.map(entryRow)}</ul>}
+      </li>
+    );
+  };
 
   return (
     <div className="stack">
@@ -590,7 +760,7 @@ export function HistoryView() {
                   portal.open({
                     _tag: "confirm",
                     title: `Restore the map to rev ${shown.revision}?`,
-                    body: "Every arrow, setting and machine fact returns to how it was then, as one new revision. Undo reverses it.",
+                    body: "Every arrow, setting, machine fact, card place and note returns to how it was then, as one new revision. Undo reverses it.",
                     confirmLabel: "Restore",
                     tone: "primary",
                     action: () =>
@@ -612,73 +782,80 @@ export function HistoryView() {
         )}
       </div>
       <div className="card view">
+        <div className="history-filters" role="group" aria-label="Filter the history">
+          <select
+            aria-label="Machine"
+            value={filter.machineId ?? ""}
+            onChange={(e) => setFilter({ ...filter, machineId: e.target.value || null })}
+          >
+            <option value="">Every machine</option>
+            {map.machines.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Kind"
+            value={filter.kind ?? ""}
+            onChange={(e) =>
+              setFilter({
+                ...filter,
+                kind: HISTORY_KINDS.find((kind) => kind === e.target.value) ?? null,
+              })
+            }
+          >
+            <option value="">Every kind</option>
+            {HISTORY_KINDS.map((kind) => (
+              <option key={kind} value={kind}>
+                {HISTORY_KIND[kind].label}
+              </option>
+            ))}
+          </select>
+          <select
+            aria-label="Actor"
+            value={filter.actor ?? ""}
+            onChange={(e) => setFilter({ ...filter, actor: e.target.value || null })}
+          >
+            <option value="">Everyone</option>
+            {[...actors].map(([key, label]) => (
+              <option key={key} value={key}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <label className="toggle">
+            <input
+              type="checkbox"
+              className="switch"
+              checked={filter.importantOnly}
+              onChange={(e) => setFilter({ ...filter, importantOnly: e.target.checked })}
+            />
+            Important only
+          </label>
+          {filtered && (
+            <button type="button" className="btn small" onClick={() => setFilter(NO_FILTER)}>
+              Clear filters
+            </button>
+          )}
+        </div>
         {entries.length === 0 ? (
           <Empty title="No history yet">Every change of the map shows here.</Empty>
+        ) : days.length === 0 ? (
+          <Empty title="Nothing matches">Clear a filter to see more of the history.</Empty>
         ) : (
-          <ul className="list">
-            {entries.map((entry) => {
-              const revision = entry.revision;
-              if (revision) {
-                return (
-                  <Item
-                    key={`rev${revision.revision}`}
-                    on={selected._tag === "revision" && selected.revision === revision.revision}
-                    label={`Rev ${revision.revision}: ${revision.summary}`}
-                    open={() => portal.select({ _tag: "revision", revision: revision.revision })}
-                    side={
-                      <button
-                        type="button"
-                        className="btn small"
-                        aria-label={`Undo rev ${revision.revision}`}
-                        onClick={() => undo(revision.revision)}
-                      >
-                        <UndoIcon />
-                        Undo
-                      </button>
-                    }
-                  >
-                    <span className="rev">rev {revision.revision}</span>
-                    <span className="grow">
-                      <b>{revision.summary}</b>
-                      <span className="sub">
-                        {actorText(revision.actor, map)} · {timeAgo(entry.at, now)}
-                      </span>
-                      <span className="sub">
-                        {revision.changes
-                          .slice(0, 3)
-                          .map((c) => describeChange(c, map))
-                          .join(" · ")}
-                        {revision.changes.length > 3 && ` · ${revision.changes.length - 3} more`}
-                      </span>
-                    </span>
-                  </Item>
-                );
-              }
-              const command = entry.command;
-              if (!command) return null;
-              return (
-                <Item
-                  key={command.id}
-                  on={selected._tag === "command" && selected.id === command.id}
-                  label={`${COMMAND_LABEL[command.input._tag]} on ${machineName(map, command.machineId)}: ${command.status}`}
-                  open={() => portal.select({ _tag: "command", id: command.id })}
-                >
-                  <span className="rev">cmd</span>
-                  <span className="grow">
-                    <b>
-                      {COMMAND_LABEL[command.input._tag]} on {machineName(map, command.machineId)}
-                    </b>
-                    <span className="sub">
-                      {actorText(command.actor, map)} · {timeAgo(entry.at, now)}
-                    </span>
-                  </span>
-                  <span className={`sticker ${COMMAND_STICKER[command.status]}`}>
-                    {command.status}
-                  </span>
-                </Item>
-              );
-            })}
-          </ul>
+          days.map(({ day, items }) => (
+            <section key={day} className="history-day" aria-label={dayLabel(day)}>
+              <h3 className="day-sep">
+                <span>{dayLabel(day)}</span>
+              </h3>
+              <ul className="list">
+                {items.map((item) =>
+                  item._tag === "single" ? entryRow(item.entry) : groupRow(item),
+                )}
+              </ul>
+            </section>
+          ))
         )}
         {oldest > 1 && (
           <div className="actions centered">

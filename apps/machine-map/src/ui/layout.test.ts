@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { placePairs, separate, type Box } from "./layout.ts";
+import { offsetPoint, placePairs, pointOffset, separate, type Box } from "./layout.ts";
 
 const overlaps = (a: Box, b: Box) =>
   Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
@@ -46,7 +46,7 @@ describe("separate (MM-1103)", () => {
 describe("placePairs (MM-1103)", () => {
   it("puts a pair card in the middle of its line when the middle is free", () => {
     const [spot] = placePairs(
-      [{ a: { x: 100, y: 400 }, b: { x: 1100, y: 400 }, w: 300, h: 90 }],
+      [{ a: { x: 100, y: 400 }, b: { x: 1100, y: 400 }, w: 300, h: 90, fixed: null }],
       [card(100, 400), card(1100, 400)],
       1200,
       800,
@@ -60,8 +60,8 @@ describe("placePairs (MM-1103)", () => {
     const size = { w: 300, h: 90 };
     const spots = placePairs(
       [
-        { a: { x: 200, y: 150 }, b: { x: 1000, y: 650 }, ...size },
-        { a: { x: 1000, y: 150 }, b: { x: 200, y: 650 }, ...size },
+        { a: { x: 200, y: 150 }, b: { x: 1000, y: 650 }, ...size, fixed: null },
+        { a: { x: 1000, y: 150 }, b: { x: 200, y: 650 }, ...size, fixed: null },
       ],
       machines,
       1200,
@@ -77,12 +77,57 @@ describe("placePairs (MM-1103)", () => {
     const machines = [card(600, 200), card(600, 340)];
     const size = { w: 300, h: 90 };
     const [spot] = placePairs(
-      [{ a: { x: 600, y: 200 }, b: { x: 600, y: 340 }, ...size }],
+      [{ a: { x: 600, y: 200 }, b: { x: 600, y: 340 }, ...size, fixed: null }],
       machines,
       1200,
       800,
     );
     const pair = { ...(spot ?? { x: 0, y: 0 }), ...size };
     for (const machine of machines) expect(overlaps(pair, machine)).toBe(false);
+  });
+});
+
+describe("pair placement (MM-1108)", () => {
+  const a = { x: 100, y: 100 };
+  const b = { x: 100, y: 500 };
+
+  it("turns a dropped point into an offset and back", () => {
+    const point = { x: 160, y: 200 };
+    const offset = pointOffset(a, b, point, 800);
+    expect(offset.along).toBeCloseTo(0.25);
+    expect(offsetPoint(a, b, offset, 800).x).toBeCloseTo(point.x, 0);
+    expect(offsetPoint(a, b, offset, 800).y).toBeCloseTo(point.y, 0);
+  });
+
+  it("follows the machines: the card keeps its place relative to the line", () => {
+    const offset = pointOffset(a, b, { x: 100, y: 300 }, 800);
+    // Both machines move right by 400: the card moves with them.
+    expect(offsetPoint({ x: 500, y: 100 }, { x: 500, y: 500 }, offset, 800)).toEqual({
+      x: 500,
+      y: 300,
+    });
+  });
+
+  it("keeps the offset in range for a point past the ends", () => {
+    expect(pointOffset(a, b, { x: 100, y: 900 }, 800).along).toBe(1);
+    expect(pointOffset(a, b, { x: 5000, y: 300 }, 800).aside).toBe(-1);
+  });
+
+  it("keeps a fixed card where the owner put it, and moves automatic cards off it", () => {
+    const size = { w: 200, h: 80 };
+    const line = { a: { x: 100, y: 400 }, b: { x: 1100, y: 400 } };
+    const [fixed, auto] = placePairs(
+      [
+        { ...line, ...size, fixed: { x: 600, y: 400 } },
+        { ...line, ...size, fixed: null },
+      ],
+      [],
+      1200,
+      800,
+    );
+    expect(fixed).toEqual({ x: 600, y: 400 });
+    expect(overlaps({ ...(auto ?? { x: 0, y: 0 }), ...size }, { x: 600, y: 400, ...size })).toBe(
+      false,
+    );
   });
 });
