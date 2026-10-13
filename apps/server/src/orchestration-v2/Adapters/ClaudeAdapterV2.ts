@@ -28,6 +28,8 @@ import {
   type PermissionUpdate,
   type Query as ClaudeQuery,
   type Settings as ClaudeSdkSettings,
+  type SpawnOptions as ClaudeSpawnOptions,
+  type SpawnedProcess as ClaudeSpawnedProcess,
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
   type SDKMessage,
@@ -39,6 +41,8 @@ import type {
   AskUserQuestionInput,
   WebSearchOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- the CLI's process group is owned with raw POSIX signals.
+import * as NodeChildProcess from "node:child_process";
 import { parseCliArgs } from "@t3tools/shared/cliArgs";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -224,6 +228,69 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK puts no deadline on control requests. The CLI answers
 // mcp_set_servers once each server connected or hit its own 30 s timeout.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+
+/**
+ * Spawns the Claude CLI in its own POSIX process group and turns every kill
+ * into a group kill. The CLI runs MCP plugin servers (each plugin's `bun
+ * server.ts`) under throwaway `bun run` wrappers, and on close the SDK
+ * transport signals only the CLI PID: the plugin servers survive the session
+ * as orphans and keep logging into a stdout pipe nobody drains, burning CPU
+ * on it (one pinned core per wedged server). A server wedged in that write
+ * never reaches its SIGTERM handler, so only SIGKILL can stop it. The whole
+ * tree stays in the CLI's process group, so a group signal reaps it all:
+ * SIGTERM in the transport's graceful stage, SIGKILL in its escalation.
+ */
+export function makeClaudeProcessGroupSpawner(
+  platform: NodeJS.Platform,
+): (options: ClaudeSpawnOptions) => ClaudeSpawnedProcess {
+  // Windows has no POSIX process groups; there the spawn stays as the SDK's
+  // own and TerminateProcess-style kills keep their native semantics.
+  const posix = platform !== "win32";
+  return function spawnClaudeCodeProcessGroup(options: ClaudeSpawnOptions): ClaudeSpawnedProcess {
+    const child = NodeChildProcess.spawn(options.command, options.args, {
+      ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+      env: options.env,
+      signal: options.signal,
+      stdio: ["pipe", "pipe", "pipe"],
+      // Own process group: the precondition for the group kill below. Without
+      // it, a group signal would hit the server's own group instead.
+      detached: posix,
+      windowsHide: true,
+    });
+    // The transport only wires stdin and stdout for custom spawns; drain
+    // stderr so a chatty CLI cannot wedge on a full pipe either.
+    child.stderr?.on("data", () => {});
+    const pid = child.pid;
+    if (posix && pid !== undefined && pid > 0) {
+      // The CLI can also leave the group without a kill: the transport's
+      // graceful close ends stdin and the CLI exits by itself. Whatever it
+      // left running (a plugin server it failed to reap) dies with the group.
+      child.on("exit", () => {
+        try {
+          process.kill(-pid, "SIGKILL");
+        } catch {}
+      });
+      const killChild = child.kill.bind(child);
+      child.kill = ((signal: NodeJS.Signals | number = "SIGTERM") => {
+        // Signal the CLI through Node first, so its killed/exit bookkeeping
+        // stays exactly as the transport expects it.
+        let notified: boolean;
+        try {
+          notified = killChild(signal);
+        } catch {
+          return false;
+        }
+        // Then take down the process group the CLI leads: the plugin servers
+        // it spawned. They may already be gone; that is fine.
+        try {
+          process.kill(-pid, signal);
+        } catch {}
+        return notified;
+      }) as typeof child.kill;
+    }
+    return child;
+  };
+}
 
 export const ClaudeProviderCapabilitiesV2 = {
   sessions: {
@@ -659,6 +726,8 @@ export const layerQueryRunner: Layer.Layer<
   ClaudeAgentSdkQueryRunner,
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
+    const platform = yield* HostProcess.Platform;
+    const claudeProcessGroupSpawner = makeClaudeProcessGroupSpawner(platform);
     const { native: nativeEventLogger } = yield* ProviderEventLoggers.ProviderEventLoggers;
     const agentScope = yield* AgentScope;
 
@@ -716,7 +785,18 @@ export const layerQueryRunner: Layer.Layer<
         // before the session is handed out fails or is interrupted.
         const queryRuntime = yield* Effect.uninterruptibleMask((restore) =>
           Effect.try({
-            try: () => query({ prompt, options }),
+            try: () =>
+              query({
+                prompt,
+                // A caller-supplied spawner keeps ownership of its process
+                // (remote runtimes, tests); the default takes the process
+                // group the close path can then reap as a whole.
+                options: {
+                  ...options,
+                  spawnClaudeCodeProcess:
+                    options.spawnClaudeCodeProcess ?? claudeProcessGroupSpawner,
+                },
+              }),
             catch: (cause) => queryRunnerError(cause, "query"),
           }).pipe(
             Effect.tap((queryRuntime) =>
