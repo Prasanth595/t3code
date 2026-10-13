@@ -1,0 +1,433 @@
+/**
+ * Pure rules of the map document: apply changes with their inverse (MM-703), the desired state of
+ * one machine (MM-603, MM-1202), and which machines a revision touches (MM-602).
+ * The Durable Object and the page share this module.
+ */
+import type {
+  ArrowRecord,
+  MachineDesiredState,
+  MachineId,
+  MachineLevel,
+  MachineMapDocument,
+  MachineMapRole,
+  MachineRecord,
+  MapChange,
+  MapPreset,
+  ScopedSettingValues,
+  SettingScope,
+  SettingValues,
+} from "@t3tools/contracts/machineMap";
+
+/** A change that breaks a map rule. The portal answers it with HTTP 409. */
+export class MapRuleError extends Error {
+  override readonly name = "MapRuleError";
+}
+
+export const LEVELS: ReadonlyArray<MachineLevel> = ["none", "read", "standard", "admin"];
+export const MAP_ROLES: ReadonlyArray<MachineMapRole> = ["none", "read", "propose", "edit"];
+
+export const levelRank = (level: MachineLevel): number => LEVELS.indexOf(level);
+export const roleRank = (role: MachineMapRole): number => MAP_ROLES.indexOf(role);
+
+export const emptyMap = (): MachineMapDocument => ({
+  revision: 0,
+  machines: [],
+  arrows: [],
+  settings: { managed: [], shared: { server: {}, client: {} }, overrides: {} },
+  presets: [],
+});
+
+/** MM-301: a pair without a stored arrow is at level `none`. */
+export const defaultArrow = (from: MachineId, to: MachineId): ArrowRecord => ({
+  from,
+  to,
+  level: "none",
+  agentTools: false,
+  expiresAt: null,
+  revertLevel: null,
+});
+
+export const findMachine = (map: MachineMapDocument, id: MachineId): MachineRecord | undefined =>
+  map.machines.find((machine) => machine.id === id);
+
+export const findArrow = (map: MachineMapDocument, from: MachineId, to: MachineId): ArrowRecord =>
+  map.arrows.find((arrow) => arrow.from === from && arrow.to === to) ?? defaultArrow(from, to);
+
+export const sameArrow = (a: ArrowRecord, b: ArrowRecord): boolean =>
+  a.level === b.level &&
+  a.agentTools === b.agentTools &&
+  a.expiresAt === b.expiresAt &&
+  a.revertLevel === b.revertLevel;
+
+const isDefaultArrow = (arrow: ArrowRecord): boolean =>
+  sameArrow(arrow, defaultArrow(arrow.from, arrow.to));
+
+export const isManaged = (map: MachineMapDocument, scope: SettingScope, key: string): boolean =>
+  map.settings.managed.some((setting) => setting.scope === scope && setting.key === key);
+
+const hasKey = (values: SettingValues, key: string): boolean => Object.hasOwn(values, key);
+
+const withoutKey = (values: SettingValues, key: string): SettingValues => {
+  const next = { ...values };
+  delete next[key];
+  return next;
+};
+
+const emptyScoped = (): ScopedSettingValues => ({ server: {}, client: {} });
+
+interface Step {
+  readonly map: MachineMapDocument;
+  /** Changes that undo this step, in apply order. */
+  readonly inverse: ReadonlyArray<MapChange>;
+}
+
+export interface Applied {
+  readonly map: MachineMapDocument;
+  /** Changes that undo every applied change, in apply order (MM-703). */
+  readonly inverse: ReadonlyArray<MapChange>;
+}
+
+/** Applies changes in order. The map keeps its revision number: the caller sets it. */
+export function applyChanges(map: MachineMapDocument, changes: ReadonlyArray<MapChange>): Applied {
+  let current = map;
+  const inverses: Array<ReadonlyArray<MapChange>> = [];
+  for (const change of changes) {
+    const step = applyChange(current, change);
+    current = step.map;
+    inverses.push(step.inverse);
+  }
+  // The last change is undone first.
+  return { map: current, inverse: inverses.toReversed().flat() };
+}
+
+function applyChange(map: MachineMapDocument, change: MapChange): Step {
+  switch (change._tag) {
+    case "setArrow":
+      return setArrow(map, change.arrow);
+    case "setSetting":
+      return setSetting(map, change);
+    case "manageSetting":
+      return manageSetting(map, change);
+    case "putMachine":
+      return putMachine(map, change.machine);
+    case "removeMachine":
+      return removeMachine(map, change.machineId);
+    case "putPreset":
+      return putPreset(map, change.preset);
+    case "removePreset":
+      return removePreset(map, change.name);
+  }
+}
+
+function setArrow(map: MachineMapDocument, arrow: ArrowRecord): Step {
+  if (arrow.from === arrow.to) throw new MapRuleError("A machine has no arrow to itself.");
+  for (const id of [arrow.from, arrow.to]) {
+    if (!findMachine(map, id)) throw new MapRuleError(`Unknown machine ${id}.`);
+  }
+  if ((arrow.expiresAt === null) !== (arrow.revertLevel === null)) {
+    throw new MapRuleError("An arrow expiry needs both a time and a level to return to.");
+  }
+  const previous = findArrow(map, arrow.from, arrow.to);
+  const others = map.arrows.filter((a) => !(a.from === arrow.from && a.to === arrow.to));
+  // A default arrow is not stored, so the document lists only arrows that grant something.
+  const arrows = isDefaultArrow(arrow) ? others : [...others, arrow];
+  return { map: { ...map, arrows }, inverse: [{ _tag: "setArrow", arrow: previous }] };
+}
+
+function setSetting(
+  map: MachineMapDocument,
+  change: Extract<MapChange, { _tag: "setSetting" }>,
+): Step {
+  const { machineId, scope, key, present, value } = change;
+  if (!isManaged(map, scope, key)) {
+    throw new MapRuleError(`The setting ${scope}.${key} is not managed by the map.`);
+  }
+  if (present && value === undefined) throw new MapRuleError(`The setting ${key} needs a value.`);
+  const settings = map.settings;
+  if (machineId === null) {
+    const values = settings.shared[scope];
+    const inverse: MapChange = {
+      ...change,
+      present: hasKey(values, key),
+      value: values[key] ?? null,
+    };
+    const nextValues = present ? { ...values, [key]: value } : withoutKey(values, key);
+    return {
+      map: {
+        ...map,
+        settings: { ...settings, shared: { ...settings.shared, [scope]: nextValues } },
+      },
+      inverse: [inverse],
+    };
+  }
+  if (!findMachine(map, machineId)) throw new MapRuleError(`Unknown machine ${machineId}.`);
+  const own = settings.overrides[machineId] ?? emptyScoped();
+  const values = own[scope];
+  const inverse: MapChange = {
+    ...change,
+    present: hasKey(values, key),
+    value: values[key] ?? null,
+  };
+  const nextOwn = {
+    ...own,
+    [scope]: present ? { ...values, [key]: value } : withoutKey(values, key),
+  };
+  const overrides = { ...settings.overrides };
+  if (Object.keys(nextOwn.server).length === 0 && Object.keys(nextOwn.client).length === 0) {
+    delete overrides[machineId];
+  } else {
+    overrides[machineId] = nextOwn;
+  }
+  return { map: { ...map, settings: { ...settings, overrides } }, inverse: [inverse] };
+}
+
+function manageSetting(
+  map: MachineMapDocument,
+  change: Extract<MapChange, { _tag: "manageSetting" }>,
+): Step {
+  const { scope, key, managed } = change;
+  const settings = map.settings;
+  if (isManaged(map, scope, key) === managed) return { map, inverse: [] };
+  if (managed) {
+    return {
+      map: { ...map, settings: { ...settings, managed: [...settings.managed, { scope, key }] } },
+      inverse: [{ _tag: "manageSetting", scope, key, managed: false }],
+    };
+  }
+  // Unmanaging drops the shared value and every override, so the inverse restores them.
+  const restore: Array<MapChange> = [{ _tag: "manageSetting", scope, key, managed: true }];
+  if (hasKey(settings.shared[scope], key)) {
+    restore.push({
+      _tag: "setSetting",
+      machineId: null,
+      scope,
+      key,
+      present: true,
+      value: settings.shared[scope][key],
+    });
+  }
+  const overrides: Record<string, ScopedSettingValues> = {};
+  for (const [id, own] of Object.entries(settings.overrides)) {
+    if (hasKey(own[scope], key)) {
+      restore.push({
+        _tag: "setSetting",
+        machineId: id as MachineId,
+        scope,
+        key,
+        present: true,
+        value: own[scope][key],
+      });
+    }
+    const nextOwn = { ...own, [scope]: withoutKey(own[scope], key) };
+    if (Object.keys(nextOwn.server).length > 0 || Object.keys(nextOwn.client).length > 0) {
+      overrides[id] = nextOwn;
+    }
+  }
+  return {
+    map: {
+      ...map,
+      settings: {
+        managed: settings.managed.filter((s) => !(s.scope === scope && s.key === key)),
+        shared: { ...settings.shared, [scope]: withoutKey(settings.shared[scope], key) },
+        overrides,
+      },
+    },
+    inverse: restore,
+  };
+}
+
+function putMachine(map: MachineMapDocument, machine: MachineRecord): Step {
+  const clash = map.machines.find(
+    (other) => other.id !== machine.id && other.tokenClientId === machine.tokenClientId,
+  );
+  if (clash) throw new MapRuleError(`${clash.name} already uses this machine token.`);
+  const previous = findMachine(map, machine.id);
+  const machines = previous
+    ? map.machines.map((m) => (m.id === machine.id ? machine : m))
+    : [...map.machines, machine];
+  return {
+    map: { ...map, machines },
+    inverse: [
+      previous
+        ? { _tag: "putMachine", machine: previous }
+        : { _tag: "removeMachine", machineId: machine.id },
+    ],
+  };
+}
+
+/** MM-208: removes the machine, its arrows and its overrides. */
+function removeMachine(map: MachineMapDocument, machineId: MachineId): Step {
+  const previous = findMachine(map, machineId);
+  if (!previous) throw new MapRuleError(`Unknown machine ${machineId}.`);
+  const removedArrows = map.arrows.filter((a) => a.from === machineId || a.to === machineId);
+  const own = map.settings.overrides[machineId];
+  const inverse: Array<MapChange> = [{ _tag: "putMachine", machine: previous }];
+  for (const arrow of removedArrows) inverse.push({ _tag: "setArrow", arrow });
+  if (own) {
+    for (const scope of ["server", "client"] as const) {
+      for (const [key, value] of Object.entries(own[scope])) {
+        inverse.push({ _tag: "setSetting", machineId, scope, key, present: true, value });
+      }
+    }
+  }
+  const overrides = { ...map.settings.overrides };
+  delete overrides[machineId];
+  return {
+    map: {
+      ...map,
+      machines: map.machines.filter((m) => m.id !== machineId),
+      arrows: map.arrows.filter((a) => a.from !== machineId && a.to !== machineId),
+      settings: { ...map.settings, overrides },
+    },
+    inverse,
+  };
+}
+
+function putPreset(map: MachineMapDocument, preset: MapPreset): Step {
+  const previous = map.presets.find((p) => p.name === preset.name);
+  return {
+    map: { ...map, presets: [...map.presets.filter((p) => p.name !== preset.name), preset] },
+    inverse: [
+      previous
+        ? { _tag: "putPreset", preset: previous }
+        : { _tag: "removePreset", name: preset.name },
+    ],
+  };
+}
+
+function removePreset(map: MachineMapDocument, name: string): Step {
+  const previous = map.presets.find((p) => p.name === name);
+  if (!previous) throw new MapRuleError(`Unknown preset ${name}.`);
+  return {
+    map: { ...map, presets: map.presets.filter((p) => p.name !== name) },
+    inverse: [{ _tag: "putPreset", preset: previous }],
+  };
+}
+
+const samePublicFacts = (a: MachineRecord, b: MachineRecord): boolean =>
+  a.name === b.name &&
+  a.kind === b.kind &&
+  a.hostname === b.hostname &&
+  a.tokenClientId === b.tokenClientId;
+
+/**
+ * Checks changes that the owner or an agent sends. Only the portal itself adds a machine, removes
+ * a machine or records a hostname, because those steps also create or delete a machine token.
+ * This also makes the revisions that add or remove a machine impossible to undo.
+ */
+export function checkEditableChanges(
+  map: MachineMapDocument,
+  changes: ReadonlyArray<MapChange>,
+): void {
+  let current = map;
+  for (const change of changes) {
+    if (change._tag === "removeMachine") {
+      throw new MapRuleError('Use "Remove machine" to remove a machine.');
+    }
+    if (change._tag === "putMachine") {
+      const previous = findMachine(current, change.machine.id);
+      if (!previous) throw new MapRuleError('Use "Add machine" to add a machine.');
+      const next = change.machine;
+      if (
+        next.tokenClientId !== previous.tokenClientId ||
+        next.hostname !== previous.hostname ||
+        next.createdAt !== previous.createdAt
+      ) {
+        throw new MapRuleError(
+          `The token and the hostname of ${previous.name} come from the machine.`,
+        );
+      }
+    }
+    current = applyChange(current, change).map;
+  }
+}
+
+/** The machines whose desired state a revision can change. `all` means every machine. */
+export function machinesTouched(revision: {
+  readonly changes: ReadonlyArray<MapChange>;
+  readonly inverse: ReadonlyArray<MapChange>;
+}): ReadonlySet<MachineId> | "all" {
+  const touched = new Set<MachineId>();
+  for (const change of revision.changes) {
+    switch (change._tag) {
+      case "setArrow":
+        touched.add(change.arrow.from);
+        touched.add(change.arrow.to);
+        break;
+      case "setSetting":
+        if (change.machineId === null) return "all";
+        touched.add(change.machineId);
+        break;
+      case "manageSetting":
+      case "removeMachine":
+        return "all";
+      case "putMachine": {
+        // The inverse lists the record before the revision. The last match is the oldest one.
+        const previous = revision.inverse.findLast(
+          (c): c is Extract<MapChange, { _tag: "putMachine" }> =>
+            c._tag === "putMachine" && c.machine.id === change.machine.id,
+        )?.machine;
+        if (!previous || !samePublicFacts(previous, change.machine)) return "all";
+        // A move changes only the place on the map, which no machine applies.
+        if (previous.mapRole !== change.machine.mapRole) touched.add(change.machine.id);
+        break;
+      }
+      case "putPreset":
+      case "removePreset":
+        break;
+    }
+  }
+  return touched;
+}
+
+export const touches = (
+  revision: Parameters<typeof machinesTouched>[0],
+  machineId: MachineId,
+): boolean => {
+  const touched = machinesTouched(revision);
+  return touched === "all" || touched.has(machineId);
+};
+
+/** The settings that one machine applies: shared values with its overrides on top. */
+export function effectiveSettings(
+  map: MachineMapDocument,
+  machineId: MachineId,
+): ScopedSettingValues {
+  const result: Record<SettingScope, Record<string, unknown>> = { server: {}, client: {} };
+  const own = map.settings.overrides[machineId];
+  for (const { scope, key } of map.settings.managed) {
+    if (own && hasKey(own[scope], key)) {
+      result[scope][key] = own[scope][key];
+    } else if (hasKey(map.settings.shared[scope], key)) {
+      result[scope][key] = map.settings.shared[scope][key];
+    }
+  }
+  return result;
+}
+
+/**
+ * MM-603, MM-1202: what one machine applies. It holds the machine itself, the public facts of the
+ * other machines and every arrow that touches it, with level `none` for pairs without an arrow.
+ */
+export function desiredState(
+  map: MachineMapDocument,
+  machineId: MachineId,
+): MachineDesiredState | undefined {
+  const self = findMachine(map, machineId);
+  if (!self) return undefined;
+  const others = map.machines.filter((m) => m.id !== machineId);
+  return {
+    revision: map.revision,
+    self,
+    peers: others.map(({ id, name, kind, hostname, tokenClientId }) => ({
+      id,
+      name,
+      kind,
+      hostname,
+      tokenClientId,
+    })),
+    arrowsIn: others.map((other) => findArrow(map, other.id, machineId)),
+    arrowsOut: others.map((other) => findArrow(map, machineId, other.id)),
+    settings: effectiveSettings(map, machineId),
+  };
+}

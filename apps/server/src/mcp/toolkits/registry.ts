@@ -4,6 +4,7 @@ import { AttachmentToolkit } from "./attachment/tools.ts";
 import { DeviceToolkit } from "./device/tools.ts";
 import { EnvironmentToolkit } from "./environment/tools.ts";
 import { HtmlToolkit } from "./html/tools.ts";
+import { MachineMapToolkit } from "./machineMap/tools.ts";
 import { OrchestratorToolkit } from "./orchestrator/tools.ts";
 import { PreviewToolkit } from "./preview/tools.ts";
 import { PreviewControlsToolkit } from "./previewControls/tools.ts";
@@ -30,6 +31,8 @@ export const McpToolkits = {
   device: DeviceToolkit,
   pullRequests: PullRequestsToolkit,
   html: HtmlToolkit,
+  // Fork: machine map (apps/machine-map/SPEC.md, MM-801).
+  machineMap: MachineMapToolkit,
 } as const;
 
 export type McpToolkitName = keyof typeof McpToolkits;

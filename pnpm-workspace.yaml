@@ -191,6 +191,7 @@ minimumReleaseAgeExclude:
   - "@opencode/protocol@2.0.23"
   - "@opencode/schema@2.0.23"
   - "@muse-code/sdk@1.4.6"
+  - "@cloudflare/workers-types@5.20261013.1"
 
 overrides:
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.

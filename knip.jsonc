@@ -71,6 +71,10 @@
       // reports an entire component module when nothing imports it.
       "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
     },
+    "apps/machine-map": {
+      // Wrangler bundles the Worker from `main` in wrangler.jsonc. Vite builds the page from index.html.
+      "entry": ["src/worker.ts!", "src/ui/main.tsx!"],
+    },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
       "entry": [

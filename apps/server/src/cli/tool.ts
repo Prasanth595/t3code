@@ -103,7 +103,7 @@ const printJson = (value: unknown) => Console.log(encodeJson(value));
  * credential; otherwise the CLI issues a short-lived MCP client session from
  * the local auth store and revokes it after the call.
  */
-const callOnServer = Effect.fn("callToolOnServer")(function* (
+export const callOnServer = Effect.fn("callToolOnServer")(function* (
   flags: { readonly baseDir: Option.Option<string> },
   run: (connection: {
     readonly endpoint: string;

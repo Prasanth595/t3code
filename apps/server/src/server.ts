@@ -11,6 +11,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
@@ -163,6 +164,10 @@ import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain"
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
+import * as MachineHost from "./fork/machineMap/MachineHost.ts";
+import * as MachineMap from "./fork/machineMap/MachineMap.ts";
+import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
+import * as MachinePeers from "./fork/machineMap/MachinePeers.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
@@ -455,10 +460,26 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
 
 const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
 
+// Fork: machine map (apps/machine-map/SPEC.md). One instance: the auth hooks and the portal
+// connection read the same desired state.
+const layerMachineMapState = MachineMapState.layer.pipe(
+  Layer.provide(layerServerSettings),
+  Layer.provide(ServerSecretStore.layer),
+);
+
+const layerMachineMap = MachineMap.layer.pipe(
+  Layer.provideMerge(MachineHost.layer),
+  Layer.provideMerge(MachinePeers.layer),
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(NodeSocket.layerWebSocketConstructor),
+);
+
 const layerAuth = EnvironmentAuth.layer.pipe(
   Layer.provideMerge(layerPersistence),
   Layer.provide(layerServerEnvironment),
   Layer.provide(ServerSecretStore.layer),
+  // Fork: machine map. Machine identities pass Cloudflare Access too (MM-1305).
+  Layer.provide(layerMachineMapState),
 );
 
 const layerCloudManagedEndpointRuntime = Layer.mergeAll(
@@ -594,6 +615,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // existed, or by a cleanup write that failed. See ProjectService.delete
   // for the normal (on-delete) path.
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
+  // Fork: the machine map portal connection. Off by default (machineMap setting).
+  layerMachineMap,
 ).pipe(
   // Core Services
   Layer.provideMerge(layerOrchestrationApplication),
@@ -668,6 +691,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
   Layer.provideMerge(layerAuth),
+  Layer.provideMerge(layerMachineMapState),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(
     Layer.mergeAll(

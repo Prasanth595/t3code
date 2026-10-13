@@ -208,6 +208,15 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 - Check, conflict and push news and the comment wake limit do not change.
 - The code is in `apps/server/src/orchestration-v2/pullRequestWatch.ts`.
 
+## Machine map
+
+The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
+
+- Join: in the portal, "Add machine" shows a one-time join code. On the machine, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
+- The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.
+- Another machine signs in with its Cloudflare Access service token. The server gives it the scopes of the arrow from that machine, with the session subject `machine:<id>`. A level change ends that machine's sessions at once.
+- Deploy the portal: `vp run deploy` in `apps/machine-map`. It needs the Worker secrets `SECRET_KEY` and `CF_API_TOKEN`.
+
 ## Secrets and variables
 
 | Name                                                                                    | Kind               | Use                                                                                                                                                                                       |

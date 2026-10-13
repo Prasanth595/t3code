@@ -75,6 +75,12 @@ import {
   ForkUpstreamPending,
 } from "./forkChangelog.ts";
 import {
+  MachineMapClientState,
+  MachineMapDesktopReport,
+  MachineMapJoinInput,
+  MachineMapRequestError,
+} from "./machineMapClient.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -599,6 +605,12 @@ export const WS_METHODS = {
   forkChangelogUpstreamPending: "forkChangelog.upstreamPending",
   forkChangelogSyncStatus: "forkChangelog.syncStatus",
   forkChangelogStartSync: "forkChangelog.startSync",
+
+  // Fork: machine map (apps/machine-map/SPEC.md)
+  machineMapSubscribe: "machineMap.subscribe",
+  machineMapJoin: "machineMap.join",
+  machineMapLeave: "machineMap.leave",
+  machineMapReportDesktop: "machineMap.reportDesktop",
 } as const;
 
 const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
@@ -626,6 +638,31 @@ const WsForkChangelogStartSyncRpc = Rpc.make(WS_METHODS.forkChangelogStartSync, 
   payload: Schema.Struct({}),
   success: ForkSyncStatus,
   error: forkChangelogError,
+});
+
+const machineMapError = Schema.Union([MachineMapRequestError, EnvironmentAuthorizationError]);
+/** Fork: the local machine map state, again on each change. See `machineMapClient.ts`. */
+const WsMachineMapSubscribeRpc = Rpc.make(WS_METHODS.machineMapSubscribe, {
+  payload: Schema.Struct({}),
+  success: MachineMapClientState,
+  error: machineMapError,
+  stream: true,
+});
+const WsMachineMapJoinRpc = Rpc.make(WS_METHODS.machineMapJoin, {
+  payload: MachineMapJoinInput,
+  success: MachineMapClientState,
+  error: machineMapError,
+});
+const WsMachineMapLeaveRpc = Rpc.make(WS_METHODS.machineMapLeave, {
+  payload: Schema.Struct({}),
+  success: MachineMapClientState,
+  error: machineMapError,
+});
+/** Fork: only the local desktop app reports. Other sessions get `desktop-only`. */
+const WsMachineMapReportDesktopRpc = Rpc.make(WS_METHODS.machineMapReportDesktop, {
+  payload: MachineMapDesktopReport,
+  success: Schema.Struct({}),
+  error: machineMapError,
 });
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -2116,4 +2153,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsForkChangelogUpstreamPendingRpc,
   WsForkChangelogSyncStatusRpc,
   WsForkChangelogStartSyncRpc,
+  WsMachineMapSubscribeRpc,
+  WsMachineMapJoinRpc,
+  WsMachineMapLeaveRpc,
+  WsMachineMapReportDesktopRpc,
 ).middleware(RpcScopeAuthorization);

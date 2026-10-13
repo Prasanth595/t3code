@@ -44,6 +44,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 - **`t3 tool`:** `t3 tool list`, `describe` and `call` run T3 MCP tools from the command line.
 - **Open workspace with a checkout:** the desktop open-workspace request accepts a checkout.
+- **Machine map:** one portal at `t3.yarden-zamir.com` (Cloudflare Worker) maps every T3 machine. It sets what each machine can do on the others, shares settings, queues changes for offline machines, and has an emergency pause. Every portal action is also an agent tool (`machineMap`, see `apps/machine-map/SPEC.md`).
 
 ## Fork fixes
 
