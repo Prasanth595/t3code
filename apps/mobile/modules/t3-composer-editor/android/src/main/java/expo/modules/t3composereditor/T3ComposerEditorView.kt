@@ -591,6 +591,11 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.MAX_VALUE
   var clipboardFragment = ""
+  private var touchSelectionStart = -1
+  private var touchSelectionEnd = -1
+  private var touchScrollX = 0
+  private var touchScrollY = 0
+  private var touchScrolled = false
 
   /**
    * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
@@ -675,8 +680,34 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
     }
   }
 
-  // After a drag scrolls the editor, ArrowKeyMovementMethod calls this to pull the caret into the
-  // visible lines, so the next keystroke lands in the middle of the prompt. Scrolling to read back
+  override fun onTouchEvent(event: MotionEvent): Boolean {
+    if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+      touchSelectionStart = selectionStart
+      touchSelectionEnd = selectionEnd
+      touchScrollX = scrollX
+      touchScrollY = scrollY
+      touchScrolled = false
+    }
+    val handled = super.onTouchEvent(event)
+    if (scrollX != touchScrollX || scrollY != touchScrollY) touchScrolled = true
+    if (event.actionMasked == MotionEvent.ACTION_UP && touchScrolled && touchSelectionStart >= 0) {
+      setSelection(
+        touchSelectionStart.coerceIn(0, length()),
+        touchSelectionEnd.coerceIn(0, length()),
+      )
+    }
+    if (
+      event.actionMasked == MotionEvent.ACTION_UP ||
+        event.actionMasked == MotionEvent.ACTION_CANCEL
+    ) {
+      touchSelectionStart = -1
+      touchSelectionEnd = -1
+      touchScrolled = false
+    }
+    return handled
+  }
+
+  // Both ArrowKeyMovementMethod and Editor move the caret after a drag. Scrolling to read back
   // must leave the caret where it was; typing scrolls back to it.
   override fun moveCursorToVisibleOffset(): Boolean = false
 
