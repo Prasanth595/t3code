@@ -50,6 +50,9 @@ const ClaudeWindow = Schema.Struct({
   utilization: Schema.Number,
   resets_at: Schema.NullOr(Schema.String),
 });
+const ClaudeProfile = Schema.Struct({
+  organization: Schema.Struct({ uuid: Schema.String }),
+});
 const ClaudeUsage = Schema.Struct({
   five_hour: Schema.optional(Schema.NullOr(ClaudeWindow)),
   seven_day: Schema.optional(Schema.NullOr(ClaudeWindow)),
@@ -86,6 +89,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
+const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 const decodeConsumeResponse = Schema.decodeUnknownEffect(
@@ -206,18 +210,31 @@ export const makeCliproxyApi = Effect.gen(function* () {
       .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
   });
 
+  const claudeWorkspaceId = Effect.fn("CliproxyApi.claudeWorkspaceId")(function* (
+    config: UsageLimitSourceConfig,
+    account: typeof AuthFile.Type,
+  ) {
+    const body = yield* apiCall(config, account, "https://api.anthropic.com/api/oauth/profile");
+    const profile = yield* decodeClaudeProfile(body);
+    return profile.organization.uuid.trim() || undefined;
+  });
+
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
     config: UsageLimitSourceConfig,
     account: typeof AuthFile.Type,
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    // Email alone cannot distinguish personal and team organizations. A failed
+    // identity probe must not hide quota, and a failed quota probe must keep its identity.
+    const workspaceId =
+      account.provider === "claude"
+        ? yield* claudeWorkspaceId(config, account).pipe(Effect.orElseSucceed(() => undefined))
+        : account.id_token?.chatgpt_account_id?.trim();
     const base = {
       id: account.id,
       driver: ProviderDriverKind.make(account.provider === "codex" ? "codex" : "claudeAgent"),
       ...(account.email ? { email: account.email } : {}),
-      ...(account.id_token?.chatgpt_account_id?.trim()
-        ? { workspaceId: account.id_token.chatgpt_account_id.trim() }
-        : {}),
+      ...(workspaceId ? { workspaceId } : {}),
     };
     const read = Effect.gen(function* () {
       if (account.provider === "claude") {
