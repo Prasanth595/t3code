@@ -57,7 +57,8 @@ describe("discoverFxSkills", () => {
   );
 
   // fx keeps both skills that share a name and refuses `$review` as
-  // ambiguous; it skips a SKILL.md whose frontmatter has no name.
+  // ambiguous. It skips a SKILL.md whose frontmatter has no name or never
+  // closes, and a symlinked folder in its managed ~/.fx/skills.
   it.effect("offers only skills fx can load and invoke by name", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -79,6 +80,12 @@ describe("discoverFxSkills", () => {
       yield* writeSkillFile(
         path.join(home, ".fx/skills/unnamed"),
         "---\ndescription: Missing name\n---\n",
+      );
+      yield* writeSkillFile(path.join(home, ".fx/skills/unclosed"), "---\nname: unclosed\n");
+      yield* writeSkillFile(path.join(home, "library/linked"), "---\nname: linked\n---\n");
+      yield* fileSystem.symlink(
+        path.join(home, "library/linked"),
+        path.join(home, ".fx/skills/linked"),
       );
 
       const skills = yield* discoverFxSkills({ cwd: workspace, environment: { HOME: home } });

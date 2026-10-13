@@ -8,6 +8,7 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import { parse as parseYamlDocument } from "yaml";
@@ -18,9 +19,15 @@ const MAX_SKILL_BYTES = 1_000_000;
 /**
  * fx's menu lists its managed `~/.fx/skills` first, then a workspace's own
  * `.fx/skills` and `skills/`, then every compatibility root
- * (`skillGroupRank` in src/core/skills/skill_runtime.zig).
+ * (`skillGroupRank` in src/core/skills/skill_runtime.zig). fx follows a
+ * symlinked skill folder in every root except its managed one, which it
+ * fills itself.
  */
-type SkillRoot = { readonly relative: string; readonly rank: 0 | 1 | 2 };
+type SkillRoot = {
+  readonly relative: string;
+  readonly rank: 0 | 1 | 2;
+  readonly followsLinks?: false;
+};
 
 const FX_WORKSPACE_ROOTS: ReadonlyArray<SkillRoot> = [
   { relative: ".fx/skills", rank: 1 },
@@ -32,7 +39,7 @@ const FX_WORKSPACE_ROOTS: ReadonlyArray<SkillRoot> = [
   { relative: ".claw/skills", rank: 2 },
 ];
 const FX_HOME_ROOTS: ReadonlyArray<SkillRoot> = [
-  { relative: ".fx/skills", rank: 0 },
+  { relative: ".fx/skills", rank: 0, followsLinks: false },
   { relative: ".config/opencode/skills", rank: 2 },
   { relative: ".codex/skills", rank: 2 },
   { relative: ".claude/skills", rank: 2 },
@@ -55,11 +62,13 @@ function parseSkillMetadata(
   contents: string,
   folderName: string,
 ): { readonly name: string; readonly description?: string } | undefined {
-  const match = FRONTMATTER_PATTERN.exec(contents);
-  if (!match) {
+  if (!/^---(?:\r?\n|$)/.test(contents)) {
     const name = nonEmptyTrimmed(folderName);
     return name === undefined ? undefined : { name };
   }
+  // An opening `---` without a closing one is invalid frontmatter, not none.
+  const match = FRONTMATTER_PATTERN.exec(contents);
+  if (!match) return undefined;
   try {
     const parsed: unknown = parseYamlDocument(match[1] ?? "");
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
@@ -82,6 +91,7 @@ function skillRoots(path: Path.Path, cwd: string, home: string) {
     readonly directory: string;
     readonly scope: string;
     readonly rank: number;
+    readonly followsLinks: boolean;
   }> = [];
   for (let current = cwd; current !== home;) {
     for (const root of FX_WORKSPACE_ROOTS) {
@@ -89,6 +99,7 @@ function skillRoots(path: Path.Path, cwd: string, home: string) {
         directory: path.join(current, root.relative),
         scope: "project",
         rank: root.rank,
+        followsLinks: root.followsLinks ?? true,
       });
     }
     const parent = path.dirname(current);
@@ -96,7 +107,12 @@ function skillRoots(path: Path.Path, cwd: string, home: string) {
     current = parent;
   }
   for (const root of FX_HOME_ROOTS) {
-    roots.push({ directory: path.join(home, root.relative), scope: "user", rank: root.rank });
+    roots.push({
+      directory: path.join(home, root.relative),
+      scope: "user",
+      rank: root.rank,
+      followsLinks: root.followsLinks ?? true,
+    });
   }
   return roots;
 }
@@ -120,6 +136,7 @@ const skipUnreadable = <A, R>(
 const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (input: {
   readonly directory: string;
   readonly scope: string;
+  readonly followsLinks: boolean;
 }): Effect.fn.Return<
   ReadonlyArray<{ readonly skill: ServerProviderSkill; readonly folder: string }>,
   never,
@@ -130,6 +147,13 @@ const discoverSkillsInRoot = Effect.fn("discoverFxSkillsInRoot")(function* (inpu
   const entries = yield* skipUnreadable(input.directory, fileSystem.readDirectory(input.directory));
   const skills: Array<{ readonly skill: ServerProviderSkill; readonly folder: string }> = [];
   for (const entry of entries ?? []) {
+    // `readLink` succeeds only on a symlink.
+    if (
+      !input.followsLinks &&
+      Option.isSome(yield* Effect.option(fileSystem.readLink(path.join(input.directory, entry))))
+    ) {
+      continue;
+    }
     const skillPath = path.join(input.directory, entry, "SKILL.md");
     const skillInfo = yield* skipUnreadable(skillPath, fileSystem.stat(skillPath));
     if (skillInfo?.type !== "File") continue;
