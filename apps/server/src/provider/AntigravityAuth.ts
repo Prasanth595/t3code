@@ -96,6 +96,7 @@ function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): Provid
     authorizationUrl: null,
     interaction: null,
     expiresAt: null,
+    inputError: null,
     ...(busy
       ? { message: "Sign-in is in progress in another client." }
       : snapshot.state.phase === "failed"
@@ -433,12 +434,19 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
             options.instanceId,
             flow.pending,
             input.callbackUrl,
+          ).pipe(
+            // The flow keeps waiting for a correct paste, so show why this one
+            // was refused without ending it. The detail is a fixed message.
+            Effect.tapError((error) =>
+              publishFlow(flow, { ...flow.state, inputError: error.detail }),
+            ),
           );
           flow.callbackSent = true;
           yield* publishFlow(flow, {
             ...flow.state,
             phase: "verifying",
             authorizationUrl: null,
+            inputError: null,
             message: "Waiting for Google to finish sign-in.",
           });
           const forwarding = yield* (

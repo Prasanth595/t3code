@@ -301,19 +301,21 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
     ["a scheme without slashes", "Onboarding failed: See https:example.com for help."],
     ["a bare hostname", "Onboarding failed. Visit support.google.com for help."],
     ["a hyphenated credential", "Invalid token sk-123456789012345678901234567890"],
-  ])("keeps the generic failure when an authenticate error contains %s", ([, errorMessage]) =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      yield* harness.auth.controller.start(owner);
-      yield* phase(harness.auth, "waiting");
-      yield* Deferred.fail(
-        harness.authenticated,
-        new AcpErrors.AcpRequestError({ code: -32603, errorMessage, method: "authenticate" }),
-      );
-      const failed = yield* phase(harness.auth, "failed");
-      assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
-      yield* Deferred.await(harness.closed);
-    }),
+  ] as const)(
+    "keeps the generic failure when an authenticate error contains %s",
+    ([, errorMessage]) =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.auth.controller.start(owner);
+        yield* phase(harness.auth, "waiting");
+        yield* Deferred.fail(
+          harness.authenticated,
+          new AcpErrors.AcpRequestError({ code: -32603, errorMessage, method: "authenticate" }),
+        );
+        const failed = yield* phase(harness.auth, "failed");
+        assert.equal(failed.message, "Google sign-in failed. Start sign-in again.");
+        yield* Deferred.await(harness.closed);
+      }),
   );
 
   it.effect("does not call callback HTTP success a successful Google sign-in", () =>
@@ -362,9 +364,16 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
           .complete(owner, { flowId: state.flowId!, callbackUrl: invalidUrl })
           .pipe(Effect.exit);
         assert.isTrue(Exit.isFailure(result));
+        assert.equal(
+          (yield* phase(harness.auth, "waiting")).inputError,
+          "This redirect URL does not belong to the current sign-in.",
+        );
+        assert.isNull((yield* phase(harness.auth, "waiting", otherOwner)).inputError);
       }
       assert.equal(harness.forwarded(), 0);
       assert.equal((yield* phase(harness.auth, "waiting")).authorizationUrl, authorizationUrl);
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      assert.isNull((yield* phase(harness.auth, "verifying")).inputError);
       yield* harness.auth.controller.cancel(owner, state.flowId!);
     }),
   );
