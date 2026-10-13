@@ -3,6 +3,7 @@ import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { type AsyncResult, type Atom } from "effect/reactivity";
 import { use, useCallback, useEffect, useRef, useState } from "react";
 
+/** Only a user's pull owns the refresh indicator; query invalidation stays silent. */
 export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null) {
   const registry = use(RegistryContext);
   const request = useRef<{ atom: NonNullable<typeof atom>; controller: AbortController } | null>(
@@ -17,24 +18,37 @@ export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A
     [atom],
   );
 
-  const onRefresh = useCallback(() => {
-    if (!atom || (request.current?.atom === atom && !request.current.controller.signal.aborted))
-      return;
-    request.current?.controller.abort();
-    const controller = new AbortController();
-    request.current = { atom, controller };
-    setRefreshingAtom(atom);
-    void executeAtomQuery(registry, atom, {
-      refresh: true,
-      signal: controller.signal,
-      reportFailure: false,
-      reportDefect: false,
-    }).finally(() => {
-      if (controller.signal.aborted || request.current?.controller !== controller) return;
-      request.current = null;
-      setRefreshingAtom(null);
-    });
-  }, [atom, registry]);
+  /**
+   * `beforeRefresh` runs first under the same indicator, e.g. to drop a server-side cache. If it
+   * fails, the read still runs and at worst answers from that cache.
+   */
+  const onRefresh = useCallback(
+    (beforeRefresh?: () => Promise<unknown>) => {
+      if (!atom || (request.current?.atom === atom && !request.current.controller.signal.aborted))
+        return;
+      request.current?.controller.abort();
+      const controller = new AbortController();
+      request.current = { atom, controller };
+      setRefreshingAtom(atom);
+      void Promise.resolve()
+        .then(beforeRefresh)
+        .catch(() => undefined)
+        .then(() =>
+          executeAtomQuery(registry, atom, {
+            refresh: true,
+            signal: controller.signal,
+            reportFailure: false,
+            reportDefect: false,
+          }),
+        )
+        .finally(() => {
+          if (controller.signal.aborted || request.current?.controller !== controller) return;
+          request.current = null;
+          setRefreshingAtom(null);
+        });
+    },
+    [atom, registry],
+  );
 
   return { refreshing: atom !== null && refreshingAtom === atom, onRefresh };
 }
