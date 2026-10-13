@@ -101,6 +101,10 @@ Most fork changes are server and web code. They reach the Mac without a new app 
 - The setting `T3CODE_DESKTOP_LIVE_SERVER_DIR` names a live server folder. It is off when unset.
 - With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a`, `<folder>/b` or `<folder>/c`, three worktrees of this repository.
 - `scripts/fork-live/build.sh` runs every minute, from the copy `<folder>/build.sh`. Each successful build replaces that copy, so a builder fix applies at once. When fork main has a new commit, it builds it in the folder that neither runs nor is on offer. Then it writes `<folder>/ready.json` with the path, commit, subject and build time. Thus a build on offer stays complete until you install it or a newer build replaces it.
+- When the new commits change only paths that do not reach the server or web bundle, the script builds nothing. It writes the commit to `<folder>/no-build-sha`, so that it does not try the commit again. These paths are `docs`, `*.md`, `.github`, `apps/desktop`, `apps/mobile`, `apps/marketing`, `apps/machine-map` and test files.
+- The install covers only the packages that the `t3` build needs, not the mobile app. When the lockfile, the workspace file, the patches and the package manifests did not change since the last install of the build folder, the script skips the install.
+- When the new commits change only `apps/server` without its `package.json`, the script copies the web bundle of the newest build and builds only the server.
+- The build log has a timestamp and a duration for each phase.
 - The update button offers the ready build as `live <commit>`. A full app update always comes first. The upstream "update everything" pass comes after the live build, and other servers do not follow a live build.
 - Install moves the `current` link, restarts the server and reloads the windows. If the new server does not start, the link goes back and the previous server starts again.
 - A failed build shows a macOS notification. The app keeps its current server.
