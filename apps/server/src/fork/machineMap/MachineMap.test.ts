@@ -398,4 +398,50 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
       }),
     ),
   );
+
+  it.effect("a removed machine forgets its token and its arrows, and says why (MM-208)", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const portal = yield* startFakePortal;
+        const ran = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* Effect.gen(function* () {
+          const machineMap = yield* MachineMap.MachineMap;
+          const state = yield* MachineMapState.MachineMapState;
+          const auth = yield* EnvironmentAuth.EnvironmentAuth;
+
+          yield* machineMap.join({ code: "good" });
+          const { socket } = yield* Queue.take(portal.sockets);
+          yield* nextOf(portal.received, "hello");
+          socket.send(
+            encodePortalMessage({
+              _tag: "desired",
+              state: desiredState({ revision: 1, arrowsIn: [arrow(PEER, SELF, "read")] }),
+            }),
+          );
+          yield* nextOf(portal.received, "applied");
+          const peerSession = yield* auth.issueSession({
+            subject: `machine:${PEER}`,
+            scopes: MACHINE_LEVEL_SCOPES.read,
+          });
+
+          socket.close(4004, "This machine left the map.");
+          const removed = yield* machineMap.clientStates({ desktop: false }).pipe(
+            Stream.filter((client) => !client.joined),
+            Stream.runHead,
+          );
+          expect(removed._tag === "Some" && removed.value).toMatchObject({
+            enabled: true,
+            desired: null,
+            connection: {
+              status: "not-joined",
+              lastError: "The portal removed this machine from the map. Join again with a new code.",
+            },
+          });
+          expect((yield* state.snapshot).token).toBeNull();
+          const sessionIds = (yield* auth.listSessions()).map((session) => session.sessionId);
+          expect(sessionIds).not.toContain(peerSession.sessionId);
+        }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
+      }),
+    ),
+  );
 });

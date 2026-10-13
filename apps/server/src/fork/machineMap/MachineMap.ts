@@ -62,7 +62,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
 import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
-import { runPortalSession, type SendToPortal } from "./portalConnection.ts";
+import { PORTAL_CLOSE_CODES, runPortalSession, type SendToPortal } from "./portalConnection.ts";
 
 /** MM-1001: the status goes out at most this often. */
 const STATUS_MIN_INTERVAL = Duration.seconds(5);
@@ -422,6 +422,16 @@ const make = Effect.gen(function* () {
     }
   });
 
+  /**
+   * Forgets the token, the desired state and the desktop commands, and ends machine sessions.
+   * The token goes last: its change restarts the connection fiber, which may be the caller.
+   */
+  const forgetMap = Effect.gen(function* () {
+    yield* state.updateSaved((saved) => ({ ...saved, desired: null, desktopCommands: [] }));
+    yield* revokeSessions(isMachineSubject).pipe(Effect.ignore({ log: true }));
+    yield* state.setToken(null);
+  });
+
   const markOffline = Effect.gen(function* () {
     yield* Ref.set(currentSend, null);
     yield* failPendingToolCalls;
@@ -451,28 +461,59 @@ const make = Effect.gen(function* () {
           Effect.catchCause((cause) =>
             Cause.hasInterruptsOnly(cause)
               ? Effect.failCause(cause)
-              : Effect.succeed({ reason: "failed", message: Cause.pretty(cause).slice(0, 300) }),
+              : Effect.succeed({
+                  reason: "failed",
+                  message: Cause.pretty(cause).slice(0, 300),
+                  closeCode: null,
+                }),
           ),
         );
         yield* markOffline;
         const nowMs = yield* Clock.currentTimeMillis;
         const openedAt = yield* Ref.get(openedAtMs);
-        // A connection that the portal drops at once counts as a failure too.
+        // A connection that the portal drops at once counts as a failure too. So does a
+        // replacement: two servers with one token must not take turns every second.
         failures =
-          openedAt !== null && nowMs - openedAt >= HEALTHY_CONNECTION_MS ? 0 : failures + 1;
+          openedAt !== null &&
+          nowMs - openedAt >= HEALTHY_CONNECTION_MS &&
+          ended.closeCode !== PORTAL_CLOSE_CODES.replaced
+            ? 0
+            : failures + 1;
         yield* SubscriptionRef.set(connection, {
           online: false,
           since: DateTime.formatIso(yield* DateTime.now),
-          lastError: ended.message,
+          lastError:
+            ended.closeCode === PORTAL_CLOSE_CODES.removed
+              ? "The portal removed this machine from the map. Join again with a new code."
+              : ended.message,
           failedAttempts: failures,
         });
         yield* Effect.logInfo("Machine map portal connection ended.", {
           reason: ended.reason,
+          closeCode: ended.closeCode,
           failures,
         });
+        if (ended.closeCode === PORTAL_CLOSE_CODES.removed) {
+          // MM-208: the old token never connects again, so retrying only adds noise.
+          yield* forgetMap.pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Machine map could not forget a removed machine.", {
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+          return;
+        }
         const base = Math.min(MAX_BACKOFF_MS, 1_000 * 2 ** Math.min(failures, 6));
         const jitter = yield* Random.nextIntBetween(0, Math.floor(base / 4) + 1);
-        yield* Effect.sleep(Duration.millis(failures === 0 ? 1_000 : base + jitter));
+        // Another protocol version stays another version until this server updates.
+        const delayMs =
+          ended.closeCode === PORTAL_CLOSE_CODES.protocol
+            ? MAX_BACKOFF_MS
+            : failures === 0
+              ? 1_000
+              : base + jitter;
+        yield* Effect.sleep(Duration.millis(delayMs));
       }
     }).pipe(Effect.ensuring(markOffline));
 
@@ -610,7 +651,7 @@ const make = Effect.gen(function* () {
                 ? "online"
                 : "connecting",
           since: current.since,
-          lastError: active ? current.lastError : null,
+          lastError: local.enabled ? current.lastError : null,
           failedAttempts: active ? current.failedAttempts : 0,
         },
         desired: local.saved.desired,
@@ -755,6 +796,14 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
+      // The error of an old connection does not apply to the new token. This goes first,
+      // because the saved token starts the new connection.
+      yield* SubscriptionRef.set(connection, {
+        online: false,
+        since: DateTime.formatIso(yield* DateTime.now),
+        lastError: null,
+        failedAttempts: 0,
+      });
       yield* state
         .setToken({ clientId: enrolled.tokenClientId, secret: enrolled.tokenSecret })
         .pipe(Effect.mapError(storageFailed));
@@ -769,11 +818,7 @@ const make = Effect.gen(function* () {
     yield* settings
       .updateSettings({ machineMap: { enabled: false } })
       .pipe(Effect.mapError(settingsFailed));
-    yield* state.setToken(null).pipe(Effect.mapError(storageFailed));
-    yield* state
-      .updateSaved((saved) => ({ ...saved, desired: null, desktopCommands: [] }))
-      .pipe(Effect.mapError(storageFailed));
-    yield* revokeSessions(isMachineSubject).pipe(Effect.ignore({ log: true }));
+    yield* forgetMap.pipe(Effect.mapError(storageFailed));
     // Return once the portal connection is closed, so no later call goes out on it.
     yield* SubscriptionRef.changes(connection).pipe(
       Stream.filter((current) => !current.online),

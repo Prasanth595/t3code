@@ -31,12 +31,24 @@ export class PortalConnectionError extends Schema.TaggedError<PortalConnectionEr
     reason: Schema.Literals(["open-failed", "closed", "silent"]),
     /** A short, safe description, such as `Unexpected server response: 403`. */
     detail: Schema.String,
+    /** The WebSocket close code when the socket closed, such as `PORTAL_CLOSE_CODES.removed`. */
+    closeCode: Schema.NullOr(Schema.Number),
   },
 ) {
   override get message(): string {
     return `Portal connection ${this.reason}: ${this.detail}`;
   }
 }
+
+/** The close codes of the portal (`apps/machine-map/README.md`). */
+export const PORTAL_CLOSE_CODES = {
+  /** A newer connection of the same machine replaced this one. */
+  replaced: 4000,
+  /** The owner removed this machine from the map (MM-208). */
+  removed: 4004,
+  /** The portal speaks another protocol version. */
+  protocol: 4400,
+} as const;
 
 /** `https://portal` to `wss://portal/connect`. */
 const connectUrl = (portalUrl: string): string => {
@@ -53,10 +65,23 @@ const describeSocketError = (error: Socket.SocketError): string => {
       ? (cause as { readonly message: unknown }).message
       : undefined;
   if (typeof message === "string" && message.length > 0) return message.slice(0, 200);
-  return error.reason._tag === "SocketCloseError"
+  if (error.reason._tag !== "SocketCloseError") return error.reason._tag;
+  // The portal writes the close reason for people, for example "This machine left the map."
+  const closeReason = error.reason.closeReason;
+  return closeReason === undefined || closeReason.length === 0
     ? `closed with code ${error.reason.code}`
-    : error.reason._tag;
+    : `closed with code ${error.reason.code}: ${closeReason.slice(0, 200)}`;
 };
+
+/** Keeps the close code, so the caller can act on the codes of the portal. */
+const socketFailure =
+  (reason: "open-failed" | "closed") =>
+  (error: Socket.SocketError): PortalConnectionError =>
+    new PortalConnectionError({
+      reason,
+      detail: describeSocketError(error),
+      closeCode: error.reason._tag === "SocketCloseError" ? error.reason.code : null,
+    });
 
 export type SendToPortal = (message: MachineToPortal) => Effect.Effect<void, Socket.SocketError>;
 
@@ -91,13 +116,7 @@ export const runPortalSession = <R1, R2>(input: {
         { openTimeout: Duration.seconds(15) },
       );
       const pull = yield* Socket.readerString(socket).pipe(
-        Effect.mapError(
-          (error) =>
-            new PortalConnectionError({
-              reason: "open-failed",
-              detail: describeSocketError(error),
-            }),
-        ),
+        Effect.mapError(socketFailure("open-failed")),
       );
       const writer = yield* socket.writer;
       const send: SendToPortal = (message) =>
@@ -115,28 +134,16 @@ export const runPortalSession = <R1, R2>(input: {
             return yield* new PortalConnectionError({
               reason: "silent",
               detail: `no frame for ${Math.round(silentFor / 1000)} seconds`,
+              closeCode: null,
             });
           }
-          yield* writer.write(PORTAL_PING).pipe(
-            Effect.mapError(
-              (error) =>
-                new PortalConnectionError({
-                  reason: "closed",
-                  detail: describeSocketError(error),
-                }),
-            ),
-          );
+          yield* writer.write(PORTAL_PING).pipe(Effect.mapError(socketFailure("closed")));
         }
       });
 
       const receive = Effect.gen(function* () {
         while (true) {
-          const frames = yield* pull.pipe(
-            Effect.mapError(
-              (error) =>
-                new PortalConnectionError({ reason: "closed", detail: describeSocketError(error) }),
-            ),
-          );
+          const frames = yield* pull.pipe(Effect.mapError(socketFailure("closed")));
           lastFrameAt = yield* Clock.currentTimeMillis;
           for (const frame of frames) {
             if (frame === PORTAL_PONG) continue;
