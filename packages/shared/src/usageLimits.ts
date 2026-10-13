@@ -380,7 +380,12 @@ export interface LimitPoolWindow {
   }>;
   readonly remainingPercent: number;
   readonly usedPercent: number;
-  readonly pace: LimitPace | null;
+  /**
+   * Points between what is left and what even spending would leave by now:
+   * positive is quota to spare, negative is spending faster than the clock.
+   * Null when no member reports a window length and reset.
+   */
+  readonly paceHeadroomPercent: number | null;
   readonly resets: ReadonlyArray<{
     readonly member: LimitPoolMember;
     readonly at: number;
@@ -511,6 +516,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
     const timedUsed = timed.reduce((sum, t) => sum + t.used, 0) / timed.length;
     const meanElapsed =
       timed.length > 0 ? timed.reduce((sum, t) => sum + t.elapsed, 0) / timed.length : null;
+    // Headroom is taken between rounded figures so it agrees with the bar's pace marks.
+    const paceRemaining = meanElapsed === null ? null : Math.round(100 - meanElapsed * 100);
     const resets = members
       .flatMap((member) => {
         const at = resetMillis(member.window);
@@ -535,7 +542,8 @@ function poolWindows(accounts: readonly LimitAccount[], now: number): readonly L
       ),
       usedPercent: Math.round(usedPercent),
       remainingPercent: Math.round(100 - usedPercent),
-      pace: meanElapsed === null ? null : paceOfShares(timedUsed, meanElapsed),
+      paceHeadroomPercent:
+        paceRemaining === null ? null : Math.round(100 - timedUsed) - paceRemaining,
       resets,
     };
   });
@@ -599,6 +607,12 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   if (gap > 5) return "ahead";
   if (gap < -5) return "under";
   return "on";
+}
+
+/** Distance from even spending: `24% behind pace`, `8% ahead of pace`, or `On pace`. */
+export function formatPaceHeadroom(headroomPercent: number): string {
+  if (headroomPercent === 0) return "On pace";
+  return `${Math.abs(headroomPercent)}% ${headroomPercent > 0 ? "behind" : "ahead of"} pace`;
 }
 
 /** `2h 13m`, `3d 4h`, `12m`. */
