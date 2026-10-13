@@ -82,13 +82,14 @@ jobs:
         run: vp run typecheck
 
       # A merge without conflicts can still break a fork feature. The fork tests
-      # are the test files that differ from upstream main after the merge.
+      # are the test files that the fork changed since the last merged upstream
+      # commit. Right after the merge, that commit is upstream main.
       - id: fork_tests
         if: steps.merge.outputs.merged == 'true'
         name: Fork tests
         run: |
           set -euo pipefail
-          mapfile -t files < <(git diff --name-only --diff-filter=AMR upstream/main HEAD -- '*.test.ts' '*.test.tsx')
+          mapfile -t files < <(git diff --name-only --diff-filter=AMR "$(git merge-base upstream/main HEAD)" HEAD -- '*.test.ts' '*.test.tsx')
           if (( ${#files[@]} == 0 )); then
             echo "No fork test files."
             exit 0

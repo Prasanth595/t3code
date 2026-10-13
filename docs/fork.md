@@ -7,7 +7,7 @@ The installed app updates itself from the fork releases through the built-in upd
 
 Fork main only moves forward. Nothing rebases or force-pushes it.
 
-- `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge, runs the fork tests and pushes it as a fast-forward. The fork tests are the test files that differ from upstream main. If main moved during the run, it merges the new main and pushes again.
+- `.github/workflows/fork-sync.yml` merges `pingdotgg/t3code` main into fork main every day. It typechecks the merge, runs the fork tests and pushes it as a fast-forward. The fork tests are the test files that the fork changed since the last merged upstream commit, `git merge-base upstream/main HEAD`. A diff against a newer upstream main also lists files that only upstream changed. If main moved during the run, it merges the new main and pushes again.
 - If the merge conflicts, the typecheck fails or a fork test fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
 - `.github/workflows/fork-release.yml` builds the desktop apps. It runs when a push to main changes the app shell (`apps/desktop` without its tests, icons, build config, dependencies), once a day, and on manual dispatch. If the commit already has a release, it stops early. Server and web changes reach the machines without a release, see "Live server updates" and "Deploy to the VPS".
 - The release builds macOS arm64 (signed) and Windows x64 (unsigned) at the same time. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
