@@ -8,7 +8,6 @@ import {
   collectLimitPools,
   cursorUsageWindowDetails,
   displayLimitWindows,
-  formatPaceHeadroom,
   formatResetsIn,
   paceRemainingPercent,
   remainingPercent,
@@ -33,6 +32,7 @@ const DRIVER_LABEL: Partial<Record<string, string>> = {
   claudeAgent: "Claude",
   antigravity: "Antigravity",
 };
+const PACE_LABEL = { ahead: "Ahead of pace", on: "On pace", under: "Under pace" } as const;
 
 function accountName(account: LimitAccount) {
   if (account.displayName) return account.displayName;
@@ -99,7 +99,6 @@ function PoolWindowCard({
   readonly description?: string;
 }) {
   const navigation = useNavigation();
-  // The soonest reset that hands anything back; an untouched account resets to no effect.
   const nextRefill = pool.resets.find((reset) => reset.restoresPercent > 0);
   const openAccount = (account: LimitAccount) =>
     navigation.navigate("SettingsSheet", {
@@ -125,28 +124,21 @@ function PoolWindowCard({
               {pool.remainingPercent}%
             </Text>
             <Text className="text-sm text-foreground-muted">left</Text>
-            {nextRefill ? (
-              <Text
-                accessibilityLabel={`Pooled usage +${nextRefill.restoresPercent}% ${formatResetsIn(
-                  nextRefill.member.window,
-                  now,
-                )
-                  ?.replace("resets in ", "in ")
-                  .replace("resets now", "now")}`}
-                className="text-xs tabular-nums text-foreground-muted"
-              >
-                ↻ +{nextRefill.restoresPercent}%
-              </Text>
-            ) : null}
           </View>
         </View>
-        {pool.paceHeadroomPercent !== null ? (
-          <Text className="text-xs tabular-nums text-foreground-tertiary">
-            {formatPaceHeadroom(pool.paceHeadroomPercent)}
-          </Text>
+        {pool.pace ? (
+          <Text className="text-xs text-foreground-tertiary">{PACE_LABEL[pool.pace]}</Text>
         ) : null}
       </View>
       {description ? <Text className="text-xs text-foreground-muted">{description}</Text> : null}
+      {nextRefill ? (
+        <Text className="text-xs tabular-nums text-foreground-muted">
+          ↻ +{nextRefill.restoresPercent}%{" "}
+          {formatResetsIn(nextRefill.member.window, now)
+            ?.replace("resets in ", "in ")
+            .replace("resets now", "now")}
+        </Text>
+      ) : null}
       <View className="flex-row gap-1">
         {pool.columns.map(({ account, window }, index) => {
           if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;

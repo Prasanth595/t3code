@@ -19,7 +19,6 @@ import {
   collectLimitPools,
   displayLimitWindows,
   elapsedShare,
-  formatPaceHeadroom,
   formatResetsIn,
   limitsNotice,
   paceOf,
@@ -85,12 +84,6 @@ describe("pace", () => {
     expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
     expect(paceRemainingPercent({ ...window, resetsAt: undefined }, now)).toBeNull();
     expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
-  });
-
-  it("phrases distance from even spending", () => {
-    expect(formatPaceHeadroom(24)).toBe("24% behind pace");
-    expect(formatPaceHeadroom(-7)).toBe("7% ahead of pace");
-    expect(formatPaceHeadroom(0)).toBe("On pace");
   });
 
   it("phrases the reset as a countdown", () => {
@@ -795,13 +788,13 @@ describe("pools", () => {
       now,
     );
     // Only a votes: 80% used, 80% elapsed.
-    expect(untimed[0]?.windows[0]?.paceHeadroomPercent).toBe(0);
+    expect(untimed[0]?.windows[0]?.pace).toBe("on");
     // a is 80% through its window and b 60%: the pool is 70% elapsed, 60% used.
     expect(session).toMatchObject({
       id: "five_hour",
       remainingPercent: 40,
       usedPercent: 60,
-      paceHeadroomPercent: 10,
+      pace: "under",
     });
     expect(
       session?.resets.map((reset) => [reset.member.account.key, reset.restoresPercent]),
