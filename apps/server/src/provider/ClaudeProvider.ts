@@ -487,7 +487,7 @@ export const probeClaudeOrganizationId = Effect.fn("probeClaudeOrganizationId")(
 ) {
   const result = yield* runClaudeCommand(claudeSettings, ["auth", "status", "--json"], environment);
   if (result.code !== 0) {
-    return yield* Effect.fail(new ClaudeAuthStatusError({ exitCode: result.code }));
+    return yield* new ClaudeAuthStatusError({ exitCode: result.code });
   }
   const status = yield* Schema.decodeUnknownEffect(ClaudeAuthStatus)(result.stdout);
   return status.loggedIn ? status.orgId?.trim() || undefined : undefined;

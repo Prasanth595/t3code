@@ -55,6 +55,7 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
+import { AUTH_PROBE_TIMEOUT_MS } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
   makeCachedProviderMaintenanceResolution,
@@ -208,8 +209,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             [
               probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
               probeClaudeOrganizationId(effectiveConfig, processEnv).pipe(
-                Effect.timeout(Duration.seconds(10)),
-                Effect.orElse(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
+                Effect.timeout(AUTH_PROBE_TIMEOUT_MS),
+                Effect.catch(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
               ),
             ],
             { concurrency: "unbounded" },
