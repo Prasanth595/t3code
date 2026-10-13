@@ -3,8 +3,8 @@ import type { MachineId, MachineMapDocument, MachineRecord } from "@t3tools/cont
 
 import { findArrow } from "../rules/map.ts";
 import { usePortalContext } from "./context.ts";
-import { arrowApplied, machineQueue } from "./derive.ts";
-import { hasJoined, LEVEL_LABEL, presenceText, spatialArrow } from "./format.ts";
+import { arrowEndWait, arrowEnds, machineQueue } from "./derive.ts";
+import { LEVEL_LABEL, presenceText, spatialArrow } from "./format.ts";
 import { KindIcon } from "./icons.tsx";
 
 /** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
@@ -128,15 +128,11 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const direction = spatialArrow(position(from), position(to));
     const [first, second] = direction.first === "from" ? [from, to] : [to, from];
     const on = selection._tag === "arrow" && selection.from === from.id && selection.to === to.id;
-    const applied = arrowApplied(snapshot, from.id, to.id);
-    const pendingEnds = [...(applied.from ? [] : [from]), ...(applied.to ? [] : [to])];
-    const joining = pendingEnds.filter((m) => !hasJoined(snapshot.presence[m.id]));
+    const ends = arrowEnds(snapshot, from.id, to.id);
     const wait =
-      pendingEnds.length > joining.length
-        ? "queued"
-        : joining.length > 0
-          ? `waiting for ${joining.map((m) => m.name).join(" and ")} to join`
-          : null;
+      [arrowEndWait(ends.from, from), arrowEndWait(ends.to, to)]
+        .filter((text) => text !== null)
+        .join(", ") || null;
     return (
       <button
         type="button"

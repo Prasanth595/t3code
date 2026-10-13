@@ -24,12 +24,11 @@ import {
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type CommandOptions } from "./context.ts";
-import { arrowApplied, describeChange, machineQueue } from "./derive.ts";
+import { arrowEndWait, arrowEnds, describeChange, machineQueue, type ArrowEnd } from "./derive.ts";
 import {
   actorText,
   COMMAND_LABEL,
   DANGEROUS_COMMANDS,
-  hasJoined,
   LEVEL_LABEL,
   LEVEL_TEXT,
   machineName,
@@ -130,14 +129,13 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
     ]);
   };
 
-  const applied = arrowApplied(snapshot, source.id, target.id);
-  const endText = (done: boolean, machine: MachineRecord) => {
-    const presence = snapshot.presence[machine.id];
-    if (done) return `applied on ${machine.name}`;
-    if (!hasJoined(presence)) return `waiting for ${machine.name} to join`;
-    return `queued for ${machine.name}${presence?.online ? "" : " (offline)"}`;
+  const ends = arrowEnds(snapshot, source.id, target.id);
+  const endText = (end: ArrowEnd, machine: MachineRecord) => {
+    const wait = arrowEndWait(end, machine);
+    if (wait === null) return `applied on ${machine.name}`;
+    return end === "queued" && !snapshot.presence[machine.id]?.online ? `${wait} (offline)` : wait;
   };
-  const appliedText = [endText(applied.to, target), endText(applied.from, source)].join(", ");
+  const appliedText = [endText(ends.to, target), endText(ends.from, source)].join(", ");
   const lastTest = snapshot.commands.find(
     (c) => c.machineId === source.id && c.input._tag === "testArrow" && c.input.to === target.id,
   );
