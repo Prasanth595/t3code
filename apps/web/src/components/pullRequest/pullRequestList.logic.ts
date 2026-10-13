@@ -227,14 +227,23 @@ function boundedNames(names: ReadonlyArray<string>): string[] {
  * Quoting is the way back to plain text: `"size:XXL"` is searched for as written, which is what
  * makes a literal search for a colon still possible. A known key whose value it does not take is
  * text too, so a search for "status:" itself is still findable.
+ *
+ * Fork: with `ownerQualifiers`, `org:` and `owner:` name repository owners instead of labels. The
+ * names are lowercase, and all owner qualifiers together are one OR, because a project has one
+ * owner. A negated owner qualifier is text. `owners` is absent when no owner is named.
  */
-export function parsePullRequestQuery(raw: string): {
+export function parsePullRequestQuery(
+  raw: string,
+  options: { readonly ownerQualifiers?: boolean } = {},
+): {
   readonly text: string;
   readonly filters: PullRequestListFilters;
+  readonly owners?: ReadonlyArray<string>;
 } {
   const text: string[] = [];
   const labels: string[][] = [];
   const excludedLabels: string[] = [];
+  const owners = new Set<string>();
   let author: string | undefined;
   let draft: PullRequestListFilters["draft"];
   let review: PullRequestListFilters["review"];
@@ -243,7 +252,14 @@ export function parsePullRequestQuery(raw: string): {
     const qualifier = /^(-?)([A-Za-z][A-Za-z0-9_-]*):(.*)$/.exec(token);
     const value = qualifier === null ? "" : qualifierValue(qualifier[3] ?? "");
     const negated = qualifier?.[1] === "-";
-    switch (value.length === 0 ? "" : (qualifier?.[2]?.toLowerCase() ?? "")) {
+    const key = value.length === 0 ? "" : (qualifier?.[2]?.toLowerCase() ?? "");
+    if (options.ownerQualifiers === true && (key === "org" || key === "owner")) {
+      const names = negated ? [] : boundedNames(splitQualifierList(qualifier?.[3] ?? ""));
+      if (names.length === 0) text.push(token);
+      for (const name of names) owners.add(name.toLowerCase());
+      continue;
+    }
+    switch (key) {
       case "label": {
         // GitHub's own OR: `label:a,b` is one qualifier satisfied by either name. Negated, the
         // comma excludes each — a row carrying any of them goes.
@@ -308,6 +324,7 @@ export function parsePullRequestQuery(raw: string): {
       ...(review === undefined ? {} : { review }),
       ...(checks === undefined ? {} : { checks }),
     },
+    ...(owners.size === 0 ? {} : { owners: [...owners] }),
   };
 }
 

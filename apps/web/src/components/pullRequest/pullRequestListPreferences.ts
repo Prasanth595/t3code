@@ -31,6 +31,8 @@ export interface PullRequestListPreferences {
   readonly checks?: NonNullable<PullRequestListFilters["checks"]>;
   readonly author?: string;
   readonly labels?: ReadonlyArray<string>;
+  /** Fork: repository owners, lowercase. Only read while `repositoryOwnerFilters` is on. */
+  readonly owners?: ReadonlyArray<string>;
   readonly sort?: PullRequestListSort;
 }
 
@@ -44,6 +46,8 @@ const DEFAULT_PULL_REQUEST_LIST_PREFERENCES = {
 } as const satisfies PullRequestListPreferences;
 
 const BoundedPreference = Schema.String.check(Schema.isMaxLength(200));
+/** Fork: the most owners that the URL and the saved preferences keep, the same bound as labels. */
+export const MAX_PULL_REQUEST_LIST_OWNERS = 10;
 const PullRequestListPreferencesSchema = Schema.Struct({
   involvement: PullRequestInvolvement,
   state: PullRequestListState,
@@ -56,6 +60,9 @@ const PullRequestListPreferencesSchema = Schema.Struct({
   checks: PullRequestListFilters.fields.checks,
   author: Schema.optional(BoundedPreference),
   labels: Schema.optional(Schema.Array(BoundedPreference).check(Schema.isMaxLength(10))),
+  owners: Schema.optional(
+    Schema.Array(BoundedPreference).check(Schema.isMaxLength(MAX_PULL_REQUEST_LIST_OWNERS)),
+  ),
   sort: Schema.optional(PullRequestListSort),
 });
 
@@ -87,6 +94,7 @@ export function pullRequestListPreferences(
     ...(search.checks ? { checks: search.checks } : {}),
     ...(search.author ? { author: search.author } : {}),
     ...(search.labels && search.labels.length > 0 ? { labels: search.labels } : {}),
+    ...(search.owners && search.owners.length > 0 ? { owners: search.owners } : {}),
     ...(search.sort && search.sort !== "ready" ? { sort: search.sort } : {}),
   };
 }

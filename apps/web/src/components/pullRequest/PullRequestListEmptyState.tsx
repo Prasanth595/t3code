@@ -77,6 +77,7 @@ export function PullRequestListEmptyState({
   onClearQuery,
   onLoadMore,
   onRefresh,
+  onShowAllOwners,
 }: {
   /** The text being searched for, so the reader is told what was searched rather than guessing. */
   query: string;
@@ -96,6 +97,8 @@ export function PullRequestListEmptyState({
   onClearQuery: () => void;
   onLoadMore: () => void;
   onRefresh: () => void;
+  /** Fork: present while the menu narrows the list to some repository owners. */
+  onShowAllOwners?: (() => void) | undefined;
 }) {
   // Ahead of the search and the filters, because neither can produce a row until a project does.
   if (!hasProjects) {
@@ -170,6 +173,11 @@ export function PullRequestListEmptyState({
         </EmptyDescription>
       </EmptyHeader>
       <div className="flex flex-wrap justify-center gap-2">
+        {onShowAllOwners ? (
+          <Button size="sm" variant="outline" onClick={onShowAllOwners}>
+            Show all owners
+          </Button>
+        ) : null}
         {canLoadMore ? (
           <Button size="sm" variant="outline" disabled={loadingMore} onClick={onLoadMore}>
             {loadingMore ? "Loading..." : "Load more pull requests"}

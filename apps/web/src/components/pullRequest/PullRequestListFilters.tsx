@@ -8,6 +8,7 @@ import type {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
+  Building2Icon,
   CircleCheckIcon,
   CircleDashedIcon,
   CircleSlashIcon,
@@ -48,6 +49,7 @@ import {
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
+import { MAX_PULL_REQUEST_LIST_OWNERS } from "./pullRequestListPreferences";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
@@ -391,6 +393,62 @@ function PullRequestLabelFilter({
   );
 }
 
+/** Fork: the repository owner filter, shown only while `repositoryOwnerFilters` is on. */
+export interface PullRequestOwnerFilterProps {
+  /** Lowercase owners, as `repositoryOwnerOf` gives them. Empty means every owner. */
+  readonly selected: ReadonlyArray<string>;
+  /** The owners of the projects that feed the list. */
+  readonly options: ReadonlyArray<string>;
+  readonly onChange: (owners: ReadonlyArray<string>) => void;
+}
+
+function PullRequestOwnerFilter({ selected, options, onChange }: PullRequestOwnerFilterProps) {
+  // A selected owner with no project here stays in the list, so that the reader can clear it.
+  const visible = [...selected.filter((owner) => !options.includes(owner)), ...options];
+  const full = selected.length >= MAX_PULL_REQUEST_LIST_OWNERS;
+  return (
+    <MenuSub>
+      <MenuSubTrigger>
+        <Building2Icon aria-hidden className="size-3.5" />
+        <span className="flex-1">Owner</span>
+        <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+          {selected.length === 0
+            ? "All"
+            : selected.length === 1
+              ? selected[0]
+              : `${selected.length} selected`}
+        </span>
+      </MenuSubTrigger>
+      <MenuSubPopup>
+        <MenuItem disabled={selected.length === 0} onClick={() => onChange([])}>
+          <LayersIcon aria-hidden className="size-3.5" />
+          All owners
+        </MenuItem>
+        <MenuSeparator />
+        {visible.length === 0 ? (
+          <MenuItem disabled>No owners in this view</MenuItem>
+        ) : (
+          visible.map((owner) => {
+            const checked = selected.includes(owner);
+            return (
+              <MenuCheckboxItem
+                key={owner}
+                checked={checked}
+                disabled={!checked && full}
+                onCheckedChange={(next) =>
+                  onChange(next ? [...selected, owner] : selected.filter((name) => name !== owner))
+                }
+              >
+                <span className="block min-w-0 truncate">{owner}</span>
+              </MenuCheckboxItem>
+            );
+          })
+        )}
+      </MenuSubPopup>
+    </MenuSub>
+  );
+}
+
 export function PullRequestFiltersMenu({
   onOpenChange,
   state,
@@ -414,6 +472,7 @@ export function PullRequestFiltersMenu({
   projectEnvironmentId,
   unavailable,
   onProject,
+  owners,
 }: {
   onOpenChange?: (open: boolean) => void;
   state: PullRequestListState;
@@ -457,6 +516,8 @@ export function PullRequestFiltersMenu({
   unavailable: ReadonlyMap<string, string>;
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
+  /** Fork: absent while the `repositoryOwnerFilters` setting is off. */
+  owners?: PullRequestOwnerFilterProps | undefined;
 }) {
   const selectedLabels = (filters.labels ?? []).flatMap((group) => group);
   const filterCount = [
@@ -470,6 +531,7 @@ export function PullRequestFiltersMenu({
     filters.checks,
     filters.author,
     ...selectedLabels,
+    ...(owners?.selected ?? []),
   ].filter(Boolean).length;
   const updateFilters = (next: Partial<PullRequestListFilters>) =>
     onFilters(
@@ -585,6 +647,7 @@ export function PullRequestFiltersMenu({
           </>
         ) : null}
         <MenuSeparator />
+        {owners ? <PullRequestOwnerFilter {...owners} /> : null}
         <PullRequestFilterRadioSubmenu
           label="Project"
           value={projectValue}
