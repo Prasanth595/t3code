@@ -2238,6 +2238,31 @@ dialog.palette .dialog-body {
   color: var(--ink);
 }
 
+/* MM-708: the one-shot effects of a press. panicEffects.ts adds and removes them. */
+.panic-flash,
+.panic-stamp {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+}
+.panic-flash {
+  background: var(--panic);
+}
+.panic-stamp {
+  display: grid;
+  place-items: center;
+}
+.panic-stamp .stamp {
+  padding: 6px 28px;
+  font-size: clamp(3rem, 12vw, 7rem);
+  color: var(--panic);
+  background: #ffffffd9;
+  border-width: 8px;
+  border-color: var(--panic);
+  transform: none;
+}
+
 /* The paused state (MM-713): a hazard frame around the page and a banner with Resume. */
 .paused-frame {
   position: fixed;

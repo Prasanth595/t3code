@@ -6,6 +6,12 @@ import { usePortalContext, type Portal } from "./context.ts";
 import { pauseReach, type PauseReach } from "./derive.ts";
 import { actorText, timeAgo } from "./format.ts";
 import { CloseIcon } from "./icons.tsx";
+import {
+  playCoverSound,
+  playPanicSound,
+  playResumeSound,
+  showPanicEffects,
+} from "./panicEffects.ts";
 
 const HINTS = {
   closed: "Lift the cover first",
@@ -29,6 +35,8 @@ export function EmergencyButton({
   const paused = portal.pause !== null;
 
   const press = () => {
+    playPanicSound();
+    showPanicEffects();
     setCoverOpen(false);
     onPressed?.();
     portal.call(async () => {
@@ -60,7 +68,10 @@ export function EmergencyButton({
               className={`cover${coverOpen ? " open" : ""}`}
               aria-expanded={coverOpen}
               aria-label={coverOpen ? "Close the cover" : "Lift the cover"}
-              onClick={() => setCoverOpen(!coverOpen)}
+              onClick={() => {
+                playCoverSound(!coverOpen);
+                setCoverOpen(!coverOpen);
+              }}
             >
               <span>{coverOpen ? "close" : "lift"}</span>
             </button>
@@ -179,13 +190,15 @@ export const confirmResume = (portal: Portal): void =>
     body: "The arrows and map roles return to how they were before the pause, as one revision. Agents do not start again on their own.",
     confirmLabel: "Resume",
     tone: "primary",
-    action: () =>
-      portal.call(async () => {
+    action: () => {
+      playResumeSound();
+      return portal.call(async () => {
         const result = await callApi<ResumeResponse>("POST", "/api/resume");
         return result.revision === null
           ? "Resumed. Nothing had to change."
           : `Resumed as rev ${result.revision}.`;
-      }),
+      });
+    },
   });
 
 /** MM-713: every page shows the pause, who paused and when, and the way out. */
