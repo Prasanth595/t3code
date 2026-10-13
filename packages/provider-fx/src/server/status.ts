@@ -1,11 +1,5 @@
-import {
-  type CustomModelSetting,
-  type ServerProvider,
-  type ServerProviderAuth,
-  type ServerProviderModel,
-} from "@t3tools/contracts";
+import { type ServerProviderAuth, type ServerProviderModel } from "@t3tools/contracts";
 import type { FxSettings } from "../settings.ts";
-import { causeErrorTag } from "@t3tools/shared/observability";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as DateTime from "effect/DateTime";
@@ -13,153 +7,106 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as HttpClient from "effect/http/HttpClient";
 import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import {
   FX_DEFAULT_MODEL_SLUG,
+  FX_DRIVER_KIND,
   FX_EFFORT_OPTION_DESCRIPTOR,
   FX_SUPPORTED_RUNTIME_MODES,
 } from "./acpSupport.ts";
 import {
   AUTH_PROBE_TIMEOUT_MS,
   buildServerProvider,
+  DEFAULT_TIMEOUT_MS,
   isCommandMissingCause,
   nonEmptyTrimmed,
   parseGenericCliVersion,
+  type ProviderProbeResult,
   providerModelsFromSettings,
-  spawnAndCollect,
   type ServerProviderDraft,
+  spawnAndCollect,
 } from "@t3tools/provider-core/server/snapshotProbe";
-import {
-  enrichProviderSnapshotWithVersionAdvisory,
-  type ProviderMaintenanceCapabilities,
-} from "@t3tools/provider-core/server/maintenanceResolver";
 
 const FX_PRESENTATION = {
   displayName: "fx",
   showInteractionModeToggle: false,
   supportedRuntimeModes: FX_SUPPORTED_RUNTIME_MODES,
 } as const;
-
-const VERSION_PROBE_TIMEOUT_MS = 4_000;
 const FX_MODEL_CAPABILITIES = createModelCapabilities({
   optionDescriptors: [FX_EFFORT_OPTION_DESCRIPTOR],
 });
-const SIGNED_OUT_AUTH = "missing";
-const SIGNED_OUT_HELP = "Run `fx login` to sign in.";
 
-export type FxLogin =
-  | { readonly _tag: "SignedIn"; readonly method: string }
-  | { readonly _tag: "SignedOut" }
-  | { readonly _tag: "Unknown" };
-
-export interface FxStatus {
-  readonly login: FxLogin;
-  readonly defaultModel: string | undefined;
-}
-
-export interface FxModelCatalog {
-  readonly ids: ReadonlyArray<string>;
-}
-
-export interface FxProviderStatus {
-  readonly draft: ServerProviderDraft;
-  readonly defaultModel: string | undefined;
-}
-
-const FxStatusWire = Schema.Struct({
-  auth: Schema.optional(Schema.String),
-  model: Schema.optional(Schema.String),
-}).annotate({ parseOptions: { onExcessProperty: "ignore" } });
-
-const FxModelsWire = Schema.Struct({
-  ids: Schema.optional(Schema.Array(Schema.Unknown)),
-}).annotate({ parseOptions: { onExcessProperty: "ignore" } });
-
-const decodeFxStatusWire = Schema.decodeUnknownOption(Schema.fromJsonString(FxStatusWire));
-const decodeFxModelsWire = Schema.decodeUnknownOption(Schema.fromJsonString(FxModelsWire));
-
-function loginFromAuth(auth: string | undefined): FxLogin {
-  const method = nonEmptyTrimmed(auth);
-  if (method === undefined) return { _tag: "Unknown" };
-  if (method === SIGNED_OUT_AUTH) {
-    return { _tag: "SignedOut" };
-  }
-  return { _tag: "SignedIn", method };
-}
-
-function parseFxStatusJson(stdout: string): FxStatus {
-  const decoded = decodeFxStatusWire(stdout);
-  if (Option.isNone(decoded)) {
-    return { login: { _tag: "Unknown" }, defaultModel: undefined };
-  }
-  return {
-    login: loginFromAuth(decoded.value.auth),
-    defaultModel: nonEmptyTrimmed(decoded.value.model),
-  };
-}
-
-function fxLoginToProviderAuth(login: FxLogin): ServerProviderAuth {
-  switch (login._tag) {
-    case "SignedIn":
-      return { status: "authenticated", label: login.method };
-    case "SignedOut":
-      return { status: "unauthenticated" };
-    case "Unknown":
-      return { status: "unknown" };
-  }
-}
-
-function modelIdFromUnknown(value: unknown): string | undefined {
-  return typeof value === "string" ? nonEmptyTrimmed(value) : undefined;
-}
-
-function parseFxModelsJson(stdout: string): FxModelCatalog {
-  const decoded = decodeFxModelsWire(stdout);
-  if (Option.isNone(decoded) || decoded.value.ids === undefined) return { ids: [] };
-  return {
-    ids: decoded.value.ids.flatMap((id) => {
-      const slug = modelIdFromUnknown(id);
-      return slug === undefined ? [] : [slug];
-    }),
-  };
-}
-
-function buildFxModels(input: {
-  readonly ids: ReadonlyArray<string>;
-  readonly defaultModel: string | undefined;
-  readonly customModels: ReadonlyArray<CustomModelSetting>;
-}): ReadonlyArray<ServerProviderModel> {
-  const defaultEntry: ServerProviderModel = {
-    slug: FX_DEFAULT_MODEL_SLUG,
-    name: input.defaultModel ? `Default (${input.defaultModel})` : "Default",
-    isCustom: false,
-    isDefault: true,
-    capabilities: FX_MODEL_CAPABILITIES,
-  };
-  const seen = new Set<string>([FX_DEFAULT_MODEL_SLUG]);
-  const catalog: Array<ServerProviderModel> = [];
-  for (const id of input.ids) {
-    if (seen.has(id)) continue;
-    seen.add(id);
-    catalog.push({
-      slug: id,
-      name: id,
-      isCustom: false,
-      capabilities: FX_MODEL_CAPABILITIES,
-    });
-  }
-  return providerModelsFromSettings(
-    [defaultEntry, ...catalog],
-    input.customModels,
+/**
+ * "Default" keeps the model `fx status` reports as its alias, which the
+ * adapter selects for it. `fx models` lists the rest.
+ */
+const fxModels = (
+  settings: FxSettings,
+  defaultModel?: string,
+  listed: ReadonlyArray<string> = [],
+): ReadonlyArray<ServerProviderModel> =>
+  providerModelsFromSettings(
+    [
+      {
+        slug: FX_DEFAULT_MODEL_SLUG,
+        name: defaultModel === undefined ? "Default" : `Default (${defaultModel})`,
+        ...(defaultModel === undefined ? {} : { aliases: [defaultModel] }),
+        isCustom: false,
+        isDefault: true,
+        capabilities: FX_MODEL_CAPABILITIES,
+      },
+      ...listed
+        .filter((id, index) => id !== FX_DEFAULT_MODEL_SLUG && listed.indexOf(id) === index)
+        .map((id) => ({
+          slug: id,
+          name: id,
+          isCustom: false,
+          capabilities: FX_MODEL_CAPABILITIES,
+        })),
+    ],
+    settings.customModels,
     FX_MODEL_CAPABILITIES,
   );
-}
 
-const runFxCliCommand = (
+const snapshot = (
+  settings: FxSettings,
+  checkedAt: string,
+  probe: ProviderProbeResult,
+  defaultModel?: string,
+  listed?: ReadonlyArray<string>,
+): ServerProviderDraft => ({
+  ...buildServerProvider({
+    // Gives the snapshot its version advisory; fx runs no enrichment pass.
+    driver: FX_DRIVER_KIND,
+    presentation: FX_PRESENTATION,
+    enabled: settings.enabled,
+    checkedAt,
+    models: fxModels(settings, defaultModel, listed),
+    probe,
+  }),
+  // Every `fx acp` session is saved under `~/.fx` and ACP has no session
+  // delete, so a throwaway text-generation session would stay on disk.
+  supportsTextGeneration: false,
+});
+
+export const buildInitialFxProviderSnapshot = (
+  settings: FxSettings,
+): Effect.Effect<ServerProviderDraft> =>
+  Effect.map(DateTime.now, (now) =>
+    snapshot(settings, DateTime.formatIso(now), {
+      installed: settings.enabled,
+      version: null,
+      status: "warning",
+      auth: { status: "unknown" },
+      message: settings.enabled
+        ? "Checking fx CLI availability..."
+        : "fx is disabled in T3 Code settings.",
+    }),
+  );
+
+const runFxCli = (
   settings: FxSettings,
   args: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
@@ -176,261 +123,108 @@ const runFxCliCommand = (
     );
   });
 
-function withTextGenerationUnsupported(draft: ServerProviderDraft): ServerProviderDraft {
-  return { ...draft, supportsTextGeneration: false };
+/** `fx status --json` on fx 0.0.13: `auth` names the login method, `missing` when signed out. */
+const FxStatus = Schema.fromJsonString(
+  Schema.Struct({
+    auth: Schema.optional(Schema.String),
+    model: Schema.optional(Schema.String),
+  }),
+);
+const decodeFxStatus = Schema.decodeUnknownOption(FxStatus);
+const FxModels = Schema.fromJsonString(
+  Schema.Struct({ ids: Schema.optional(Schema.Array(Schema.String)) }),
+);
+const decodeFxModels = Schema.decodeUnknownOption(FxModels);
+
+function fxAuth(auth: string | undefined): ServerProviderAuth {
+  const method = nonEmptyTrimmed(auth);
+  if (method === undefined) return { status: "unknown" };
+  return method === "missing"
+    ? { status: "unauthenticated" }
+    : { status: "authenticated", label: method };
 }
 
-export function buildInitialFxProviderSnapshot(
+/**
+ * Reads `fx --version`, `fx status --json` (login and default model) and
+ * `fx models --json`. None of them opens an ACP session, which fx would save.
+ */
+export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function* (
   settings: FxSettings,
-): Effect.Effect<ServerProviderDraft> {
-  return Effect.gen(function* () {
-    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
-    return withTextGenerationUnsupported(
-      !settings.enabled
-        ? fxDisabledDraft(settings, checkedAt)
-        : buildServerProvider({
-            presentation: FX_PRESENTATION,
-            enabled: true,
-            checkedAt,
-            models: buildFxModels({
-              ids: [],
-              defaultModel: undefined,
-              customModels: settings.customModels,
-            }),
-            probe: {
-              installed: true,
-              version: null,
-              status: "warning",
-              auth: { status: "unknown" },
-              message: "Checking fx CLI availability...",
-            },
-          }),
-    );
-  });
-}
-
-function fxDisabledDraft(settings: FxSettings, checkedAt: string): ServerProviderDraft {
-  return buildServerProvider({
-    presentation: FX_PRESENTATION,
-    enabled: false,
-    checkedAt,
-    models: buildFxModels({
-      ids: [],
-      defaultModel: undefined,
-      customModels: settings.customModels,
-    }),
-    probe: {
+  environment: NodeJS.ProcessEnv,
+): Effect.fn.Return<ServerProviderDraft, never, ChildProcessSpawner.ChildProcessSpawner> {
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
+  if (!settings.enabled) {
+    return snapshot(settings, checkedAt, {
       installed: false,
       version: null,
       status: "warning",
       auth: { status: "unknown" },
       message: "fx is disabled in T3 Code settings.",
-    },
-  });
-}
+    });
+  }
 
-function fxVersionProbeDraft(
-  settings: FxSettings,
-  checkedAt: string,
-  probe: {
-    readonly installed: boolean;
-    readonly version: string | null;
-    readonly message: string;
-  },
-): ServerProviderDraft {
-  return buildServerProvider({
-    presentation: FX_PRESENTATION,
-    enabled: settings.enabled,
-    checkedAt,
-    models: buildFxModels({
-      ids: [],
-      defaultModel: undefined,
-      customModels: settings.customModels,
-    }),
-    probe: {
-      installed: probe.installed,
-      version: probe.version,
-      status: "error",
-      auth: { status: "unknown" },
-      message: probe.message,
-    },
-  });
-}
-
-function fxProbe(
-  draft: ServerProviderDraft,
-  defaultModel: string | undefined = undefined,
-): FxProviderStatus {
-  return { draft: withTextGenerationUnsupported(draft), defaultModel };
-}
-
-export const checkFxProviderStatus = Effect.fn("checkFxProviderStatus")(function* (
-  settings: FxSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<FxProviderStatus, never, ChildProcessSpawner.ChildProcessSpawner> {
-  const checkedAt = DateTime.formatIso(yield* DateTime.now);
-  if (!settings.enabled) return fxProbe(fxDisabledDraft(settings, checkedAt));
-
-  const versionResult = yield* runFxCliCommand(settings, ["--version"], environment).pipe(
-    Effect.timeoutOption(VERSION_PROBE_TIMEOUT_MS),
+  const versionResult = yield* runFxCli(settings, ["--version"], environment).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
     Effect.result,
   );
-  if (Result.isFailure(versionResult)) {
-    const error = versionResult.failure;
-    yield* Effect.logWarning("fx CLI health check failed.", { errorTag: error._tag });
-    const missing = isCommandMissingCause(error);
-    return fxProbe(
-      fxVersionProbeDraft(settings, checkedAt, {
-        installed: !missing,
-        version: null,
-        message: missing
-          ? "fx is not installed or not on PATH."
-          : "Failed to execute fx CLI health check.",
-      }),
-    );
-  }
-  if (Option.isNone(versionResult.success)) {
-    yield* Effect.logWarning("fx CLI version probe timed out.");
-    return fxProbe(
-      fxVersionProbeDraft(settings, checkedAt, {
-        installed: true,
-        version: null,
-        message: "fx is installed but timed out while running `fx --version`.",
-      }),
-    );
+  if (Result.isFailure(versionResult) || Option.isNone(versionResult.success)) {
+    const missing = Result.isFailure(versionResult) && isCommandMissingCause(versionResult.failure);
+    return snapshot(settings, checkedAt, {
+      installed: !missing,
+      version: null,
+      status: "error",
+      auth: { status: "unknown" },
+      message: missing ? "fx is not installed or not on PATH." : "Failed to run `fx --version`.",
+    });
   }
   const versionOutput = versionResult.success.value;
   const version = parseGenericCliVersion(`${versionOutput.stdout}\n${versionOutput.stderr}`);
   if (versionOutput.code !== 0) {
-    yield* Effect.logWarning("fx CLI version probe exited with a non-zero status.", {
-      exitCode: versionOutput.code,
-      stdoutLength: versionOutput.stdout.length,
-      stderrLength: versionOutput.stderr.length,
+    return snapshot(settings, checkedAt, {
+      installed: true,
+      version,
+      status: "error",
+      auth: { status: "unknown" },
+      message: "fx is installed but failed to run.",
     });
-    return fxProbe(
-      fxVersionProbeDraft(settings, checkedAt, {
-        installed: true,
-        version,
-        message: "fx is installed but failed to run.",
-      }),
-    );
   }
 
-  const statusResult = yield* runFxCliCommand(settings, ["status", "--json"], environment).pipe(
-    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
-    Effect.result,
+  const read = (args: ReadonlyArray<string>) =>
+    runFxCli(settings, args, environment).pipe(
+      Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
+      Effect.map(Option.filter((output) => output.code === 0)),
+      Effect.map(Option.map((output) => output.stdout)),
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+  const status = Option.flatMap(yield* read(["status", "--json"]), decodeFxStatus);
+  const listed = Option.flatMap(yield* read(["models", "--json"]), decodeFxModels).pipe(
+    Option.map((models) => models.ids?.flatMap((id) => nonEmptyTrimmed(id) ?? []) ?? []),
   );
-  const statusOutput =
-    Result.isSuccess(statusResult) &&
-    Option.isSome(statusResult.success) &&
-    statusResult.success.value.code === 0
-      ? statusResult.success.value
-      : undefined;
-  const status = statusOutput
-    ? parseFxStatusJson(statusOutput.stdout)
-    : { login: { _tag: "Unknown" } as const, defaultModel: undefined };
-
-  const modelsResult = yield* runFxCliCommand(settings, ["models", "--json"], environment).pipe(
-    Effect.timeoutOption(AUTH_PROBE_TIMEOUT_MS),
-    Effect.result,
-  );
-  const modelsOutput =
-    Result.isSuccess(modelsResult) &&
-    Option.isSome(modelsResult.success) &&
-    modelsResult.success.value.code === 0
-      ? modelsResult.success.value
-      : undefined;
-  const catalog = modelsOutput ? parseFxModelsJson(modelsOutput.stdout) : { ids: [] };
-  const modelsFailed = modelsOutput === undefined;
-  if (modelsFailed) {
-    yield* Effect.logWarning("fx model listing failed or timed out.");
-  }
-
-  const models = buildFxModels({
-    ids: catalog.ids,
-    defaultModel: status.defaultModel,
-    customModels: settings.customModels,
-  });
-  const auth = fxLoginToProviderAuth(status.login);
-
-  if (status.login._tag === "SignedOut") {
-    return fxProbe(
-      buildServerProvider({
-        presentation: FX_PRESENTATION,
-        enabled: true,
-        checkedAt,
-        models,
-        probe: {
-          installed: true,
-          version,
-          status: "error",
-          auth,
-          message: SIGNED_OUT_HELP,
-        },
-      }),
-      status.defaultModel,
-    );
-  }
-
-  if (status.login._tag === "Unknown") {
-    return fxProbe(
-      buildServerProvider({
-        presentation: FX_PRESENTATION,
-        enabled: true,
-        checkedAt,
-        models,
-        probe: {
-          installed: true,
-          version,
-          status: "warning",
-          auth,
-          message: "fx is installed but login state could not be determined.",
-        },
-      }),
-      status.defaultModel,
-    );
-  }
-
-  return fxProbe(
-    buildServerProvider({
-      presentation: FX_PRESENTATION,
-      enabled: true,
-      checkedAt,
-      models,
-      probe: {
-        installed: true,
-        version,
-        status: modelsFailed ? "warning" : "ready",
-        auth,
-        ...(modelsFailed
+  const auth = fxAuth(Option.getOrUndefined(status)?.auth);
+  const defaultModel = nonEmptyTrimmed(Option.getOrUndefined(status)?.model);
+  const probe =
+    auth.status === "unauthenticated"
+      ? { status: "error" as const, message: "Run `fx login` to sign in." }
+      : auth.status === "unknown"
+        ? {
+            status: "warning" as const,
+            message: "fx is installed but login state could not be determined.",
+          }
+        : Option.isNone(listed)
           ? {
+              status: "warning" as const,
               message: "fx is installed but model listing failed. Model options may be incomplete.",
             }
-          : {}),
-      },
-    }),
-    status.defaultModel,
+          : { status: "ready" as const };
+  return snapshot(
+    settings,
+    checkedAt,
+    { installed: true, version, auth, ...probe },
+    defaultModel,
+    Option.getOrUndefined(listed),
   );
 });
 
-export const enrichFxSnapshot = (input: {
-  readonly snapshot: ServerProvider;
-  readonly maintenanceCapabilities: ProviderMaintenanceCapabilities;
-  readonly enableProviderUpdateChecks?: boolean;
-  readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
-}): Effect.Effect<
-  void,
-  never,
-  HttpClient.HttpClient | ProviderLatestVersions.ProviderLatestVersions
-> =>
-  enrichProviderSnapshotWithVersionAdvisory(input.snapshot, input.maintenanceCapabilities, {
-    enableProviderUpdateChecks: input.enableProviderUpdateChecks,
-  }).pipe(
-    Effect.flatMap((enrichedSnapshot) => input.publishSnapshot(enrichedSnapshot)),
-    Effect.catchCause((cause) =>
-      Effect.logWarning("fx version advisory enrichment failed", {
-        errorTag: causeErrorTag(cause),
-      }),
-    ),
-    Effect.asVoid,
-  );
+/** fx's id for "Default": the alias the snapshot gave it, if `fx status` reported one. */
+export const fxDefaultModelId = (models: ReadonlyArray<ServerProviderModel>) =>
+  models.find((model) => model.slug === FX_DEFAULT_MODEL_SLUG)?.aliases?.[0];

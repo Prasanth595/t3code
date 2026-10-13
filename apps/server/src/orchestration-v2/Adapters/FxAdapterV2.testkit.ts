@@ -15,7 +15,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -57,7 +56,6 @@ function layerFxProviderAdapterRegistryReplay(
         settings: DEFAULT_FX_SETTINGS,
         environment: {},
         selfInvocation: yield* resolveSelfInvocation(),
-        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         makeRuntime: (runtimeInput) =>
           makeAcpReplayRuntime({
             transcript,

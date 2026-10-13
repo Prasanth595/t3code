@@ -52,10 +52,10 @@ const check = (statusJson: string) =>
       const stdout = outputs[args];
       return Effect.succeed(processHandle(stdout ?? "", stdout === undefined ? 2 : 0));
     });
-    const probe = yield* checkFxProviderStatus(settings, {}).pipe(
+    const draft = yield* checkFxProviderStatus(settings, {}).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
-    return { draft: probe.draft, invoked };
+    return { draft, invoked };
   }).pipe(Effect.provide(NodeServices.layer));
 
 describe("checkFxProviderStatus", () => {
@@ -79,6 +79,9 @@ describe("checkFxProviderStatus", () => {
         signedIn.draft.models.map((model) => model.slug),
         ["default", "anthropic/claude-sonnet-5.5", "anthropic/claude-opus-5.5"],
       );
+      // "Default" carries the model `fx status` reports, which the adapter selects for it.
+      assert.deepEqual(signedIn.draft.models[0]?.aliases, ["anthropic/claude-opus-5.5"]);
+      assert.isDefined(signedIn.draft.versionAdvisory);
 
       const signedOut = yield* check(
         JSON.stringify({

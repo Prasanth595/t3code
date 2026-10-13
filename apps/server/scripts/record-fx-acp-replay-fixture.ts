@@ -26,7 +26,6 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import { ACP_PROTOCOL } from "@t3tools/provider-acp/server/adapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
@@ -374,7 +373,6 @@ const recordScenario = Effect.fn("recordFxScenario")(function* (fixtureName: str
         settings,
         environment,
         selfInvocation: yield* resolveSelfInvocation(),
-        continuationRequests: yield* ProviderContinuationRequests.ProviderContinuationRequests,
         makeRuntime: (input) =>
           makeFxAcpRuntime({
             ...input,

@@ -2,35 +2,31 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { type OrchestrationV2ProviderCapabilities } from "@t3tools/contracts";
 import { FxSettings } from "../settings.ts";
-import * as Crypto from "effect/Crypto";
+import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
-import * as EffectAcpErrors from "effect-acp/errors";
+import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as EffectAcpErrors from "effect-acp/errors";
 
-import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import type * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import type * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import {
-  applyFxEffortSelection,
+  applyFxEffortDefault,
   applyFxModelSelection,
   FX_DRIVER_KIND,
-  FX_EFFORT_CONFIG_ID,
   fxPermissionDisposition,
   fxSessionModeForPolicy,
   makeFxAcpRuntime,
-  withFxSessionModeAlwaysWritten,
+  withFxSessionMode,
 } from "./acpSupport.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
-import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
-import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
-import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   ProviderAdapterDriverCreateError,
   type ProviderAdapterDriver,
@@ -72,10 +68,11 @@ export interface FxAdapterV2Options {
   readonly settings: FxSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly selfInvocation: SelfInvocation;
-  readonly currentFxDefaultModel?: Effect.Effect<string | undefined>;
+  /** fx's id for "Default", the model the provider snapshot read from `fx status`. */
+  readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
-  readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
+  /** Replaces the `fx acp` launch (replay tests). fx's session setup still applies. */
   readonly makeRuntime?: (
     input: AcpAdapterV2RuntimeInput,
   ) => Effect.Effect<
@@ -86,44 +83,24 @@ export interface FxAdapterV2Options {
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
 }
 
-export type FxAdapterV2 = ProviderAdapter.ProviderAdapterV2["Service"] & {
-  readonly currentFxDefaultModel: Effect.Effect<string | undefined>;
-  readonly noteFxDefaultModel: (model: string | undefined) => Effect.Effect<void>;
-};
-
-function makeFxAcpAdapterFlavor(
-  options: FxAdapterV2Options,
-  currentFxDefaultModel: Effect.Effect<string | undefined>,
-): AcpAdapterV2Flavor {
+function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor {
+  const makeRuntime =
+    options.makeRuntime ??
+    (({ runtimePolicy: _runtimePolicy, processEnvironment, ...input }: AcpAdapterV2RuntimeInput) =>
+      makeFxAcpRuntime({
+        ...input,
+        fxSettings: options.settings,
+        environment: { ...options.environment, ...processEnvironment },
+      }));
   return {
     driver: FX_DRIVER_KIND,
     runtimeHarness: "fx",
     capabilities: FxProviderCapabilitiesV2,
-    makeRuntime: (input) =>
-      (
-        options.makeRuntime ??
-        ((runtimeInput: AcpAdapterV2RuntimeInput) =>
-          makeFxAcpRuntime({
-            ...runtimeInput,
-            fxSettings: options.settings,
-            environment: options.environment,
-          }))
-      )(input).pipe(Effect.map(withFxSessionModeAlwaysWritten)),
+    makeRuntime: (input) => makeRuntime(input).pipe(Effect.map(withFxSessionMode)),
     applyModelSelection: ({ runtime, modelSelection }) =>
-      Effect.gen(function* () {
-        const applied = yield* applyFxModelSelection({
-          runtime,
-          requestedModel: modelSelection.model,
-          fxDefaultModel: yield* currentFxDefaultModel,
-        });
-        yield* applyFxEffortSelection({
-          runtime,
-          requestedEffort: modelSelection.options?.find(
-            (option) => option.id === FX_EFFORT_CONFIG_ID,
-          )?.value,
-        });
-        return applied;
-      }),
+      applyFxModelSelection(runtime, modelSelection, options.defaultModel).pipe(
+        Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)),
+      ),
     sessionModeForPolicy: fxSessionModeForPolicy,
     permissionDisposition: fxPermissionDisposition,
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
@@ -133,23 +110,13 @@ function makeFxAcpAdapterFlavor(
 export const makeFxAdapterV2 = Effect.fn("makeFxAdapterV2")(function* (
   options: FxAdapterV2Options,
 ) {
-  const defaultModelRef = yield* Ref.make<string | undefined>(undefined);
-  const currentFxDefaultModel = options.currentFxDefaultModel ?? Ref.get(defaultModelRef);
-  const adapter = yield* makeAcpAdapterV2({
+  return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor: makeFxAcpAdapterFlavor(options, currentFxDefaultModel),
+    flavor: makeFxAcpAdapterFlavor(options),
     selfInvocation: options.selfInvocation,
     ...(options.nativeLogging === undefined ? {} : { nativeLogging: options.nativeLogging }),
-    ...(options.continuationRequests === undefined
-      ? {}
-      : { continuationRequests: options.continuationRequests }),
     ...(options.testHooks === undefined ? {} : { testHooks: options.testHooks }),
   });
-  return {
-    ...adapter,
-    currentFxDefaultModel,
-    noteFxDefaultModel: (model) => Ref.set(defaultModelRef, model),
-  } satisfies FxAdapterV2;
 });
 
 export type FxAdapterV2DriverEnv =
@@ -162,7 +129,13 @@ export type FxAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
-export const FxAdapterV2Driver: ProviderAdapterDriver<FxSettings, FxAdapterV2DriverEnv> = {
+/**
+ * `defaultModel` reads fx's id for "Default" from the provider snapshot;
+ * without one (the bare V2 adapter registry) "Default" writes no model.
+ */
+export const makeFxAdapterV2Driver = (
+  defaultModel?: Effect.Effect<string | undefined>,
+): ProviderAdapterDriver<FxSettings, FxAdapterV2DriverEnv> => ({
   driverKind: FX_DRIVER_KIND,
   configSchema: FxSettings,
   defaultConfig: (): FxSettings => DEFAULT_FX_SETTINGS,
@@ -171,14 +144,13 @@ export const FxAdapterV2Driver: ProviderAdapterDriver<FxSettings, FxAdapterV2Dri
       const hostEnvironment = yield* HostProcess.Environment;
       const selfInvocation = yield* resolveSelfInvocation();
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
-      const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       return yield* makeFxAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
-        continuationRequests,
+        ...(defaultModel === undefined ? {} : { defaultModel }),
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,
@@ -200,4 +172,6 @@ export const FxAdapterV2Driver: ProviderAdapterDriver<FxSettings, FxAdapterV2Dri
         ),
       ),
   ),
-};
+});
+
+export const FxAdapterV2Driver = makeFxAdapterV2Driver();

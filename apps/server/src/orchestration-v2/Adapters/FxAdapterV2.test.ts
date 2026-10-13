@@ -153,7 +153,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     settings: ENABLED_FX_SETTINGS,
     environment: {},
     selfInvocation: yield* resolveSelfInvocation(),
-    currentFxDefaultModel: Effect.succeed(FX_DEFAULT_MODEL),
+    defaultModel: Effect.succeed(FX_DEFAULT_MODEL),
     makeRuntime: makeAcpReplayRuntime({
       transcript,
       statusPath,
