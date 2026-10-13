@@ -108,6 +108,39 @@ export function existingThreadIdsForCommand(
   }
 }
 
+/**
+ * Transitive subagent children of the thread, parent before child. A shell is
+ * a subagent child when its lineage says so; forks are not descendants and
+ * never expand. The visited set guards against lineage cycles.
+ */
+export function subagentDescendantIds(
+  shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  threadId: ThreadId,
+): ReadonlyArray<ThreadId> {
+  const childIdsByParentId = new Map<ThreadId, Array<ThreadId>>();
+  for (const shell of shells) {
+    const { parentThreadId, relationshipToParent } = shell.lineage;
+    if (relationshipToParent !== "subagent" || parentThreadId === null) continue;
+    const childIds = childIdsByParentId.get(parentThreadId) ?? [];
+    childIds.push(shell.id);
+    childIdsByParentId.set(parentThreadId, childIds);
+  }
+  const descendants: Array<ThreadId> = [];
+  const visited = new Set<ThreadId>([threadId]);
+  const pending = [threadId];
+  while (pending.length > 0) {
+    const parentId = pending.shift();
+    if (parentId === undefined) break;
+    for (const childId of childIdsByParentId.get(parentId) ?? []) {
+      if (visited.has(childId)) continue;
+      visited.add(childId);
+      descendants.push(childId);
+      pending.push(childId);
+    }
+  }
+  return descendants;
+}
+
 export type ThreadManagementTerminalRunStatus = Extract<
   OrchestrationV2Run["status"],
   "completed" | "failed" | "cancelled" | "interrupted" | "rolled_back"
@@ -651,11 +684,57 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
+  const dispatchUnchecked: ThreadManagementServiceShape["dispatch"] = (command) =>
     ensureCommandTranscripts(command).pipe(
       Effect.andThen(assertDispatchTargetEnabled(command)),
       Effect.andThen(orchestrator.dispatch(command)),
     );
+
+  /**
+   * Archiving or unarchiving a thread cascades to its subagent descendants,
+   * parent before child, so the subtree moves together. A descendant failure
+   * aborts the operation before the target is touched. Descendant command ids
+   * derive from the input command id because the orchestrator replays receipts
+   * by command id; a shared id would collide. Descendants dispatch through
+   * dispatchUnchecked because the walk already covers the full subtree.
+   */
+  const dispatchWithSubagentCascade = (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.archive" | "thread.unarchive" }
+    >,
+  ): ReturnType<ThreadManagementServiceShape["dispatch"]> => {
+    const location = command.type === "thread.archive" ? "active" : "archive";
+    return orchestrator.getShellSnapshot({ location }).pipe(
+      Effect.flatMap((snapshot) => {
+        const shells = location === "active" ? snapshot.threads : snapshot.archivedThreads;
+        return Effect.forEach(
+          subagentDescendantIds(shells, command.threadId),
+          (descendantId) =>
+            dispatchUnchecked(
+              command.type === "thread.archive"
+                ? {
+                    type: "thread.archive",
+                    commandId: CommandId.make(`${command.commandId}:${descendantId}`),
+                    threadId: descendantId,
+                  }
+                : {
+                    type: "thread.unarchive",
+                    commandId: CommandId.make(`${command.commandId}:${descendantId}`),
+                    threadId: descendantId,
+                  },
+            ),
+          { discard: true },
+        );
+      }),
+      Effect.andThen(dispatchUnchecked(command)),
+    );
+  };
+
+  const dispatch: ThreadManagementServiceShape["dispatch"] = (command) =>
+    command.type === "thread.archive" || command.type === "thread.unarchive"
+      ? dispatchWithSubagentCascade(command)
+      : dispatchUnchecked(command);
 
   const getProjectThread: ThreadManagementServiceShape["getProjectThread"] = (input) =>
     getThreadProjection(input.threadId).pipe(

@@ -13,6 +13,7 @@ import {
   buildMultiSelectThreadContextMenuItems,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
+  excludeCascadeCoveredEntries,
   filterSidebarProjectScopeItems,
   filterSidebarV2VisibleThreads,
   formatWorkingDurationLabel,
@@ -293,6 +294,72 @@ describe("archiveSelectedThreadEntries", () => {
       mutationFailure: null,
       followupFailures: [failure],
     });
+  });
+});
+
+describe("excludeCascadeCoveredEntries", () => {
+  const parentId = ThreadId.make("thread-parent");
+  const childId = ThreadId.make("thread-child");
+  const grandchildId = ThreadId.make("thread-grandchild");
+  const forkId = ThreadId.make("thread-fork");
+
+  const shell = (
+    id: ThreadId,
+    parent: { parentThreadId: ThreadId | null; relationshipToParent: "subagent" | "fork" | null },
+  ) => ({
+    threadKey: id,
+    thread: {
+      id,
+      lineage: { rootThreadId: parent.parentThreadId ?? id, ...parent },
+    },
+  });
+
+  const parentEntry = shell(parentId, { parentThreadId: null, relationshipToParent: null });
+  const childEntry = shell(childId, { parentThreadId: parentId, relationshipToParent: "subagent" });
+  const grandchildEntry = shell(grandchildId, {
+    parentThreadId: childId,
+    relationshipToParent: "subagent",
+  });
+  const forkEntry = shell(forkId, { parentThreadId: parentId, relationshipToParent: "fork" });
+  const allShells = new Map(
+    [parentEntry, childEntry, grandchildEntry, forkEntry].map((entry) => [
+      entry.thread.id,
+      entry.thread,
+    ]),
+  );
+  const readShell = (_entry: unknown, id: ThreadId) => allShells.get(id) ?? null;
+
+  it("drops a selected subagent whose parent is also selected", () => {
+    expect(excludeCascadeCoveredEntries([parentEntry, childEntry], readShell)).toEqual([
+      parentEntry,
+    ]);
+  });
+
+  it("drops a grandchild when a transitive ancestor is selected", () => {
+    expect(
+      excludeCascadeCoveredEntries([parentEntry, grandchildEntry], readShell).map(
+        (entry) => entry.thread.id,
+      ),
+    ).toEqual([parentId]);
+  });
+
+  it("keeps a subagent whose ancestors are not selected", () => {
+    expect(excludeCascadeCoveredEntries([childEntry, grandchildEntry], readShell)).toEqual([
+      childEntry,
+    ]);
+  });
+
+  it("keeps forks, which the cascade never covers", () => {
+    expect(excludeCascadeCoveredEntries([parentEntry, forkEntry], readShell)).toEqual([
+      parentEntry,
+      forkEntry,
+    ]);
+  });
+
+  it("keeps a subagent whose ancestor shell is unreadable", () => {
+    expect(
+      excludeCascadeCoveredEntries([childEntry], () => null).map((entry) => entry.thread.id),
+    ).toEqual([childId]);
   });
 });
 

@@ -548,6 +548,43 @@ export async function archiveSelectedThreadEntries<
   return { archivedThreadKeys, mutationFailure: null, followupFailures };
 }
 
+/**
+ * Drops selected entries the server-side archive cascade already covers:
+ * archiving a thread cascades to its subagent descendants, so a selected
+ * subagent whose ancestor is also selected needs no dispatch of its own.
+ * Without this, the redundant dispatch fails as "already archived" and aborts
+ * the batch. Only subagent lineage cascades; forks stay independent. An
+ * unreadable ancestor shell keeps the entry, because no coverage is proven.
+ */
+export function excludeCascadeCoveredEntries<
+  TEntry extends { readonly thread: Pick<SidebarThreadSummary, "id" | "lineage"> },
+>(
+  entries: readonly TEntry[],
+  readShell: (
+    entry: TEntry,
+    parentThreadId: ThreadId,
+  ) => Pick<SidebarThreadSummary, "id" | "lineage"> | null,
+): TEntry[] {
+  const selectedIds = new Set(entries.map((entry) => entry.thread.id));
+  return entries.filter((entry) => {
+    let current: Pick<SidebarThreadSummary, "id" | "lineage"> = entry.thread;
+    const visited = new Set<ThreadId>([current.id]);
+    while (
+      current.lineage.relationshipToParent === "subagent" &&
+      current.lineage.parentThreadId !== null
+    ) {
+      const parentId = current.lineage.parentThreadId;
+      if (selectedIds.has(parentId)) return false;
+      if (visited.has(parentId)) return true;
+      visited.add(parentId);
+      const parent = readShell(entry, parentId);
+      if (parent === null) return true;
+      current = parent;
+    }
+    return true;
+  });
+}
+
 export function buildMultiSelectThreadContextMenuItems(input: {
   count: number;
   hasRunningThread: boolean;

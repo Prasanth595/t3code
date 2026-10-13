@@ -3,6 +3,7 @@ import {
   CommandId,
   MessageId,
   NodeId,
+  type OrchestrationV2AppThreadLineage,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
@@ -13,6 +14,7 @@ import {
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2ThreadShellSnapshot,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -962,3 +964,129 @@ it.effect.each([
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
 );
+// The cascade only reads a shell's id and lineage, so the fixtures carry
+// those two fields alone.
+const cascadeShell = (
+  id: ThreadId,
+  lineage: OrchestrationV2AppThreadLineage,
+): OrchestrationV2ThreadShell => ({ id, lineage }) as OrchestrationV2ThreadShell;
+
+const cascadeLineage = (
+  parentThreadId: ThreadId | null,
+  relationshipToParent: "subagent" | "fork" | null,
+  rootThreadId: ThreadId,
+): OrchestrationV2AppThreadLineage => ({ parentThreadId, relationshipToParent, rootThreadId });
+
+const cascadeTargetId = ThreadId.make("thread:thread-management:cascade-target");
+const cascadeChildId = ThreadId.make("thread:thread-management:cascade-child");
+const cascadeGrandchildId = ThreadId.make("thread:thread-management:cascade-grandchild");
+const cascadeForkId = ThreadId.make("thread:thread-management:cascade-fork");
+const cascadeUnrelatedId = ThreadId.make("thread:thread-management:cascade-unrelated");
+
+const cascadeFamilyShells = [
+  cascadeShell(cascadeTargetId, cascadeLineage(null, null, cascadeTargetId)),
+  cascadeShell(cascadeChildId, cascadeLineage(cascadeTargetId, "subagent", cascadeTargetId)),
+  cascadeShell(cascadeGrandchildId, cascadeLineage(cascadeChildId, "subagent", cascadeTargetId)),
+  cascadeShell(cascadeForkId, cascadeLineage(cascadeTargetId, "fork", cascadeTargetId)),
+  cascadeShell(cascadeUnrelatedId, cascadeLineage(null, null, cascadeUnrelatedId)),
+];
+
+const cascadeSnapshot = (location: "active" | "archive"): OrchestrationV2ThreadShellSnapshot => ({
+  schemaVersion: 1,
+  snapshotSequence: 7,
+  threads: location === "active" ? cascadeFamilyShells : [],
+  archivedThreads: location === "archive" ? cascadeFamilyShells : [],
+});
+
+it.effect.each(["thread.archive", "thread.unarchive"] as const)(
+  "%s cascades to transitive subagent descendants, target last",
+  (commandType) => {
+    const dispatches: Array<{ commandId: CommandId; threadId: ThreadId }> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          // Suspend so the push happens when the command runs, not when the
+          // caller constructs the Effect.
+          dispatch: (command) =>
+            Effect.suspend(() => {
+              if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+                dispatches.push({ commandId: command.commandId, threadId: command.threadId });
+              }
+              return Effect.succeed({ sequence: dispatches.length, storedEvents: [] });
+            }),
+          getShellSnapshot: (options) =>
+            Effect.succeed(cascadeSnapshot(options?.location ?? "active")),
+        }),
+      ),
+      Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(layerReceiptsTest),
+    );
+    return Effect.gen(function* () {
+      const service = yield* ThreadManagementService.ThreadManagementService;
+      yield* service.dispatch({
+        type: commandType,
+        commandId: CommandId.make(`command:thread-management:${commandType}`),
+        threadId: cascadeTargetId,
+      });
+      expect(dispatches).toEqual([
+        {
+          commandId: CommandId.make(`command:thread-management:${commandType}:${cascadeChildId}`),
+          threadId: cascadeChildId,
+        },
+        {
+          commandId: CommandId.make(
+            `command:thread-management:${commandType}:${cascadeGrandchildId}`,
+          ),
+          threadId: cascadeGrandchildId,
+        },
+        {
+          commandId: CommandId.make(`command:thread-management:${commandType}`),
+          threadId: cascadeTargetId,
+        },
+      ]);
+    }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect("a descendant archive failure aborts before the target is dispatched", () => {
+  const dispatches: Array<ThreadId> = [];
+  const layerTest = ThreadManagementService.layer.pipe(
+    Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+    Layer.provide(
+      Layer.mock(Orchestrator.OrchestratorV2)({
+        dispatch: (command) =>
+          Effect.suspend(() => {
+            if (command.type !== "thread.archive" && command.type !== "thread.unarchive") {
+              return Effect.succeed({ sequence: 0, storedEvents: [] });
+            }
+            dispatches.push(command.threadId);
+            return command.threadId === cascadeGrandchildId
+              ? Effect.fail(
+                  new Orchestrator.OrchestratorDispatchError({
+                    commandId: command.commandId,
+                    commandType: command.type,
+                    cause: "grandchild stuck",
+                  }),
+                )
+              : Effect.succeed({ sequence: dispatches.length, storedEvents: [] });
+          }),
+        getShellSnapshot: () => Effect.succeed(cascadeSnapshot("active")),
+      }),
+    ),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerReceiptsTest),
+  );
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const error = yield* Effect.flip(
+      service.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("command:thread-management:cascade-abort"),
+        threadId: cascadeTargetId,
+      }),
+    );
+    expect(error).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
+    expect(dispatches).toEqual([cascadeChildId, cascadeGrandchildId]);
+  }).pipe(Effect.provide(layerTest));
+});

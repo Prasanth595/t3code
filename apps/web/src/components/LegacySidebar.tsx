@@ -189,6 +189,7 @@ import {
   archiveSelectedThreadEntries,
   buildMultiSelectThreadContextMenuItems,
   deleteSelectedThreadEntries,
+  excludeCascadeCoveredEntries,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -1990,7 +1991,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         }
 
         const archiveOutcome = await archiveSelectedThreadEntries({
-          entries: selectedThreadEntries,
+          entries: excludeCascadeCoveredEntries(selectedThreadEntries, (entry, parentThreadId) =>
+            readThreadShell({
+              environmentId: entry.threadRef.environmentId,
+              threadId: parentThreadId,
+            }),
+          ),
           archive: ({ threadRef }, onArchived) => archiveThread(threadRef, { onArchived }),
         });
         for (const failure of archiveOutcome.followupFailures) {
