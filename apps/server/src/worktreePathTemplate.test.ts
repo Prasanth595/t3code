@@ -82,6 +82,80 @@ it.layer(layerTest)("worktree path template", (it) => {
     }),
   );
 
+  it.effect("avoids branches that block the namespace in either direction", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { container, main } = yield* makeContainer;
+      yield* git(main, ["branch", "t3"]);
+      yield* git(main, ["branch", "fix/sidebar"]);
+      const options = { worktreePathTemplate: "{repoDir}/{branch}", pickFreeName: true };
+
+      const underBranch = yield* driver.createWorktree(
+        { cwd: main, path: null, refName: "main", newRefName: "t3/fix" },
+        options,
+      );
+      const overBranch = yield* driver.createWorktree(
+        { cwd: main, path: null, refName: "main", newRefName: "fix" },
+        options,
+      );
+
+      assert.equal(underBranch.worktree.refName, "t3-fix");
+      assert.equal(underBranch.worktree.path, path.join(container, "t3-fix"));
+      assert.equal(overBranch.worktree.refName, "fix-1");
+    }),
+  );
+
+  it.effect("gives concurrent launches with the same name different names", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { main } = yield* makeContainer;
+      const create = driver.createWorktree(
+        { cwd: main, path: null, refName: "main", newRefName: "same-words" },
+        { worktreePathTemplate: "{repoDir}/{branchLeaf}", pickFreeName: true },
+      );
+
+      const created = yield* Effect.all([create, create, create], { concurrency: "unbounded" });
+
+      assert.equal(new Set(created.map((result) => result.worktree.refName)).size, 3);
+    }),
+  );
+
+  it.effect("marks a worktree that is created again at its recorded path", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { container, main } = yield* makeContainer;
+      yield* git(main, ["branch", "recreated"]);
+
+      const created = yield* driver.createWorktree(
+        { cwd: main, path: path.join(container, "recreated"), refName: "recreated" },
+        { worktreePathTemplate: "{repoDir}/{branchLeaf}" },
+      );
+
+      assert.equal(yield* isT3CreatedWorktree(fs, path, created.worktree.path), true);
+    }),
+  );
+
+  it.effect("names the taken folder when a typed branch collides on its leaf", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const { main } = yield* makeContainer;
+      const options = { worktreePathTemplate: "{repoDir}/{branchLeaf}" };
+      yield* driver.createWorktree(
+        { cwd: main, path: null, refName: "main", newRefName: "feat/x" },
+        options,
+      );
+
+      const error = yield* driver
+        .createWorktree({ cwd: main, path: null, refName: "main", newRefName: "fix/x" }, options)
+        .pipe(Effect.flip);
+
+      assert.include(error.detail, "already exists");
+    }),
+  );
+
   it.effect("refuses a template that nests the worktree in a normal checkout", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

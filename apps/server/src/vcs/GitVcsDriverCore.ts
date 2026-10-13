@@ -3441,7 +3441,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const sanitizedBranch = targetBranch.replace(/\//g, "-");
     const repoName = path.basename(input.cwd);
     let worktreePath = input.path;
-    const template = input.path == null ? (options?.worktreePathTemplate ?? "") : "";
+    // A recreated worktree has an explicit path, but it still gets the mark.
+    const template = options?.worktreePathTemplate ?? "";
+    let releaseTemplateName: Effect.Effect<void> = Effect.void;
     if (worktreePath == null) {
       const home = yield* HostProcess.HomeDirectory;
       const parentDir = resolveWorktreesDirectory(
@@ -3470,17 +3472,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           checkoutRoot: repositoryPaths?.worktreeRoot ?? input.cwd,
           branch: targetBranch,
           pickFreeName: newRefName !== undefined && options?.pickFreeName === true,
-          isTaken: (candidate) =>
-            Effect.all([
-              branchExists(input.cwd, candidate.branch),
-              fileSystem.exists(candidate.path).pipe(Effect.orElseSucceed(() => true)),
-            ]).pipe(Effect.map(([branchTaken, pathTaken]) => branchTaken || pathTaken)),
+          listBranches: listLocalBranchNames(input.cwd),
+          pathExists: (candidate) =>
+            fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => true)),
           path,
           home,
         });
         worktreePath = placed.path;
         if (newRefName !== undefined) newRefName = placed.branch;
         targetBranch = placed.branch;
+        releaseTemplateName = placed.release;
       }
     }
     const args = newRefName
@@ -3511,7 +3512,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             }
           : {}),
       },
-    );
+    ).pipe(Effect.ensuring(releaseTemplateName));
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);

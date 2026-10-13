@@ -22,10 +22,26 @@ const templateError = (cwd: string, detail: string) =>
     detail: `${detail} Change the worktree path template in Settings → Storage.`,
   });
 
+/** Git stores refs as paths, so `t3` blocks `t3/x`, and `t3/x/y` blocks `t3/x`. */
+const branchConflicts = (candidate: string, branches: ReadonlyArray<string>) =>
+  branches.some(
+    (branch) =>
+      branch === candidate ||
+      branch.startsWith(`${candidate}/`) ||
+      candidate.startsWith(`${branch}/`),
+  );
+
+// Names picked but not yet created, so two launches with the same first words
+// in this process do not pick the same branch and folder. A claim that leaks
+// after a failure only gives a later launch with that name a suffix.
+const claimedNames = new Set<string>();
+
 /**
  * The folder and branch for a new worktree. With `pickFreeName`, a taken
- * branch or folder gets a `-1`, `-2` suffix on the branch, as
- * `renameBranch` does, so that the folder still follows the branch.
+ * branch or folder gets a `-1`, `-2` suffix on the branch, as `renameBranch`
+ * does, so that the folder still follows the branch. When a branch blocks
+ * the namespace, the name is flattened, as `t3/x` becomes `t3-x`. Run
+ * `release` after `git worktree add` ends.
  */
 export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function* (input: {
   readonly cwd: string;
@@ -35,10 +51,8 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
   readonly checkoutRoot: string;
   readonly branch: string;
   readonly pickFreeName: boolean;
-  readonly isTaken: (candidate: {
-    readonly branch: string;
-    readonly path: string;
-  }) => Effect.Effect<boolean, GitCommandError>;
+  readonly listBranches: Effect.Effect<ReadonlyArray<string>, GitCommandError>;
+  readonly pathExists: (path: string) => Effect.Effect<boolean>;
   readonly path: Path.Path;
   readonly home: string;
 }) {
@@ -70,15 +84,35 @@ export const placeTemplateWorktree = Effect.fn("placeTemplateWorktree")(function
     return resolved;
   };
 
-  const first = resolve(input.branch);
-  if (typeof first !== "string") return yield* first;
-  if (!input.pickFreeName || !(yield* input.isTaken({ branch: input.branch, path: first })))
-    return { branch: input.branch, path: first };
-  for (let suffix = 1; suffix <= MAX_NAME_SUFFIX; suffix += 1) {
-    const branch = `${input.branch}-${suffix}`;
-    const path = resolve(branch);
+  if (!input.pickFreeName) {
+    const path = resolve(input.branch);
     if (typeof path !== "string") return yield* path;
-    if (!(yield* input.isTaken({ branch, path }))) return { branch, path };
+    // A typed or pull request branch keeps its name, so a taken folder is an error.
+    if (yield* input.pathExists(path))
+      return yield* templateError(
+        input.cwd,
+        `The folder "${path}" for branch "${input.branch}" already exists. Remove it, or use {branch} instead of {branchLeaf}.`,
+      );
+    return { branch: input.branch, path, release: Effect.void };
+  }
+  const branches = yield* input.listBranches;
+  const flattened = input.branch.replaceAll("/", "-");
+  const bases = flattened === input.branch ? [input.branch] : [input.branch, flattened];
+  for (const base of bases) {
+    for (let suffix = 0; suffix <= MAX_NAME_SUFFIX; suffix += 1) {
+      const branch = suffix === 0 ? base : `${base}-${suffix}`;
+      const path = resolve(branch);
+      if (typeof path !== "string") return yield* path;
+      if (branchConflicts(branch, branches) || (yield* input.pathExists(path))) continue;
+      // Checked and claimed in one synchronous step, so no other fiber runs between.
+      const keys = [`branch:${input.gitCommonDir}:${branch}`, `path:${path}`];
+      if (keys.some((key) => claimedNames.has(key))) continue;
+      for (const key of keys) claimedNames.add(key);
+      const release = Effect.sync(() => {
+        for (const key of keys) claimedNames.delete(key);
+      });
+      return { branch, path, release };
+    }
   }
   return yield* templateError(
     input.cwd,
