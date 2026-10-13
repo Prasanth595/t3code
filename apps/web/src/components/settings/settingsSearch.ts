@@ -571,6 +571,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["terminal keybindings keyboard shortcuts priority shell focus"],
   },
   {
+    id: "repository-owner-filters",
+    title: "Repository owner filters",
+    to: "/settings/general",
+    searchTerms: [
+      "github organization org owner account filter pull requests sidebar usage work personal",
+    ],
+  },
+  {
     id: "app-toggle-shortcuts",
     title: "App toggle shortcuts",
     to: "/settings/general",

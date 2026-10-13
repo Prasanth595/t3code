@@ -429,6 +429,11 @@ export const ClientSettingsSchema = Schema.Struct({
   backgroundWorkDetails: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
   forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
+   * sidebar, and split usage by owner.
+   */
+  repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1837,6 +1842,7 @@ export const ClientSettingsPatch = Schema.Struct({
   appToggleShortcuts: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
+  repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
