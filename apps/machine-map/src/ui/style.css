@@ -2475,9 +2475,18 @@ dialog.palette .dialog-body {
     transition-duration: 0ms !important;
   }
 }
-/* The card subline is already mono and small. */
-.node .sub .build {
+/* MM-1002: the full build label on its own line. It wraps at a space and never cuts off. */
+.node .build-line {
+  margin-top: 8px;
+  font-size: 0.74rem;
+  opacity: 0.85;
+  overflow-wrap: break-word;
+}
+.node .build-line .build {
   font-size: inherit;
+}
+.map.compact .node .build-line {
+  font-size: 0.68rem;
 }
 
 /* Resources and health (MM-1506, MM-1508). Bars and charts change only when a sample arrives. */

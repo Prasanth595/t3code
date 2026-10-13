@@ -786,16 +786,16 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const queue = machineQueue(snapshot, portal.rotations, machine);
             const on = focus === machine.id;
             const dropTarget = target === machine.id;
+            // MM-1002: the build gets its own line under the name, so it never cuts off.
+            const build = state === "online" && status ? status : null;
             const sub =
-              state === "waiting" ? (
-                "Waiting to join"
-              ) : state === "offline" ? (
-                `Seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`
-              ) : status ? (
-                <BuildLabel status={status} />
-              ) : (
-                (machine.hostname ?? "No status yet")
-              );
+              state === "waiting"
+                ? "Waiting to join"
+                : state === "offline"
+                  ? `Seen ${timeAgo(presence?.lastSeenAt ?? null, now)}`
+                  : build
+                    ? null
+                    : (machine.hostname ?? "No status yet");
             return (
               <div
                 key={machine.id}
@@ -837,9 +837,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                   </span>
                   <span className="label">
                     {machine.name}
-                    <span className="sub">{sub}</span>
+                    {sub !== null && <span className="sub">{sub}</span>}
                   </span>
                 </div>
+                {build && (
+                  <div className="build-line">
+                    <BuildLabel status={build} />
+                  </div>
+                )}
                 {!readOnly && <CardMeters machineId={machine.id} />}
                 <div className="tags">
                   <BuildSticker standing={standings.get(machine.id)} />
