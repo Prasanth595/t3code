@@ -69,10 +69,11 @@ function lastChildUtility(element: ESTree.JSXElement) {
   return undefined;
 }
 
-/** JSX an expression can render: both branches of a ternary, the right of `&&`, a map callback's result. */
-function renderedBy(expression: ESTree.Node | null | undefined): ESTree.Node[] {
+/** JSX an expression can render: both branches of a ternary or `||`, the right of `&&`, a map callback's result. */
+function renderedBy(expression: ESTree.Node | JsxChild | null | undefined): ESTree.Node[] {
   if (!expression) return [];
   switch (expression.type) {
+    case "JSXExpressionContainer":
     case "ParenthesizedExpression":
       return renderedBy(expression.expression);
     case "JSXElement":
@@ -82,7 +83,9 @@ function renderedBy(expression: ESTree.Node | null | undefined): ESTree.Node[] {
     case "ConditionalExpression":
       return [...renderedBy(expression.consequent), ...renderedBy(expression.alternate)];
     case "LogicalExpression":
-      return renderedBy(expression.right);
+      return expression.operator === "&&"
+        ? renderedBy(expression.right)
+        : [...renderedBy(expression.left), ...renderedBy(expression.right)];
     case "CallExpression": {
       const callback = expression.arguments[0];
       if (callback?.type !== "ArrowFunctionExpression" && callback?.type !== "FunctionExpression")
@@ -109,44 +112,53 @@ function returnedBy(body: ESTree.Node): ESTree.Node[] {
   return found;
 }
 
-/** Whether an expression can render nothing, letting an earlier sibling end up last. */
-function mayRenderNothing(expression: ESTree.Node | JsxChild): boolean {
+type Rendered = "element" | "maybe" | "none";
+
+const either = (a: Rendered, b: Rendered): Rendered => (a === b ? a : "maybe");
+
+/** Whether an expression, or only its truthy values, always, maybe, or never renders an element; text counts as none. */
+function renders(expression: ESTree.Node | JsxChild, truthy = false): Rendered {
   switch (expression.type) {
+    case "JSXElement":
+      return "element";
+    case "JSXFragment": {
+      const children = expression.children.map((child) => renders(child));
+      if (children.includes("element")) return "element";
+      return children.includes("maybe") ? "maybe" : "none";
+    }
     case "JSXText":
-      return expression.value.trim() === "";
     case "JSXEmptyExpression":
-      return true;
+    case "Literal":
+    case "TemplateLiteral":
+      return "none";
     case "JSXExpressionContainer":
     case "ParenthesizedExpression":
-      return mayRenderNothing(expression.expression);
-    case "Literal":
-      return expression.value === null || expression.value === false;
+      return renders(expression.expression, truthy);
     case "Identifier":
-      return expression.name === "undefined";
-    case "LogicalExpression":
-    case "CallExpression":
-      return true;
+      return expression.name === "undefined" ? "none" : "maybe";
+    case "LogicalExpression": {
+      const right = renders(expression.right, truthy);
+      if (expression.operator === "&&") {
+        return truthy || renders(expression.left) === "element" ? right : either("none", right);
+      }
+      return either(renders(expression.left, expression.operator === "||"), right);
+    }
     case "ConditionalExpression":
-      return mayRenderNothing(expression.consequent) || mayRenderNothing(expression.alternate);
-    case "JSXFragment":
-      return expression.children.every(mayRenderNothing);
+      return either(renders(expression.consequent, truthy), renders(expression.alternate, truthy));
     default:
-      return false;
+      return "maybe";
   }
 }
 
-/** Nodes that can end up as the last rendered child. */
+/** Nodes that can end up as the last rendered element child. */
 function possiblyLast(children: ReadonlyArray<JsxChild>): ESTree.Node[] {
-  const meaningful = children.filter(
-    (child) =>
-      !(child.type === "JSXText" && child.value.trim() === "") &&
-      !(child.type === "JSXExpressionContainer" && child.expression.type === "JSXEmptyExpression"),
-  );
   const found: ESTree.Node[] = [];
-  for (let index = meaningful.length - 1; index >= 0; index--) {
-    const child = meaningful[index]!;
-    found.push(...renderedBy(child.type === "JSXExpressionContainer" ? child.expression : child));
-    if (!mayRenderNothing(child)) break;
+  for (let index = children.length - 1; index >= 0; index--) {
+    const child = children[index]!;
+    const rendered = renders(child);
+    if (rendered === "none") continue;
+    found.push(...renderedBy(child));
+    if (rendered === "element") break;
   }
   return found;
 }

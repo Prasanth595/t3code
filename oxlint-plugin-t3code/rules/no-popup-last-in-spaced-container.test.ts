@@ -135,6 +135,64 @@ const el = <div className="space-y-2"><Popover />{null}{show ? (<p />) : <span /
   );
 
   rule.invalid(
+    "reports a popup followed only by text, which is not an element child",
+    `${imports}
+const a = <div className="space-y-2"><Popover />{"After"}</div>;
+const b = <div className="space-y-2"><Popover /> After {1}{\`x\`}{true}</div>;
+const c = <div className="space-y-2"><Popover /><>text</></div>;`,
+    (output) => {
+      assert.strictEqual(output.match(/<Popover> can be the last child/g)?.length, 3);
+    },
+  );
+
+  rule.valid(
+    "allows a popup followed by a logical expression that always renders an element",
+    `${imports}
+const a = <div className="space-y-2"><Popover />{(ready && <p />) || <span />}</div>;
+const b = <div className="space-y-2"><Popover />{<p /> ?? <span />}{<p /> && <span />}</div>;`,
+  );
+
+  rule.invalid(
+    "reports a popup when a later logical expression may render text or nothing",
+    `${imports}
+const a = <div className="space-y-2"><Popover />{label || <span />}</div>;
+const b = <div className="space-y-2"><Popover />{ready && "Ready"}</div>;
+const c = <div className="space-y-2"><Popover />{items.map((item) => <p key={item} />)}</div>;
+const d = <div className="space-y-2"><Popover />{(ready && <p />) ?? <span />}</div>;`,
+    (output) => {
+      assert.strictEqual(output.match(/<Popover> can be the last child/g)?.length, 4);
+    },
+  );
+
+  rule.invalid(
+    "reports a popup followed by an unknown value",
+    `${imports}
+const a = <div className="space-y-2"><Popover />{children}</div>;
+const b = <div className="space-y-2"><Popover />{props.footer}</div>;`,
+    (output) => {
+      assert.strictEqual(output.match(/<Popover> can be the last child/g)?.length, 2);
+    },
+  );
+
+  rule.invalid(
+    "reports a popup on the left of an or that can be last",
+    `${imports}
+const el = <div className="space-y-2"><p />{(open && <Popover />) || <span />}</div>;`,
+  );
+
+  rule.valid(
+    "allows a popup before a nested ternary that always renders",
+    `${imports}
+const el = <div className="space-y-2"><Popover />{a ? <p /> : b ? <span /> : <i />}</div>;`,
+  );
+
+  rule.invalid(
+    "reports a popup before a nested ternary with an empty branch",
+    `${imports}
+const el = <div className="space-y-2"><Popover />{a ? <p /> : b ? "text" : <i />}</div>;`,
+  );
+
+  rule.invalid(
     "reports a popup last inside a direct or nested fragment",
     `${imports}
 const a = <div className="space-y-3"><p>Before</p><><Menu /></></div>;
