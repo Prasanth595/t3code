@@ -1,4 +1,4 @@
-import type { VoiceRecorder } from "@t3tools/client-runtime/voice-input";
+import { withVoiceNativeTimeout, type VoiceRecorder } from "@t3tools/client-runtime/voice-input";
 
 type Subscription = { remove(): void };
 
@@ -97,13 +97,17 @@ export function createLazyVoiceRecorder<TStatus, TRecorderState>(input: {
       subscription?.remove();
       subscription = null;
       retired = released;
-      void pending.then(() => {
+      const releaseRetired = () => {
         if (retired === released) {
           retiredUri = released.uri;
           retired = null;
         }
         released.release();
-      });
+      };
+      // A natively hung stop must not block releasing the recorder: bound the
+      // wait, then release regardless so the mic is never held past cleanup.
+      const settling = pending;
+      void withVoiceNativeTimeout(settling).then(releaseRetired, releaseRetired);
     },
   };
 }

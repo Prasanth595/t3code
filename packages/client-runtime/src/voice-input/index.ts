@@ -1,8 +1,10 @@
 export {
   VoiceInputController,
+  VOICE_NATIVE_OPERATION_TIMEOUT_MS,
   VOICE_RECORDING_LIMIT_SECONDS,
   voiceInputBlocksSubmission,
   voiceInputFreezesEditor,
+  withVoiceNativeTimeout,
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
   type VoiceInputPhase,

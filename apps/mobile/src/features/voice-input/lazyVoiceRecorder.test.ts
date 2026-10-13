@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { VoiceInputController } from "@t3tools/client-runtime/voice-input";
+import {
+  VOICE_NATIVE_OPERATION_TIMEOUT_MS,
+  VoiceInputController,
+} from "@t3tools/client-runtime/voice-input";
 
 import { createLazyVoiceRecorder, type VoiceRecordingInput } from "./lazyVoiceRecorder";
 
@@ -140,6 +143,27 @@ describe("createLazyVoiceRecorder", () => {
     await vi.waitFor(() => expect(native.release).toHaveBeenCalledTimes(1));
     expect(recorder.uri).toBe("file:///voice-0.m4a");
     expect(recorder.getStatus()).toBeNull();
+  });
+
+  it("releases the native recorder even when a pending stop never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const { recorder, created } = createHarness();
+      await recorder.prepareToRecordAsync();
+      const native = created[0]!;
+      native.stop.mockReturnValueOnce(new Promise<void>(() => {}));
+
+      void recorder.stop();
+      recorder.release();
+      expect(native.release).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(VOICE_NATIVE_OPERATION_TIMEOUT_MS);
+      expect(native.release).toHaveBeenCalledTimes(1);
+      expect(recorder.uri).toBe("file:///voice-0.m4a");
+      expect(recorder.getStatus()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("releases after a failed stop and creates a fresh recorder for the next start", async () => {

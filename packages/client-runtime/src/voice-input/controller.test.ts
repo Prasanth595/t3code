@@ -607,6 +607,58 @@ describe("VoiceInputController", () => {
     }
   });
 
+  it("releases audio setup that succeeds after its timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const setup = deferred<void>();
+      const releaseRecording = vi.fn(async () => undefined);
+      const harness = createHarness({
+        configureRecording: () => setup.promise,
+        releaseRecording,
+      });
+      const starting = harness.controller.start();
+      await vi.advanceTimersByTimeAsync(VOICE_NATIVE_OPERATION_TIMEOUT_MS);
+      await starting;
+      expect(harness.controller.currentState.phase).toBe("error");
+      expect(releaseRecording).not.toHaveBeenCalled();
+
+      setup.resolve(undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(releaseRecording).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("leaves a newer recording alone when timed-out setup succeeds late", async () => {
+    vi.useFakeTimers();
+    try {
+      const staleSetup = deferred<void>();
+      let setups = 0;
+      const releaseRecording = vi.fn(async () => undefined);
+      const harness = createHarness({
+        configureRecording: () => (++setups === 1 ? staleSetup.promise : Promise.resolve()),
+        releaseRecording,
+      });
+      const first = harness.controller.start();
+      await vi.advanceTimersByTimeAsync(VOICE_NATIVE_OPERATION_TIMEOUT_MS);
+      await first;
+      expect(harness.controller.currentState.phase).toBe("error");
+
+      await harness.controller.start();
+      expect(harness.controller.currentState.phase).toBe("recording");
+
+      staleSetup.resolve(undefined);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(releaseRecording).not.toHaveBeenCalled();
+
+      await harness.controller.interruptRecording();
+      expect(releaseRecording).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the new abort controller when restarting the same composer after cancellation", async () => {
     const transcription = deferred<string>();
     const transcriptionEntered = deferred<void>();

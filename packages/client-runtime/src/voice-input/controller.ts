@@ -10,7 +10,7 @@ export const VOICE_RECORDING_LIMIT_SECONDS = 5 * 60;
 // session stays held and every later recording fails with "already active".
 export const VOICE_NATIVE_OPERATION_TIMEOUT_MS = 10_000;
 
-function withVoiceNativeTimeout<T>(operation: Promise<T>): Promise<T> {
+export function withVoiceNativeTimeout<T>(operation: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(
@@ -293,8 +293,7 @@ export class VoiceInputController {
       }
       if (!this.isCurrent(operationToken)) return;
 
-      await withVoiceNativeTimeout(this.dependencies.configureRecording());
-      this.recordingConfigured = true;
+      await this.configureRecordingSession();
       if (!this.isCurrent(operationToken)) return;
       await this.dependencies.recorder.prepareToRecordAsync();
       if (!this.isCurrent(operationToken)) return;
@@ -521,6 +520,28 @@ export class VoiceInputController {
     } catch {
       // Final cleanup retries if the prompt release before transcription fails.
     }
+  }
+
+  private async configureRecordingSession(): Promise<void> {
+    const setup = this.dependencies.configureRecording();
+    try {
+      await withVoiceNativeTimeout(setup);
+    } catch (error) {
+      // A setup that finishes after its timeout still owns the audio session
+      // when it eventually succeeds: release it unless a live recording owns
+      // audio now, so a late completion cannot reactivate audio after cancel.
+      // Never tears down a newer session: that one has recordingConfigured.
+      void setup.then(
+        () => {
+          if (!this.recordingConfigured) {
+            void withVoiceNativeTimeout(this.dependencies.releaseRecording()).catch(() => {});
+          }
+        },
+        () => {},
+      );
+      throw error;
+    }
+    this.recordingConfigured = true;
   }
 
   private invalidateOperation(): void {
