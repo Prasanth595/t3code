@@ -150,6 +150,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
   const endpoint = `repos/${input.repository}`;
   const read = yield* api.rest({
     host: input.host,
+    cwd: input.cwd,
     operation: "runGitHubStackAction",
     path: `${endpoint}/stacks?pull_request=${input.number}`,
   });
@@ -191,6 +192,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     const [owner, name] = input.repository.split("/");
     const permissions = yield* api.graphql({
       host: input.host,
+      cwd: input.cwd,
       operation: "runGitHubStackAction",
       allowReserve: true,
       // `open` is non-empty here, so there is always a document.
@@ -225,6 +227,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     // GitHub's own "Rebase stack" has no API, and its per-PR "update branch" replays the old
     // copy of every lower layer into the one above it. The cascade moves each layer's own commits.
     yield* cascadeRebaseStack({
+      cwd: input.cwd,
       host: input.host,
       repository: input.repository,
       base: stack.base,
@@ -256,6 +259,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     );
   const request = yield* api.rest({
     host: input.host,
+    cwd: input.cwd,
     operation: "runGitHubStackAction",
     method: "PUT",
     path: `${endpoint}/pulls/${input.number}/merge-async`,
@@ -277,6 +281,7 @@ export const runGitHubStackAction = Effect.fn("runGitHubStackAction")(function* 
     yield* Effect.sleep(Math.min(1_000 * 2 ** attempt, 10_000));
     const poll = yield* api.rest({
       host: input.host,
+      cwd: input.cwd,
       operation: "runGitHubStackAction",
       path: `${endpoint}/pulls/${input.number}/merge-async/${encodeURIComponent(uuid)}`,
     });

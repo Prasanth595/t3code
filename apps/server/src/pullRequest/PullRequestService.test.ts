@@ -4490,6 +4490,52 @@ it.effect("reads the repositories one at a time when the search itself fails", (
     assert.strictEqual(result.entries.length, 2);
   }),
 );
+it.effect("asks for line counts once per account, from a checkout signed in as it", () =>
+  Effect.gen(function* () {
+    const asked: Array<{ cwd: string; repositories: ReadonlyArray<string> }> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/work/web", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/work/api", repository: "acme/api" }),
+        project({ id: "p3", title: "site", workspaceRoot: "/home/site", repository: "me/site" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          // Each folder's gh login, as a per-directory GH_CONFIG_DIR gives it.
+          getRoutingIdentity: (input) =>
+            Effect.succeed(
+              input.cwd.startsWith("/work/")
+                ? { accountId: "1", viewer: "work" }
+                : { accountId: "2", viewer: "personal" },
+            ),
+          listChangeRequestStats: (input) => {
+            asked.push({
+              cwd: input.cwd,
+              repositories: input.changeRequests.map((request) => request.repository),
+            });
+            return Effect.succeed([]);
+          },
+        }),
+      ],
+    });
+
+    yield* service.listStats({
+      refs: [
+        { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 },
+        { projectId: "p3" as ProjectId, repository: "me/site", number: 2 },
+        { projectId: "p2" as ProjectId, repository: "acme/api", number: 3 },
+      ],
+    });
+
+    assert.deepStrictEqual(
+      asked.toSorted((a, b) => a.cwd.localeCompare(b.cwd)),
+      [
+        { cwd: "/home/site", repositories: ["me/site"] },
+        { cwd: "/work/web", repositories: ["acme/web", "acme/api"] },
+      ],
+    );
+  }),
+);
 it.effect("fills in the line counts for the rows it is given", () =>
   Effect.gen(function* () {
     const asked: Array<unknown> = [];

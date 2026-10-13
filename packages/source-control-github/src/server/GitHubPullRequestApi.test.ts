@@ -60,7 +60,7 @@ type ApiCall =
 type ApiAnswer = Effect.Effect<GitHubApi.GitHubRestResponse, GitHubApi.GitHubApiError>;
 
 const mockedExecute = vi.fn<(call: ApiCall) => ApiAnswer>();
-const defaultCredential = (host: string) =>
+const defaultCredential = (host: string, _cwd?: string) =>
   Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
 const mockedCredential = vi.fn(defaultCredential);
 const mockedStackMemberships = vi.fn<(call: ApiCall) => ApiAnswer>(() =>
@@ -92,7 +92,7 @@ const mockApi = Layer.effect(
           Effect.map((answer) => answer.body),
         ),
       rest: (input) => mockedExecute({ kind: "rest", ...input }),
-      credential: (host) => mockedCredential(host),
+      credential: (host, cwd) => mockedCredential(host, cwd),
     });
   }),
 );
@@ -781,6 +781,55 @@ layer("GitHubPullRequestApi.layer", (it) => {
         s0_number: 7,
         s1_number: 8,
       });
+    }),
+  );
+
+  it.effect("batches linked pull requests per account, not per host", () =>
+    Effect.gen(function* () {
+      // Two checkouts whose gh logins differ, as a per-directory GH_CONFIG_DIR gives them.
+      mockedCredential.mockImplementation((host, cwd) =>
+        Effect.succeed({ token: Redacted.make(`token${cwd}`), fingerprint: `${host}:${cwd}` }),
+      );
+      const node = (number: number) => ({
+        number,
+        title: `Pull request ${number}`,
+        url: `https://github.com/acme/web/pull/${number}`,
+        author: { login: "octocat", name: "Octo Cat" },
+        baseRefName: "main",
+        headRefName: `feat/${number}`,
+        state: "OPEN",
+        isDraft: false,
+        updatedAt: "2026-08-24T12:34:56.000Z",
+      });
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                s0: {
+                  pullRequest: node(Number(call.kind === "graphql" && call.variables?.s0_number)),
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const reads = yield* Effect.forEach(
+        [
+          { cwd: "/work", repository: "acme/web", number: 7 },
+          { cwd: "/personal", repository: "octo/site", number: 8 },
+        ],
+        (read) => cli.getPullRequestSummary({ ...read, host: "github.com" }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("10 millis");
+      const summaries = yield* Fiber.join(reads);
+
+      expect(summaries.map((summary) => summary.headBranch)).toEqual(["feat/7", "feat/8"]);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect([varsAt(0).s0_owner, varsAt(1).s0_owner].toSorted()).toEqual(["acme", "octo"]);
     }),
   );
 
@@ -3273,7 +3322,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.acme.com" });
 
       expect(login).toBe("enterprise-user");
-      expect(mockedCredential).toHaveBeenCalledWith("github.acme.com");
+      expect(mockedCredential).toHaveBeenCalledWith("github.acme.com", "/w");
       expect(callAt(0)).toMatchObject({ kind: "rest", host: "github.acme.com", path: "user" });
     }),
   );

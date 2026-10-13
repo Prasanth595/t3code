@@ -396,6 +396,7 @@ const OWNER_HEAD_SCAN_LIMIT = 100;
 
 class PullRequestsByHeadRead extends Request.Class<
   {
+    readonly cwd: string;
     readonly host: string;
     readonly owner: string;
     readonly name: string;
@@ -560,6 +561,7 @@ export const make = Effect.gen(function* () {
   const headResolver = RequestResolver.makeGrouped<PullRequestsByHeadRead, string>({
     key: ({ request, context }) =>
       [
+        request.cwd,
         request.host,
         request.owner,
         request.name,
@@ -570,11 +572,12 @@ export const make = Effect.gen(function* () {
       ].join("\0"),
     resolver: (entries) => {
       const [first] = entries;
-      const { host, owner, name, allowReserve } = first.request;
+      const { cwd, host, owner, name, allowReserve } = first.request;
       const query = buildPullRequestsByHeadQuery(entries.map((entry) => entry.request));
       return graphqlJson(
         {
           host,
+          cwd,
           operation: "listPullRequestsByHead",
           query: query.document,
           variables: { owner, name, ...query.variables },
@@ -638,6 +641,7 @@ export const make = Effect.gen(function* () {
     const rows = yield* Effect.request(
       new PullRequestsByHeadRead({
         ...locator,
+        cwd: input.cwd,
         headRefName,
         state: input.state,
         limit: ownerMatch ? OWNER_HEAD_SCAN_LIMIT : limit,
@@ -682,6 +686,7 @@ export const make = Effect.gen(function* () {
       const decoded = yield* graphqlJson(
         {
           host: locator.host,
+          cwd: input.cwd,
           operation: "getPullRequest",
           query: PULL_REQUEST_BY_NUMBER_QUERY,
           variables: { owner: locator.owner, name: locator.name, number: parsed.number },
@@ -700,11 +705,13 @@ export const make = Effect.gen(function* () {
   );
 
   const readRepository = Effect.fn("GitHubSourceControlProvider.readRepository")(function* (
+    cwd: string,
     locator: GitHubRepositoryLocator,
   ) {
     const response = yield* rest(
       {
         host: locator.host,
+        cwd,
         operation: "getRepository",
         path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}`,
         allowReserve: true,
@@ -719,10 +726,12 @@ export const make = Effect.gen(function* () {
   });
 
   const readViewerLogin = Effect.fn("GitHubSourceControlProvider.readViewerLogin")(function* (
+    cwd: string,
     host: string,
   ) {
     const response = yield* rest({
       host,
+      cwd,
       operation: "getViewer",
       path: "user",
       allowReserve: true,
@@ -790,7 +799,7 @@ export const make = Effect.gen(function* () {
       // prefix. Without the default branch that collision cannot be ruled out, and the checkout
       // would reset the local default branch to the fork's commit, so it fails instead.
       const defaultBranch = isCrossRepository
-        ? yield* readRepository(base).pipe(
+        ? yield* readRepository(input.cwd, base).pipe(
             Effect.map((repository) => repository.default_branch ?? null),
           )
         : null;
@@ -808,7 +817,11 @@ export const make = Effect.gen(function* () {
         const known = remoteFor(headNameWithOwner);
         if (known !== null) return known;
         const [owner, name] = headNameWithOwner.split("/");
-        const fork = yield* readRepository({ host: base.host, owner: owner!, name: name! });
+        const fork = yield* readRepository(input.cwd, {
+          host: base.host,
+          owner: owner!,
+          name: name!,
+        });
         const originUrl = yield* git.readConfigValue(input.cwd, "remote.origin.url");
         return yield* git.ensureRemote({
           cwd: input.cwd,
@@ -911,6 +924,7 @@ export const make = Effect.gen(function* () {
     const result = yield* api
       .rest({
         host: input.url.host,
+        cwd: input.cwd,
         operation: "resolveLink",
         path: endpoint,
         maxResponseBytes: 1_000_000,
@@ -1004,6 +1018,7 @@ export const make = Effect.gen(function* () {
           );
         yield* rest({
           host: locator.host,
+          cwd: input.cwd,
           operation: "createPullRequest",
           method: "POST",
           // A user's own write may spend the reserve the background leaves for it.
@@ -1035,10 +1050,14 @@ export const make = Effect.gen(function* () {
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??
           (/^[^/\s]+$/.test(bareName)
-            ? { host: fallbackHost, owner: yield* readViewerLogin(fallbackHost), name: bareName }
+            ? {
+                host: fallbackHost,
+                owner: yield* readViewerLogin(input.cwd, fallbackHost),
+                name: bareName,
+              }
             : null);
         if (locator === null) return yield* failure("Repositories are named owner/name.");
-        return repositoryCloneUrls(yield* readRepository(locator));
+        return repositoryCloneUrls(yield* readRepository(input.cwd, locator));
       }).pipe(
         Effect.mapError(
           providerError("getRepositoryCloneUrls", input.cwd, { repository: input.repository }),
@@ -1050,7 +1069,7 @@ export const make = Effect.gen(function* () {
           input.repository,
           (environment.GH_HOST ?? "github.com").toLowerCase(),
         );
-        const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
+        const viewer = locator === null ? null : yield* readViewerLogin(input.cwd, locator.host);
         const owner = locator?.owner ?? viewer;
         const name = locator?.name ?? input.repository.trim();
         const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
@@ -1058,6 +1077,7 @@ export const make = Effect.gen(function* () {
         const response = yield* rest(
           {
             host,
+            cwd: input.cwd,
             operation: "createRepository",
             method: "POST",
             allowReserve: true,
@@ -1085,7 +1105,7 @@ export const make = Effect.gen(function* () {
           host: contextHost(input.context),
           context: input.context,
         });
-        const repository = yield* readRepository(locator);
+        const repository = yield* readRepository(input.cwd, locator);
         const branch = repository.default_branch?.trim() ?? "";
         return branch.length > 0 ? branch : null;
       }).pipe(Effect.mapError(providerError("getDefaultBranch", input.cwd))),
