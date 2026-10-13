@@ -596,6 +596,7 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
   private var touchScrollX = 0
   private var touchScrollY = 0
   private var touchScrolled = false
+  private var touchMovedCaret = false
 
   /**
    * Placeholder shown while the draft is empty. An editable TextView never ellipsizes its hint,
@@ -687,12 +688,20 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
       touchScrollX = scrollX
       touchScrollY = scrollY
       touchScrolled = false
+      touchMovedCaret = false
     }
     val handled = super.onTouchEvent(event)
     if (scrollX != touchScrollX || scrollY != touchScrollY) touchScrolled = true
+    if (
+      event.actionMasked == MotionEvent.ACTION_MOVE &&
+        (selectionStart != touchSelectionStart || selectionEnd != touchSelectionEnd)
+    ) {
+      touchMovedCaret = true
+    }
     val restoresCaret =
       event.actionMasked == MotionEvent.ACTION_UP &&
         touchScrolled &&
+        !touchMovedCaret &&
         touchSelectionStart >= 0 &&
         touchSelectionStart == touchSelectionEnd &&
         selectionStart == selectionEnd
@@ -709,6 +718,7 @@ internal class SelectionAwareEditText(context: Context) : EditText(context) {
       touchSelectionStart = -1
       touchSelectionEnd = -1
       touchScrolled = false
+      touchMovedCaret = false
     }
     return handled
   }
