@@ -58,29 +58,42 @@ export function arrowRaises(previous: ArrowRecord, next: ArrowRecord): boolean {
 }
 
 /**
- * MM-803: true when the changes raise access for `machineId`: a higher level or agent tools on an
- * arrow from it, or a higher map role for it.
+ * True when the changes raise access for a machine that `concerns` picks: a higher level or agent
+ * tools on an arrow from it, or a higher map role for it.
  */
-export function raisesOwnAccess(
+function raises(
   map: MachineMapDocument,
-  machineId: MachineId,
   changes: ReadonlyArray<MapChange>,
+  concerns: (machineId: MachineId) => boolean,
 ): boolean {
   let current = map;
   for (const change of changes) {
-    if (change._tag === "setArrow" && change.arrow.from === machineId) {
+    if (change._tag === "setArrow" && concerns(change.arrow.from)) {
       if (arrowRaises(findArrow(current, change.arrow.from, change.arrow.to), change.arrow)) {
         return true;
       }
     }
-    if (change._tag === "putMachine" && change.machine.id === machineId) {
-      const previousRole = findMachine(current, machineId)?.mapRole ?? "none";
+    if (change._tag === "putMachine" && concerns(change.machine.id)) {
+      const previousRole = findMachine(current, change.machine.id)?.mapRole ?? "none";
       if (roleRank(change.machine.mapRole) > roleRank(previousRole)) return true;
     }
     current = applyChanges(current, [change]).map;
   }
   return false;
 }
+
+/** MM-803: true when the changes raise access for `machineId`. */
+export const raisesOwnAccess = (
+  map: MachineMapDocument,
+  machineId: MachineId,
+  changes: ReadonlyArray<MapChange>,
+): boolean => raises(map, changes, (id) => id === machineId);
+
+/** MM-710: true when the changes raise an arrow or a map role of any machine. */
+export const raisesAnyAccess = (
+  map: MachineMapDocument,
+  changes: ReadonlyArray<MapChange>,
+): boolean => raises(map, changes, () => true);
 
 /** MM-802. Commands are not map changes, so a proposal cannot hold them: they need `edit`. */
 export const requiredRole = (tool: MapToolName): "read" | "propose" | "edit" => {

@@ -51,6 +51,7 @@ The T3 server side follows `machineMap.ts`. These details are not in the types:
 - Connect: open a WebSocket to `wss://t3.yarden-zamir.com/connect` with the headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Send `hello` first. A new connection closes the older one of the same machine (code 4000). A removed machine gets code 4004.
 - Liveness: send the text `ping`. The portal answers `pong` without waking the Durable Object (MM-1001).
 - Tool calls: `toolResult.result` has the shape `MapToolResult` in `src/api.ts`. A write answers `applied` with a revision, or `proposed` with a proposal id.
+- Emergency pause (MM-711): while the portal is paused, every `toolCall` gets `toolResult` with `ok: false` and an error that says so.
 - Rotation: the old secret works until the machine sends `rotated`, or until the rotation expires after 24 hours. A machine that stays offline past that needs a new join code.
 
 ## Limits
