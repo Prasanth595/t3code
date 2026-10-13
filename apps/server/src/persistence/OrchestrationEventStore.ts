@@ -33,7 +33,6 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Option from "effect/Option";
-import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -71,7 +70,7 @@ export class OrchestrationEventStore extends Context.Service<
      * Read only V2 thread events from the application log.
      *
      * Reads in fixed-size sequence pages until the filtered range is exhausted;
-     * `limit` caps the total emitted events across pages.
+     * `limit` caps raw rows across pages, including skipped unknown types.
      *
      * A row whose `event_type` this build does not know fails the read unless
      * `skipUnknownEventTypes` is set, which logs and drops it instead. Only
@@ -193,8 +192,7 @@ const ProjectEventPersistedRowSchema = Schema.Struct({
   metadata: EventMetadataFromJsonString,
 });
 
-/** Exported so tests can exercise a full raw page without hardcoding a number that could drift. */
-export const READ_PAGE_SIZE = 500;
+const READ_PAGE_SIZE = 500;
 
 interface ApplicationEventRow {
   readonly sequence: number;
@@ -283,14 +281,18 @@ function rowToApplicationStoredEvent(
 
 const isKnownProjectEventType = Schema.is(ProjectEventType);
 
-/** Whether `row.event_type` is a discriminant this build knows for its aggregate kind. */
-function isKnownApplicationEventType(
-  row: Pick<ApplicationEventRow, "aggregate_kind" | "event_type">,
-): boolean {
-  return row.aggregate_kind === "project"
+/** Filter only unknown discriminants; known types still undergo strict payload decoding. */
+const keepReplayRow = (row: ApplicationEventRow, skipUnknownEventTypes?: boolean) =>
+  skipUnknownEventTypes !== true ||
+  (row.aggregate_kind === "project"
     ? isKnownProjectEventType(row.event_type)
-    : isKnownOrchestrationV2EventType(row.event_type);
-}
+    : isKnownOrchestrationV2EventType(row.event_type))
+    ? Effect.succeed(true)
+    : Effect.logWarning("Skipping an application event row with an unknown event type", {
+        aggregateKind: row.aggregate_kind,
+        sequence: row.sequence,
+        eventTypeLength: row.event_type.length,
+      }).pipe(Effect.as(false));
 
 function inferActorKind(event: UnsequencedProjectEvent): typeof ActorKind.Type {
   if (event.commandId !== null && event.commandId.startsWith("provider:")) {
@@ -560,20 +562,13 @@ const makeEventStore = Effect.gen(function* () {
         );
       },
     ).pipe(
-      Stream.filterMapEffect((row) =>
-        input?.skipUnknownEventTypes === true && !isKnownOrchestrationV2EventType(row.event_type)
-          ? // Written by a newer build; a known type with a bad payload still fails.
-            Effect.logWarning("Skipping an application event row with an unknown event type", {
-              threadId: row.stream_id,
-              sequence: row.sequence,
-              eventTypeLength: row.event_type.length,
-            }).pipe(Effect.as(Result.failVoid))
-          : rowToV2StoredEvent(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError("OrchestrationEventStore.readAgentEvents:decode"),
-              ),
-              Effect.map(Result.succeed),
-            ),
+      Stream.filterEffect((row) => keepReplayRow(row, input?.skipUnknownEventTypes)),
+      Stream.mapEffect((row) =>
+        rowToV2StoredEvent(row).pipe(
+          Effect.mapError(
+            toPersistenceDecodeError("OrchestrationEventStore.readAgentEvents:decode"),
+          ),
+        ),
       ),
     );
   };
@@ -660,10 +655,7 @@ const makeEventStore = Effect.gen(function* () {
     ),
   );
 
-  // Pagination counts raw SQL rows (not post-filter decoded events), exactly
-  // like readAgentEvents: a page that reads a full READ_PAGE_SIZE of raw rows
-  // must keep paginating even if some of those rows get dropped below as
-  // unknown, or the cursor and the "more pages?" check would both undercount.
+  // Advance over raw rows so even a full page of unknown types cannot end replay early.
   const catchUpApplicationEvents = (input: {
     readonly afterSequence: number;
     readonly throughSequence: number;
@@ -691,20 +683,13 @@ const makeEventStore = Effect.gen(function* () {
         }),
       ),
     ).pipe(
-      Stream.filterMapEffect((row) =>
-        input.skipUnknownEventTypes === true && !isKnownApplicationEventType(row)
-          ? // Written by a newer build; a known type with a bad payload still fails.
-            Effect.logWarning("Skipping an application event row with an unknown event type", {
-              threadId: row.stream_id,
-              sequence: row.sequence,
-              eventTypeLength: row.event_type.length,
-            }).pipe(Effect.as(Result.failVoid))
-          : rowToApplicationStoredEvent(row).pipe(
-              Effect.mapError(
-                toPersistenceDecodeError("OrchestrationEventStore.readApplicationEvents:decode"),
-              ),
-              Effect.map(Result.succeed),
-            ),
+      Stream.filterEffect((row) => keepReplayRow(row, input.skipUnknownEventTypes)),
+      Stream.mapEffect((row) =>
+        rowToApplicationStoredEvent(row).pipe(
+          Effect.mapError(
+            toPersistenceDecodeError("OrchestrationEventStore.readApplicationEvents:decode"),
+          ),
+        ),
       ),
     );
 
