@@ -3,7 +3,13 @@
  */
 import { useEffect, useState } from "react";
 import * as Schema from "effect/Schema";
-import { MachineId, PortalEvent, type PortalSnapshot } from "@t3tools/contracts/machineMap";
+import {
+  MachineId,
+  PortalEvent,
+  type MachineMapDocument,
+  type MapPosition,
+  type PortalSnapshot,
+} from "@t3tools/contracts/machineMap";
 
 import { PauseEvent, type PauseState, type PendingRotation, type RotationsEvent } from "../api.ts";
 
@@ -61,6 +67,34 @@ export function reduce(state: PortalState, event: PageEvent): PortalState {
     case "proposals":
       return { ...state, snapshot: { ...snapshot, proposals: event.proposals } };
   }
+}
+
+/**
+ * A machine position that the page shows before the map holds it: a dropped machine stays where
+ * the owner let go while the save runs.
+ */
+export interface HeldPosition {
+  readonly machineId: MachineId;
+  readonly position: MapPosition;
+  /** The revision that saved the position. Null until the portal answers. */
+  readonly revision: number | null;
+}
+
+/**
+ * Drops the held positions that the map caught up with: the map has the same position, or the map
+ * reached the revision that saved it. Returns the same array when nothing changed.
+ */
+export function settleHeldPositions(
+  held: ReadonlyArray<HeldPosition>,
+  map: MachineMapDocument,
+): ReadonlyArray<HeldPosition> {
+  const open = held.filter((h) => {
+    const machine = map.machines.find((m) => m.id === h.machineId);
+    if (!machine) return false;
+    if (h.revision !== null && map.revision >= h.revision) return false;
+    return machine.position.x !== h.position.x || machine.position.y !== h.position.y;
+  });
+  return open.length === held.length ? held : open;
 }
 
 const RotationsEventSchema = Schema.TaggedStruct("rotations", {

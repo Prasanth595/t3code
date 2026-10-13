@@ -17,6 +17,7 @@ import {
   type Dialog,
   type DraftChange,
   type Portal,
+  type SubmitOutcome,
 } from "./context.ts";
 import { machineQueue } from "./derive.ts";
 import { DialogHost, Palette } from "./dialogs.tsx";
@@ -131,20 +132,30 @@ export function App() {
     location.hash = formatRoute({ view: view ?? route.view, selection });
   };
 
-  const submit = (summary: string, changes: ReadonlyArray<MapChange>) => {
+  const submit = async (
+    summary: string,
+    changes: ReadonlyArray<MapChange>,
+  ): Promise<SubmitOutcome> => {
     if (draft) {
       try {
         applyChanges(map, changes);
-        setDraft([...draft, { summary, changes }]);
       } catch (error) {
         setNotice({ kind: "error", text: errorText(error) });
+        return { _tag: "failed" };
       }
-      return;
+      setDraft([...draft, { summary, changes }]);
+      return { _tag: "held" };
     }
-    call(async () => {
+    try {
       const result = await callApi<WriteResult>("POST", "/api/changes", { summary, changes });
-      return result._tag === "applied" ? undefined : "The change waits in the Inbox.";
-    });
+      setNotice(
+        result._tag === "applied" ? null : { kind: "ok", text: "The change waits in the Inbox." },
+      );
+      return result;
+    } catch (error) {
+      setNotice({ kind: "error", text: errorText(error) });
+      return { _tag: "failed" };
+    }
   };
 
   const command = (machineId: MachineId, input: MachineCommandInput, options?: CommandOptions) => {
