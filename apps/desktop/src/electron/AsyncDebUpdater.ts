@@ -1,46 +1,60 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Package installation runs at the native Electron adapter boundary.
-import * as NodeChildProcess from "node:child_process";
-import * as NodePath from "node:path";
+import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { autoUpdater as nativeAutoUpdater } from "electron";
 import { DebUpdater } from "electron-updater";
 
+class DebInstallCommandError extends Schema.TaggedError<DebInstallCommandError>()(
+  "DebInstallCommandError",
+  { command: Schema.String, exitCode: Schema.Number },
+) {
+  override get message() {
+    return `${this.command} exited with code ${this.exitCode}.`;
+  }
+}
+
 const quoteShellArgument = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-const runInstallCommand = (command: string, args: readonly string[]): Promise<void> =>
-  new Promise((resolve, reject) => {
-    NodeChildProcess.execFile(
-      command,
-      args,
-      {
-        env: {
-          ...process.env,
-          PATH: (process.env.PATH ?? "")
-            .split(NodePath.delimiter)
-            .filter(NodePath.isAbsolute)
-            .join(NodePath.delimiter),
-        },
-      },
-      (error) => (error === null ? resolve() : reject(error)),
+const runInstallCommand = (command: string, args: readonly string[]) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const exitCode = yield* spawner.exitCode(
+      ChildProcess.make(command, args, {
+        env: { PATH: (process.env.PATH ?? "").split(":").filter(path.isAbsolute).join(":") },
+        stdin: "ignore",
+        stdout: "inherit",
+        stderr: "inherit",
+      }),
     );
+    if (exitCode !== 0) return yield* new DebInstallCommandError({ command, exitCode });
   });
 
 /** Keep authentication and package installation off Electron's main event loop. */
 export class AsyncDebUpdater extends DebUpdater {
+  readonly runInstallCommand: (command: string, args: readonly string[]) => Promise<void>;
+
+  constructor(run: (command: string, args: readonly string[]) => Promise<void>) {
+    super();
+    this.runInstallCommand = run;
+  }
   private runPackageCommand(command: string, args: readonly string[]) {
-    if (this.isRunningAsRoot()) return runInstallCommand(command, args);
+    if (this.isRunningAsRoot()) return this.runInstallCommand(command, args);
     const [sudo, ...sudoArgs] = this.sudoWithArgs(`${this.app.name} would like to update`);
     if (!sudo) return Promise.reject(new Error("No elevation command available."));
     // gksudo/kdesudo accept a command string; pkexec/sudo/beesu accept argv.
     const elevatedArgs = /gksudo|kdesudo/i.test(sudo)
       ? [...sudoArgs, [command, ...args].map(quoteShellArgument).join(" ")]
       : [...sudoArgs, command, ...args];
-    return runInstallCommand(sudo, elevatedArgs);
+    return this.runInstallCommand(sudo, elevatedArgs);
   }
 
-  override async quitAndInstall(_isSilent = false, isForceRunAfter = false): Promise<void> {
+  override async quitAndInstall(isSilent = false, isForceRunAfter = false): Promise<void> {
     if (this.quitAndInstallCalled) return;
-    // LinuxUpdater.installerPath is shell-escaped. execFile needs the raw path.
+    // LinuxUpdater.installerPath is shell-escaped. The process spawner needs the raw path.
     const installerPath = this.downloadedUpdateHelper?.file;
     if (!installerPath || !this.downloadedUpdateHelper?.downloadedFileInfo) {
       throw new Error("No downloaded .deb available to install.");
@@ -73,7 +87,7 @@ export class AsyncDebUpdater extends DebUpdater {
       } else {
         throw new Error(`Package manager ${packageManager} not supported`);
       }
-      if (isForceRunAfter) this.app.relaunch();
+      if (isSilent ? isForceRunAfter : this.autoRunAppAfterInstall) this.app.relaunch();
     } catch (error) {
       this.quitAndInstallCalled = false;
       throw error;
@@ -84,3 +98,10 @@ export class AsyncDebUpdater extends DebUpdater {
     });
   }
 }
+
+/** Bridge the desktop runtime's process service into electron-updater's Promise API. */
+export const make = Effect.gen(function* () {
+  const context = yield* Effect.context<ChildProcessSpawner.ChildProcessSpawner | Path.Path>();
+  const run = Effect.runPromiseWith(context);
+  return new AsyncDebUpdater((command, args) => run(runInstallCommand(command, args)));
+});
