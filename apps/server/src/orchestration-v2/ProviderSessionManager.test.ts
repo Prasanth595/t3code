@@ -14,7 +14,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  type ProviderSessionId,
+  ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -4505,8 +4505,8 @@ it.effect(
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 4);
 
-        // The second thread has no persisted provider thread, so nothing is unloaded.
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        // Loaded native state must be released even before a provider-thread row is persisted.
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
@@ -4514,7 +4514,10 @@ it.effect(
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
         // The runtime stays up for the second thread; the first thread's
         // native state is unloaded after its turn is interrupted.
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread",
+          "native-thread",
+        ]);
 
         yield* manager.detach({ providerSessionId, threadId: secondThreadId });
         yield* TestClock.adjust("1 second");
@@ -5005,5 +5008,156 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect.each([true, false])(
+  "unloads the native writer owned by a session after its projected row is rebound (session changed: %s)",
+  (sessionChanged) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:rebound-native-writer");
+        const sessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId: sessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const loaded = yield* runtime.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId,
+            providerSessionId: sessionId,
+            now,
+          }),
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const replacementSessionId = ProviderSessionId.make("session:replacement-writer");
+        // The outbox runs after this rebind commits. It must unload the native
+        // reference in the old process, never the new row's replacement ref.
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+              occurredAt: now,
+              payload: {
+                ...loaded,
+                providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+                providerSessionId: sessionChanged ? replacementSessionId : sessionId,
+                nativeThreadRef: {
+                  driver: CODEX_DRIVER,
+                  nativeId: "replacement-native-ref",
+                  strength: "strong",
+                },
+              },
+            },
+          ],
+        });
+        yield* manager.detach({ threadId, providerSessionId: sessionId });
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          loaded.nativeThreadRef!.nativeId!,
+        ]);
+        yield* manager.detach({ threadId, providerSessionId: sessionId });
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          loaded.nativeThreadRef!.nativeId!,
+        ]);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexProviderCapabilitiesV2 }),
+        ),
+      );
+    }),
+);
+
+it.effect.each([false, true])(
+  "releases the old Codex account writer only when no other conversation is attached (sibling: %s)",
+  (hasSibling) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:release-empty-codex");
+        const siblingId = ThreadId.make("thread:keep-codex-sibling");
+        const providerSessionId = ids.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator: ids, threadId: siblingId, now }),
+          ],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const loaded = yield* runtime.resumeThread({
+          providerThread: makeProviderThread({
+            idAllocator: ids,
+            threadId,
+            providerSessionId,
+            now,
+          }),
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* ids.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...loaded,
+                providerInstanceId: ProviderInstanceId.make("codex-alternate"),
+                providerSessionId: ProviderSessionId.make("session:alternate-account"),
+              },
+            },
+          ],
+        });
+        if (hasSibling) {
+          yield* manager.open({
+            threadId: siblingId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+        }
+        yield* manager.detach({ threadId, providerSessionId });
+        assert.equal((yield* Ref.get(state)).closeCount, hasSibling ? 0 : 1);
+        assert.equal(Option.isSome(yield* manager.get(providerSessionId)), hasSibling);
+        if (hasSibling) yield* manager.close(providerSessionId);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        yield* manager.detach({ threadId, providerSessionId });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 1_000, capabilities: CodexProviderCapabilitiesV2 }),
+        ),
+      );
     }),
 );

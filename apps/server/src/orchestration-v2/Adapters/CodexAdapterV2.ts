@@ -6554,6 +6554,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
                 Effect.flatMap(decodeCodexResumeMetadata),
               );
+              if (response.thread.id !== nativeThreadId) {
+                return yield* toProtocolError("Codex resumed a different native conversation.");
+              }
               // Codex follows a resume with a goal snapshot notification; the
               // run's first turn writes it if it differs from the stored goal.
               return {
