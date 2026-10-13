@@ -406,6 +406,8 @@ export function applyServerSettingsPatch(
     projectSettingsOverrides: projectSettingsOverridesPatch,
     // Entry replacement per project, like the override record above.
     pinnedProjectScriptIds: pinnedProjectScriptIdsPatch,
+    // Replaced per surface: deepMerge would merge the layout rows index by index.
+    threadCardLayouts: threadCardLayoutsPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
     // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -497,6 +499,9 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    ...(threadCardLayoutsPatch === undefined
+      ? {}
+      : { threadCardLayouts: { ...current.threadCardLayouts, ...threadCardLayoutsPatch } }),
     favorites,
     providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined

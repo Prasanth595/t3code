@@ -46,7 +46,7 @@ import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspace
 import { useThreadSearch } from "../../state/queries";
 import { useThreadJumpShortcuts } from "../keyboard/threadKeyboardShortcuts";
 import { usePendingThreadOrder } from "../../state/thread-order";
-import { threadListEnvironmentsAtom } from "../../state/server";
+import { mobileThreadCardLayoutAtom, threadListEnvironmentsAtom } from "../../state/server";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
@@ -546,6 +546,7 @@ export function HomeScreen(props: HomeScreenProps) {
   // Threads on servers without the settlement capability never classify as
   // settled (the user could neither un-settle nor pin them).
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
+  const cardLayout = useAtomValue(mobileThreadCardLayoutAtom);
   const {
     providersByEnvironmentId,
     machineByEnvironmentId,
@@ -798,6 +799,7 @@ export function HomeScreen(props: HomeScreenProps) {
               : null
           }
           environmentMachine={machineByEnvironmentId.get(thread.environmentId)}
+          cardLayout={cardLayout}
           searchMatch={threadSearchMatchByKey.get(
             threadSearchMatchKey({
               environmentId: thread.environmentId,
@@ -856,6 +858,7 @@ export function HomeScreen(props: HomeScreenProps) {
       autoSettleOptOutEnvironmentIds,
       pinningEnvironmentIds,
       autoSettleOptOutEnvironmentIds,
+      cardLayout,
       machineByEnvironmentId,
       pinReorderEnvironmentIds,
       projectByKey,
@@ -892,6 +895,7 @@ export function HomeScreen(props: HomeScreenProps) {
     () => ({
       projectByKey,
       projectTitleByProjectKey: v2ProjectTitleByProjectKey,
+      cardLayout,
       listEnvironments,
       savedConnectionsById: props.savedConnectionsById,
       searchQuery: props.searchQuery,
@@ -905,6 +909,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.searchQuery,
       selectedThreadKey,
       props.savedConnectionsById,
+      cardLayout,
       listEnvironments,
       threadSearchMatchByKey,
       v2ProjectTitleByProjectKey,
