@@ -8,12 +8,33 @@ import {
   isWorkspaceAudioPreviewPath,
   isWorkspaceBrowserPreviewPath,
   isWorkspaceImagePreviewPath,
+  isWorkspaceOfficePreviewPath,
+  isWorkspacePresentationPreviewPath,
   isWorkspacePreviewEntryPath,
+  isWorkspaceSpreadsheetPreviewPath,
   isWorkspaceVideoPreviewPath,
   mediaKindFromPath,
+  officeMimeTypeFromExtension,
 } from "./filePreview.ts";
 
 describe("workspace file previews", () => {
+  it.each(["data.xlsx", "budget.XLS", "sheets#draft.xlsx", "reports?old/data.xlsx"])(
+    "recognizes spreadsheet preview path %s",
+    (path) => {
+      expect(isWorkspaceSpreadsheetPreviewPath(path)).toBe(true);
+      expect(isWorkspaceOfficePreviewPath(path)).toBe(true);
+      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+    },
+  );
+
+  it.each(["deck.pptx", "slides.PPT", "pitch#v1.pptx", "talks?old/deck.pptx"])(
+    "recognizes presentation preview path %s",
+    (path) => {
+      expect(isWorkspacePresentationPreviewPath(path)).toBe(true);
+      expect(isWorkspaceOfficePreviewPath(path)).toBe(true);
+      expect(isWorkspacePreviewEntryPath(path)).toBe(true);
+    },
+  );
   it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
     "recognizes browser preview path %s",
     (path) => {
@@ -50,11 +71,19 @@ describe("workspace file previews", () => {
     expect(isWorkspacePreviewEntryPath(path)).toBe(false);
   });
 
-  it("serves audio in place from the host like video and browser documents", () => {
+  it("serves audio and office files in place from the host like video and browser documents", () => {
     expect(isWorkspaceAudioPreviewPath("notes/recording.WAV")).toBe(true);
     expect(isWorkspaceAudioPreviewPath("recording.wav.ts")).toBe(false);
     expect(hostPreviewMimeTypeFromExtension(".m4a")).toBe("audio/mp4");
     expect(hostPreviewMimeTypeFromExtension(".mp4")).toBe("video/mp4");
+    expect(hostPreviewMimeTypeFromExtension(".xlsx")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    expect(hostPreviewMimeTypeFromExtension(".xls")).toBe("application/vnd.ms-excel");
+    expect(hostPreviewMimeTypeFromExtension(".pptx")).toBe(
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    );
+    expect(hostPreviewMimeTypeFromExtension(".ppt")).toBe("application/vnd.ms-powerpoint");
     expect(hostPreviewMimeTypeFromExtension(".txt")).toBeNull();
   });
 });
@@ -92,6 +121,22 @@ describe("attachment preview classification", () => {
     ["report.pdf", "application/pdf", "pdf"],
     ["page.HTML", "", "html"],
     ["recording.mp3", "", "audio"],
+    ["sheet.xlsx", "", "spreadsheet"],
+    ["legacy.xls", "", "spreadsheet"],
+    ["slides.pptx", "", "presentation"],
+    ["deck.ppt", "", "presentation"],
+    ["sheet.xlsx", "application/octet-stream", "spreadsheet"],
+    ["slides.pptx", "application/octet-stream", "presentation"],
+    [
+      "custom.bin",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "spreadsheet",
+    ],
+    [
+      "custom.bin",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "presentation",
+    ],
     ["payload", "application/problem+json", "text"],
     ["archive.zip", "application/zip", "unsupported"],
     ["misleading.json", "application/pdf", "pdf"],

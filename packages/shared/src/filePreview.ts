@@ -8,6 +8,10 @@ const ICON_EXTENSION_BY_MIME_TYPE: Readonly<Record<string, string>> = {
   "application/pdf": "pdf",
   "application/zip": "zip",
   "application/vnd.sqlite3": "sqlite",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/vnd.ms-powerpoint": "ppt",
   "text/x-python": "py",
   "text/javascript": "js",
   "text/x-ruby": "rb",
@@ -29,6 +33,8 @@ export type FilePreviewKind =
   | "html"
   | "markdown"
   | "text"
+  | "spreadsheet"
+  | "presentation"
   | "unsupported";
 
 /** Content classification is identical for captured attachments and workspace references. */
@@ -43,6 +49,16 @@ export function filePreviewKind(file: {
   if (mime === "application/pdf") return "pdf";
   if (mime === "text/html") return "html";
   if (mime === "text/markdown" || mime === "text/x-markdown") return "markdown";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mime === "application/vnd.ms-excel"
+  )
+    return "spreadsheet";
+  if (
+    mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+    mime === "application/vnd.ms-powerpoint"
+  )
+    return "presentation";
   if (mime.startsWith("image/")) return "image";
   if (mime.startsWith("video/")) return "video";
   if (mime.startsWith("audio/")) return "audio";
@@ -50,6 +66,8 @@ export function filePreviewKind(file: {
     if (extension === ".pdf") return "pdf";
     if (/^\.html?$/.test(extension)) return "html";
     if (/^\.(md|markdown|mdown|mkd|mdx)$/.test(extension)) return "markdown";
+    if (/^\.(xlsx|xls)$/.test(extension)) return "spreadsheet";
+    if (/^\.(pptx|ppt)$/.test(extension)) return "presentation";
     const media = mediaMimeTypeFromExtension(extension);
     if (media?.startsWith("image/")) return "image";
     if (media?.startsWith("video/")) return "video";
@@ -134,6 +152,26 @@ const AUDIO_MIME_TYPE_BY_EXTENSION = new Map([
   [".aiff", "audio/aiff"],
 ]);
 
+export const WORKSPACE_SPREADSHEET_PREVIEW_EXTENSIONS = [".xlsx", ".xls"] as const;
+export const WORKSPACE_PRESENTATION_PREVIEW_EXTENSIONS = [".pptx", ".ppt"] as const;
+export const WORKSPACE_OFFICE_PREVIEW_EXTENSIONS = [
+  ...WORKSPACE_SPREADSHEET_PREVIEW_EXTENSIONS,
+  ...WORKSPACE_PRESENTATION_PREVIEW_EXTENSIONS,
+] as const;
+
+const OFFICE_MIME_TYPE_BY_EXTENSION = new Map([
+  [".xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  [".xls", "application/vnd.ms-excel"],
+  [".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"],
+  [".ppt", "application/vnd.ms-powerpoint"],
+]);
+
+/** Office spreadsheet and presentation formats the server can serve in place. */
+export function officeMimeTypeFromExtension(extension: string): string | null {
+  if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
+  return OFFICE_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ?? null;
+}
+
 /** Audio a player can request inline; the server serves these with byte ranges like video. */
 export function audioMimeTypeFromExtension(extension: string): string | null {
   if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
@@ -149,12 +187,13 @@ export function mediaMimeTypeFromExtension(extension: string): string | null {
   );
 }
 
-/** Files the server serves in place from anywhere on its host: media, audio and browser documents. */
+/** Files the server serves in place from anywhere on its host: media, audio, office and browser documents. */
 export function hostPreviewMimeTypeFromExtension(extension: string): string | null {
   if (!/^\.[a-z0-9]+$/i.test(extension)) return null;
   return (
     mediaMimeTypeFromExtension(extension) ??
     audioMimeTypeFromExtension(extension) ??
+    officeMimeTypeFromExtension(extension) ??
     BROWSER_MIME_TYPE_BY_EXTENSION.get(extension.toLowerCase()) ??
     null
   );
@@ -204,6 +243,18 @@ export function isWorkspaceImagePreviewPath(path: string): boolean {
   return hasPreviewExtension(path, WORKSPACE_IMAGE_PREVIEW_EXTENSIONS);
 }
 
+export function isWorkspaceSpreadsheetPreviewPath(path: string): boolean {
+  return hasPreviewExtension(path, WORKSPACE_SPREADSHEET_PREVIEW_EXTENSIONS);
+}
+
+export function isWorkspacePresentationPreviewPath(path: string): boolean {
+  return hasPreviewExtension(path, WORKSPACE_PRESENTATION_PREVIEW_EXTENSIONS);
+}
+
+export function isWorkspaceOfficePreviewPath(path: string): boolean {
+  return hasPreviewExtension(path, WORKSPACE_OFFICE_PREVIEW_EXTENSIONS);
+}
+
 /** File viewers receive literal filesystem paths, not Markdown URLs. */
 export function isWorkspaceVideoPreviewPath(path: string): boolean {
   return videoMimeType({ name: path, mimeType: "" }) !== null;
@@ -215,5 +266,9 @@ export function isWorkspaceAudioPreviewPath(path: string): boolean {
 }
 
 export function isWorkspacePreviewEntryPath(path: string): boolean {
-  return isWorkspaceBrowserPreviewPath(path) || isWorkspaceImagePreviewPath(path);
+  return (
+    isWorkspaceBrowserPreviewPath(path) ||
+    isWorkspaceImagePreviewPath(path) ||
+    isWorkspaceOfficePreviewPath(path)
+  );
 }

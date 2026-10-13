@@ -19,6 +19,8 @@ import { cn } from "~/lib/utils";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
+import { ExcelPreview } from "./ExcelPreview";
+import { PowerPointPreview } from "./PowerPointPreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
   FileSurfaceAction,
@@ -274,6 +276,20 @@ export function AttachmentFilePreview(props: {
         onError={() => setError("Unable to load image.")}
       />
     </div>
+  ) : kind === "spreadsheet" ? (
+    <ExcelPreview
+      src={url}
+      file={props.file}
+      name={props.name}
+      onError={(err) => setError(err.message)}
+    />
+  ) : kind === "presentation" ? (
+    <PowerPointPreview
+      src={url}
+      file={props.file}
+      name={props.name}
+      onError={(err) => setError(err.message)}
+    />
   ) : (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
       <p className="text-sm font-medium">No preview for this file</p>
