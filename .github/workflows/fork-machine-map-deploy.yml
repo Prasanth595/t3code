@@ -1,0 +1,50 @@
+name: Machine map deploy
+
+# Deploys the machine map portal (apps/machine-map) to Cloudflare from main.
+# Only this workflow deploys, so a deploy always matches main. See docs/fork.md.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - apps/machine-map/**
+      - packages/contracts/src/machineMap*.ts
+      - pnpm-lock.yaml
+      - .github/workflows/fork-machine-map-deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time. A waiting run is replaced by a newer push, so the last deploy is always the newest main.
+concurrency:
+  group: machine-map-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test and deploy the portal
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            - args: ["--filter", "@t3tools/machine-map...", "--filter", "@t3tools/monorepo"]
+      - run: vp run --filter @t3tools/machine-map typecheck
+      - run: vp run --filter @t3tools/machine-map test
+      - name: Deploy
+        working-directory: apps/machine-map
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DEPLOY_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 2b654a284959a6a3b93fe33940d70db0
+        run: vp run deploy
