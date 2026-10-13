@@ -267,6 +267,12 @@ export default defineConfig({
         rules: { "shadcn/no-unknown-classes": "error" },
       },
       {
+        // An open popup inserts focus guards after its trigger, so a trigger that ends a
+        // space-*/divide-* container starts getting spaced and pushes the content below.
+        files: ["apps/web/src/**"],
+        rules: { "t3code/no-popup-last-in-spaced-container": "error" },
+      },
+      {
         // State indicators paint inward; decorative rings keep their own geometry.
         files: ["apps/web/src/**"],
         rules: { "t3code/no-outset-state-indicators": "error" },
