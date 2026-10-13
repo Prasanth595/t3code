@@ -581,6 +581,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "pull-request-filter-chips",
+    title: "Pull request filter chips",
+    to: "/settings/general",
+    searchTerms: ["active filters chips exclude negative is not pull requests list empty"],
+  },
+  {
     id: "app-toggle-shortcuts",
     title: "App toggle shortcuts",
     to: "/settings/general",

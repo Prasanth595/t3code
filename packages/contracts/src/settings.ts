@@ -434,6 +434,11 @@ export const ClientSettingsSchema = Schema.Struct({
    * sidebar, and split usage by owner.
    */
   repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the active pull request filters show as chips above the list, and an empty list names
+   * the filters that emptied it. Remove when upstream T3 Code shows its active filters itself.
+   */
+  pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1866,6 +1871,7 @@ export const ClientSettingsPatch = Schema.Struct({
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
+  pullRequestFilterChips: Schema.optionalKey(Schema.Boolean),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
