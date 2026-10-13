@@ -2118,6 +2118,7 @@ ul.alerts li.ended {
 }
 .health-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   margin-bottom: 6px;
@@ -2126,9 +2127,9 @@ ul.alerts li.ended {
   font-weight: 800;
   font-size: 1.2rem;
   letter-spacing: -0.01em;
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 .health-head .stickers {
   display: flex;
