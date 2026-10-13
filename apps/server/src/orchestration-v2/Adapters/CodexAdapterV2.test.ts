@@ -48,6 +48,8 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -1912,6 +1914,56 @@ describe("CodexAdapterV2 session initialize", () => {
       assert.equal(session.initializeRequests(), 2);
     }).pipe(
       Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+});
+
+describe("CodexAdapterV2 unresponsive app-server", () => {
+  it.effect("fails the session when the app-server stops answering", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
+        instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
+        settings: DEFAULT_CODEX_SETTINGS,
+        environment: {},
+        clientFactory: {
+          open: () =>
+            CodexClient.make(
+              Stdio.make({
+                args: Effect.succeed([]),
+                stdin: Stream.never,
+                stdout: () => Sink.drain,
+                stderr: () => Sink.drain,
+              }),
+            ),
+        },
+        crypto: yield* Crypto.Crypto,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* makeReplayServerConfig("codex-unresponsive-app-server").pipe(
+          Effect.orDie,
+        ),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId: ThreadId.make("thread-codex-unresponsive-app-server"),
+        providerSessionId: ProviderSessionId.make("provider-session-codex-unresponsive-app-server"),
+        modelSelection: CODEX_TEST_MODEL_SELECTION,
+        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+      });
+      const failure = yield* runtime.events.pipe(
+        Stream.runDrain,
+        Effect.flip,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 minute");
+      yield* TestClock.adjust("1 minute");
+
+      const error = yield* Fiber.join(failure);
+      assert.instanceOf(error, ProviderAdapter.ProviderAdapterEventStreamError);
+      assert.include(String(error.cause), "Codex stopped responding");
+    }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),

@@ -468,6 +468,11 @@ function codexMcpToolOutput(
 // Reading an app's resource is one MCP round trip; a server that hangs must not
 // hold the item (and the run's ingestion) open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+// A wedged app-server stays alive but stops answering. The probe,
+// thread/loaded/list, only reads Codex's in-memory thread list, and any reply
+// to it, even an error, proves the app-server is still reading.
+const CODEX_LIVENESS_PROBE_INTERVAL = "1 minute";
+const CODEX_LIVENESS_PROBE_TIMEOUT = "1 minute";
 
 /** The UI resource a completed Codex MCP tool call names, under any field Codex reports it in. */
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
@@ -1811,9 +1816,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
         // Every thread on this session shares the app-server. Once its
-        // connection ends, fail the stream so the session manager releases the
-        // session and the next turn starts a new app-server.
-        yield* client.terminated.pipe(
+        // connection ends, or it stops answering a once-a-minute probe, fail
+        // the stream so the session manager releases the session and the next
+        // turn starts a new app-server.
+        const unresponsive = Effect.gen(function* () {
+          while (true) {
+            yield* Effect.sleep(CODEX_LIVENESS_PROBE_INTERVAL);
+            const answered = yield* client
+              .request("thread/loaded/list", { limit: 1 })
+              .pipe(
+                Effect.catchTags({ CodexAppServerRequestError: () => Effect.void }),
+                Effect.timeoutOption(CODEX_LIVENESS_PROBE_TIMEOUT),
+              );
+            if (Option.isNone(answered)) {
+              return `Codex stopped responding: it did not answer a liveness check within ${CODEX_LIVENESS_PROBE_TIMEOUT}.`;
+            }
+          }
+        });
+        yield* Effect.raceFirst(
+          client.terminated.pipe(Effect.map((error): unknown => error)),
+          // A probe that fails with a transport error is the termination above.
+          unresponsive.pipe(Effect.catch(() => Effect.never)),
+        ).pipe(
           Effect.flatMap((cause) =>
             Queue.fail(
               events,
