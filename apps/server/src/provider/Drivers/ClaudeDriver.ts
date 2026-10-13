@@ -209,7 +209,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             probeClaudeCapabilities(effectiveConfig, processEnv, cwd),
             probeClaudeOrganizationId(effectiveConfig, processEnv).pipe(
               Effect.timeout(AUTH_PROBE_TIMEOUT_MS),
-              Effect.catch(() => ClaudeResetCredits.readClaudeOrganizationId(accountConfigPath)),
+              Effect.orElseSucceed(() => undefined),
             ),
           ]).pipe(
             Effect.map(([capabilities, workspaceId]) =>

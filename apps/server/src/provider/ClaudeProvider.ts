@@ -263,10 +263,7 @@ function nonEmptyProbeString(value: string): string | undefined {
 
 type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
-  /**
-   * The organization UUID reported by the configured CLI, with the login's
-   * `.claude.json` as a fallback when the CLI cannot report its status.
-   */
+  /** The organization UUID reported by the configured CLI, when available. */
   readonly workspaceId?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
