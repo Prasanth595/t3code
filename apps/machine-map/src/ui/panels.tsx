@@ -12,7 +12,15 @@ import {
 
 import type { WriteResult } from "../api.ts";
 import { arrowChange } from "../rules/access.ts";
-import { effectiveSettings, findArrow, findMachine, LEVELS, MAP_ROLES } from "../rules/map.ts";
+import {
+  effectiveSettings,
+  findArrow,
+  findMachine,
+  LEVELS,
+  levelRank,
+  MAP_ROLES,
+  roleRank,
+} from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type CommandOptions } from "./context.ts";
@@ -31,6 +39,7 @@ import {
   timeUntil,
   valueText,
 } from "./format.ts";
+import { KindIcon } from "./icons.tsx";
 import { NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
 
@@ -74,6 +83,13 @@ export function Panel({ selection }: { selection: Selection }) {
 
 const Missing = ({ what }: { what: string }) => (
   <div className="muted">This {what} is no longer here.</div>
+);
+
+/** MM-711: while paused, access only goes down, so raising controls are off. */
+const PausedNote = () => (
+  <div className="paused-note">
+    <span className="sticker">paused</span> Access only goes down until you resume.
+  </div>
 );
 
 type Duration = "permanent" | "hour" | "day" | "until";
@@ -131,6 +147,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
       <div className="desc">
         What {f} can do on {t}.
       </div>
+      {portal.pause && <PausedNote />}
       <div className="section">Duration</div>
       <div className="seg wide">
         {(["permanent", "hour", "day", "until"] as const).map((d) => (
@@ -159,6 +176,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
             key={level}
             type="button"
             aria-pressed={arrow.level === level}
+            disabled={portal.pause !== null && levelRank(level) > levelRank(arrow.level)}
             onClick={() => setLevel(level)}
           >
             {LEVEL_LABEL[level]}
@@ -204,6 +222,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
           type="checkbox"
           className="switch"
           checked={arrow.agentTools}
+          disabled={portal.pause !== null && !arrow.agentTools}
           onChange={(e) =>
             portal.submit(`${f} → ${t} agent tools ${e.target.checked ? "on" : "off"}`, [
               arrowChange(map, {
@@ -301,7 +320,12 @@ function MachinePanel({ id }: { id: string }) {
 
   return (
     <>
-      <h2>{machine.name}</h2>
+      <h2 className="with-icon">
+        <span className="icon">
+          <KindIcon kind={machine.kind} />
+        </span>
+        {machine.name}
+      </h2>
       <div className="desc">
         <span className="mono">{machine.id}</span> · applied rev{" "}
         {presence?.appliedRevision ?? "none"} of {map.revision}
@@ -374,12 +398,14 @@ function MachinePanel({ id }: { id: string }) {
       )}
 
       <div className="section">Map role</div>
+      {portal.pause && <PausedNote />}
       <div className="seg wide">
         {MAP_ROLES.map((role: MachineMapRole) => (
           <button
             key={role}
             type="button"
             aria-pressed={machine.mapRole === role}
+            disabled={portal.pause !== null && roleRank(role) > roleRank(machine.mapRole)}
             onClick={() => put(`${machine.name} map role ${role}`, { ...machine, mapRole: role })}
           >
             {role}

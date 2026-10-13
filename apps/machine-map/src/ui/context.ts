@@ -9,7 +9,7 @@ import type {
   PortalSnapshot,
 } from "@t3tools/contracts/machineMap";
 
-import type { PendingRotation } from "../api.ts";
+import type { PauseState, PendingRotation } from "../api.ts";
 import type { Route, Selection, View } from "./route.ts";
 
 /** One held change of a draft (MM-707). */
@@ -34,11 +34,15 @@ export type Dialog =
   | { readonly _tag: "newJoinCode"; readonly machineId: MachineId; readonly machineName: string }
   | { readonly _tag: "savePreset" }
   | { readonly _tag: "manageSetting" }
+  /** MM-708: the big red button, opened from the command palette. */
+  | { readonly _tag: "emergency" }
   | {
       readonly _tag: "confirm";
       readonly title: string;
       readonly body: string;
       readonly confirmLabel: string;
+      /** The confirm button look. Dangerous actions are the default. */
+      readonly tone?: "danger" | "primary";
       readonly action: () => void;
     };
 
@@ -49,6 +53,8 @@ export interface Portal {
   /** Revisions newest first: the snapshot history plus older pages that the page loaded. */
   readonly history: ReadonlyArray<MapRevision>;
   readonly rotations: ReadonlyArray<PendingRotation>;
+  /** MM-713: null when nothing is paused. */
+  readonly pause: PauseState | null;
   readonly draft: ReadonlyArray<DraftChange> | null;
   readonly now: number;
   readonly route: Route;

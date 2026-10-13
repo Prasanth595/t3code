@@ -7,15 +7,19 @@ import { arrowApplied, machineQueue } from "./derive.ts";
 import { LEVEL_LABEL, presenceText, spatialArrow } from "./format.ts";
 import { KindIcon } from "./icons.tsx";
 
-/** The area machines live in: the map height, and at most 640 pixels wide, centered. */
-const MAX_WIDTH = 640;
+/** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
+const MAX_WIDTH = 1500;
 /** A machine card never leaves the map. */
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 /** Pointer moves under this many pixels are a tap, not a drag. */
 const TAP_PIXELS = 5;
-/** Half the size of a machine card and of a pair card, so both stay inside the map on a phone. */
-const NODE_HALF = { x: 66, y: 68 };
-const PAIR_HALF_X = 92;
+/** A map narrower than this uses the compact cards. The CSS class `compact` follows it. */
+const COMPACT_WIDTH = 640;
+/** Half the size of a machine card and of a pair card, so both stay inside the map. */
+const HALF = {
+  wide: { nodeX: 112, nodeY: 74, pairX: 170 },
+  compact: { nodeX: 78, nodeY: 66, pairX: 120 },
+} as const;
 
 interface Drag {
   readonly id: MachineId;
@@ -45,13 +49,15 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     return () => observer.disconnect();
   }, []);
 
+  const compact = size.width < COMPACT_WIDTH;
+  const half = compact ? HALF.compact : HALF.wide;
   const width = Math.min(size.width, MAX_WIDTH);
   const left = (size.width - width) / 2;
   const position = (m: MachineRecord) =>
     drag?.id === m.id ? { x: drag.x, y: drag.y } : m.position;
   const at = (m: MachineRecord) => ({
-    x: clamp(left + position(m).x * width, NODE_HALF.x, size.width - NODE_HALF.x),
-    y: clamp(position(m).y * size.height, NODE_HALF.y, size.height - NODE_HALF.y),
+    x: clamp(left + position(m).x * width, half.nodeX, size.width - half.nodeX),
+    y: clamp(position(m).y * size.height, half.nodeY, size.height - half.nodeY),
   });
 
   const selection = route.selection;
@@ -147,7 +153,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   };
 
   return (
-    <div className="card map" ref={ref}>
+    <div className={`card map${compact ? " compact" : ""}`} ref={ref}>
       <svg aria-hidden>
         {pairs.map(([a, b]) => {
           const pa = at(a);
@@ -178,7 +184,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
               key={`pair:${a.id}>${b.id}`}
               className={`card pair${dim ? " dim" : ""}`}
               style={{
-                left: clamp((pa.x + pb.x) / 2, PAIR_HALF_X, size.width - PAIR_HALF_X),
+                left: clamp((pa.x + pb.x) / 2, half.pairX, size.width - half.pairX),
                 top: (pa.y + pb.y) / 2,
               }}
             >
@@ -213,10 +219,16 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 {state}
               </span>
               <div className="name">
-                <KindIcon kind={machine.kind} />
-                {machine.name}
+                <span className="icon">
+                  <KindIcon kind={machine.kind} />
+                </span>
+                <span className="label">
+                  {machine.name}
+                  <span className="sub">
+                    {status?.build ?? machine.hostname ?? "no status yet"}
+                  </span>
+                </span>
               </div>
-              <div className="sub">{status?.build ?? machine.hostname ?? "no status yet"}</div>
               {!readOnly && (
                 <div className="tags">
                   {status && status.runningTurns > 0 && (
@@ -233,7 +245,20 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           );
         })}
       {machines.length === 0 && (
-        <div className="empty">No machines yet. Use "Add machine" to add the first one.</div>
+        <div className="empty map-empty">
+          <span className="stamp">empty</span>
+          <h2>No machines yet</h2>
+          <p>Add the first machine. It joins with a one-time code and shows here.</p>
+          {!readOnly && (
+            <button
+              type="button"
+              className="btn primary"
+              onClick={() => portal.open({ _tag: "addMachine" })}
+            >
+              Add machine
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

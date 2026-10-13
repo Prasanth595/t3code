@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   MachineCommand,
   MachineMapDocument,
@@ -11,7 +11,7 @@ import type {
   SignOutEverywhereResponse,
   WriteResult,
 } from "../api.ts";
-import { effectiveSettings, findArrow, MAP_ROLES } from "../rules/map.ts";
+import { effectiveSettings, findArrow, MAP_ROLES, roleRank } from "../rules/map.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
 import { describeChange, machineQueue } from "./derive.ts";
@@ -29,6 +29,25 @@ import {
 import { UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
 
+/** An empty list: a short title, what fills it, and a stamp when the empty state is good news. */
+function Empty({
+  title,
+  settled = false,
+  children,
+}: {
+  title: string;
+  settled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="empty">
+      {settled && <span className="stamp">✓ all clear</span>}
+      <h3>{title}</h3>
+      <p>{children}</p>
+    </div>
+  );
+}
+
 /** MM-1102 Table: the arrow matrix and the machine list. */
 export function TableView() {
   const portal = usePortalContext();
@@ -36,6 +55,7 @@ export function TableView() {
   const selected = route.selection;
   return (
     <div className="card view stack">
+      <h2>Who can use whom</h2>
       <table>
         <thead>
           <tr>
@@ -77,6 +97,7 @@ export function TableView() {
       <div className="small muted">
         Each cell is what the row machine can do on the column machine.
       </div>
+      <h2>Machines</h2>
       <table>
         <thead>
           <tr>
@@ -119,7 +140,13 @@ export function TableView() {
                     }}
                   >
                     {MAP_ROLES.map((role) => (
-                      <option key={role} value={role}>
+                      <option
+                        key={role}
+                        value={role}
+                        disabled={
+                          portal.pause !== null && roleRank(role) > roleRank(machine.mapRole)
+                        }
+                      >
                         {role}
                       </option>
                     ))}
@@ -155,7 +182,9 @@ export function SettingsView() {
         <span className="small muted">The map manages only the settings that you add here.</span>
       </div>
       {managed.length === 0 ? (
-        <div className="empty">No managed settings yet.</div>
+        <Empty title="No managed settings yet">
+          Pick a setting with "Manage a setting". Its value then syncs to every machine.
+        </Empty>
       ) : (
         <table>
           <thead>
@@ -281,7 +310,9 @@ export function QueueView() {
     <div className="card view stack">
       <h2>Waiting</h2>
       {items.length === 0 ? (
-        <div className="empty">Nothing waits. Every machine has the current map.</div>
+        <Empty title="Nothing waits" settled>
+          Every machine has the current map.
+        </Empty>
       ) : (
         <ul className="list">
           {items.map((item) => {
@@ -363,7 +394,9 @@ export function QueueView() {
       )}
       <h2>Recent commands</h2>
       {finished.length === 0 ? (
-        <div className="empty">No commands yet.</div>
+        <Empty title="No commands yet">
+          Commands that you or agents send show here with their result.
+        </Empty>
       ) : (
         <ul className="list">
           {finished.map((command) => (
@@ -475,7 +508,7 @@ export function HistoryView() {
       </div>
       <div className="card view">
         {entries.length === 0 ? (
-          <div className="empty">No history yet.</div>
+          <Empty title="No history yet">Every change of the map shows here.</Empty>
         ) : (
           <ul className="list">
             {entries.map((entry) =>
@@ -569,9 +602,9 @@ export function InboxView() {
   return (
     <div className="card view">
       {snapshot.proposals.length === 0 ? (
-        <div className="empty">
-          No proposals. Agents with the map role "propose" send them here.
-        </div>
+        <Empty title="Inbox zero" settled>
+          Agents with the map role "propose" send their changes here for you to approve.
+        </Empty>
       ) : (
         <ul className="list">
           {snapshot.proposals.map((proposal) => (

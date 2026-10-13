@@ -5,6 +5,7 @@ import type { JoinCodeResponse, WriteResult } from "../api.ts";
 import { savePresetChange } from "../rules/presets.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext, type Dialog } from "./context.ts";
+import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, shortTime } from "./format.ts";
 import { findArrow } from "../rules/map.ts";
 import { VIEWS, type View } from "./route.ts";
@@ -38,7 +39,7 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
           <div className="actions">
             <button
               type="button"
-              className="btn danger"
+              className={`btn ${dialog.tone ?? "danger"}`}
               autoFocus
               onClick={() => {
                 close();
@@ -83,6 +84,16 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
       return <SavePresetDialog close={close} />;
     case "manageSetting":
       return <ManageSettingDialog close={close} />;
+    case "emergency":
+      return (
+        <Modal title="Emergency pause" onClose={close}>
+          <p className="muted">
+            Stops every agent on every machine, sets every arrow and map role to none, and refuses
+            agent tool calls until you resume. Your own access stays.
+          </p>
+          <EmergencyButton size="dialog" onPressed={close} />
+        </Modal>
+      );
   }
 }
 
@@ -413,6 +424,20 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
       kind: "action",
       run: () => portal.open({ _tag: "manageSetting" }),
     });
+    // MM-708: the palette opens the big red button, so the cover still confirms the press.
+    out.push(
+      portal.pause
+        ? {
+            label: "Resume after emergency pause",
+            kind: "action",
+            run: () => confirmResume(portal),
+          }
+        : {
+            label: "Emergency pause: stop everything",
+            kind: "action",
+            run: () => portal.open({ _tag: "emergency" }),
+          },
+    );
     out.push({
       label: "Lockdown",
       kind: "action",

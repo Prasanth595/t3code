@@ -20,6 +20,7 @@ import {
 } from "./context.ts";
 import { machineQueue } from "./derive.ts";
 import { DialogHost, Palette } from "./dialogs.tsx";
+import { EmergencyButton, PausedBanner } from "./emergency.tsx";
 import { COMMAND_LABEL, DANGEROUS_COMMANDS, machineName } from "./format.ts";
 import { MapView } from "./MapView.tsx";
 import { Panel } from "./panels.tsx";
@@ -104,9 +105,12 @@ export function App() {
     return (
       <div className="app">
         <div className="card view empty">
-          {connection === "offline"
-            ? "The portal does not answer. Retrying."
-            : "Connecting to the portal."}
+          <h2>{connection === "offline" ? "The portal does not answer" : "Connecting"}</h2>
+          <p>
+            {connection === "offline"
+              ? "The page retries on its own."
+              : "The page opens a live connection to the portal."}
+          </p>
         </div>
       </div>
     );
@@ -177,6 +181,7 @@ export function App() {
     map,
     history,
     rotations: state.rotations,
+    pause: state.pause,
     draft,
     now,
     route,
@@ -261,35 +266,44 @@ export function App() {
   return (
     // oxlint-disable-next-line react/jsx-no-constructed-context-values -- Every state change renders the whole page, so a memo saves nothing.
     <PortalContext.Provider value={portal}>
-      <div className="app">
+      <div className={`app${state.pause ? " paused" : ""}`}>
         <header className="top">
-          <h1>Machines</h1>
-          <div className="seg tabs" role="tablist">
-            {VIEWS.map((v) => (
-              <button
-                key={v}
-                type="button"
-                role="tab"
-                aria-selected={route.view === v}
-                onClick={() => {
-                  location.hash = formatRoute({ view: v, selection: route.selection });
-                }}
+          <div className="top-main">
+            <div className="brand">
+              <h1>
+                <span className="brand-mark">T3</span> Machines
+              </h1>
+              <span
+                className={`sticker live ${connection === "live" ? "ok" : connection === "connecting" ? "wait" : ""}`}
               >
-                {VIEW_LABEL[v]}
-                {counts[v] ? ` ${counts[v]}` : ""}
-              </button>
-            ))}
+                {connection === "live"
+                  ? `Live · rev ${snapshot.map.revision}`
+                  : connection === "connecting"
+                    ? "Connecting"
+                    : "Offline · retrying"}
+              </span>
+            </div>
+            <nav className="tabs" role="tablist" aria-label="Views">
+              {VIEWS.map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="tab"
+                  aria-selected={route.view === v}
+                  onClick={() => {
+                    location.hash = formatRoute({ view: v, selection: route.selection });
+                  }}
+                >
+                  {VIEW_LABEL[v]}
+                  {counts[v] ? <span className="count">{counts[v]}</span> : null}
+                </button>
+              ))}
+            </nav>
           </div>
-          <span
-            className={`sticker live ${connection === "live" ? "ok" : connection === "connecting" ? "wait" : ""}`}
-          >
-            {connection === "live"
-              ? `Live · rev ${snapshot.map.revision}`
-              : connection === "connecting"
-                ? "Connecting"
-                : "Offline · retrying"}
-          </span>
+          <EmergencyButton size="header" />
         </header>
+
+        <PausedBanner />
 
         <div className="toolbar">
           <button
