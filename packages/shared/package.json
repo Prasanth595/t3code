@@ -55,6 +55,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./worktreePathTemplate": {
+      "types": "./src/worktreePathTemplate.ts",
+      "import": "./src/worktreePathTemplate.ts"
+    },
     "./githubMedia": {
       "types": "./src/githubMedia.ts",
       "import": "./src/githubMedia.ts"

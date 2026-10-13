@@ -754,9 +754,12 @@ export const make = Effect.gen(function* () {
     return { settings: resolveProjectSettings(settings, projectId).settings, projectId };
   });
   // Best effort: a settings read failure falls back to the default location.
-  const readWorktreesDirectory = serverSettingsService.getSettings.pipe(
-    Effect.map((settings) => settings.worktreesDirectory),
-    Effect.orElseSucceed(() => ""),
+  const readWorktreeLocation = serverSettingsService.getSettings.pipe(
+    Effect.map(({ worktreesDirectory, worktreePathTemplate }) => ({
+      worktreesDirectory,
+      worktreePathTemplate,
+    })),
+    Effect.orElseSucceed(() => ({ worktreesDirectory: "", worktreePathTemplate: "" })),
   );
   const createWorktree: GitManager["Service"]["createWorktree"] = Effect.fn(
     "GitManager.createWorktree",
@@ -768,8 +771,8 @@ export const make = Effect.gen(function* () {
             Effect.map(({ settings }) => settings.worktreeSubmodules),
             Effect.orElseSucceed(() => null),
           );
-    const worktreesDirectory = yield* readWorktreesDirectory;
-    return yield* gitCore.createWorktree(input, { worktreesDirectory, ...options, submodules });
+    const location = yield* readWorktreeLocation;
+    return yield* gitCore.createWorktree(input, { ...location, ...options, submodules });
   });
 
   const readRepositoryInstructions = (cwd: string, fileName: string) =>
@@ -2928,7 +2931,7 @@ export const make = Effect.gen(function* () {
           path: null,
         },
         {
-          worktreesDirectory: yield* readWorktreesDirectory,
+          ...(yield* readWorktreeLocation),
           // Best effort: a settings read failure falls back to the checkout's t3.json.
           submodules: yield* projectSettingsFor(input).pipe(
             Effect.map(({ settings }) => settings.worktreeSubmodules),

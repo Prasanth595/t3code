@@ -200,6 +200,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
   {
+    id: "storage-worktree-path-template",
+    title: "Worktree path template",
+    to: "/settings/storage",
+    scope: "environment-defaults",
+    searchTerms: ["worktree path template folder branch bare container repository sibling"],
+  },
+  {
     id: "storage-artifacts",
     title: "Artifacts and logs",
     to: "/settings/storage",

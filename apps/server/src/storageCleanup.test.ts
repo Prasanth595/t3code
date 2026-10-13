@@ -5,7 +5,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import type * as Path from "effect/Path";
+import * as Path from "effect/Path";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
@@ -26,6 +26,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { CodexProviderCapabilitiesV2 } from "./orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { ServerActivation } from "./serverActivation.ts";
+import { markT3CreatedWorktree } from "./worktreePathTemplate.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   ProjectId,
@@ -747,6 +748,30 @@ describe("storage cleanup reports and local file policies", () => {
           "browser-artifacts",
           "logs",
         ]);
+      }),
+    ),
+  );
+
+  // Fork: worktreePathTemplate.
+  it.live("removes a worktree outside the managed folder only when T3 marked it", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree, command, setThreads } = yield* cleanupFixture;
+        const path = yield* Path.Path;
+        const outside = `${yield* fs.realPath(yield* fs.makeTempDirectoryScoped())}/feature`;
+        yield* command(worktree, ["worktree", "move", worktree, outside]);
+        setThreads([shell({ branch: "feature", worktreePath: outside })]);
+
+        const unmarked = yield* service.runNow;
+        expect(unmarked.entries[0]).toMatchObject({
+          outcome: "kept",
+          reason: "Outside the managed worktree folder",
+        });
+
+        yield* markT3CreatedWorktree(fs, path, outside, outside);
+        const marked = yield* service.runNow;
+        expect(marked.entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(outside)).toBe(false);
       }),
     ),
   );

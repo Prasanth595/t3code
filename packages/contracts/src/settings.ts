@@ -1266,6 +1266,11 @@ export const ServerSettings = Schema.Struct({
   previousWorktreesDirectories: Schema.Array(TrimmedString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
+  /**
+   * Fork: where new worktrees go, such as `{repoDir}/{branchLeaf}`. Empty
+   * keeps the `worktreesDirectory` layout. See docs/fork.md.
+   */
+  worktreePathTemplate: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
@@ -1732,6 +1737,7 @@ export const ServerSettingsPatch = Schema.Struct({
     }),
   ),
   worktreesDirectory: Schema.optionalKey(TrimmedString),
+  worktreePathTemplate: Schema.optionalKey(TrimmedString),
   // Server settings
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),

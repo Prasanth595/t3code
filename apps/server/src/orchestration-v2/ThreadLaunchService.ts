@@ -2,6 +2,7 @@ import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { branchNameFromMessage } from "@t3tools/shared/worktreePathTemplate";
 import {
   CommandId,
   type ChatAttachment,
@@ -382,6 +383,27 @@ const make = Effect.gen(function* () {
       } else {
         branch = requestedBranch ?? null;
       }
+      // Fork: a worktree path template names the folder after the branch, so
+      // the branch gets its final name before the folder exists.
+      const branchForPathTemplate =
+        input.workspaceStrategy.type === "worktree" &&
+        branch !== null &&
+        isTemporaryWorktreeBranch(branch) &&
+        initialMessage !== undefined
+          ? yield* serverSettings.getSettings.pipe(
+              Effect.map((all) => {
+                const settings = resolveProjectSettings(all, input.projectId).settings;
+                return all.worktreePathTemplate === ""
+                  ? null
+                  : branchNameFromMessage(initialMessage.text, {
+                      mode: settings.branchNamingMode,
+                      prefix: settings.branchNamePrefix,
+                    });
+              }),
+              Effect.orElseSucceed(() => null),
+            )
+          : null;
+      if (branchForPathTemplate !== null) branch = branchForPathTemplate;
       let worktreePath =
         input.workspaceStrategy.type === "existing_worktree"
           ? input.workspaceStrategy.worktreePath
@@ -459,6 +481,7 @@ const make = Effect.gen(function* () {
               path: null,
             },
             {
+              ...(branchForPathTemplate !== null ? { pickFreeName: true } : {}),
               progress: {
                 onWorktreeClaimed: (path) =>
                   Effect.sync(() => {

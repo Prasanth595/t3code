@@ -283,6 +283,25 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 - Check, conflict and push news and the comment wake limit do not change.
 - The code is in `apps/server/src/orchestration-v2/pullRequestWatch.ts`.
 
+## Worktree path template
+
+The server setting `worktreePathTemplate` decides where new worktrees go. It is empty by default, and the worktree location setting then applies. Set it in Settings > Storage > Worktree path template.
+
+| Variable       | Value                                                                     |
+| -------------- | ------------------------------------------------------------------------- |
+| `{worktrees}`  | The worktree location setting, or `<T3 home>/worktrees`.                  |
+| `{repoDir}`    | The parent of the Git common dir: the checkout, or the `.bare` container. |
+| `{repo}`       | The folder name of `{repoDir}`.                                           |
+| `{branch}`     | The branch name, with `/` changed to `-`.                                 |
+| `{branchLeaf}` | The last part of the branch name.                                         |
+
+- For a `.bare` container repository, use `{repoDir}/{branchLeaf}`. A worktree for `feat/api/qcdi-1234-auth` then goes to `<container>/qcdi-1234-auth`, next to `main/`. Git runs the global `post-checkout` hook, which links `_shared/`.
+- For normal clones, use `{worktrees}/{repo}/{branch}` or `{repoDir}/../{repo}-{branch}`. The server refuses a path inside the checkout.
+- The template must hold `{branch}` or `{branchLeaf}`.
+- With a template, an auto-named thread names its branch from the first six words of its first message, before the worktree exists. The static branch naming mode adds its prefix. There is no model rename later, so the folder and the branch keep the same name. A taken name gets a `-1`, `-2` suffix on the branch and the folder. When a branch such as `t3` blocks `t3/x`, the name becomes `t3-x`.
+- A branch that you type, and a pull request branch, keep their names. If their folder already exists, the launch fails and names the folder. Use `{branch}` when different branches end in the same last part.
+- While a template is set, T3 marks each worktree that it creates with a `t3-created` file in the worktree's folder in the Git common dir. Storage cleanup and review diffs trust that mark, because the worktree can be outside the managed worktree folders. Cleanup never removes a worktree without the mark outside those folders.
+
 ## Machine map
 
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
