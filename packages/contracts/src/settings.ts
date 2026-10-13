@@ -441,7 +441,7 @@ export const ClientSettingsSchema = Schema.Struct({
   forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
-   * sidebar, and split usage by owner.
+   * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
    */
   repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
