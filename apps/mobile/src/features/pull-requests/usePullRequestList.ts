@@ -98,8 +98,8 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           );
           if (controller.signal.aborted || activeScope.current !== scopeKey) return;
           if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-          if (response.value.errors.length)
-            throw new Error(pullRequestListErrorMessage(response.value.errors));
+          // Returned rather than thrown so every environment's failures count as one message.
+          if (response.value.errors.length) return response.value.errors;
           const next = appendPullRequestListPage(
             registry.get(pagesAtom) ?? pages,
             response.value,
@@ -116,8 +116,18 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
         }),
       );
       if (requests.current.page === controller) delete requests.current.page;
-      if (!controller.signal.aborted && activeScope.current === scopeKey)
-        setLoading({ key: scopeKey, page: false, refresh: false, error: requestErrors(responses) });
+      if (!controller.signal.aborted && activeScope.current === scopeKey) {
+        const repositoryErrors = responses.flatMap((result) =>
+          result.status === "fulfilled" ? (result.value ?? []) : [],
+        );
+        const error = [
+          requestErrors(responses),
+          repositoryErrors.length ? pullRequestListErrorMessage(repositoryErrors) : null,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        setLoading({ key: scopeKey, page: false, refresh: false, error: error || null });
+      }
     },
     [targets, registry, scopeKey, state.error, activeScope],
   );
