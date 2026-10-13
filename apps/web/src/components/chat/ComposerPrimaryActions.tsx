@@ -23,6 +23,7 @@ interface PendingActionState {
   canAdvance: boolean;
   isResponding: boolean;
   isComplete: boolean;
+  unansweredCount: number;
 }
 
 interface ComposerPrimaryActionsProps {
@@ -63,9 +64,14 @@ const formatPendingPrimaryActionLabel = (input: {
   isLastQuestion: boolean;
   isResponding: boolean;
   questionIndex: number;
+  unansweredCount: number;
 }) => {
   if (input.isResponding) {
     return "Submitting...";
+  }
+  // Submitting with gaps jumps to the first unanswered question instead.
+  if (input.isLastQuestion && input.unansweredCount > 0) {
+    return `Submit (${input.unansweredCount} left)`;
   }
   if (input.compact) {
     return input.isLastQuestion ? "Submit" : "Next";
@@ -194,7 +200,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             !canOperateThread ||
             isEnvironmentUnavailable ||
             pendingAction.isResponding ||
-            (pendingAction.isLastQuestion ? !pendingAction.isComplete : !pendingAction.canAdvance)
+            !pendingAction.canAdvance
           }
         >
           {formatPendingPrimaryActionLabel({
@@ -202,6 +208,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             isLastQuestion: pendingAction.isLastQuestion,
             isResponding: pendingAction.isResponding,
             questionIndex: pendingAction.questionIndex,
+            unansweredCount: pendingAction.unansweredCount,
           })}
         </button>
       </div>

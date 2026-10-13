@@ -14,7 +14,7 @@ vi.mock("../ui/collapsible", () => {
 
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 
-it("cancels an answer's pending auto-submit on revocation and resumes after a new grant", async () => {
+it("cancels an answer's pending auto-advance on revocation and resumes after a new grant", async () => {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {
@@ -38,6 +38,13 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
         options: [{ label: "Incremental", description: "One module at a time" }],
         multiSelect: false,
       },
+      {
+        id: "scope",
+        header: "Scope",
+        question: "How much?",
+        options: [{ label: "All of it", description: "Every module" }],
+        multiSelect: false,
+      },
     ],
   };
   const panel = (disabled: boolean) => (
@@ -49,6 +56,7 @@ it("cancels an answer's pending auto-submit on revocation and resumes after a ne
       questionIndex={0}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
+      onSelectQuestion={() => {}}
       onDismiss={onDismiss}
     />
   );

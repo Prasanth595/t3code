@@ -3,6 +3,7 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
+  summarizePendingUserInputAnswer,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
 import { CheckIcon } from "lucide-react";
@@ -17,7 +18,9 @@ interface PendingUserInputPanelProps {
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
+  /** Moves past an answered question; never called on the last one. */
   onAdvance: () => void;
+  onSelectQuestion: (questionIndex: number) => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }
 
@@ -29,6 +32,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   questionIndex,
   onToggleOption,
   onAdvance,
+  onSelectQuestion,
   onDismiss,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
@@ -45,6 +49,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       questionIndex={questionIndex}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
+      onSelectQuestion={onSelectQuestion}
       onDismiss={onDismiss}
     />
   );
@@ -58,6 +63,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   questionIndex,
   onToggleOption,
   onAdvance,
+  onSelectQuestion,
   onDismiss,
 }: {
   prompt: PendingUserInput;
@@ -67,6 +73,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
+  onSelectQuestion: (questionIndex: number) => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
 }) {
   // Message-mode requests remain answerable after their provider turn ends.
@@ -126,6 +133,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return clearAutoAdvance;
   }, [activeQuestion?.id, disabled]);
 
+  // Choosing an option moves on to the next question, but never submits: the
+  // last question waits for Submit so a click can't send answers by accident.
   const handleOptionSelection = useCallback(
     (questionId: string, optionValue: string) => {
       if (disabled || isResponding) return;
@@ -137,19 +146,20 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       onToggleOption(questionId, optionValue);
       if (autoAdvanceTimerRef.current !== null) {
         window.clearTimeout(autoAdvanceTimerRef.current);
+        autoAdvanceTimerRef.current = null;
       }
+      if (progress.isLastQuestion) return;
       autoAdvanceTimerRef.current = window.setTimeout(() => {
         autoAdvanceTimerRef.current = null;
         onAdvanceRef.current();
       }, 200);
     },
-    [activeQuestion, disabled, isResponding, onToggleOption],
+    [activeQuestion, disabled, isResponding, onToggleOption, progress.isLastQuestion],
   );
 
-  // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
-  // outside editable fields. Multi-select prompts toggle options in place; single-
-  // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
-  // out, since the numbers they refer to are not on screen.
+  // Keyboard shortcuts when focus is outside editable fields: number keys 1-9
+  // select the corresponding option, and left/right arrows switch questions.
+  // Collapsed prompts opt out, since what the keys refer to is not on screen.
   useEffect(() => {
     if (!activeQuestion || responseDisabled || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -164,6 +174,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       ) {
         return;
       }
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+        const nextIndex = progress.questionIndex + (event.key === "ArrowLeft" ? -1 : 1);
+        if (nextIndex < 0 || nextIndex >= prompt.questions.length) return;
+        event.preventDefault();
+        onSelectQuestion(nextIndex);
+        return;
+      }
       const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
       const optionIndex = digit - 1;
@@ -175,7 +192,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, responseDisabled]);
+  }, [
+    activeQuestion,
+    handleOptionSelection,
+    isCollapsed,
+    onSelectQuestion,
+    progress.questionIndex,
+    prompt.questions.length,
+    responseDisabled,
+  ]);
 
   if (!activeQuestion) {
     return null;
@@ -200,7 +225,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         <ComposerBanner.Icon />
         <ComposerBanner.Content>
           <span className="shrink-0 font-medium text-muted-foreground">
-            {activeQuestion.header}
+            {isCollapsed || prompt.questions.length === 1
+              ? activeQuestion.header
+              : `${progress.answeredQuestionCount} of ${prompt.questions.length} answered`}
           </span>
           {isCollapsed ? (
             <span className="min-w-0 flex-1 truncate text-secondary-label">
@@ -209,7 +236,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
           ) : null}
         </ComposerBanner.Content>
         <ComposerBanner.Actions>
-          {prompt.questions.length > 1 ? (
+          {isCollapsed && prompt.questions.length > 1 ? (
             <span className="text-3xs font-medium text-muted-foreground tabular-nums">
               {questionIndex + 1}/{prompt.questions.length}
             </span>
@@ -240,6 +267,45 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         </ComposerBanner.Actions>
       </CollapsibleTrigger>
       <CollapsiblePanel>
+        {prompt.questions.length > 1 ? (
+          <ComposerBanner.Body className="pe-1 pb-2">
+            <div
+              role="tablist"
+              aria-label="Questions"
+              className="flex gap-1 overflow-x-auto [scrollbar-width:none]"
+            >
+              {prompt.questions.map((question, index) => {
+                const summary = summarizePendingUserInputAnswer(question, answers[question.id]);
+                const isActive = index === progress.questionIndex;
+                return (
+                  <button
+                    key={question.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    aria-label={summary ? `${question.header}: ${summary}` : question.header}
+                    data-pending-user-input-tab={summary === null ? "unanswered" : "answered"}
+                    onClick={() => onSelectQuestion(index)}
+                    className={cn(
+                      "flex max-w-48 min-w-0 shrink-0 cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-2xs outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                      isActive
+                        ? "bg-muted/70 text-foreground"
+                        : "text-muted-foreground hover:bg-muted/30 hover:text-foreground/85",
+                    )}
+                  >
+                    <span className="shrink-0 font-medium">{question.header}</span>
+                    {summary !== null ? (
+                      <>
+                        <CheckIcon className="size-3 shrink-0 text-primary" />
+                        <span className="min-w-0 truncate text-secondary-label">{summary}</span>
+                      </>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          </ComposerBanner.Body>
+        ) : null}
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
             <p className="text-sm text-foreground/85">{activeQuestion.question}</p>

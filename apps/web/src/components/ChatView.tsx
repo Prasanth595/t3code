@@ -214,6 +214,7 @@ import {
   buildPendingUserInputAnswers,
   carryDisplacedCustomAnswerIntoPrompt,
   derivePendingUserInputProgress,
+  findFirstUnansweredPendingUserInputQuestionIndex,
   projectPendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -10455,11 +10456,20 @@ export default function ChatView(props: ChatViewProps) {
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
         void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        return;
       }
+      // Submitting with gaps shows the first question still waiting for an answer.
+      setActivePendingUserInputQuestionIndex(
+        findFirstUnansweredPendingUserInputQuestionIndex(
+          activePendingUserInput.questions,
+          activePendingDraftAnswers,
+        ),
+      );
       return;
     }
     setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
   }, [
+    activePendingDraftAnswers,
     activePendingProgress,
     activePendingResolvedAnswers,
     activePendingUserInput,
@@ -11879,6 +11889,9 @@ export default function ChatView(props: ChatViewProps) {
                               onDismissActivePendingUserInput={onDismissUserInput}
                               onPreviousActivePendingUserInputQuestion={
                                 onPreviousActivePendingUserInputQuestion
+                              }
+                              onSelectActivePendingUserInputQuestion={
+                                setActivePendingUserInputQuestionIndex
                               }
                               onChangeActivePendingUserInputCustomAnswer={
                                 onChangeActivePendingUserInputCustomAnswer

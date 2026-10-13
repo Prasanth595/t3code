@@ -49,6 +49,7 @@ function Questions({ initialIndex = 0 }: { initialIndex?: number }) {
         answers={answers}
         questionIndex={questionIndex}
         onAdvance={advance}
+        onSelectQuestion={setQuestionIndex}
         onToggleOption={(questionId, value) => {
           const question = prompt.questions.find((entry) => entry.id === questionId)!;
           setAnswers((existing) => ({
@@ -87,8 +88,10 @@ async function chooseOption() {
   await act(async () => {
     renderer!.root
       .findAllByType("button")
-      .find((button) =>
-        button.findAllByType("span").some((span) => span.children.includes("Incremental")),
+      .find(
+        (button) =>
+          button.props.role !== "tab" &&
+          button.findAllByType("span").some((span) => span.children.includes("Incremental")),
       )!
       .props.onClick();
   });
@@ -141,4 +144,27 @@ it("still auto-advances once after the answer draft rerenders the same question"
   expect(activeIndex()).toBe("1");
   await act(async () => vi.advanceTimersByTime(200));
   expect(activeIndex()).toBe("1");
+});
+
+it("does not submit when the last question is answered", async () => {
+  await act(async () => {
+    renderer = create(<Questions initialIndex={2} />);
+  });
+  await chooseOption();
+  await act(async () => vi.advanceTimersByTime(200));
+  expect(activeIndex()).toBe("2");
+});
+
+it("jumps to a question from its tab, which shows the chosen answer", async () => {
+  await act(async () => {
+    renderer = create(<Questions />);
+  });
+  await chooseOption();
+  await act(async () => vi.advanceTimersByTime(200));
+  const tabs = () =>
+    renderer!.root.findAll((node) => node.props.role === "tab" && node.type === "button");
+  expect(tabs()[0]!.props["aria-label"]).toBe("Question 1: Incremental");
+  expect(tabs()[2]!.props["aria-label"]).toBe("Question 3");
+  await act(async () => tabs()[2]!.props.onClick());
+  expect(activeIndex()).toBe("2");
 });

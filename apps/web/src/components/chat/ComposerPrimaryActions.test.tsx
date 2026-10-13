@@ -28,6 +28,7 @@ function renderPendingActions(isRunning: boolean) {
         canAdvance: true,
         isResponding: false,
         isComplete: true,
+        unansweredCount: 0,
       },
       isRunning,
       canInterrupt: isRunning,

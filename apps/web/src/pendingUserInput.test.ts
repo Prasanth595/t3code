@@ -12,6 +12,7 @@ import {
   projectPendingUserInputAnswer,
   resolvePendingUserInputAnswer,
   setPendingUserInputCustomAnswer,
+  summarizePendingUserInputAnswer,
   togglePendingUserInputOptionSelection,
 } from "./pendingUserInput";
 
@@ -404,6 +405,44 @@ it("accepts attachment-only answers after every upload finishes", () => {
       spec: { attachmentCount: 1 },
     }),
   ).toBeNull();
+});
+
+describe("summarizePendingUserInputAnswer", () => {
+  const question = {
+    id: "hosting",
+    header: "Images",
+    question: "Where should images go?",
+    options: [
+      { label: "GitHub attachments", value: "gh", description: "Upload with gh" },
+      { label: "Drop", description: "Upload to Drop" },
+    ],
+    multiSelect: false,
+  };
+
+  it("is null while the question is unanswered", () => {
+    expect(summarizePendingUserInputAnswer(question, undefined)).toBeNull();
+  });
+
+  it("shows the option label rather than its value", () => {
+    expect(summarizePendingUserInputAnswer(question, { selectedOptionValues: ["gh"] })).toBe(
+      "GitHub attachments",
+    );
+  });
+
+  it("joins multi-select labels", () => {
+    expect(
+      summarizePendingUserInputAnswer(
+        { ...question, multiSelect: true },
+        { selectedOptionValues: ["Drop", "gh"] },
+      ),
+    ).toBe("Drop, GitHub attachments");
+  });
+
+  it("collapses a typed answer onto one line", () => {
+    expect(
+      summarizePendingUserInputAnswer(question, { customAnswer: "  Use S3\n  with a CDN " }),
+    ).toBe("Use S3 with a CDN");
+  });
 });
 
 describe("carryDisplacedCustomAnswerIntoPrompt", () => {

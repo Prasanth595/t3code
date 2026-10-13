@@ -86,6 +86,20 @@ export function resolvePendingUserInputAnswer(
   );
 }
 
+/** Short text for a question's answer, as shown on its tab. Null while unanswered. */
+export function summarizePendingUserInputAnswer(
+  question: UserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): string | null {
+  const answer = resolvePendingUserInputAnswer(question, draft);
+  if (answer === null) return null;
+  const labelFor = (value: string) =>
+    question.options.find((option) => (option.value ?? option.label) === value)?.label ?? value;
+  if (Array.isArray(answer)) return answer.map(labelFor).join(", ");
+  if (answer.trim().length === 0) return "Attachment";
+  return labelFor(answer).replace(/\s+/g, " ").trim();
+}
+
 export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
