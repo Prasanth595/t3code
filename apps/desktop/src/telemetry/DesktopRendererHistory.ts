@@ -244,7 +244,9 @@ const make = Effect.fn("DesktopRendererHistory.make")(function* () {
     Effect.sync(() => {
       if (!accepting) return;
       const sampledAtUnixMs = clock.currentTimeMillisUnsafe();
-      if (sampledAtUnixMs - lastSampledAtUnixMs < 30_000) return;
+      // History rows are disk writes that wake the machine; at most one batch
+      // per minute regardless of the (faster) publish cadence.
+      if (sampledAtUnixMs - lastSampledAtUnixMs < 60_000) return;
       lastSampledAtUnixMs = sampledAtUnixMs;
       const byPid = new Map(metrics.map((metric) => [metric.pid, metric]));
       for (const renderer of active.values()) {

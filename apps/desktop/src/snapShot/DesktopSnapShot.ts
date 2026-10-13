@@ -97,7 +97,9 @@ const WAYLAND_MODIFIER_PAIR_UNAVAILABLE_MESSAGE =
   "Modifier-pair shortcuts aren't available in this Wayland session. Choose another shortcut or use Take snapshot from the command palette.";
 const FLASH_ANIMATION_DURATION_MS = 180;
 const FLASH_STATIC_DURATION_MS = 60;
-const FLASH_FRAME_INTERVAL_MS = 16;
+// A 180ms fade needs only a few compositor frames; sampling at 60ms keeps
+// three visible steps instead of waking the main process at ~60fps.
+const FLASH_FRAME_INTERVAL_MS = 60;
 const FLASH_PEAK_OPACITY = 0.08;
 const MAC_SCREEN_CAPTURE_SETTINGS_URL = MAC_PERMISSION_SETTINGS_URLS["screen-recording"];
 const MAC_SCREEN_CAPTURE_PERMISSION_MESSAGE =

@@ -30,6 +30,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
+import * as ElectronPowerMonitor from "../electron/ElectronPowerMonitor.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -49,7 +50,8 @@ import {
 } from "./updateMachine.ts";
 
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
-const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
+const AUTO_UPDATE_POLL_INTERVAL = Duration.minutes(4);
+const AUTO_UPDATE_POLL_INTERVAL_ON_BATTERY = Duration.minutes(30);
 const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
@@ -341,6 +343,9 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  // Optional so update tests run without a power monitor; production wires
+  // ElectronPowerMonitor.layer and gets battery/suspend-aware polling.
+  const powerMonitor = yield* Effect.serviceOption(ElectronPowerMonitor.ElectronPowerMonitor);
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
   const activeUpdateActionRef = yield* Ref.make<Option.Option<UpdateAction>>(Option.none());
@@ -781,8 +786,31 @@ export const make = Effect.gen(function* () {
       }),
       Effect.forkScoped,
     );
-    yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
-      Effect.andThen(checkForUpdates("poll")),
+    // The poll backs off on battery power and skips the check that came due
+    // across a suspend/resume cycle instead of spiking network and CPU on
+    // wake. Without a power monitor (tests) it keeps the fixed 4-minute
+    // cadence.
+    let resumeCount = 0;
+    if (Option.isSome(powerMonitor)) {
+      yield* powerMonitor.value.onSimpleEvent("resume", () => {
+        resumeCount += 1;
+      });
+    }
+    const nextPollInterval = Option.isSome(powerMonitor)
+      ? powerMonitor.value.isOnBatteryPower.pipe(
+          Effect.orElseSucceed(() => false),
+          Effect.map((onBattery) =>
+            onBattery ? AUTO_UPDATE_POLL_INTERVAL_ON_BATTERY : AUTO_UPDATE_POLL_INTERVAL,
+          ),
+        )
+      : Effect.succeed(AUTO_UPDATE_POLL_INTERVAL);
+    yield* Effect.gen(function* () {
+      const resumesBefore = yield* Effect.sync(() => resumeCount);
+      yield* Effect.sleep(yield* nextPollInterval);
+      if ((yield* Effect.sync(() => resumeCount)) === resumesBefore) {
+        yield* checkForUpdates("poll");
+      }
+    }).pipe(
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {

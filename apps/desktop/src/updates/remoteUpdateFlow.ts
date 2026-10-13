@@ -19,8 +19,9 @@ export type RemoteDesktopUpdateStep =
 /**
  * How many times this run already issued each action. The caps are what stop
  * a check -> up-to-date -> check loop and endless download retries; they are
- * counts rather than booleans because a state event raced by the local
- * 4-minute poller can re-show an already-handled status once.
+ * counts rather than booleans because a state event raced by the periodic
+ * local poller (which backs off on battery) can re-show an already-handled
+ * status once.
  */
 export interface RemoteDesktopUpdateAttempts {
   readonly checks: number;

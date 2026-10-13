@@ -331,6 +331,26 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+/* Idle indicators honor the same visibility contract as the live-activity
+   utilities: observed containers flip --visible-animation-state to paused when
+   off-screen, page-hidden, or reduced-motion, and every other usage keeps
+   animating by default. Unlayered so it wins over the generated utilities. */
+.animate-skeleton,
+.animate-status-pulse,
+.animate-status-ping {
+  animation-play-state: var(--visible-animation-state, running);
+}
+
+/* Several status dots use the bare utilities without motion-safe:, so gate
+   them centrally instead of touching each consumer. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-skeleton,
+  .animate-status-pulse,
+  .animate-status-ping {
+    animation: none;
+  }
+}
+
 @utility surface-glass {
   background: color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));

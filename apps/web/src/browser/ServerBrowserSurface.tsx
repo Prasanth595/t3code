@@ -488,8 +488,41 @@ export function ServerBrowserSurface(props: {
   useEffect(() => {
     if (!visible || accessDenied || access !== null) return;
     // A failed ticket mint, e.g. while the server restarts, never retries on its own.
-    const timer = setInterval(() => refreshPreviewStreamAccess(environmentId), ACCESS_RETRY_MS);
-    return () => clearInterval(timer);
+    // The retry timer exists only while the window is showing: a hidden tab
+    // spends nothing, and the retries it missed collapse into the one it makes
+    // on the way back.
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const showing = () => document.visibilityState === "visible";
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = undefined;
+      if (!disposed && showing()) {
+        timer = setTimeout(tick, ACCESS_RETRY_MS);
+      }
+    };
+    const tick = () => {
+      timer = undefined;
+      if (disposed || !showing()) return;
+      refreshPreviewStreamAccess(environmentId);
+      schedule();
+    };
+    const onVisibilityChange = () => {
+      if (!showing()) {
+        clearTimeout(timer);
+        timer = undefined;
+        return;
+      }
+      refreshPreviewStreamAccess(environmentId);
+      schedule();
+    };
+    schedule();
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [access, accessDenied, environmentId, visible]);
 
   useEffect(() => {

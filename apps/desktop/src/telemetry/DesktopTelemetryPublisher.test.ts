@@ -411,6 +411,131 @@ describe("DesktopTelemetryPublisher", () => {
     }),
   );
 
+  it.effect("clamps diagnostics cadence on idle, speed-limit, and lock", () =>
+    Effect.gen(function* () {
+      const systemIdleState = yield* Ref.make<ElectronPowerMonitor.ElectronIdleState>("active");
+      let metricsReadCount = 0;
+      const simpleListeners = new Map<string, () => void>();
+      let speedLimitListener: ((limit: number) => void) | null = null;
+      const metrics = [
+        {
+          pid: 4_242,
+          type: "Browser",
+          creationTime: 1_000.75,
+          name: "electron",
+          cpu: {
+            percentCPUUsage: 12.5,
+            cumulativeCPUUsage: 3.25,
+            idleWakeupsPerSecond: 7,
+          },
+          memory: {
+            workingSetSize: 2_048,
+            peakWorkingSetSize: 4_096,
+          },
+        } as Electron.ProcessMetric,
+      ];
+      const layerPower = Layer.succeed(
+        ElectronPowerMonitor.ElectronPowerMonitor,
+        ElectronPowerMonitor.ElectronPowerMonitor.of({
+          isOnBatteryPower: Effect.succeed(false),
+          getSystemIdleTime: Effect.succeed(5),
+          getSystemIdleState: () => Ref.get(systemIdleState),
+          getCurrentThermalState: Effect.succeed("nominal"),
+          onSimpleEvent: (eventName, listener) =>
+            Effect.sync(() => {
+              simpleListeners.set(eventName, listener);
+            }),
+          onThermalStateChange: () => Effect.void,
+          onSpeedLimitChange: (listener) =>
+            Effect.sync(() => {
+              speedLimitListener = listener;
+            }),
+        }),
+      );
+      const layer = DesktopTelemetryPublisher.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerElectronApp(metrics, () => {
+              metricsReadCount += 1;
+            }),
+            layerPower,
+            layerHistory,
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
+        // Wait for the hello plus the initial snapshot before asserting cadence.
+        yield* publisher.encoded.pipe(Stream.take(2), Stream.runCollect);
+        assert.equal(metricsReadCount, 1);
+        const demandFiber = yield* Stream.runHead(publisher.changes).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        yield* publisher.handleControlForSource("diagnostics-viewer", {
+          version: 1,
+          type: "setDiagnosticsDemand",
+          enabled: true,
+        });
+        yield* Fiber.join(demandFiber);
+        assert.equal(metricsReadCount, 2);
+
+        // Idle with demand drops from LIVE 1s to BATTERY 5s.
+        yield* Ref.set(systemIdleState, "idle");
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal((yield* publisher.latest).pipe(Option.getOrThrow).power.idle, "true");
+        const idleBaseline = metricsReadCount;
+        yield* TestClock.adjust(Duration.millis(4_999));
+        assert.equal(metricsReadCount, idleBaseline);
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.equal(metricsReadCount, idleBaseline + 1);
+
+        // Active again restores LIVE 1s.
+        yield* Ref.set(systemIdleState, "active");
+        yield* TestClock.adjust(Duration.seconds(5));
+        assert.equal((yield* publisher.latest).pipe(Option.getOrThrow).power.idle, "false");
+        const liveBaseline = metricsReadCount;
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal(metricsReadCount, liveBaseline + 1);
+
+        // speed-limit-change alone escalates to CONSTRAINED 15s.
+        const speedFiber = yield* Stream.runHead(publisher.changes).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        speedLimitListener?.(80);
+        const speedSnapshot = Option.getOrThrow(yield* Fiber.join(speedFiber));
+        assert.equal(Option.getOrNull(speedSnapshot.speedLimitPercent), 80);
+        const constrainedBaseline = metricsReadCount;
+        yield* TestClock.adjust(Duration.millis(14_999));
+        assert.equal(metricsReadCount, constrainedBaseline);
+        yield* TestClock.adjust(Duration.millis(1));
+        assert.equal(metricsReadCount, constrainedBaseline + 1);
+
+        // Lock skips the expensive getAppMetrics read entirely.
+        const lockFiber = yield* Stream.runHead(publisher.changes).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        simpleListeners.get("lock-screen")?.();
+        const lockedSnapshot = Option.getOrThrow(yield* Fiber.join(lockFiber));
+        assert.equal(lockedSnapshot.power.locked, "true");
+        const lockedBaseline = metricsReadCount;
+        assert.equal(lockedBaseline, constrainedBaseline + 1);
+        const lockedSequence = (yield* publisher.latest).pipe(Option.getOrThrow).sequence;
+        yield* TestClock.adjust(Duration.seconds(15));
+        assert.equal(metricsReadCount, lockedBaseline);
+        assert.equal(
+          (yield* publisher.latest).pipe(Option.getOrThrow).sequence,
+          lockedSequence + 1,
+        );
+
+        // Unlock resumes full sampling.
+        const unlockFiber = yield* Stream.runHead(publisher.changes).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        simpleListeners.get("unlock-screen")?.();
+        const unlockedSnapshot = Option.getOrThrow(yield* Fiber.join(unlockFiber));
+        assert.equal(unlockedSnapshot.power.locked, "false");
+        assert.equal(metricsReadCount, lockedBaseline + 1);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("routes requestDesktopUpdate control messages and replays update reports", () =>
     Effect.gen(function* () {
       const layerPower = Layer.succeed(
@@ -610,7 +735,7 @@ describe("DesktopRendererHistory", () => {
             matches: (row) => row.event === "sample" && row.webContentsId === 2,
             written: sampled,
           };
-          yield* TestClock.adjust(Duration.seconds(30));
+          yield* TestClock.adjust(Duration.seconds(60));
           yield* history.recordMetrics(metrics);
           const sample = yield* Deferred.await(sampled);
           assert.equal(sample.rendererPid, 7_002);
@@ -645,7 +770,7 @@ describe("DesktopRendererHistory", () => {
             matches: (row) => row.event === "sample" && row.webContentsId === 2,
             written: replacementSampled,
           };
-          yield* TestClock.adjust(Duration.seconds(30));
+          yield* TestClock.adjust(Duration.seconds(60));
           yield* history.recordMetrics(metrics);
           assert.equal((yield* Deferred.await(replacementSampled)).rendererCreationTimeMs, 700_300);
 
@@ -680,7 +805,7 @@ describe("DesktopRendererHistory", () => {
           const afterDestroy = yield* Deferred.make<Record>();
           milestone = { matches: (row) => row.event === "sample", written: afterDestroy };
           const previousCount = persisted.length;
-          yield* TestClock.adjust(Duration.seconds(30));
+          yield* TestClock.adjust(Duration.seconds(60));
           yield* history.recordMetrics(metrics);
           assert.equal((yield* Deferred.await(afterDestroy)).webContentsId, 1);
           assert.isFalse(persisted.slice(previousCount).some((row) => row.webContentsId === 2));

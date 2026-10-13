@@ -50,17 +50,23 @@ export function startWindowsForegroundFocusThread(
     number,
     {
       readonly request: FocusRequest;
-      readonly resolve: (focused: boolean) => void;
+      readonly key: string;
+      readonly resolvers: Array<(focused: boolean) => void>;
       readonly timeout: ReturnType<typeof setTimeout>;
     }
   >();
+  // Concurrent duplicate requests (the capture-reveal path issues prepare
+  // then focus for the same window, and retries focus on failure) ride along
+  // on one worker round-trip instead of stacking timers and focus fights.
+  const inflightByKey = new Map<string, number>();
 
   const finish = (requestId: number, focused: boolean) => {
     const request = pending.get(requestId);
     if (!request) return;
     pending.delete(requestId);
+    if (inflightByKey.get(request.key) === requestId) inflightByKey.delete(request.key);
     clearTimeout(request.timeout);
-    request.resolve(focused);
+    for (const resolve of request.resolvers) resolve(focused);
   };
   const send = (request: FocusRequest, targetWorker: NodeWorkerThreads.Worker) => {
     if (!ready || closed || worker !== targetWorker) return;
@@ -106,17 +112,28 @@ export function startWindowsForegroundFocusThread(
 
   if (!start()) return unavailableThread();
 
-  const restart = (timedOutWorker: NodeWorkerThreads.Worker | undefined) => {
+  // A timed-out helper is hung: terminate it but restart lazily on the next
+  // request instead of eagerly respawning a native module nobody may use.
+  const suspendWorker = (timedOutWorker: NodeWorkerThreads.Worker | undefined) => {
     if (!timedOutWorker || worker !== timedOutWorker) return;
     worker = undefined;
     ready = false;
-    for (const requestId of pending.keys()) finish(requestId, false);
     void timedOutWorker.terminate();
-    start();
   };
   const request = (type: FocusRequest["type"], target: WindowsForegroundFocusTarget) =>
     new Promise<boolean>((resolve) => {
-      if (closed || (!worker && !start())) {
+      if (closed) {
+        resolve(false);
+        return;
+      }
+      const key = `${type}:${target.windowId}`;
+      const existingId = inflightByKey.get(key);
+      const existing = existingId === undefined ? undefined : pending.get(existingId);
+      if (existing) {
+        existing.resolvers.push(resolve);
+        return;
+      }
+      if (!worker && !start()) {
         resolve(false);
         return;
       }
@@ -125,10 +142,11 @@ export function startWindowsForegroundFocusThread(
       const requestWorker = worker!;
       const timeout = setTimeout(() => {
         finish(requestId, false);
-        restart(requestWorker);
+        suspendWorker(requestWorker);
       }, FOCUS_TIMEOUT_MS);
       timeout.unref();
-      pending.set(requestId, { request: focusRequest, resolve, timeout });
+      pending.set(requestId, { request: focusRequest, key, resolvers: [resolve], timeout });
+      inflightByKey.set(key, requestId);
       send(focusRequest, requestWorker);
     });
 

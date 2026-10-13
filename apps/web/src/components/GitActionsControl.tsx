@@ -85,6 +85,7 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
+import { useNowSecond } from "~/hooks/useNowSecond";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -333,18 +334,9 @@ function GitActionElapsedTime({
   startedAtMs: number | null;
   className?: string;
 }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (startedAtMs === null) {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      setNowMs(Date.now());
-    }, 1_000);
-    return () => window.clearInterval(intervalId);
-  }, [startedAtMs]);
+  // Shared module-level 1s clock: one timer for every mounted instance, and
+  // none while the tab is hidden.
+  const nowMs = useNowSecond(startedAtMs !== null) * 1_000;
 
   const elapsed = formatGitActionElapsed(startedAtMs, nowMs);
   if (!elapsed) {

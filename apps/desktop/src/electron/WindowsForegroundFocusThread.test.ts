@@ -69,7 +69,7 @@ it("fails pending focus when the helper exits", async () => {
   thread.close();
 });
 
-it("replaces a timed-out helper before accepting more work", async () => {
+it("parks a timed-out helper and restarts it lazily on the next request", async () => {
   vi.useFakeTimers();
   const replacement = makeWorker();
   workerConstructorMock.mockReturnValueOnce(worker).mockReturnValueOnce(replacement);
@@ -82,10 +82,12 @@ it("replaces a timed-out helper before accepting more work", async () => {
 
     assert.isFalse(await focused);
     assert.lengthOf(worker.terminate.mock.calls, 1);
-    assert.lengthOf(workerConstructorMock.mock.calls, 2);
+    // No eager respawn of the native helper: the next request pays for it.
+    assert.lengthOf(workerConstructorMock.mock.calls, 1);
 
-    replacement.emit("message", "ready");
     const prepared = thread.prepare(target);
+    assert.lengthOf(workerConstructorMock.mock.calls, 2);
+    replacement.emit("message", "ready");
     assert.deepEqual(replacement.postMessage.mock.calls[0]?.[0], {
       type: "prepare",
       requestId: 2,
@@ -97,4 +99,18 @@ it("replaces a timed-out helper before accepting more work", async () => {
     thread.close();
     vi.useRealTimers();
   }
+});
+
+it("coalesces concurrent identical focus requests onto one round-trip", async () => {
+  const thread = startWindowsForegroundFocusThread("focus.cjs");
+  worker.emit("message", "ready");
+
+  const first = thread.focus(target);
+  const second = thread.focus(target);
+  assert.lengthOf(worker.postMessage.mock.calls, 1);
+
+  worker.emit("message", { type: "result", requestId: 1, focused: true });
+  assert.isTrue(await first);
+  assert.isTrue(await second);
+  thread.close();
 });

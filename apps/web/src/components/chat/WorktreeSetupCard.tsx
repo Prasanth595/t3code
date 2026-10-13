@@ -14,7 +14,8 @@ import {
   XIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import { useNowSecond } from "~/hooks/useNowSecond";
 
 import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -40,20 +41,6 @@ function stageElapsedMs(stage: WorktreeSetupStage, nowMs: number): number | null
   const end = stage.endedAt ? Date.parse(stage.endedAt) : nowMs;
   if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
   return Math.max(0, end - start);
-}
-
-/**
- * Ticks once a second while any stage runs so elapsed labels stay live
- * without pushing a React commit through the timeline for every second.
- */
-function useNowWhile(active: boolean): number {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const id = setInterval(() => setNowMs(Date.now()), 1_000);
-    return () => clearInterval(id);
-  }, [active]);
-  return nowMs;
 }
 
 function StageIcon({ status }: { status: WorktreeSetupStage["status"] }) {
@@ -346,7 +333,9 @@ export function WorktreeSetupCard({
   embedded?: boolean;
 }) {
   const running = snapshot.phase === "running";
-  const nowMs = useNowWhile(running);
+  // Elapsed labels stay live off the shared 1s clock: one timer for the whole
+  // tab instead of one per card, paused while the tab is hidden.
+  const nowMs = useNowSecond(running) * 1_000;
   const [detailsOpen, setDetailsOpen] = useState(false);
   const totalElapsed = (() => {
     const start = Date.parse(snapshot.startedAt);

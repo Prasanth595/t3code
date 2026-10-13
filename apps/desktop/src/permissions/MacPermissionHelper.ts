@@ -116,8 +116,22 @@ export class MacPermissionHelper {
       webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
     this.window = window;
+    let finished = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let stopTracking = () => {};
     const finish = () => {
-      window.close();
+      if (finished) return;
+      finished = true;
+      // Stop the TCC poll and Settings tracking synchronously instead of
+      // waiting for the window's closed event, then destroy the transparent
+      // helper window outright so it stops compositing immediately.
+      if (timer !== undefined) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+      stopTracking();
+      stopTracking = () => {};
+      if (!window.isDestroyed()) window.destroy();
       if (owner && !owner.isDestroyed()) {
         owner.show();
         owner.focus();
@@ -179,14 +193,16 @@ export class MacPermissionHelper {
       }
       if (!window.isVisible()) window.showInactive();
     };
-    let stopTracking = () => {};
     window.on("blur", syncPosition);
     const onOwnerClosed = () => window.destroy();
     Electron.ipcMain.on(MAC_PERMISSION_HELPER_CHANNEL, onMessage);
-    const timer = setInterval(check, 1_000);
+    timer = setInterval(check, 1_000);
     owner?.once("closed", onOwnerClosed);
     window.once("closed", () => {
-      clearInterval(timer);
+      if (timer !== undefined) {
+        clearInterval(timer);
+        timer = undefined;
+      }
       stopTracking();
       Electron.ipcMain.removeListener(MAC_PERMISSION_HELPER_CHANNEL, onMessage);
       owner?.removeListener("closed", onOwnerClosed);

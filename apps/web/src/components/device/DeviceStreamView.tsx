@@ -25,6 +25,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 
 const AX_POLL_INTERVAL_MS = 2_000;
+const AX_POLL_HIDDEN_INTERVAL_MS = 10_000;
 const CONTROLS_RAIL_WIDTH = 56;
 
 export interface DeviceViewControls {
@@ -272,7 +273,10 @@ export function DeviceStreamView(props: {
       };
 
   // The accessibility tree is polled while the overlay is on; each poll is
-  // one JSON fetch, so there is nothing to repaint between polls.
+  // one JSON fetch, so there is nothing to repaint between polls. While the
+  // tab is hidden the overlay paints nothing: polls back off to a slow
+  // heartbeat that skips the fetch, and returning to the tab re-polls
+  // immediately.
   const [axElements, setAxElements] = useState<ReadonlyArray<DeviceAxElement>>([]);
   useEffect(() => {
     if (!props.axOverlay || !access || !props.visible) return;
@@ -280,21 +284,41 @@ export function DeviceStreamView(props: {
     let controller: AbortController | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
+    let inFlight = false;
+    const delay = () =>
+      document.visibilityState === "visible" ? AX_POLL_INTERVAL_MS : AX_POLL_HIDDEN_INTERVAL_MS;
     const poll = async () => {
+      if (stopped || inFlight) return;
+      if (document.visibilityState !== "visible") {
+        timer = setTimeout(() => void poll(), delay());
+        return;
+      }
+      inFlight = true;
       controller = new AbortController();
       try {
         const tree = await fetchDeviceAxTree(target, controller.signal);
         if (!stopped) setAxElements(tree.elements);
       } catch {
         // Keep the last good tree; the next poll retries.
+      } finally {
+        inFlight = false;
       }
-      if (!stopped) timer = setTimeout(() => void poll(), AX_POLL_INTERVAL_MS);
+      if (!stopped) timer = setTimeout(() => void poll(), delay());
+    };
+    const onReturn = () => {
+      if (stopped || inFlight || document.visibilityState !== "visible") return;
+      if (timer) clearTimeout(timer);
+      void poll();
     };
     void poll();
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
     return () => {
       stopped = true;
       controller?.abort();
       if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
       setAxElements([]);
     };
   }, [access, props.axOverlay, props.deviceId, props.platform, props.visible]);

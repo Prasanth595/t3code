@@ -35,6 +35,7 @@ import {
   type Session,
   clipboard,
   nativeImage,
+  powerMonitor,
   shell,
   webContents,
 } from "electron";
@@ -131,6 +132,13 @@ const ZOOM_EPSILON = 0.001;
 /** How long an armed tab keeps the exclusive display-media slot before another tab may take it. */
 const RECORDING_ARM_GRACE_MS = 10_000;
 const PICTURE_IN_PICTURE_FRAME_INTERVAL_MS = Math.ceil(1_000 / 12);
+/**
+ * Idle-GPU gate: when the machine is constrained (on battery, locked) or the
+ * host window is occluded, PiP drops from 12fps to 2fps. When the PiP window
+ * itself is occluded nobody sees frames, so capture pauses entirely.
+ */
+export const PICTURE_IN_PICTURE_CONSTRAINED_FRAME_INTERVAL_MS = 500;
+const PICTURE_IN_PICTURE_IDLE_THRESHOLD_SECONDS = 60;
 const PICTURE_IN_PICTURE_JPEG_QUALITY = 80;
 /**
  * Cold guests can reject capturePage with UnknownVizError or never settle it.
@@ -145,6 +153,55 @@ const PICTURE_IN_PICTURE_MIN_WIDTH = 240;
 const PICTURE_IN_PICTURE_MIN_HEIGHT = 160;
 const PICTURE_IN_PICTURE_ASPECT_RATIO_EPSILON = 0.002;
 const MAX_ARTIFACT_SITE_SLUG_LENGTH = 80;
+
+/**
+ * Idle-GPU helpers for the PiP capture loop. All three are defensive: test
+ * doubles and destroyed windows may lack methods, which means "not occluded /
+ * not constrained" so unit tests keep exercising the full-rate path while
+ * production pauses or slows capture when nobody can see the frames.
+ */
+export const isFrameCaptureWindowOccluded = (
+  window: { readonly isDestroyed?: () => boolean } | undefined | null,
+): boolean => {
+  if (!window) return false;
+  try {
+    const candidate = window as Partial<BrowserWindow>;
+    if (typeof candidate.isDestroyed === "function" && candidate.isDestroyed()) return true;
+    if (typeof candidate.isMinimized === "function" && candidate.isMinimized()) return true;
+    if (typeof candidate.isVisible === "function" && !candidate.isVisible()) return true;
+  } catch {
+    return false;
+  }
+  return false;
+};
+
+export const isFrameCapturePowerConstrained = (): boolean => {
+  try {
+    const monitor = powerMonitor as unknown as
+      | {
+          readonly isOnBatteryPower?: () => boolean;
+          readonly getSystemIdleState?: (thresholdSeconds: number) => string;
+        }
+      | undefined;
+    if (!monitor) return false;
+    if (typeof monitor.isOnBatteryPower === "function" && monitor.isOnBatteryPower()) {
+      return true;
+    }
+    if (typeof monitor.getSystemIdleState === "function") {
+      const state = monitor.getSystemIdleState(PICTURE_IN_PICTURE_IDLE_THRESHOLD_SECONDS);
+      if (state === "locked") return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+};
+
+/** Full-rate 12fps normally, 2fps when constrained so idle stays cheap. */
+export const pictureInPictureFrameIntervalMs = (constrained: boolean): number =>
+  constrained
+    ? PICTURE_IN_PICTURE_CONSTRAINED_FRAME_INTERVAL_MS
+    : PICTURE_IN_PICTURE_FRAME_INTERVAL_MS;
 const requestRecordingCaptureExpression = (tabId: string): string =>
   `globalThis[${JSON.stringify(DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER)}]?.(${JSON.stringify(tabId)}) === true`;
 const DEFAULT_ANNOTATION_THEME: DesktopPreviewAnnotationTheme = {
@@ -2545,6 +2602,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const captureSession = (yield* SynchronizedRef.get(frameCaptureSessionsRef)).get(tabId);
     if (!captureSession?.consumers.has("picture-in-picture") || captureSession.scope === null)
       return;
+    // Nobody sees an occluded PiP window: skip the capturePage entirely instead
+    // of burning compositor/GPU work for frames that are never delivered.
+    const pipSession = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
+    if (pipSession && isFrameCaptureWindowOccluded(pipSession.window)) return;
     const wc = yield* requireWebContents(tabId);
     const image = yield* attemptPromise(
       {
@@ -2686,8 +2747,20 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     // Recording keeps only the activity lease. Picture-in-picture owns the
     // capturePage loop and tolerates transient compositor warmup failures.
-    const captureNextFrame = Effect.sleep(PICTURE_IN_PICTURE_FRAME_INTERVAL_MS).pipe(
-      Effect.andThen(capturePreviewFrame(tabId)),
+    // Idle-GPU gating: the loop sleeps at full rate only while frames are
+    // visible and the machine is unconstrained; otherwise it backs off to 2fps
+    // (or skips capture entirely when the PiP window itself is occluded).
+    const captureNextFrame = Effect.gen(function* () {
+      const pipSession = (yield* SynchronizedRef.get(pictureInPictureSessionsRef)).get(tabId);
+      const pipOccluded = pipSession ? isFrameCaptureWindowOccluded(pipSession.window) : false;
+      const constrained =
+        pipOccluded ||
+        isFrameCapturePowerConstrained() ||
+        isFrameCaptureWindowOccluded(currentMainWindow);
+      yield* Effect.sleep(pictureInPictureFrameIntervalMs(constrained));
+      if (pipOccluded) return;
+      yield* capturePreviewFrame(tabId);
+    }).pipe(
       Effect.catch((error) =>
         Effect.logWarning("Background preview frame capture failed.", {
           tabId,
@@ -2717,8 +2790,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }
             let scope = current.scope;
             if (consumer === "picture-in-picture" && scope === null) {
-              scope = yield* Scope.fork(parentScope, "sequential");
-              yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
+              // try/finally for the loop scope: if forking the capture loop
+              // fails, the map below never commits, so close the scope here
+              // instead of leaking it.
+              const freshScope = yield* Scope.fork(parentScope, "sequential");
+              yield* Effect.forkIn(Effect.forever(captureNextFrame), freshScope).pipe(
+                Effect.onError(() => Scope.close(freshScope, Exit.void).pipe(Effect.ignore)),
+              );
+              scope = freshScope;
             }
             return [
               consumer === "picture-in-picture",
@@ -2745,7 +2824,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           const scope =
             consumer === "picture-in-picture" ? yield* Scope.fork(parentScope, "sequential") : null;
           if (scope !== null) {
-            yield* Effect.forkIn(Effect.forever(captureNextFrame), scope);
+            // try/finally for the loop scope and this attempt's throttling
+            // disables: on loop-fork failure the map below never commits, so
+            // close the scope and re-arm what this attempt disabled.
+            yield* Effect.forkIn(Effect.forever(captureNextFrame), scope).pipe(
+              Effect.onError(() =>
+                Effect.gen(function* () {
+                  yield* Scope.close(scope, Exit.void).pipe(Effect.ignore);
+                  yield* setFrameCaptureWebContentsBackgroundThrottling(wc, true).pipe(
+                    Effect.ignore,
+                  );
+                  const liveSessions = yield* SynchronizedRef.get(frameCaptureSessionsRef);
+                  if (liveSessions.size === 0) {
+                    yield* setFrameCaptureBackgroundThrottling(true).pipe(Effect.ignore);
+                  }
+                }).pipe(Effect.ignore),
+              ),
+            );
           }
           return [
             consumer === "picture-in-picture",

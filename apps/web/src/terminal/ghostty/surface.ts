@@ -671,6 +671,10 @@ export class GhosttyTerminalSurface {
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
+    // A hidden page never paints: rAF stays pending and the blink/selection
+    // timers would only wake the page. Pause them here and resume on return,
+    // mirroring the media player's visibility handling.
+    document.addEventListener("visibilitychange", this.onPageVisibilityChange);
     this.stopObservingResize = observeResize(mount, () => this.fit());
   }
 
@@ -832,6 +836,21 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     // Nothing else wakes an idle steady cursor: the blink timer only reschedules
     // from a render, and reduced motion is exactly the state that stopped it.
+    this.cursorOn = true;
+    this.requestRender();
+  };
+
+  private readonly onPageVisibilityChange = () => {
+    if (this.disposed) return;
+    if (document.hidden) {
+      // The pending rAF never fires while hidden, so drop it and the blink
+      // timer with it; a selection drag cannot continue off-screen either.
+      this.cancelRender();
+      this.setSelectionAutoscroll(0);
+      return;
+    }
+    // Re-enter on the visible blink phase; scheduleCursorBlink restarts the
+    // cycle from here when the cursor should blink.
     this.cursorOn = true;
     this.requestRender();
   };
@@ -1060,6 +1079,7 @@ export class GhosttyTerminalSurface {
     this.disposed = true;
     this.stopObservingResize();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
+    document.removeEventListener("visibilitychange", this.onPageVisibilityChange);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
     this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
@@ -1541,6 +1561,10 @@ export class GhosttyTerminalSurface {
     // selection into the newly revealed rows, like xterm's drag scroller.
     this.selectionScrollTimer = window.setInterval(() => {
       if (this.disposed || this.selectionScrollDelta === 0) return;
+      if (document.hidden || !this.visible) {
+        this.setSelectionAutoscroll(0);
+        return;
+      }
       this.scrollViewport(this.selectionScrollDelta);
       const pointer = this.selectionPointer;
       if (pointer) this.extendSelectionTo(pointer.x, pointer.y);
@@ -1959,6 +1983,10 @@ export class GhosttyTerminalSurface {
   private blinkEnabled(): boolean {
     const snapshot = this.snapshot;
     if (!snapshot || !this.visible || !this.hasSize) return false;
+    // A hidden page never composites: scheduling the 500ms toggle would only
+    // wake the page to flip a bit no one can see. The visibility listener
+    // restarts the cycle on return.
+    if (document.visibilityState !== "visible") return false;
     return shouldBlinkTerminalCursor({
       focused: this.focused,
       cursorBlinking: snapshot.cursorBlinking,

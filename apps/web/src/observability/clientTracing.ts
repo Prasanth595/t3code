@@ -13,7 +13,10 @@ import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer"
 import { isElectron } from "../env";
 import { APP_VERSION } from "~/branding";
 
-const DEFAULT_EXPORT_INTERVAL_MS = 1_000;
+// Idle spans batch for up to 10 seconds (matching the desktop exporter) instead
+// of flushing every second. Empty batches skip the POST, so this mostly removes
+// wakeups and coalesces bursts like the periodic activity report.
+const DEFAULT_EXPORT_INTERVAL_MS = 10_000;
 const CLIENT_TRACING_RESOURCE = {
   serviceName: "t3code-web",
   attributes: {

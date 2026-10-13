@@ -15,7 +15,6 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
-import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 
@@ -23,6 +22,10 @@ import { randomUUID } from "./utils";
 
 const CLIENT_ID_STORAGE_KEY = "t3.backgroundActivity.clientId";
 const REPORT_INTERVAL_MS = 25_000;
+// Hidden tabs hold no foreground state, so they refresh just under the lease
+// TTL instead of at the visible cadence. Transitions still report immediately
+// through `requestReport`.
+const HIDDEN_REPORT_INTERVAL_MS = 40_000;
 const LEASE_TTL_MS = 45_000;
 const RECENT_INTERACTION_WINDOW_MS = LEASE_TTL_MS;
 const BASELINE_SCOPES: ReadonlyArray<BackgroundScope> = [{ type: "provider-status" }];
@@ -247,9 +250,11 @@ export const layer = Layer.effectDiscard(
       Stream.runForEach(() => report),
       Effect.forkScoped,
     );
-    yield* Effect.sync(requestReport).pipe(
-      Effect.repeat(Schedule.spaced(`${REPORT_INTERVAL_MS} millis`)),
-      Effect.forkScoped,
-    );
+    yield* Effect.gen(function* () {
+      yield* Effect.sync(requestReport);
+      yield* Effect.sleep(
+        `${document.visibilityState === "hidden" ? HIDDEN_REPORT_INTERVAL_MS : REPORT_INTERVAL_MS} millis`,
+      );
+    }).pipe(Effect.forever, Effect.forkScoped);
   }),
 );

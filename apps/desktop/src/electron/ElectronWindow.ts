@@ -291,11 +291,26 @@ export const make = Effect.gen(function* () {
             window.moveTop();
           }
 
-          if (platform === "darwin") {
-            Electron.app.focus({ steal: true });
+          // Idle-GPU gate: focusing (and on macOS, stealing app focus) pumps
+          // compositor work. Skip both when the window is already visible and
+          // focused; the reveal is then a no-op instead of a wakeup.
+          let alreadyForeground = false;
+          try {
+            alreadyForeground =
+              typeof window.isFocused === "function" &&
+              typeof window.isVisible === "function" &&
+              window.isFocused() &&
+              window.isVisible();
+          } catch {
+            alreadyForeground = false;
           }
+          if (!alreadyForeground) {
+            if (platform === "darwin") {
+              Electron.app.focus({ steal: true });
+            }
 
-          window.focus();
+            window.focus();
+          }
 
           if (captureReveal) {
             if (shellHostedForeground) {

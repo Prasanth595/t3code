@@ -17,6 +17,10 @@ import { useGuideRunStore, type GuideRunWatch } from "./guideRunStore";
 
 /** How often a watched run is re-read. A run takes minutes, not seconds. */
 const RUN_POLL_MS = 5_000;
+/** While the tab is hidden nobody reads the answer, so back off hard. Kept
+    running (rather than paused) because this watcher's job is saying when a
+    run ends that the reader left behind. */
+const RUN_POLL_HIDDEN_MS = 30_000;
 /** A run never seen running after this long was dropped before the first read. */
 const UNSEEN_RUN_MS = 60_000;
 
@@ -41,8 +45,29 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
   const navigate = useNavigate();
   const refresh = query.refresh;
   useEffect(() => {
-    const timer = setInterval(refresh, RUN_POLL_MS);
-    return () => clearInterval(timer);
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const delay = () => (document.visibilityState === "visible" ? RUN_POLL_MS : RUN_POLL_HIDDEN_MS);
+    const tick = () => {
+      if (disposed) return;
+      refresh();
+      timer = setTimeout(tick, delay());
+    };
+    const onReturn = () => {
+      if (disposed || document.visibilityState !== "visible") return;
+      clearTimeout(timer);
+      refresh();
+      timer = setTimeout(tick, RUN_POLL_MS);
+    };
+    timer = setTimeout(tick, RUN_POLL_MS);
+    window.addEventListener("focus", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    return () => {
+      disposed = true;
+      clearTimeout(timer);
+      window.removeEventListener("focus", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
   }, [refresh]);
 
   const data = query.data;

@@ -24,7 +24,14 @@ import * as RpcClientError from "effect/rpc/RpcClientError";
 import * as RpcSerialization from "effect/rpc/RpcSerialization";
 import * as Socket from "effect/socket/Socket";
 
-import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
+import {
+  makeWsRpcProtocolClient,
+  HIDDEN_PING_INTERVAL,
+  HIDDEN_PING_TIMEOUT,
+  PING_INTERVAL,
+  PING_TIMEOUT,
+  type WsRpcProtocolClient,
+} from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -173,6 +180,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     // Set when the socket closes because the server stopped answering, so the failure says so
     // instead of looking like the server closed the connection.
     const pingTimedOut = yield* Ref.make(false);
+    // Sessions born while the page is hidden keep a slower heartbeat: nobody
+    // is watching, and the supervisor still reconnects on demand.
+    const hiddenPage = typeof document !== "undefined" && document.visibilityState === "hidden";
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
       onPingTimeout: Ref.set(pingTimedOut, true),
@@ -201,7 +211,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
-        pingTimeout: PING_TIMEOUT,
+        pingInterval: hiddenPage ? HIDDEN_PING_INTERVAL : PING_INTERVAL,
+        pingTimeout: hiddenPage ? HIDDEN_PING_TIMEOUT : PING_TIMEOUT,
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
       }),

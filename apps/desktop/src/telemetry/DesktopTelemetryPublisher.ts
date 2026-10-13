@@ -123,25 +123,36 @@ function updatePowerState(state: PowerState, event: PowerEvent): PowerState {
   }
 }
 
+function isSamplingConstrained(power: PowerState): boolean {
+  return (
+    power.suspended ||
+    power.locked === "true" ||
+    power.thermalState === "serious" ||
+    power.thermalState === "critical" ||
+    Option.isSome(power.speedLimitPercent)
+  );
+}
+
 function sampleInterval(
   power: PowerState,
   diagnosticsDemand: boolean,
   hostPowerIntervals: HostPowerIntervals,
 ): Duration.Duration {
   if (!diagnosticsDemand) {
-    return power.suspended || power.locked === "true" || power.idle === "true"
-      ? hostPowerIntervals.idle
-      : hostPowerIntervals.active;
+    if (power.suspended || power.locked === "true" || power.idle === "true") {
+      // Idle with no viewer is pure overhead; back off further on battery.
+      return power.onBattery === "true"
+        ? Duration.times(hostPowerIntervals.idle, 2)
+        : hostPowerIntervals.idle;
+    }
+    return hostPowerIntervals.active;
   }
-  if (
-    power.suspended ||
-    power.locked === "true" ||
-    power.thermalState === "serious" ||
-    power.thermalState === "critical"
-  ) {
+  if (isSamplingConstrained(power)) {
     return CONSTRAINED_SAMPLE_INTERVAL;
   }
-  if (power.onBattery === "true") return BATTERY_SAMPLE_INTERVAL;
+  // LIVE (1s) only with an attached diagnostics viewer, AC power, an active
+  // user, and no thermal/speed-limit pressure. Idle on AC drops to 5s.
+  if (power.onBattery === "true" || power.idle === "true") return BATTERY_SAMPLE_INTERVAL;
   return LIVE_SAMPLE_INTERVAL;
 }
 
@@ -208,19 +219,30 @@ export const make = Effect.fn("desktop.telemetryPublisher.make")(function* () {
       const sampledAt = yield* DateTime.now;
       const sampledAtUnixMs = DateTime.toEpochMillis(sampledAt);
       const demand = (yield* Ref.get(diagnosticsDemandSources)).size > 0;
-      const [currentPower, idleSeconds, systemIdleState, onBattery, metrics] = yield* Effect.all(
+      const currentPower = yield* Ref.get(powerState);
+      // getAppMetrics is the expensive poll (shared CPU interval plus
+      // per-process stats). Skip it while locked/suspended: the snapshot then
+      // carries no per-process rows and history keeps its last-known memory.
+      // A timer sample that would clear a stale suspend still reads metrics so
+      // recovery publishes a full snapshot.
+      const willRecoverSuspended =
+        allowSuspendRecovery && currentPower.suspended && !currentPower.suspendedEventPending;
+      const skipMetrics =
+        (currentPower.suspended && !willRecoverSuspended) || currentPower.locked === "true";
+      const [idleSeconds, systemIdleState, onBattery] = yield* Effect.all(
         [
-          Ref.get(powerState),
           powerMonitor.getSystemIdleTime,
           powerMonitor.getSystemIdleState(IDLE_THRESHOLD_SECONDS),
           powerMonitor.isOnBatteryPower,
-          electronApp.getAppMetrics,
         ],
         { concurrency: "unbounded" },
       );
+      const metrics = skipMetrics ? [] : yield* electronApp.getAppMetrics;
       // One Electron sampler preserves the shared CPU measurement interval.
       // History follows the existing power-aware cadence, even without demand.
-      yield* rendererHistory.recordMetrics(metrics);
+      if (!skipMetrics) {
+        yield* rendererHistory.recordMetrics(metrics);
+      }
       const polledLocked =
         systemIdleState === "unknown"
           ? currentPower.locked

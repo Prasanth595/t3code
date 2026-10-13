@@ -7,6 +7,13 @@ type RpcClientFactory = typeof makeWsRpcProtocolClient;
 export type WsRpcProtocolClient =
   RpcClientFactory extends Effect.Effect<infer Client, any, any> ? Client : never;
 
-// Pings go out every 5 seconds, and a server busy for a few seconds stops
-// answering them. Allow 15 seconds without any frame before dropping the socket.
+// Pings go out every 5 seconds while the page is visible, and a server busy
+// for a few seconds stops answering them. Allow 15 seconds without any frame
+// before dropping the socket.
+export const PING_INTERVAL = "5 seconds";
 export const PING_TIMEOUT = "15 seconds";
+// Sessions born while the page is hidden hold no foreground state, so they
+// keep a slower heartbeat. The timeout still tolerates a missed pong, and the
+// supervisor reconnects on demand when the user returns.
+export const HIDDEN_PING_INTERVAL = "30 seconds";
+export const HIDDEN_PING_TIMEOUT = "60 seconds";

@@ -273,6 +273,7 @@ import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { useSecondTick } from "~/hooks/useNowSecond";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -3585,16 +3586,13 @@ function WorkingTimer({ createdAt }: { createdAt: string }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = formatWorkingTimerNow(createdAt);
 
-  useEffect(() => {
-    const updateText = () => {
-      if (textRef.current) {
-        textRef.current.textContent = formatWorkingTimerNow(createdAt);
-      }
-    };
-    updateText();
-    const id = setInterval(updateText, 1000);
-    return () => clearInterval(id);
-  }, [createdAt]);
+  // Direct DOM write so the tick never commits through the timeline; the 1s
+  // cadence comes from the shared module-level clock, not one interval per row.
+  useSecondTick(true, () => {
+    if (textRef.current) {
+      textRef.current.textContent = formatWorkingTimerNow(createdAt);
+    }
+  });
 
   return (
     <span ref={textRef} className="tabular-nums">

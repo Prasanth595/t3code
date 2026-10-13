@@ -846,15 +846,27 @@ export const make = Effect.gen(function* () {
     bindFirstRevealTrigger(revealSubscribers, () => {
       // Boot is done; hand the window back to normal hidden-window throttling
       // (see the backgroundThrottling comment on the create options above).
-      if (!window.isDestroyed()) {
-        window.webContents.setBackgroundThrottling(true);
+      // try/finally: a throwing maximize() or setBackgroundThrottling must not
+      // strand the window unthrottled or skip the reveal.
+      try {
+        if (!window.isDestroyed()) {
+          try {
+            window.webContents.setBackgroundThrottling(true);
+          } catch {
+            // Best effort; a destroyed webContents throws and needs no throttling.
+          }
+        }
+      } finally {
+        try {
+          if (persistedSettings.mainWindowMaximized && !window.isDestroyed()) {
+            window.maximize();
+          }
+        } finally {
+          void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
+        }
       }
       // Reveal the real window, then close the connecting splash (if any) so the
       // two don't overlap and there's no blank gap between them.
-      if (persistedSettings.mainWindowMaximized) {
-        window.maximize();
-      }
-      void runPromise(Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash));
     });
 
     loadApplication();

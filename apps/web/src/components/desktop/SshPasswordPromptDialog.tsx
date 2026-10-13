@@ -1,6 +1,8 @@
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 
+import { useNowSecond } from "~/hooks/useNowSecond";
+
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -69,7 +71,9 @@ function ActiveSshPasswordPrompt({
 }) {
   const [password, setPassword] = useState("");
   const [isResponding, setIsResponding] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  // Shared 1s clock for the expiry countdown: no per-dialog interval, and the
+  // countdown freezes (rather than waking the tab) while hidden.
+  const now = useNowSecond() * 1_000;
   const [responseError, setResponseError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const isRespondingRef = useRef(false);
@@ -82,15 +86,6 @@ function ActiveSshPasswordPrompt({
     });
     return () => {
       window.cancelAnimationFrame(frame);
-    };
-  }, []);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setNow(Date.now());
-    }, 1_000);
-    return () => {
-      window.clearInterval(interval);
     };
   }, []);
 
