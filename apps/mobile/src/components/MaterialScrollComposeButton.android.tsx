@@ -24,8 +24,10 @@ export function MaterialScrollComposeButton(props: {
   const typography = resolveScaledTextRole("footnote", appearance.baseFontSize);
   const { iconSize, fabSize } = useAndroidControlSizing();
   const [buttonWidth, setButtonWidth] = useState(fabSize);
+  // Treat measurements at the width limit as overflow, allowing for native pixel rounding.
   const expanded =
-    props.expanded && (props.maxWidth === undefined || buttonWidth <= props.maxWidth);
+    props.expanded &&
+    (props.maxWidth === undefined || Math.ceil(buttonWidth) < Math.floor(props.maxWidth));
   const rememberWidth = useCallback(({ width }: { width: number }) => {
     setButtonWidth((previous) => Math.max(previous, width));
   }, []);
@@ -33,7 +35,11 @@ export function MaterialScrollComposeButton(props: {
     <View
       pointerEvents="box-none"
       className={props.className}
-      style={[props.style, { left: 20, height: fabSize }]}
+      style={[
+        props.style,
+        { height: fabSize },
+        props.maxWidth === undefined ? { left: 20 } : { width: Math.max(fabSize, props.maxWidth) },
+      ]}
     >
       <View pointerEvents="none" importantForAccessibility="no-hide-descendants">
         <Host
