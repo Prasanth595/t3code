@@ -11151,7 +11151,7 @@ export default function ChatView(props: ChatViewProps) {
           rightPanelOpen && activeRightPanelSurface?.id === renderedRightPanelSurface.id
         }
         // Keyed by thread too, so switching threads reopens on that thread's remembered tab.
-        key={`${activeThreadKey}:${renderedRightPanelSurface.host ?? ""}:${renderedRightPanelSurface.repository}#${renderedRightPanelSurface.number}`}
+        key={`${activeThreadKey}:${renderedRightPanelSurface.id}`}
         environmentId={activeThread.environmentId}
         onSelectPullRequest={(reference) => {
           if (activeThreadRef)

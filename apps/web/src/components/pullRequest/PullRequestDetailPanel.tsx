@@ -509,10 +509,12 @@ export function PullRequestDetailPanel({
   // Counted up by the guide's last stop to open the composer on the review.
   const [openReviewRequest, setOpenReviewRequest] = useState(0);
   const [tab, setTab] = useState<DetailTab>(initialTab);
-  const tabChanged = useEffectEvent((next: DetailTab) => onTabChange?.(next));
-  useEffect(() => {
-    tabChanged(tab);
-  }, [tab]);
+  // A tab the reader moves to is reported so its holder can reopen on it. Falling back from a
+  // tab this host cannot show is not reported, so the choice returns when the tab does.
+  const selectTab = (next: DetailTab) => {
+    setTab(next);
+    onTabChange?.(next);
+  };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
@@ -525,7 +527,7 @@ export function PullRequestDetailPanel({
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
-    setTab("code");
+    selectTab("code");
   };
   // The guide names files; following one shows it in the whole diff, not a single commit's.
   const [codeRevealRequest, setCodeRevealRequest] = useState<{
@@ -536,7 +538,7 @@ export function PullRequestDetailPanel({
     selectCodeCommit(null);
     setCodeRevealRequest((previous) => ({ path, nonce: (previous?.nonce ?? 0) + 1 }));
     void loadCodeTab();
-    setTab("code");
+    selectTab("code");
   };
   // A guide notice asks for its pull request's Guide tab once the page has opened it.
   const guideOpenRequested = useGuideRunStore(
@@ -544,8 +546,10 @@ export function PullRequestDetailPanel({
   );
   if (guideOpenRequested && tab !== "guide") setTab("guide");
   useEffect(() => {
-    if (guideOpenRequested) useGuideRunStore.getState().requestOpen(null);
-  }, [guideOpenRequested]);
+    if (!guideOpenRequested) return;
+    useGuideRunStore.getState().requestOpen(null);
+    onTabChange?.("guide");
+  }, [guideOpenRequested, onTabChange]);
   // Every tab the reader has opened stays mounted behind the active one. The diff viewer
   // always needed this (it virtualizes against its own scroll position); the trace showed the
   // summary needs it too — a large description re-parses its whole markdown on every return
@@ -1126,7 +1130,7 @@ export function PullRequestDetailPanel({
   });
   const writeGuide = () => {
     void guideWriter.write();
-    if (guideWriter.data?.guide == null) setTab("guide");
+    if (guideWriter.data?.guide == null) selectTab("guide");
   };
 
   const writeTaskToComposer = (target: ScopedThreadRef | DraftId, task: ThreadTask) => {
@@ -2736,7 +2740,7 @@ export function PullRequestDetailPanel({
           <PullRequestDetailTabBar
             tabs={visibleTabs}
             value={tab}
-            onValueChange={setTab}
+            onValueChange={selectTab}
             onTabIntent={(item) => {
               if (item === "code") void loadCodeTab();
             }}
