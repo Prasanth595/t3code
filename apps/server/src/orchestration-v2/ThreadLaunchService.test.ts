@@ -1127,13 +1127,18 @@ it.effect("starts a thread in the main checkout without running the setup action
       });
       const launched = yield* launches.launch(input);
       assert.isNull(launched.projection.thread.worktreePath);
-      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
-        Stream.filter(
+      const events = yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.takeUntil(
           (stored) =>
             stored.commandId === CommandId.make(`${input.commandId}:release`) &&
             stored.event.type === "run.updated",
         ),
-        Stream.runHead,
+        Stream.runCollect,
+      );
+      assert.isFalse(
+        events.some(
+          (stored) => stored.commandId === CommandId.make(`${input.commandId}:progress:setup`),
+        ),
       );
       assert.equal(harness.runSetup.mock.calls.length, 0);
     }).pipe(Effect.provide(harness.layer));
