@@ -430,9 +430,10 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("logs bounded updater failure context without exposing the cause", () => {
-    const cause = new Error(
-      "request failed for https://user:secret@example.com/update?token=secret",
+  it.effect("logs the redacted cause of a rejected update check", () => {
+    const cause = Object.assign(
+      new Error("request failed for https://user:secret@example.com/update?token=secret"),
+      { code: "ERR_UPDATER_LATEST_VERSION_NOT_FOUND" },
     );
     const updaterError = new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
       channel: null,
@@ -459,6 +460,10 @@ describe("DesktopUpdates", () => {
         assert.isDefined(loggedAnnotation);
         assert.equal(loggedAnnotation.errorTag, "ElectronUpdaterCheckForUpdatesError");
         assert.isNull(loggedAnnotation.channel);
+        assert.equal(
+          loggedAnnotation.cause,
+          "Error [ERR_UPDATER_LATEST_VERSION_NOT_FOUND]: request failed for [redacted URL]",
+        );
         assert.notProperty(loggedAnnotation, "error");
         assert.notInclude(Object.values(loggedAnnotation).map(String).join(" "), "secret");
         assert.equal(
@@ -466,6 +471,49 @@ describe("DesktopUpdates", () => {
           "Electron updater failed to check for updates on channel default.",
         );
         assert.notInclude(state.message ?? "", "secret");
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          TestClock.layer(),
+          harness.layer,
+          Logger.layer([logger], { mergeWithExisting: false }),
+        ),
+      ),
+    );
+  });
+
+  it.effect("logs the redacted cause of an updater error event", () => {
+    const harness = makeHarness();
+    const cause = Object.assign(new Error("404 Not Found\nHeaders: authorization=secret"), {
+      code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND",
+    });
+    const loggedAnnotations: Array<Record<string, unknown>> = [];
+    const logger = Logger.make(({ fiber }) => {
+      const annotations = fiber.getRef(References.CurrentLogAnnotations);
+      if (annotations.errorTag === "DesktopUpdaterReportedError") {
+        loggedAnnotations.push(annotations);
+      }
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+
+        harness.emit("error", cause);
+        yield* flushCallbacks;
+
+        const loggedAnnotation = loggedAnnotations.at(-1);
+        assert.isDefined(loggedAnnotation);
+        assert.equal(loggedAnnotation.operation, "background");
+        assert.equal(
+          loggedAnnotation.cause,
+          "Error [ERR_UPDATER_CHANNEL_FILE_NOT_FOUND]: 404 Not Found",
+        );
+        assert.notInclude(JSON.stringify(loggedAnnotations), "secret");
+        const state = yield* updates.getState;
+        assert.equal(state.message, "Desktop updater background operation reported an error.");
       }),
     ).pipe(
       Effect.provide(
