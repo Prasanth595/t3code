@@ -281,6 +281,13 @@ it.effect("settles unknown identities served by a GitLab login for their host", 
       "code.example.test",
     ]);
 
+    // A Windows drive path is not a remote, even if a login matches its drive letter.
+    const drivePath = identity("C:/repos/project");
+    assert.strictEqual(
+      yield* refine!({ identity: drivePath, resolveContext: () => Effect.die("not asked") }),
+      drivePath,
+    );
+
     // A host no GitLab login serves, or an identity another host already owns, is left alone.
     const unserved = identity("https://code.example.test/team/repo.git", "unknown");
     assert.strictEqual(

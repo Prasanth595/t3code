@@ -106,8 +106,9 @@ function refineUnknownGitLabRemote(input: SourceControlUnknownRemoteRefinementIn
 function unknownRemoteProvider(remoteUrl: string) {
   const detected = detectSourceControlProviderFromRemoteUrl(remoteUrl);
   if (detected) return detected.kind === "unknown" ? detected : null;
-  // An SCP remote with no user (`host:group/project.git`) is not detected.
-  const host = /^([^@:/]+):.+/.exec(remoteUrl.trim())?.[1]?.toLowerCase();
+  // An SCP remote with no user (`host:group/project.git`) is not detected. A one-letter host is
+  // a Windows drive (`C:/repos/project`), not a remote.
+  const host = /^([^@:/]{2,}):.+/.exec(remoteUrl.trim())?.[1]?.toLowerCase();
   return host
     ? { kind: SourceControlProviderKind.make("unknown"), name: host, baseUrl: `https://${host}` }
     : null;
