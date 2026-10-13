@@ -64,7 +64,10 @@ export type T3McpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  // Fork: machine map tools.
+  | "machine-map"
+  | "machine-tool-call";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -332,6 +335,22 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  // Fork: machine map (apps/machine-map/SPEC.md, MM-801).
+  machines_read: tool(["Read", "Reading", "Read", "the machine map"], "machine-map"),
+  machines_set_access: tool(["Set", "Setting", "Set", "machine access"], "machine-map"),
+  machines_set_setting: tool(["Set", "Setting", "Set", "a machine setting"], "machine-map"),
+  machines_command: tool(["Send", "Sending", "Sent", "a machine command"], "machine-map"),
+  machines_queue_cancel: tool(
+    ["Cancel", "Cancelling", "Cancelled", "a queued command"],
+    "machine-map",
+  ),
+  machines_undo: tool(["Undo", "Undoing", "Undid", "a machine map change"], "machine-map"),
+  machines_preset: tool(["Apply", "Applying", "Applied", "a machine map preset"], "machine-map"),
+  machines_join: tool(["Join", "Joining", "Joined", "the machine map"], "machine-map"),
+  machine_tool_call: tool(
+    ["Call", "Calling", "Called", "a tool on another machine"],
+    "machine-tool-call",
+  ),
 };
 
 /**

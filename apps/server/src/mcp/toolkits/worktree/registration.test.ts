@@ -34,6 +34,8 @@ import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpSessionRegistry from "../../McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "../../PreviewAutomationBroker.ts";
 import * as PreviewBrowser from "../../../preview/PreviewBrowser.ts";
+import * as MachineMap from "../../../fork/machineMap/MachineMap.ts";
+import * as MachinePeers from "../../../fork/machineMap/MachinePeers.ts";
 
 const layerStubServices = Layer.mergeAll(
   Layer.mock(Orchestrator.OrchestratorV2)({}),
@@ -57,6 +59,8 @@ const layerStubServices = Layer.mergeAll(
   Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({}),
   Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
   Layer.mock(ThreadSearch.ThreadSearch)({}),
+  Layer.mock(MachineMap.MachineMap)({}),
+  Layer.mock(MachinePeers.MachinePeers)({}),
 );
 
 const ToolsListPayload = Schema.fromJsonString(

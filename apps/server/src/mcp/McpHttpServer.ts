@@ -49,6 +49,7 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
+import * as MachineMapHandlers from "./toolkits/machineMap/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { McpToolkits, type McpToolkitName } from "./toolkits/registry.ts";
 
@@ -872,6 +873,8 @@ const toolkitRegistrations = {
   device: layerDeviceToolkit,
   pullRequests: layerPullRequestsToolkit,
   html: layerHtmlToolkit,
+  // Fork: machine map tools.
+  machineMap: toolkitRegistration(McpToolkits.machineMap, MachineMapHandlers.layer),
 } satisfies { readonly [Name in McpToolkitName]: Layer.Layer<never, unknown, unknown> };
 
 export const layer = Layer.mergeAll(
