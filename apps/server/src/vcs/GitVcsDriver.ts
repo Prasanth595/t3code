@@ -476,6 +476,7 @@ function chunkPathsForGitCheckIgnore(relativePaths: ReadonlyArray<string>): stri
   return chunks;
 }
 
+/** Reads fetch and push URLs from verbose remotes, ignoring trailing partial-clone filter annotations. */
 function parseGitRemoteVerboseOutput(
   output: string,
 ): Map<string, { url?: string; pushUrl?: string }> {
@@ -486,7 +487,6 @@ function parseGitRemoteVerboseOutput(
       continue;
     }
 
-    // Partial clone fetch remotes include a filter annotation such as [blob:none].
     const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]\r\n]+\])?$/.exec(trimmed);
     if (!match) {
       continue;
