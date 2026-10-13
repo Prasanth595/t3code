@@ -566,6 +566,14 @@ it.layer(
         for (const account of [
           { account: null, requiresOpenaiAuth: false },
           { account: { type: "apiKey" as const }, requiresOpenaiAuth: false },
+          {
+            account: {
+              type: "chatgpt" as const,
+              email: "test@example.com",
+              planType: "pro" as const,
+            },
+            requiresOpenaiAuth: false,
+          },
         ]) {
           const custom = yield* usageFor(account);
           assert.deepStrictEqual(custom?.windows, []);
