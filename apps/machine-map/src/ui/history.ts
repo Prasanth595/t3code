@@ -12,6 +12,7 @@ import type {
   MapPosition,
   MapRevision,
 } from "@t3tools/contracts/machineMap";
+import type { HealthAlert } from "@t3tools/contracts/machineMapResources";
 
 import { arrowRaises, usesText } from "../rules/access.ts";
 import { defaultArrow, roleRank } from "../rules/map.ts";
@@ -40,7 +41,8 @@ export type HistoryKind =
   | "note"
   | "preset"
   | "other"
-  | "command";
+  | "command"
+  | "alert";
 
 /** Each kind: the filter label, the sticker (one or two words) and whether it is important. */
 export const HISTORY_KIND: Record<
@@ -61,6 +63,7 @@ export const HISTORY_KIND: Record<
   preset: { label: "Presets", sticker: "preset", important: false },
   other: { label: "Other changes", sticker: "change", important: false },
   command: { label: "Commands", sticker: "command", important: false },
+  alert: { label: "Health alerts", sticker: "alert", important: false },
 };
 
 export const HISTORY_KINDS = Object.keys(HISTORY_KIND).filter(
@@ -169,12 +172,21 @@ export type HistoryEntry =
       readonly at: string;
       readonly kind: "command";
       readonly command: MachineCommand;
+    }
+  | {
+      /** MM-1505: the start or the end of a health alert, a portal event and not a revision. */
+      readonly _tag: "alert";
+      readonly at: string;
+      readonly kind: "alert";
+      readonly alert: HealthAlert;
+      readonly ended: boolean;
     };
 
-/** Revisions and commands, newest first. */
+/** Revisions, commands, and alert starts and ends, newest first. */
 export function historyEntries(
   revisions: ReadonlyArray<MapRevision>,
   commands: ReadonlyArray<MachineCommand>,
+  alerts: ReadonlyArray<HealthAlert>,
 ): Array<HistoryEntry> {
   return [
     ...revisions.map((revision): HistoryEntry => ({
@@ -189,11 +201,39 @@ export function historyEntries(
       kind: "command",
       command,
     })),
+    ...alerts.flatMap((alert): Array<HistoryEntry> => [
+      { _tag: "alert", at: alert.startedAt, kind: "alert", alert, ended: false },
+      ...(alert.endedAt === null
+        ? []
+        : [{ _tag: "alert", at: alert.endedAt, kind: "alert", alert, ended: true } as const]),
+    ]),
   ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
 }
 
-const entryActor = (entry: HistoryEntry): MapActor =>
-  entry._tag === "revision" ? entry.revision.actor : entry.command.actor;
+/** A stable key of one entry. */
+export function entryKey(entry: HistoryEntry): string {
+  switch (entry._tag) {
+    case "revision":
+      return `rev${entry.revision.revision}`;
+    case "command":
+      return entry.command.id;
+    case "alert":
+      return `${entry.alert.id}:${entry.ended ? "end" : "start"}`;
+  }
+}
+
+const HEALTH_ACTOR: MapActor = { _tag: "portal", reason: "health" };
+
+export function entryActor(entry: HistoryEntry): MapActor {
+  switch (entry._tag) {
+    case "revision":
+      return entry.revision.actor;
+    case "command":
+      return entry.command.actor;
+    case "alert":
+      return HEALTH_ACTOR;
+  }
+}
 
 /** One actor for the filter: an owner device, the agents of one machine, or the portal. */
 export function actorKey(actor: MapActor): string {
@@ -220,6 +260,7 @@ export function actorLabel(actor: MapActor, map: MachineMapDocument): string {
 
 /** The machines that an entry names. A shared setting names none. */
 export function entryMachines(entry: HistoryEntry): ReadonlySet<string> {
+  if (entry._tag === "alert") return new Set([entry.alert.machineId]);
   if (entry._tag === "command") {
     const { input, machineId } = entry.command;
     return new Set(input._tag === "testArrow" ? [machineId, input.to] : [machineId]);

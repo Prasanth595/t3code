@@ -55,6 +55,7 @@ import {
   valueText,
 } from "./format.ts";
 import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
+import { AlertStickers, ResourcesSection } from "./resources.tsx";
 import { NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
 
@@ -510,6 +511,7 @@ function MachinePanel({ id }: { id: string }) {
       </p>
       <div className="stickers-row">
         <span className={`sticker ${PRESENCE_STICKER[state]}`}>{state}</span>
+        <AlertStickers machineId={machine.id} />
         {status && status.runningTurns > 0 && (
           <span className="sticker ok">{status.runningTurns} running</span>
         )}
@@ -591,6 +593,9 @@ function MachinePanel({ id }: { id: string }) {
       ) : (
         <p className="small muted">No status yet. It shows here after the first connection.</p>
       )}
+
+      <Section>Resources</Section>
+      <ResourcesSection machine={machine} />
 
       <Section>Connect</Section>
       <p className="hint">

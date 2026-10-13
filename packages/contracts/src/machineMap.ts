@@ -398,6 +398,7 @@ export const MapToolName = Schema.Literals([
   "machines_queue_cancel",
   "machines_undo",
   "machines_preset",
+  "machines_resources",
 ]);
 export type MapToolName = typeof MapToolName.Type;
 
@@ -561,5 +562,10 @@ export const MapToolInputs = {
         description: "Preset name. Required for save and apply. Ignored for lockdown.",
       }),
     ),
+  }),
+  /** MM-1507: the resource history of one machine. The range defaults to `hour`. */
+  machines_resources: Schema.Struct({
+    machineId: MachineId,
+    range: Schema.optionalKey(Schema.Literals(["hour", "day", "month"])),
   }),
 } satisfies Record<MapToolName, Schema.Top>;

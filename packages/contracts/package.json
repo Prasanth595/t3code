@@ -22,6 +22,10 @@
     "./machineMap": {
       "types": "./src/machineMap.ts",
       "import": "./src/machineMap.ts"
+    },
+    "./machineMapResources": {
+      "types": "./src/machineMapResources.ts",
+      "import": "./src/machineMapResources.ts"
     }
   },
   "scripts": {

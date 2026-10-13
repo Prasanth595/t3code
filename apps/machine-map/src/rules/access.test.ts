@@ -97,6 +97,7 @@ describe("gateTool (MM-802)", () => {
   it("checks the map role of the calling machine", () => {
     expect(gateTool(withRole("none"), MAC, "machines_read")._tag).toBe("refuse");
     expect(gateTool(withRole("read"), MAC, "machines_read")._tag).toBe("allow");
+    expect(gateTool(withRole("read"), MAC, "machines_resources")._tag).toBe("allow");
     expect(gateTool(withRole("read"), MAC, "machines_set_access")._tag).toBe("refuse");
     expect(gateTool(withRole("propose"), MAC, "machines_set_access")._tag).toBe("allow");
     expect(gateTool(withRole("propose"), MAC, "machines_command")._tag).toBe("refuse");

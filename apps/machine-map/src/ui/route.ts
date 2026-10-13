@@ -1,11 +1,21 @@
 /** MM-1106: each view and each selected item has its own hash link. */
 
-export const VIEWS = ["map", "table", "settings", "queue", "history", "inbox", "devices"] as const;
+export const VIEWS = [
+  "map",
+  "table",
+  "health",
+  "settings",
+  "queue",
+  "history",
+  "inbox",
+  "devices",
+] as const;
 export type View = (typeof VIEWS)[number];
 
 export const VIEW_LABEL: Record<View, string> = {
   map: "Map",
   table: "Table",
+  health: "Health",
   settings: "Settings",
   queue: "Queue",
   history: "History",

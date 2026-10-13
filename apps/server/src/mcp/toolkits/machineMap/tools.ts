@@ -39,7 +39,7 @@ const PORTAL_NOTE =
 const MAP_WRITE_NOTE =
   'With the map role `edit`, the change applies at once and the result is {"_tag":"applied","revision":n}. With the role `propose`, or when the change raises access of this machine, the change waits in the portal Inbox and the result is {"_tag":"proposed","proposalId":"...","reason":"map-role"|"self-escalation"}. The owner approves or rejects a proposal; it expires after 24 hours. Each applied change is a revision that machines_undo can reverse. An offline machine applies the change when it connects.';
 
-const mapTool = <const Name extends Exclude<MapToolName, "machines_read">>(
+const mapTool = <const Name extends Exclude<MapToolName, "machines_read" | "machines_resources">>(
   name: Name,
   description: string,
 ) =>
@@ -53,7 +53,16 @@ const mapTool = <const Name extends Exclude<MapToolName, "machines_read">>(
 // MCP needs an object root for parameters, so the tool without inputs declares none.
 const MachinesReadTool = Tool.make("machines_read", {
   ...shared,
-  description: `Read the machine map. Call it first to find machine ids, map roles, revision numbers and command ids. Needs the map role \`read\`. Changes nothing. The result is {"_tag":"read", map, presence, commands, history, proposals}: map holds the machines, arrows, managed settings and presets, and the owner's display data: notes (sticky notes with text and a place) and pairPlacements (where the owner put pair cards), which no machine applies; presence.<machineId> holds online, lastSeenAt and status (build, running turns, supported commands, clients); history holds the newest 50 revisions and makes most of the size, often more than 50,000 characters. ${PORTAL_NOTE}`,
+  description: `Read the machine map. Call it first to find machine ids, map roles, revision numbers and command ids. Needs the map role \`read\`. Changes nothing. The result is {"_tag":"read", map, presence, commands, history, proposals, resources}: map holds the machines, arrows, managed settings and presets, and the owner's display data: notes (sticky notes with text and a place) and pairPlacements (where the owner put pair cards), which no machine applies; presence.<machineId> holds online, lastSeenAt and status (build, running turns, supported commands, clients); resources holds latest.<machineId> (the newest resource sample), thresholds.<machineId> (health thresholds) and alerts (the active health alerts); history holds the newest 50 revisions and makes most of the size, often more than 50,000 characters. ${PORTAL_NOTE}`,
+  success: Schema.Unknown,
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+
+const MachinesResourcesTool = Tool.make("machines_resources", {
+  ...shared,
+  description: `Read the resource history of the machine with id machineId (from machines_read): CPU, memory, disk, swap and agent processes. Range \`hour\` and \`day\` give one point a minute, \`month\` one point an hour; the default is \`hour\`. The result is {"_tag":"resources", history, alerts}: alerts holds the health alerts of that machine that were active in the range. Needs the map role \`read\`. Changes nothing. ${PORTAL_NOTE}`,
+  parameters: MapToolInputs.machines_resources,
   success: Schema.Unknown,
 })
   .annotate(Tool.Readonly, true)
@@ -120,6 +129,7 @@ const MachineToolCallTool = Tool.make("machine_tool_call", {
 
 export const MachineMapToolkit = Toolkit.make(
   MachinesReadTool,
+  MachinesResourcesTool,
   MachinesSetAccessTool,
   MachinesSetSettingTool,
   MachinesCommandTool,
