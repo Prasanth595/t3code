@@ -14,6 +14,24 @@ import { ToolCliError, callOnServer } from "../../cli/tool.ts";
 import { callAcpMcpTool } from "../../mcp/AcpMcpStdioBridge.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+/** A failed tool returns its error as JSON text, for example an `OrchestratorMcpFailure`. */
+const decodeFailure = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ message: Schema.String })),
+);
+const ToolContent = Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.String }));
+const decodeContent = Schema.decodeUnknownOption(ToolContent);
+
+const failureMessage = (content: unknown): string =>
+  Option.match(decodeContent(content), {
+    onNone: () => encodeJson(content ?? null),
+    onSome: ([first]) =>
+      first === undefined
+        ? "no details"
+        : Option.match(decodeFailure(first.text), {
+            onNone: () => first.text,
+            onSome: (failure) => failure.message,
+          }),
+  });
 
 const joinCommand = Command.make("join", {
   ...projectLocationFlags,
@@ -44,7 +62,7 @@ const joinCommand = Command.make("join", {
         };
         if (envelope.isError === true) {
           return yield* new ToolCliError({
-            detail: `Join failed: ${encodeJson(envelope.content ?? result)}`,
+            detail: `Join failed: ${failureMessage(envelope.content)}`,
           });
         }
         yield* Console.log("Joined the machine map. The server connects to the portal now.");
