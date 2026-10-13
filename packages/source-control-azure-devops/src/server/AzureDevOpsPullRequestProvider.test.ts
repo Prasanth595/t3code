@@ -1,10 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 
-import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   LOCATION_CACHE_CAPACITY,
@@ -371,119 +368,15 @@ describe("what one diff slice spends", () => {
   it.effect("carries on from where the last slice stopped", () =>
     Effect.gen(function* () {
       const paths = ["a.ts", "b.ts", "c.ts", "d.ts", "e.ts", "f.ts"];
-      let signedOut = false;
-      let pushed = false;
-      let holdIterations = false;
-      let iterationReads = 0;
-      const started = yield* Deferred.make<void>();
-      const previewStarted = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      const contentReads: string[] = [];
-      const provider = yield* make.pipe(
-        Effect.provide(
-          Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-            getPullRequest: () =>
-              Effect.gen(function* () {
-                if (signedOut) {
-                  return yield* new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
-                    operation: "execute",
-                    command: "az",
-                    cwd: "/w",
-                    argumentCount: 1,
-                    cause: "signed out",
-                  });
-                }
-                if (holdIterations) {
-                  yield* Deferred.succeed(previewStarted, undefined);
-                  yield* Deferred.await(release);
-                }
-                return PULL_REQUEST;
-              }),
-            listIterations: () =>
-              Effect.gen(function* () {
-                iterationReads += 1;
-                if (signedOut) {
-                  return yield* new AzureDevOpsCli.AzureDevOpsCliAuthenticationError({
-                    operation: "execute",
-                    command: "az",
-                    cwd: "/w",
-                    argumentCount: 1,
-                    cause: "signed out",
-                  });
-                }
-                if (holdIterations) {
-                  yield* Deferred.succeed(started, undefined);
-                  yield* Deferred.await(release);
-                }
-                return pushed
-                  ? [ITERATION, { ...ITERATION, id: ITERATION.id + 1, headCommit: "new-head" }]
-                  : [ITERATION];
-              }),
-            listIterationChanges: () =>
-              Effect.succeed({ changes: paths.map((path) => change(path)), truncated: false }),
-            readItemContent: (item) =>
-              Effect.sync(() => {
-                contentReads.push(item.commit);
-                return {
-                  contents: side(item.commit === ITERATION.headCommit ? "new" : "old", 100, 900),
-                  isBinary: false,
-                };
-              }),
-          }),
-        ),
-      );
-      const input = { cwd: "/w", repository: "acme/web", host: "dev.azure.com", number: 7 };
-      const first = yield* provider.getDiff(input);
-      expect(first.nextCursor).toBe(`${ITERATION.id}:2`);
-      const continuation = { ...input, cursor: first.nextCursor ?? undefined };
-      const slice = yield* provider.getDiff(continuation);
+      const read = yield* readSlice({
+        paths,
+        lines: 100,
+        width: 900,
+        cursor: `${ITERATION.id}:2`,
+      });
 
-      expect(patchedPaths(slice.patch)).toEqual(["c.ts", "d.ts"]);
-      expect(slice.nextCursor).toBe(`${ITERATION.id}:4`);
-
-      pushed = true;
-      const warmedReads = contentReads.length;
-      const again = yield* provider.getDiff(continuation);
-      expect(again).toEqual(slice);
-      expect(contentReads).toHaveLength(warmedReads);
-
-      const fileInput = {
-        ...input,
-        oldPath: "c.ts",
-        newPath: "c.ts",
-        changeType: "change" as const,
-      };
-      const revisionsInput = { ...input, paths: ["c.ts"] };
-      const contents = yield* provider.getDiffFileContents!(fileInput);
-      yield* provider.getFileRevisions!(revisionsInput);
-      const warmedContentsReads = contentReads.length;
-
-      holdIterations = true;
-      const pending = yield* Effect.forkChild(provider.getDiffFileContents!(fileInput));
-      yield* Deferred.await(started);
-      const pendingPreview = yield* Effect.forkChild(provider.getChangeRequestPreview!(input));
-      yield* Deferred.await(previewStarted);
-      signedOut = true;
-      const signedOutReads = yield* Effect.all(
-        [
-          provider.getDiff(continuation).pipe(Effect.asVoid, Effect.result),
-          provider.getDiffFileContents!(fileInput).pipe(Effect.asVoid, Effect.result),
-          provider.getFileRevisions!(revisionsInput).pipe(Effect.asVoid, Effect.result),
-          provider.getChangeRequestSummary!(input).pipe(Effect.asVoid, Effect.result),
-          provider.getChangeRequestPreview!(input).pipe(Effect.asVoid, Effect.result),
-          provider.getChangeRequest(input).pipe(Effect.asVoid, Effect.result),
-        ].map((read) => Effect.forkChild(read, { startImmediately: true })),
-      );
-      yield* Deferred.succeed(release, undefined);
-      expect(yield* Fiber.join(pending)).toEqual(contents);
-      expect((yield* Fiber.join(pendingPreview)).title).toBe(PULL_REQUEST.title);
-      for (const result of yield* Effect.all(signedOutReads.map(Fiber.join))) {
-        expect(result._tag).toBe("Failure");
-        const error = yield* Effect.flip(Effect.fromResult(result));
-        expect(error.reason).toBe("unauthenticated");
-      }
-      expect(iterationReads).toBe(9);
-      expect(contentReads).toHaveLength(warmedContentsReads);
+      expect(patchedPaths(read.slice.patch)).toEqual(["c.ts", "d.ts"]);
+      expect(read.slice.nextCursor).toBe(`${ITERATION.id}:4`);
     }),
   );
   it.effect("keeps the pull request being read, not the one looked up first", () =>

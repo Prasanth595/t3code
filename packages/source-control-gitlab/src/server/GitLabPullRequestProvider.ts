@@ -105,11 +105,10 @@ export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
   // How a project lets its merge requests land is a setting, which moves far more slowly than
-  // the detail every refresh was reading it alongside. It is returned only with a fresh,
-  // authorized merge request read; account-specific details are never held between calls.
+  // the detail every refresh was reading it alongside, and is only returned with that fresh read.
   const mergeSettings = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", repository = ""] = key.split("\n").map(decodeURIComponent);
+      const [cwd = "", repository = ""] = key.split("\0");
       return cli.getProjectMergeCapabilities({ cwd, repository });
     },
     { capacity: 32, timeToLive: (exit) => (Exit.isSuccess(exit) ? "5 minutes" : 0) },
@@ -166,12 +165,7 @@ export const make = Effect.gen(function* () {
       Effect.all(
         [
           cli.getMergeRequestDetail(input),
-          Cache.get(
-            mergeSettings,
-            [input.cwd, input.repository]
-              .map((value) => encodeURIComponent(String(value ?? "")))
-              .join("\n"),
-          ),
+          Cache.get(mergeSettings, `${input.cwd}\0${input.repository}`),
         ],
         { concurrency: 2 },
       ).pipe(
@@ -238,8 +232,8 @@ export const make = Effect.gen(function* () {
         })),
       ),
 
-    // The same read the detail takes it from: `user.can_merge` lives on the merge request, so
-    // there is no cheaper thing to ask GitLab. Every call uses the account signed in now.
+    // The same read the detail takes it from, on its own: `user.can_merge` lives on the merge
+    // request, so there is no cheaper thing to ask GitLab.
     getViewerPermissions: (input) =>
       cli
         .getMergeRequestDetail(input)
@@ -262,10 +256,24 @@ export const make = Effect.gen(function* () {
     // Users only: GitLab requests a review of a person, and the groups that can stand in for one
     // appear in approval rules rather than in a merge request's reviewers.
     listReviewerCandidates: (input) =>
-      cli.listReviewerCandidates(input).pipe(Effect.mapError(fail("listReviewerCandidates"))),
+      cli
+        .listReviewerCandidates({
+          cwd: input.cwd,
+          repository: input.repository,
+          number: input.number,
+        })
+        .pipe(Effect.mapError(fail("listReviewerCandidates"))),
 
     setReviewerRequest: (input) =>
-      cli.setReviewerRequest(input).pipe(Effect.mapError(fail("setReviewerRequest"))),
+      cli
+        .setReviewerRequest({
+          cwd: input.cwd,
+          repository: input.repository,
+          number: input.number,
+          reviewers: input.reviewers,
+          requested: input.requested,
+        })
+        .pipe(Effect.mapError(fail("setReviewerRequest"))),
 
     runAction: (input) =>
       cli

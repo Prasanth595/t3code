@@ -1,7 +1,6 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
-import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
@@ -10,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Request from "effect/Request";
 import * as RequestResolver from "effect/RequestResolver";
@@ -1106,28 +1106,65 @@ const SIMPLE_ACTION_MUTATIONS = {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const transport = yield* GitHubApi.GitHubApi;
-  // A read started after a write must not join a request that captured the old state.
-  const forgetReads = Effect.suspend(() =>
-    Effect.all([Cache.invalidateAll(detailsInFlight), Cache.invalidateAll(workflowRunsInFlight)]),
-  );
+  // Opening a pull request asks GitHub the same questions from its detail, its checks and the
+  // viewer's permissions at once. A read that starts while an identical one is in flight under the
+  // same credential takes its answer; nothing is kept once it lands. A write, or a stack push,
+  // drops what is in flight, so a read started after it asks GitHub again.
+  const restReads = new Map<
+    string,
+    Fiber.Fiber<GitHubApi.GitHubRestResponse, GitHubApi.GitHubApiError>
+  >();
+  const graphqlReads = new Map<string, Fiber.Fiber<string, GitHubApi.GitHubApiError>>();
+  const forgetReads = Effect.sync(() => {
+    restReads.clear();
+    graphqlReads.clear();
+  });
+  const encodeReadKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
+  const shareRead = <I extends { readonly host: string }, A>(
+    reads: Map<string, Fiber.Fiber<A, GitHubApi.GitHubApiError>>,
+    send: (input: I) => Effect.Effect<A, GitHubApi.GitHubApiError>,
+    input: I,
+  ) =>
+    Effect.gen(function* () {
+      const host = input.host.trim().toLowerCase();
+      const { token, fingerprint } = yield* transport.credential(host);
+      // Every read input is plain data, so it always encodes.
+      const key = yield* encodeReadKey([
+        fingerprint,
+        yield* SourceControlRateLimit.CredentialScope,
+        yield* SourceControlRateLimit.Interactive,
+        input,
+      ]).pipe(Effect.orDie);
+      const held = reads.get(key);
+      if (held !== undefined) return yield* Fiber.join(held);
+      // Pinned, so whoever joins gets the answer of the credential the key names.
+      const fiber = yield* send(input).pipe(
+        Effect.provideService(GitHubApi.PinnedGitHubCredential, {
+          host,
+          token,
+          credentialFingerprint: fingerprint,
+        }),
+        Effect.forkDetach,
+      );
+      reads.set(key, fiber);
+      return yield* Fiber.join(fiber).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (reads.get(key) === fiber) reads.delete(key);
+          }),
+        ),
+      );
+    });
   const api = GitHubApi.GitHubApi.of({
     ...transport,
     graphql: (input) =>
-      transport
-        .graphql(input)
-        .pipe(
-          Effect.ensuring(
-            input.query.trimStart().startsWith("mutation") ? forgetReads : Effect.void,
-          ),
-        ),
+      input.query.trimStart().startsWith("mutation")
+        ? transport.graphql(input).pipe(Effect.ensuring(forgetReads))
+        : shareRead(graphqlReads, transport.graphql, input),
     rest: (input) =>
-      transport
-        .rest(input)
-        .pipe(
-          Effect.ensuring(
-            input.method !== undefined && input.method !== "GET" ? forgetReads : Effect.void,
-          ),
-        ),
+      input.method === undefined || input.method === "GET"
+        ? shareRead(restReads, transport.rest, input)
+        : transport.rest(input).pipe(Effect.ensuring(forgetReads)),
   });
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1749,63 +1786,6 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(Effect.map(([, runs]) => runs));
 
-  // Opening a pull request reads its detail, its checks and the viewer's permissions at once, and
-  // each starts from the same detail query, and for a fork's pull request the same workflow runs.
-  // Reads in flight together under the same credential and quota share one request. Nothing is
-  // kept once it lands, so a read that starts later asks GitHub again.
-  const inFlightKey = (cwd: string, host: string, ...parts: ReadonlyArray<string | number>) =>
-    Effect.gen(function* () {
-      // Resolve locally even for unpinned clients, then keep the read on that credential.
-      const { token, fingerprint } = yield* api.credential(host);
-      const key = [
-        cwd,
-        host,
-        ...parts,
-        yield* SourceControlRateLimit.Interactive,
-        yield* SourceControlRateLimit.CredentialScope,
-        fingerprint,
-      ]
-        .map((part) => encodeURIComponent(String(part)))
-        .join("\n");
-      return {
-        key,
-        credential: { host: host.trim().toLowerCase(), token, credentialFingerprint: fingerprint },
-      };
-    });
-  const detailsInFlight = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", host = "", repository = "", number = ""] = key
-        .split("\n")
-        .map(decodeURIComponent);
-      return getPullRequestDetail({ cwd, host, repository, number: Number(number) });
-    },
-    { capacity: 64, timeToLive: () => 0 },
-  );
-  const workflowRunsInFlight = yield* Cache.makeWith(
-    (key: string) => {
-      const [
-        cwd = "",
-        host = "",
-        repository = "",
-        number = "",
-        headSha = "",
-        headBranch = "",
-        headRepositoryOwner = "",
-      ] = key.split("\n").map(decodeURIComponent);
-      return listWorkflowRunsRequiringApproval({
-        cwd,
-        host,
-        repository,
-        number: Number(number),
-        headSha,
-        headBranch,
-        headRepositoryOwner,
-        isCrossRepository: true,
-      });
-    },
-    { capacity: 64, timeToLive: () => 0 },
-  );
-
   /** One pull request's summary, through the same aliased query the batch uses. */
   const viewPullRequestSummary = (input: PullRequestSummaryRead) => {
     const { owner, name } = parseRepositorySelector(input.repository);
@@ -2189,14 +2169,7 @@ export const make = Effect.gen(function* () {
     getPullRequestSummary,
     getPullRequestWatchFingerprint,
 
-    getPullRequestDetail: (input) =>
-      inFlightKey(input.cwd, input.host, input.repository, input.number).pipe(
-        Effect.flatMap(({ key, credential }) =>
-          Cache.get(detailsInFlight, key).pipe(
-            Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
-          ),
-        ),
-      ),
+    getPullRequestDetail,
     getPullRequestPreview: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
       return graphqlRead({
@@ -2208,24 +2181,7 @@ export const make = Effect.gen(function* () {
         decode: decodePullRequestPreviewJson,
       });
     },
-    listWorkflowRunsRequiringApproval: (input) =>
-      Effect.gen(function* () {
-        // Runs the checks revalidator just confirmed are this caller's alone to filter.
-        if ((yield* KnownWorkflowRuns) !== null)
-          return yield* listWorkflowRunsRequiringApproval(input);
-        const { key, credential } = yield* inFlightKey(
-          input.cwd,
-          input.host,
-          input.repository,
-          input.number,
-          input.headSha,
-          input.headBranch,
-          input.headRepositoryOwner,
-        );
-        return yield* Cache.get(workflowRunsInFlight, key).pipe(
-          Effect.provideService(GitHubApi.PinnedGitHubCredential, credential),
-        );
-      }),
+    listWorkflowRunsRequiringApproval,
 
     getPullRequestStack: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);

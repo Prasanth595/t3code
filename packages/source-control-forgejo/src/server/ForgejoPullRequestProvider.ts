@@ -148,13 +148,17 @@ export const make = Effect.gen(function* () {
     }
     return { items, truncated: true };
   });
-  // These reads select the current account independently of older pending requests.
+  const write = (input: ForgejoCli.ForgejoApiInput) => request(input).pipe(Effect.asVoid);
   const getPull = (input: ProviderRepositoryRef & { readonly number: number }) =>
     read(
-      { cwd: input.cwd, repository: input.repository, host: input.host, path: pullPath(input) },
+      {
+        cwd: input.cwd,
+        repository: input.repository,
+        host: input.host,
+        path: pullPath(input),
+      },
       ForgejoPullRequest,
     );
-  const write = (input: ForgejoCli.ForgejoApiInput) => request(input).pipe(Effect.asVoid);
   const getRepo = (input: ProviderRepositoryRef) =>
     read({ ...input, path: repoPath(input) }, ForgejoRepository);
   const getViewer = (input: {

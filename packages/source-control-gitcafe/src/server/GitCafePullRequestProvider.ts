@@ -300,15 +300,14 @@ export const make = Effect.gen(function* () {
     if (stack === null) return null;
     const members = yield* Effect.forEach(
       stack.members,
-      (member) => {
-        if (member.state === "merged") return Effect.succeed(member);
-        const layer = { ...input, number: member.pullRequestNumber };
-        return readPull(operation, layer).pipe(
-          Effect.map((pull) =>
-            pull.headOid == null ? member : { ...member, headOid: pull.headOid },
-          ),
-        );
-      },
+      (member) =>
+        member.state === "merged"
+          ? Effect.succeed(member)
+          : readPull(operation, { ...input, number: member.pullRequestNumber }).pipe(
+              Effect.map((pull) =>
+                pull.headOid == null ? member : { ...member, headOid: pull.headOid },
+              ),
+            ),
       { concurrency: 4 },
     );
     return { ...stack, members };
@@ -460,7 +459,7 @@ export const make = Effect.gen(function* () {
   const lineStats = yield* Cache.makeWith(
     (key: string) => {
       const [host = "", repository = "", number = "", version = "", headOid = "", baseOid = ""] =
-        key.split("\n").map(decodeURIComponent);
+        key.split("\0");
       return readLineStats(
         { host, repository, number: Number(number) },
         Number(version),
@@ -468,11 +467,8 @@ export const make = Effect.gen(function* () {
       ).pipe(
         Effect.map(({ revision, complete, ...stats }) => ({
           stats,
-          held:
-            complete &&
-            revision?.version === Number(version) &&
-            revision.headOid === headOid &&
-            revision.baseOid === baseOid,
+          // The pages already agree with the version and head asked for; the base is the pull's.
+          held: complete && revision?.baseOid === baseOid,
         })),
       );
     },
@@ -534,7 +530,7 @@ export const make = Effect.gen(function* () {
   /** The viewer's actor on a repository; a viewer GitCafe knows no actor for is asked again. */
   const viewerActors = yield* Cache.makeWith(
     (key: string) => {
-      const [host = "", repository = "", viewer = ""] = key.split("\n").map(decodeURIComponent);
+      const [host = "", repository = "", viewer = ""] = key.split("\0");
       return read(
         "listChangeRequests",
         { host },
@@ -575,9 +571,7 @@ export const make = Effect.gen(function* () {
           // or a rate limit still fails, since the service acts on those for the whole host.
           const actor = yield* Cache.get(
             viewerActors,
-            [input.host, input.repository, input.viewer.toLowerCase()]
-              .map((value) => encodeURIComponent(String(value ?? "")))
-              .join("\n"),
+            `${input.host}\0${input.repository}\0${input.viewer.toLowerCase()}`,
           ).pipe(
             Effect.map(Option.some),
             Effect.catchTags({
@@ -669,9 +663,7 @@ export const make = Effect.gen(function* () {
                   pull.version,
                   pull.headOid,
                   pull.observedBaseOid ?? "",
-                ]
-                  .map((value) => encodeURIComponent(String(value ?? "")))
-                  .join("\n"),
+                ].join("\0"),
               ).pipe(
                 Effect.map(({ stats }) => stats),
                 Effect.orElseSucceed(() => null),

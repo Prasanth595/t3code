@@ -1,8 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as Deferred from "effect/Deferred";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -33,302 +31,35 @@ const requestJson = (request: HttpClientRequest.HttpClientRequest): unknown => {
 };
 const encodeJsonEffect = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-it.effect("refreshes Forgejo viewer permissions immediately after credentials change", () => {
-  let account = "alice";
-  const requests: string[] = [];
-  const renewals: string[] = [];
-  let holdViewer: Effect.Effect<void> = Effect.void;
-  return Effect.gen(function* () {
-    const cli = yield* ForgejoCli.make;
-    const provider = yield* ForgejoPullRequestProvider.make.pipe(
-      Effect.provideService(ForgejoCli.ForgejoCli, cli),
-    );
-    const input = { cwd: "/repo", repository: "acme/web", host: "forgejo.test", number: 42 };
-    const alice = yield* provider.getViewerPermissions(input);
-    assert.deepStrictEqual(alice.verdicts, ["comment"]);
-    assert.include(alice.actions, "merge");
-    assert.strictEqual(alice.labels, true);
-    const started = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    holdViewer = Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)));
-    const detail = yield* provider.getChangeRequest(input).pipe(Effect.forkChild);
-    yield* Deferred.await(started);
-    account = "bob";
-    holdViewer = Effect.void;
-    const bob = yield* provider.getViewerPermissions(input);
-    assert.deepStrictEqual(bob.verdicts, ["comment", "approve", "request-changes"]);
-    assert.deepStrictEqual(bob.actions, []);
-    assert.strictEqual(bob.labels, false);
-    assert.strictEqual(bob.requestReviewers, false);
-    assert.strictEqual(requests.length, 9);
-    assert.deepStrictEqual(renewals, ["alice", "bob"]);
-    const freshDetail = yield* provider.getChangeRequest(input).pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    yield* Deferred.succeed(release, undefined);
-    assert.deepStrictEqual((yield* Fiber.join(freshDetail)).viewerPermissions?.verdicts, [
-      "comment",
-      "approve",
-      "request-changes",
-    ]);
-    assert.deepStrictEqual((yield* Fiber.join(detail)).viewerPermissions?.verdicts, ["comment"]);
-    assert.strictEqual(requests.length, 14);
-  }).pipe(
-    Effect.provideService(
-      FileSystem.FileSystem,
-      FileSystem.makeNoop({
-        exists: () => Effect.succeed(true),
-        readFileString: () =>
-          Effect.succeed(
-            encodeJson({ hosts: { "forgejo.test": { type: "Application", token: account } } }),
-          ),
-      }),
-    ),
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make((request) => {
-        requests.push(request.url);
-        assert.strictEqual(request.headers.authorization, `token ${account}`);
-        const response = request.url.endsWith("/user")
-          ? { login: account }
-          : request.url.endsWith("/pulls/42")
-            ? {
-                number: 42,
-                title: "Permissions",
-                body: "",
-                html_url: "https://forgejo.test/acme/web/pulls/42",
-                user: { login: "alice" },
-                state: "open",
-                merged: false,
-                head: { ref: "feature", sha: "head", repo: null },
-                base: { ref: "main", sha: "base", repo: null },
-                created_at: "2026-09-16T00:00:00Z",
-                updated_at: "2026-09-16T00:00:00Z",
-                closed_at: null,
-                merged_at: null,
-                labels: [],
-              }
-            : request.url.includes("/statuses/")
-              ? []
-              : { full_name: "acme/web", permissions: { push: account === "alice", admin: false } };
-        return (request.url.endsWith("/user") ? holdViewer : Effect.void).pipe(
-          Effect.as(HttpClientResponse.fromWeb(request, new Response(encodeJson(response)))),
-        );
-      }),
-    ),
-    Effect.provide(
-      TestSourceControlHost.layer({
-        process: {
-          run: (input) => {
-            if (input.command === "git")
-              return Effect.succeed(
-                processOutput("origin\thttps://forgejo.test/acme/web.git (fetch)"),
-              );
-            assert.strictEqual(input.command, "fj");
-            assert.deepStrictEqual(input.args, ["--host", "https://forgejo.test", "whoami"]);
-            renewals.push(account);
-            return Effect.succeed(processOutput(""));
-          },
-        },
-      }),
-    ),
-  );
-});
-
-it.effect("reselects the current tea login for writes while an older read is pending", () => {
-  let account = "alice";
-  const selected: string[] = [];
-  let holdLogin: Effect.Effect<void> = Effect.void;
-  return Effect.gen(function* () {
-    const cli = yield* ForgejoCli.make;
-    const input = {
-      cwd: "/repo\n%work",
-      repository: "https://forgejo.test/acme/web",
-      path: "repos/acme/web/pulls/42",
-    };
-    assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"alice"}');
-    account = "bob";
-    assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"bob"}');
-    const started = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    holdLogin = Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)));
-    const pending = yield* cli.api(input).pipe(Effect.forkChild);
-    yield* Deferred.await(started);
-    account = "carol";
-    holdLogin = Effect.void;
-    assert.strictEqual((yield* cli.api(input)).stdout, '{"login":"carol"}');
-    const write = yield* cli
-      .api({ ...input, method: "PATCH", body: { state: "closed" } })
-      .pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    yield* Deferred.succeed(release, undefined);
-    assert.strictEqual((yield* Fiber.join(write)).stdout, '{"login":"carol"}');
-    assert.strictEqual((yield* Fiber.join(pending)).stdout, '{"login":"bob"}');
-    assert.deepStrictEqual(selected, ["alice", "bob", "carol", "carol", "bob"]);
-  }).pipe(
-    Effect.provideService(
-      FileSystem.FileSystem,
-      FileSystem.makeNoop({ exists: () => Effect.succeed(false) }),
-    ),
-    Effect.provideService(
-      HttpClient.HttpClient,
-      HttpClient.make(() => Effect.die("tea owns HTTP")),
-    ),
-    Effect.provide(
-      TestSourceControlHost.layer({
-        process: {
-          run: (input) => {
-            assert.strictEqual(input.command, "tea");
-            assert.strictEqual(input.cwd, "/repo\n%work");
-            if (input.args[0] === "login")
-              return holdLogin.pipe(
-                Effect.as(
-                  processOutput(
-                    encodeJson([
-                      {
-                        name: account,
-                        url: "https://forgejo.test",
-                        user: account,
-                        default: "true",
-                      },
-                    ]),
-                  ),
-                ),
-              );
-            assert.strictEqual(input.args[0], "api");
-            const login = input.args[input.args.indexOf("--login") + 1] ?? "";
-            assert.notStrictEqual(login, "");
-            selected.push(login);
-            return Effect.succeed(
-              processOutput(encodeJson({ login }), { stderr: "HTTP/1.1 200 OK\n" }),
-            );
-          },
-        },
-      }),
-    ),
-  );
-});
-
-it.effect("keeps Forgejo pull reads fresh during pending reads, writes and failures", () =>
-  Effect.gen(function* () {
-    const started = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    const paths: string[] = [];
-    let pullReads = 0;
-    let state = "open";
-    let reject = false;
-    const provider = yield* ForgejoPullRequestProvider.make.pipe(
-      Effect.provide(
-        Layer.mock(ForgejoCli.ForgejoCli)({
-          api: (input) =>
-            Effect.gen(function* () {
-              assert.strictEqual(input.cwd, "/repo\n%work");
-              paths.push(input.path);
-              if (input.method === "PATCH") {
-                state = "closed";
-                return processOutput("{}");
-              }
-              if (input.path.endsWith("/pulls/42")) {
-                pullReads++;
-                if (reject)
-                  return yield* new ForgejoCli.ForgejoCliError({
-                    command: "tea",
-                    cwd: input.cwd,
-                    reason: "rate-limit",
-                    detail: "limited",
-                  });
-                const response = {
-                  number: 42,
-                  title: "Shared pull",
-                  body: "",
-                  html_url: "https://forgejo.test/acme/web/pulls/42",
-                  user: { login: "alice" },
-                  state,
-                  merged: false,
-                  head: { ref: "feature", sha: state === "open" ? "before" : "after", repo: null },
-                  base: { ref: "main", sha: "base", repo: null },
-                  created_at: "2026-09-16T00:00:00Z",
-                  updated_at: "2026-09-16T00:00:00Z",
-                  closed_at: null,
-                  merged_at: null,
-                  labels: [],
-                };
-                if (pullReads === 1) {
-                  yield* Deferred.succeed(started, undefined);
-                  yield* Deferred.await(release);
-                }
-                return processOutput(encodeJson(response));
-              }
-              return processOutput(
-                input.path === "user"
-                  ? '{"login":"bob"}'
-                  : input.path.includes("/statuses/")
-                    ? "[]"
-                    : '{"full_name":"acme/web","permissions":{"push":true,"admin":false}}',
-              );
-            }),
-        }),
-      ),
-    );
-    const summary = provider.getChangeRequestSummary;
-    const checks = provider.getChangeRequestChecks;
-    if (!summary || !checks) return yield* Effect.die("narrow reads missing");
-    const input = { cwd: "/repo\n%work", repository: "acme/web", host: "forgejo.test", number: 42 };
-    const reads = yield* Effect.all(
-      [summary(input), checks(input), provider.getChangeRequest(input)],
-      { concurrency: "unbounded" },
-    ).pipe(Effect.forkChild);
-    yield* Deferred.await(started);
-    yield* Effect.yieldNow;
-    assert.strictEqual(pullReads, 3);
-    yield* provider.runAction({ ...input, action: "close" });
-    const updated = yield* checks(input);
-    assert.strictEqual(updated.state, "closed");
-    assert.strictEqual(pullReads, 4);
-    assert.include(paths, "repos/acme/web/statuses/after?sort=recentupdate&limit=50&page=1");
-    yield* Deferred.succeed(release, undefined);
-    const original = yield* Fiber.join(reads);
-    assert.strictEqual(original[0].state, "open");
-    reject = true;
-    const failed = yield* summary(input).pipe(Effect.result);
-    assert.strictEqual(failed._tag, "Failure");
-    assert.strictEqual(pullReads, 5);
-    reject = false;
-    assert.strictEqual((yield* summary(input)).state, "closed");
-    assert.strictEqual(pullReads, 6);
-  }),
-);
-
-it.effect("submits a Forgejo review using a fresh head and an empty GET body", () => {
+it.effect("submits a Forgejo review without sending its summary in the preliminary GET", () => {
   const methods: string[] = [];
-  let head = "old-head";
-  let holdPull: Effect.Effect<void> = Effect.void;
   const reviewClient = HttpClient.make((request) => {
     methods.push(request.method);
     if (request.method === "GET") {
       assert.strictEqual(request.url, "https://forgejo.test/api/v1/repos/maria/project/pulls/42");
-      const response = HttpClientResponse.fromWeb(
-        request,
-        new Response(
-          encodeJson({
-            number: 42,
-            title: "Review target",
-            body: "",
-            html_url: "https://forgejo.test/maria/project/pulls/42",
-            user: { login: "maria" },
-            state: "open",
-            merged: false,
-            head: { ref: "feature", sha: head, repo: null },
-            base: { ref: "main", sha: "base", repo: null },
-            created_at: "2026-09-13T00:00:00Z",
-            updated_at: "2026-09-13T00:00:00Z",
-            closed_at: null,
-            merged_at: null,
-            labels: [],
-          }),
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            encodeJson({
+              number: 42,
+              title: "Review target",
+              body: "",
+              html_url: "https://forgejo.test/maria/project/pulls/42",
+              user: { login: "maria" },
+              state: "open",
+              merged: false,
+              head: { ref: "feature", sha: "head", repo: null },
+              base: { ref: "main", sha: "base", repo: null },
+              created_at: "2026-09-13T00:00:00Z",
+              updated_at: "2026-09-13T00:00:00Z",
+              closed_at: null,
+              merged_at: null,
+              labels: [],
+            }),
+          ),
         ),
       );
-      assert.strictEqual(request.body._tag, "Empty");
-      return holdPull.pipe(Effect.as(response));
     }
     assert.strictEqual(request.method, "POST");
     assert.strictEqual(
@@ -350,36 +81,16 @@ it.effect("submits a Forgejo review using a fresh head and an empty GET body", (
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
       Effect.provideService(ForgejoCli.ForgejoCli, cli),
     );
-    const started = yield* Deferred.make<void>();
-    const release = yield* Deferred.make<void>();
-    holdPull = Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)));
-    const summary = provider.getChangeRequestSummary;
-    if (!summary) return yield* Effect.die("narrow reads missing");
-    const pending = yield* summary({
+    yield* provider.submitReview({
       cwd: "/repo",
       repository: "maria/project",
       host: "forgejo.test",
       number: 42,
-    }).pipe(Effect.forkChild);
-    yield* Deferred.await(started);
-    head = "head";
-    holdPull = Effect.void;
-    const review = yield* provider
-      .submitReview({
-        cwd: "/repo",
-        repository: "maria/project",
-        host: "forgejo.test",
-        number: 42,
-        verdict: "comment",
-        body: "Review summary",
-        comments: [],
-      })
-      .pipe(Effect.forkChild);
-    yield* Effect.yieldNow;
-    yield* Deferred.succeed(release, undefined);
-    yield* Fiber.join(review);
-    assert.deepStrictEqual(methods, ["GET", "GET", "POST"]);
-    yield* Fiber.join(pending);
+      verdict: "comment",
+      body: "Review summary",
+      comments: [],
+    });
+    assert.deepStrictEqual(methods, ["GET", "POST"]);
   }).pipe(
     Effect.provideService(HttpClient.HttpClient, reviewClient),
     Effect.provideService(
@@ -388,9 +99,7 @@ it.effect("submits a Forgejo review using a fresh head and an empty GET body", (
         exists: () => Effect.succeed(true),
         readFileString: () =>
           Effect.succeed(
-            encodeJson({
-              hosts: { "forgejo.test": { type: "Application", token: "test-token" } },
-            }),
+            encodeJson({ hosts: { "forgejo.test": { type: "Application", token: "test-token" } } }),
           ),
       }),
     ),

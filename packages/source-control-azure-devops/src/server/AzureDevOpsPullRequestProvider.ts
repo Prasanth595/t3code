@@ -150,26 +150,15 @@ function toChangeRequest(pullRequest: AzureDevOpsPullRequest): ProviderChangeReq
   };
 }
 
-/** One pull request's pushes, in the terms Azure's iteration routes address them by. */
-interface IterationScope {
-  readonly cwd: string;
-  readonly location: AzureDevOpsRepositoryLocation;
-  readonly number: number;
-}
-
 export const make = Effect.gen(function* () {
   const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
   // Made once with the provider, which the registry builds once, so this is the whole build's
   // allowance rather than one request's.
   const diffSpawns = yield* Semaphore.make(MAX_DIFF_SPAWNS);
-  const cacheKey = (...parts: ReadonlyArray<string | number>) =>
-    parts.map((part) => encodeURIComponent(String(part))).join("\n");
   // Diff slices and context expansion read the same immutable blobs. Bound both count and size.
   const itemContents = yield* Cache.makeWith(
     (key: string) => {
-      const [cwd = "", project = "", repository = "", commit = "", path = ""] = key
-        .split("\n")
-        .map(decodeURIComponent);
+      const [cwd = "", project = "", repository = "", commit = "", path = ""] = key.split("\0");
       return diffSpawns.withPermits(1)(
         cli.readItemContent({ cwd, location: { project, repository }, commit, path }),
       );
@@ -185,12 +174,8 @@ export const make = Effect.gen(function* () {
   const readItemContent = (input: Parameters<typeof cli.readItemContent>[0]) =>
     Cache.get(
       itemContents,
-      cacheKey(
-        input.cwd,
-        input.location.project,
-        input.location.repository,
-        input.commit,
-        input.path,
+      [input.cwd, input.location.project, input.location.repository, input.commit, input.path].join(
+        "\0",
       ),
     );
 
@@ -219,31 +204,22 @@ export const make = Effect.gen(function* () {
   const EMPTY_DIFF_SLICE: ProviderDiffSlice = { patch: "", truncated: false, nextCursor: null };
 
   /**
-   * Where a pull request's repository lives, which is the route every other read of it needs and
-   * the one thing only the pull request itself states. A pull request cannot move between
+   * Where a pull request's repository lives, which is the route every other read of it needs. A
+   * pull request read and a listing row both state it, and a pull request cannot move between
    * repositories, so it is remembered rather than re-read: the marks alone would otherwise pay for
    * a whole pull request read every time they checked whether a file had been pushed to. Least
-   * recently used, so a listing walking cold pull requests cannot evict the one being read.
+   * recently used, so the pull requests being read stay.
    */
   const locations = new Map<string, AzureDevOpsRepositoryLocation>();
 
-  /**
-   * Keeps where a read placed a pull request. A listing's rows only take spare room, so walking a
-   * long listing cannot evict the pull request being read.
-   */
-  const rememberLocation = (
-    cwd: string,
-    pullRequest: AzureDevOpsPullRequest,
-    options: { readonly evict: boolean },
-  ) => {
+  const rememberLocation = (cwd: string, pullRequest: AzureDevOpsPullRequest) => {
     if (pullRequest.location === null) return;
     const key = `${cwd} ${pullRequest.number}`;
-    if (!locations.has(key) && locations.size >= LOCATION_CACHE_CAPACITY) {
-      if (!options.evict) return;
+    locations.delete(key);
+    if (locations.size >= LOCATION_CACHE_CAPACITY) {
       const oldest = locations.keys().next().value;
       if (oldest !== undefined) locations.delete(oldest);
     }
-    locations.delete(key);
     locations.set(key, pullRequest.location);
   };
 
@@ -257,14 +233,11 @@ export const make = Effect.gen(function* () {
     return held;
   };
 
-  // Each read uses the current CLI sign-in, including reads overlapping an account switch.
   const readPullRequest = (input: { readonly cwd: string; readonly number: number }) =>
     cli
       .getPullRequest(input)
       .pipe(
-        Effect.tap((pullRequest) =>
-          Effect.sync(() => rememberLocation(input.cwd, pullRequest, { evict: true })),
-        ),
+        Effect.tap((pullRequest) => Effect.sync(() => rememberLocation(input.cwd, pullRequest))),
       );
 
   const locationOf = (input: { readonly cwd: string; readonly number: number }) => {
@@ -274,41 +247,22 @@ export const make = Effect.gen(function* () {
       : readPullRequest(input).pipe(Effect.map((pullRequest) => pullRequest.location));
   };
 
-  const iterationKey = (scope: IterationScope, iterationId?: number) =>
-    cacheKey(
-      scope.cwd,
-      scope.location.project,
-      scope.location.repository,
-      scope.number,
-      ...(iterationId === undefined ? [] : [iterationId]),
-    );
-
-  const fromIterationKey = (key: string) => {
-    const [cwd = "", project = "", repository = "", number = "", iterationId = ""] = key
-      .split("\n")
-      .map(decodeURIComponent);
-    return {
-      cwd,
-      location: { project, repository },
-      number: Number(number),
-      iterationId: Number(iterationId),
-    };
-  };
-
-  const changesKey = (scope: IterationScope, iteration: AzureDevOpsIteration) =>
-    [
-      iterationKey(scope, iteration.id),
-      encodeURIComponent(iteration.headCommit),
-      encodeURIComponent(iteration.mergeBaseCommit),
-    ].join("\n");
-
   /**
    * What one push changed, against the merge base. Never changes once the push lands, so the
    * detail's file count, every slice of the diff and the viewed marks share one complete read.
    * Incomplete reads are retried rather than keeping missing files for the life of the push.
    */
   const iterationChanges = yield* Cache.makeWith(
-    (key: string) => cli.listIterationChanges(fromIterationKey(key)),
+    (key: string) => {
+      const [cwd = "", project = "", repository = "", number = "", iterationId = ""] =
+        key.split("\0");
+      return cli.listIterationChanges({
+        cwd,
+        location: { project, repository },
+        number: Number(number),
+        iterationId: Number(iterationId),
+      });
+    },
     {
       capacity: ITERATION_CHANGES_CAPACITY,
       timeToLive: (exit) =>
@@ -382,16 +336,41 @@ export const make = Effect.gen(function* () {
    * reported against the merge base rather than against the push before it, so the newest one is
    * the whole of the change rather than the last slice of it.
    */
-  const listLatestChanges = (
-    input: IterationScope & { readonly iterations: ReadonlyArray<AzureDevOpsIteration> },
-  ) => {
+  const changesOf = (
+    input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    },
+    iteration: AzureDevOpsIteration,
+  ) =>
+    Cache.get(
+      iterationChanges,
+      // The commits make the key immutable; the rest is what the read is addressed by.
+      [
+        input.cwd,
+        input.location.project,
+        input.location.repository,
+        input.number,
+        iteration.id,
+        iteration.headCommit,
+        iteration.mergeBaseCommit,
+      ].join("\0"),
+    );
+
+  const listLatestChanges = (input: {
+    readonly cwd: string;
+    readonly location: AzureDevOpsRepositoryLocation;
+    readonly number: number;
+    readonly iterations: ReadonlyArray<AzureDevOpsIteration>;
+  }) => {
     const latest = input.iterations.at(-1);
     return latest === undefined
       ? Effect.succeed({
           changes: [],
           truncated: false,
         } as AzureDevOpsPullRequestCli.AzureDevOpsIterationChanges)
-      : Cache.get(iterationChanges, changesKey(input, latest));
+      : changesOf(input, latest);
   };
 
   const provider: PullRequestProviderApi = {
@@ -423,7 +402,7 @@ export const make = Effect.gen(function* () {
           // read of the pull request before its conversation or its pushes can be asked for.
           Effect.tap((batch) =>
             Effect.sync(() => {
-              for (const row of batch.items) rememberLocation(input.cwd, row, { evict: false });
+              for (const row of batch.items) rememberLocation(input.cwd, row);
             }),
           ),
           Effect.map((batch) => ({
@@ -552,20 +531,20 @@ export const make = Effect.gen(function* () {
     // the Code tab has nothing to scope itself to and always asks for the whole change.
     getDiff: (input) =>
       Effect.gen(function* () {
-        const location = yield* locationOf(input);
-        if (location === null) return EMPTY_DIFF_SLICE;
-        const scope = { cwd: input.cwd, location, number: input.number };
+        const scope = yield* diffScope(input);
+        if (scope === null) return EMPTY_DIFF_SLICE;
         const cursor = parseAzureDevOpsDiffCursor(input.cursor);
-        // Even a fully cached continuation must check the current sign-in can read this review.
-        const iterations = yield* cli.listIterations(scope);
         // Reading on stays with the push the first slice was taken against. A push landing
         // mid-read would otherwise renumber the files and hand the reader one twice, or none.
         const iteration =
           cursor === null
-            ? iterations.at(-1)
-            : iterations.find((candidate) => candidate.id === cursor.iterationId);
+            ? scope.iterations.at(-1)
+            : scope.iterations.find((candidate) => candidate.id === cursor.iterationId);
         if (iteration === undefined) return EMPTY_DIFF_SLICE;
-        const listed = yield* Cache.get(iterationChanges, changesKey(scope, iteration));
+        const listed = yield* changesOf(
+          { cwd: input.cwd, location: scope.location, number: input.number },
+          iteration,
+        );
         const changes = listed.changes;
 
         const sections: string[] = [];

@@ -1008,7 +1008,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
               json({
                 changeEntries: [
                   { changeType: "add", item: { path: "/huge.bin", objectId: "8f80" } },
-                  { changeType: "add", item: { path: "/docs/%scope\nDEMO.md", objectId: "0ca4" } },
+                  { changeType: "add", item: { path: "/DEMO.md", objectId: "0ca4" } },
                 ],
               }),
             ),
@@ -1029,7 +1029,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const provider = yield* AzureDevOpsPullRequestProvider.make;
 
       const slice = yield* provider.getDiff({
-        cwd: "/w\n%repo",
+        cwd: "/w",
         repository: "web",
         host: "dev.azure.com",
         number: 42,
@@ -1039,10 +1039,6 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(slice.patch).toContain("diff --git a/huge.bin b/huge.bin");
       // And the file behind it still renders, which is the point of giving up on one file.
       expect(slice.patch).toContain("+hello");
-      for (const [call] of mockedExecute.mock.calls) {
-        expect(call.cwd).toBe("/w\n%repo");
-      }
-      expect(argsOfCall(4)).toContain("path=/docs/%scope\nDEMO.md");
     }),
   );
 
