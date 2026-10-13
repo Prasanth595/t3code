@@ -277,6 +277,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "thread-activity-indicator",
+    title: "Activity indicator",
+    to: "/settings/appearance",
+    searchTerms: ["codex classic terminal spinner working waiting background motion"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

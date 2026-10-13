@@ -1,4 +1,5 @@
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
+import { ThreadActivityIndicator } from "./ThreadActivityIndicator";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
 import { CollapsibleSectionHeader } from "./ui/collapsible-section-header";
 import {
@@ -212,6 +213,7 @@ import {
   resolveSidebarRowAccessibility,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadActivity,
   resolveThreadLastVisitedAt,
   searchSidebarThreads,
   shouldCreateNewThreadInCurrentProject,
@@ -1270,6 +1272,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // switching sidebars must not light up every historical thread as unread.
   const isUnread = hasUnseenCompletion({ ...thread, lastVisitedAt });
   const status = resolveSidebarThreadStatus(thread);
+  const activityStyle = useClientSettings((settings) => settings.threadActivityIndicatorStyle);
+  const activity = activityStyle === "codex" ? resolveSidebarThreadActivity(thread) : null;
   const isInFlight =
     status === "working" || status === "waiting" || status === "approval" || status === "input";
   // A woken thread reappears at its original position (the sort is
@@ -1295,26 +1299,30 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     isActive: props.isActive,
     isSelected,
   });
-  // Status hues follow the system-wide convention set by sidebar v1 and the
-  // mobile Live Activity/widgets (amber approval, indigo input, sky working)
-  // so a thread reads the same color everywhere it surfaces.
+  // Classic keeps the existing status hues. Codex style uses the theme text
+  // color for foreground work and its warning role for active background work.
   const topStatus =
     status === "working"
       ? {
           // A native /goal keeps the agent going across turns until it is met.
           label: thread.goal?.status === "active" ? "Goal" : "Working",
-          icon: "working" as const,
+          icon: activityStyle === "codex" ? null : ("working" as const),
           // No shimmer: a label that animates forever is noise in a sidebar
           // full of them (and repaints every vsync on high-refresh displays).
-          className: "text-info",
+          className:
+            activityStyle === "codex"
+              ? "rounded-sm bg-muted px-1 font-semibold text-foreground"
+              : "text-info",
         }
       : status === "waiting"
         ? {
-            // Waiting is calm background presence (post-settle background
-            // roster), not active progress, so the label keeps full strength.
+            // An idle runtime alone does not prove there is background work.
             label: "Waiting",
             icon: null,
-            className: "text-muted-foreground",
+            className:
+              activity === "background"
+                ? "rounded-sm bg-warning-surface px-1 font-semibold text-warning-foreground"
+                : "text-muted-foreground",
           }
         : status === "approval"
           ? {
@@ -2150,7 +2158,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   release click still fires and is consumed. */}
               {props.sweepAction !== null ? dragDestination : null}
             </div>
-            <div className="mt-1 flex min-w-0">
+            <div className={cn("mt-1 flex min-w-0", activity && "items-center gap-1.5")}>
+              {activity ? <ThreadActivityIndicator tone={activity} /> : null}
               {title}
               {isRegeneratingTitle ? (
                 <span role="status" className="sr-only">

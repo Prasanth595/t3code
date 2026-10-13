@@ -1002,6 +1002,17 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+export function resolveSidebarThreadActivity(
+  thread: SidebarThreadStatusInput & Pick<SidebarThreadSummary, "pendingBackgroundTasks">,
+): "working" | "background" | null {
+  const status = resolveSidebarThreadStatus(thread);
+  if (status === "working") return "working";
+  if (status === "waiting" && backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) {
+    return "background";
+  }
+  return null;
+}
+
 export type SidebarV2TopStatusKind =
   | "approval"
   | "done"

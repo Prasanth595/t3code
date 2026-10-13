@@ -35,6 +35,7 @@ import {
   resolveSidebarThreadSection,
   resolveSidebarRowAccessibility,
   resolveSidebarThreadStatus,
+  resolveSidebarThreadActivity,
   resolveSidebarV2TopStatus,
   resolveThreadLastVisitedAt,
   resolveThreadRowClassName,
@@ -899,6 +900,74 @@ describe("resolveSidebarThreadStatus", () => {
   };
 
   const idle = { hasPendingApprovals: false, hasPendingUserInput: false, runtime: null };
+
+  it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
+    "animates an active %s runtime",
+    (status) => {
+      expect(
+        resolveSidebarThreadActivity({
+          ...idle,
+          runtime: { ...runtime, status },
+          pendingBackgroundTasks: [],
+        }),
+      ).toBe("working");
+    },
+  );
+
+  it.each(["subagent", "monitor", "background_task"] as const)(
+    "keeps activity visible while a settled parent waits on %s work",
+    (kind) => {
+      expect(
+        resolveSidebarThreadActivity({
+          ...idle,
+          runtime: { ...runtime, status: "idle" },
+          pendingBackgroundTasks: [{ taskId: "bg-1", kind }],
+        }),
+      ).toBe("background");
+    },
+  );
+
+  it("does not imply agent progress for an idle thread or a long-lived command", () => {
+    for (const pendingBackgroundTasks of [
+      [],
+      [{ taskId: "dev-server", kind: "command" as const }],
+    ]) {
+      expect(
+        resolveSidebarThreadActivity({
+          ...idle,
+          runtime: { ...runtime, status: "idle" },
+          pendingBackgroundTasks,
+        }),
+      ).toBeNull();
+    }
+  });
+
+  it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
+    "stops activity when %s needs attention, even with running subagents",
+    (attention) => {
+      expect(
+        resolveSidebarThreadActivity({
+          ...idle,
+          [attention]: true,
+          runtime,
+          pendingBackgroundTasks: [{ taskId: "bg-1", kind: "subagent" }],
+        }),
+      ).toBeNull();
+    },
+  );
+
+  it.each(["completed", "failed", "cancelled", "interrupted", "rolled_back"] as const)(
+    "does not animate a %s runtime",
+    (status) => {
+      expect(
+        resolveSidebarThreadActivity({
+          ...idle,
+          runtime: { ...runtime, status },
+          pendingBackgroundTasks: [],
+        }),
+      ).toBeNull();
+    },
+  );
 
   it("prioritizes approval over a running runtime", () => {
     expect(resolveSidebarThreadStatus({ ...idle, hasPendingApprovals: true, runtime })).toBe(

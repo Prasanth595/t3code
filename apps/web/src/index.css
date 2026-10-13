@@ -553,6 +553,18 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   will-change: var(--visible-animation-will-change, auto);
 }
 
+@utility visible-animate-thread-activity {
+  animation: thread-activity-frames 1s steps(10) infinite;
+  animation-play-state: var(--visible-animation-state, paused);
+  will-change: var(--visible-animation-will-change, auto);
+}
+
+@keyframes thread-activity-frames {
+  to {
+    transform: translateY(calc(-40 * var(--spacing)));
+  }
+}
+
 @keyframes live-activity-focus {
   from {
     transform: translateX(0);

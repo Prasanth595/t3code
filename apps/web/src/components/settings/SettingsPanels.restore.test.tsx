@@ -78,6 +78,15 @@ describe("restoring V2 settings", () => {
     expect(state.update.mock.calls[0]?.[0][key]).toBe(DEFAULT_UNIFIED_SETTINGS[key]);
   });
 
+  it("restores Classic after opting into Codex style", async () => {
+    state.settings = { ...DEFAULT_UNIFIED_SETTINGS, threadActivityIndicatorStyle: "codex" };
+    hooks.beginRender();
+    const restore = useSettingsRestore();
+    expect(restore.changedSettingLabels).toEqual(["Activity indicator"]);
+    await restore.restoreDefaults();
+    expect(state.update.mock.calls[0]?.[0].threadActivityIndicatorStyle).toBe("classic");
+  });
+
   it("does not reset settings after cancellation", async () => {
     state.settings = { ...DEFAULT_UNIFIED_SETTINGS, autoResumeLimitedThreads: true };
     state.confirm.mockResolvedValue(false);

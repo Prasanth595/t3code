@@ -4,6 +4,8 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { useClientSettings } from "~/hooks/useSettings";
+import { ThreadActivityIndicator } from "./ThreadActivityIndicator";
 
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
@@ -878,6 +880,16 @@ export function ThreadStatusLabel({
   status: ThreadStatusPill;
   compact?: boolean;
 }) {
+  const activityStyle = useClientSettings((settings) => settings.threadActivityIndicatorStyle);
+  const showActivity =
+    activityStyle === "codex" &&
+    (status.label === "Working" || status.label === "Connecting" || status.label === "Waiting");
+  const colorClass = showActivity
+    ? status.label === "Waiting"
+      ? "text-warning-foreground"
+      : "text-foreground"
+    : status.colorClass;
+  const activityTone = status.label === "Waiting" ? "background" : "working";
   if (compact) {
     return (
       <Tooltip>
@@ -886,15 +898,19 @@ export function ThreadStatusLabel({
             <span
               role="img"
               aria-label={status.label}
-              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+              className={`inline-flex size-3.5 shrink-0 items-center justify-center ${colorClass}`}
             />
           }
         >
-          <span
-            className={`size-[9px] rounded-full ${status.dotClass} ${
-              status.pulse ? "animate-status-pulse" : ""
-            }`}
-          />
+          {showActivity ? (
+            <ThreadActivityIndicator tone={activityTone} />
+          ) : (
+            <span
+              className={`size-[9px] rounded-full ${status.dotClass} ${
+                status.pulse ? "animate-status-pulse" : ""
+              }`}
+            />
+          )}
         </TooltipTrigger>
         <TooltipPopup side="top">{status.label}</TooltipPopup>
       </Tooltip>
@@ -908,15 +924,19 @@ export function ThreadStatusLabel({
           <span
             role="img"
             aria-label={status.label}
-            className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
+            className={`inline-flex items-center gap-1 text-3xs ${colorClass}`}
           />
         }
       >
-        <span
-          className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-status-pulse" : ""
-          }`}
-        />
+        {showActivity ? (
+          <ThreadActivityIndicator tone={activityTone} />
+        ) : (
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
+              status.pulse ? "animate-status-pulse" : ""
+            }`}
+          />
+        )}
         <span className="hidden md:inline">{status.label}</span>
       </TooltipTrigger>
       <TooltipPopup side="top">{status.label}</TooltipPopup>

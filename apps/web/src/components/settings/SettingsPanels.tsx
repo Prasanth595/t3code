@@ -548,6 +548,10 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff colors"]
         : []),
       ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+      ...(settings.threadActivityIndicatorStyle !==
+      DEFAULT_UNIFIED_SETTINGS.threadActivityIndicatorStyle
+        ? ["Activity indicator"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -703,6 +707,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.fontSizeTerminal,
       settings.glassOpacity,
       settings.panelAnimationDurationMs,
+      settings.threadActivityIndicatorStyle,
       settings.responseStreamingMode,
       settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
@@ -810,6 +815,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
+      threadActivityIndicatorStyle: DEFAULT_UNIFIED_SETTINGS.threadActivityIndicatorStyle,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
@@ -1460,6 +1466,47 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="motion" title="Motion">
+        <SettingsRow
+          {...searchableSetting("thread-activity-indicator")}
+          description="Choose how active threads appear in the sidebar. Codex style animates only during active work and respects reduced motion."
+          resetAction={
+            settings.threadActivityIndicatorStyle !==
+            DEFAULT_UNIFIED_SETTINGS.threadActivityIndicatorStyle ? (
+              <SettingResetButton
+                label="activity indicator"
+                onClick={() =>
+                  updateSettings({
+                    threadActivityIndicatorStyle:
+                      DEFAULT_UNIFIED_SETTINGS.threadActivityIndicatorStyle,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.threadActivityIndicatorStyle}
+                onValueChange={(value) => {
+                  if (value === "classic" || value === "codex")
+                    updateSettings({ threadActivityIndicatorStyle: value });
+                }}
+              >
+                <SelectTrigger size="sm" className="w-full min-w-0" aria-label="Activity indicator">
+                  <SelectValue>
+                    {settings.threadActivityIndicatorStyle === "codex"
+                      ? "Codex style"
+                      : "Classic (default)"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="classic">Classic (default)</SelectItem>
+                  <SelectItem value="codex">Codex style</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
         <SettingsRow
           {...searchableSetting("panel-animations")}
           description="Set how fast panels open and close."

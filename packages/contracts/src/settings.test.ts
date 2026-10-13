@@ -336,6 +336,25 @@ describe("ClientSettings diff colors", () => {
   });
 });
 
+describe("ClientSettings activity indicator", () => {
+  it("keeps the classic presentation for existing clients", () => {
+    expect(decodeClientSettings({}).threadActivityIndicatorStyle).toBe("classic");
+  });
+
+  it.each(["classic", "codex"])("round-trips %s and allows switching back", (style) => {
+    const settings = decodeClientSettings({ threadActivityIndicatorStyle: style });
+    expect(encodeClientSettings(settings).threadActivityIndicatorStyle).toBe(style);
+    expect(decodeClientSettingsPatch({ threadActivityIndicatorStyle: style })).toEqual({
+      threadActivityIndicatorStyle: style,
+    });
+  });
+
+  it("rejects unknown styles in saved settings and patches", () => {
+    expect(() => decodeClientSettings({ threadActivityIndicatorStyle: "unknown" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ threadActivityIndicatorStyle: "unknown" })).toThrow();
+  });
+});
+
 describe("ClientSettings chat width", () => {
   it("keeps the comfortable width for existing settings without a saved width", () => {
     expect(decodeClientSettings({}).chatWidth).toBe("comfortable");
