@@ -138,6 +138,8 @@ Clients send typed WebSocket requests. The server turns them into _commands_. Th
 
 Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/internals/glossary.md`
 
+Fork (Yarden-zamir/t3code): fork tools, machine map, deploys and updates for agents: `docs/fork-agents.md`.
+
 ## Where code lives
 
 - `apps/server` - WebSocket, orchestration, providers, checkpointing. Effect-heavy: read [Effect services](docs/internals/effect-services.md) before adding server code, and `.repos/effect-smol/LLMS.md` for the Effect library itself.

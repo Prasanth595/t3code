@@ -7,6 +7,7 @@ import { SidebarPointerSensor } from "~/components/Sidebar.pointer";
 import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
+  ClientSettings,
   EnvironmentId,
   ProjectId,
   PullRequestAction,
@@ -91,25 +92,41 @@ import {
   pullRequestHostActions,
 } from "../components/pullRequest/pullRequestList.logic";
 import {
+  MAX_PULL_REQUEST_LIST_OWNERS,
   pullRequestListPreferences,
   type PullRequestListPreferencePatch,
   type PullRequestListPreferences,
   type PullRequestListSort,
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
+import {
+  projectsOfOwners,
+  pullRequestMenuOwnerFilter,
+  pullRequestOwnerRowFilter,
+  pullRequestProjectOwners,
+} from "../components/pullRequest/pullRequestOwnerFilter.logic";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
+  CHECKS_OPTIONS,
   PullRequestFiltersMenu,
   PullRequestFilterOptionIcon,
   PullRequestSearchInput,
+  REVIEW_OPTIONS,
   pullRequestHostLabel,
   pullRequestProjectKey,
   type PullRequestExpectedHost,
   type PullRequestFilterOption,
 } from "../components/pullRequest/PullRequestListFilters";
+import { PullRequestFilterChips } from "../components/pullRequest/PullRequestFilterChips";
+import {
+  clearPullRequestFilterChips,
+  pullRequestFilterChips,
+  type PullRequestFilterChip,
+} from "../components/pullRequest/pullRequestFilterChips.logic";
+import { filterSentence, type FilterOperator } from "../components/filters/FilterChip";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
 import { PullRequestListGhost } from "../components/pullRequest/PullRequestGhosts";
 import {
@@ -138,6 +155,7 @@ import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../
 import { SidebarInset } from "../components/ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { useLiveRefresh } from "../hooks/useLiveRefresh";
+import { useClientSettings } from "../hooks/useSettings";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { toastManager } from "../components/ui/toast";
@@ -301,6 +319,19 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
   return labels.length === 0 ? {} : { labels };
 }
 
+/** Fork: owners are read like labels, then lowercased to match `repositoryOwnerOf`. */
+function pullRequestSearchOwners(raw: unknown): Partial<Pick<PullRequestsSearch, "owners">> {
+  const owners = pullRequestSearchLabels(raw)
+    .labels?.map((owner) => owner.toLowerCase())
+    .slice(0, MAX_PULL_REQUEST_LIST_OWNERS);
+  return owners === undefined ? {} : { owners };
+}
+
+const selectRepositoryOwnerFilters = (settings: ClientSettings) => settings.repositoryOwnerFilters;
+const NO_OWNERS: ReadonlyArray<string> = [];
+const selectPullRequestFilterChips = (settings: ClientSettings) => settings.pullRequestFilterChips;
+const NO_FILTER_CHIPS: ReadonlyArray<PullRequestFilterChip> = [];
+
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
     involvement:
@@ -347,6 +378,8 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       ? { author: raw.author.trim().slice(0, 200) }
       : {}),
     ...pullRequestSearchLabels(raw.labels),
+    ...pullRequestSearchOwners(raw.owners),
+    ...(raw.ownerOperator === "is_not" ? { ownerOperator: "is_not" as const } : {}),
   }),
   component: PullRequestsRouteView,
 });
@@ -416,6 +449,54 @@ function PullRequestsRouteView() {
     () => allProjects.filter((project) => environmentIds.includes(project.environmentId)),
     [allProjects, environmentIds],
   );
+  // Searching asks the hosts, which takes a round trip, so the text is held for a moment before
+  // it is sent. Until it lands, the rows already on screen are narrowed locally: the answer is
+  // late but the page is not.
+  const typedQuery = (search.q ?? "").trim();
+  const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
+  const querySettled = typedQuery === sentQuery;
+  const ownerFiltersEnabled = useClientSettings(selectRepositoryOwnerFilters);
+  const filterChipsEnabled = useClientSettings(selectPullRequestFilterChips);
+  // What was typed, split into the qualifiers the hosts can act on and the words that are left.
+  // The URL keeps the line as it was written; only the request sees the two halves.
+  const typedParsed = useMemo(
+    () => parsePullRequestQuery(typedQuery, { ownerQualifiers: ownerFiltersEnabled }),
+    [ownerFiltersEnabled, typedQuery],
+  );
+  const sentParsed = useMemo(
+    () => parsePullRequestQuery(sentQuery, { ownerQualifiers: ownerFiltersEnabled }),
+    [ownerFiltersEnabled, sentQuery],
+  );
+  // Fork: the repository owners that narrow the list. A typed `org:` or `-org:` wins over the
+  // menu, the same way the other typed qualifiers win. The request reads the sent text, and the
+  // rows on screen read the typed text at once.
+  const menuOwners = ownerFiltersEnabled ? (search.owners ?? NO_OWNERS) : NO_OWNERS;
+  const menuOwnerOperator = search.ownerOperator ?? "is";
+  const menuOwnerFilter = useMemo(
+    () => pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator),
+    [menuOwnerOperator, menuOwners],
+  );
+  const requestOwners = sentParsed.owners ?? menuOwnerFilter;
+  const localOwners = typedParsed.owners ?? menuOwnerFilter;
+  // Fork: the projects that the list asks about. The project scope, the project menu and the
+  // per-server split below read these. The selection reads every project, because a link can
+  // open a pull request from any owner.
+  const listProjects = useMemo(
+    () => projectsOfOwners(projects, requestOwners),
+    [projects, requestOwners],
+  );
+  const keepRequestOwnerRow = useMemo(
+    () => pullRequestOwnerRowFilter(projects, requestOwners),
+    [projects, requestOwners],
+  );
+  const keepLocalOwnerRow = useMemo(
+    () =>
+      localOwners === requestOwners
+        ? keepRequestOwnerRow
+        : pullRequestOwnerRowFilter(projects, localOwners),
+    [keepRequestOwnerRow, localOwners, projects, requestOwners],
+  );
+  const ownerOptions = useMemo(() => pullRequestProjectOwners(projects), [projects]);
   const environmentLabels = useMemo(
     () =>
       new Map(
@@ -424,17 +505,20 @@ function PullRequestsRouteView() {
     [environments],
   );
   // The scope the URL asks for, once the environments have had their say about whether it exists.
+  // Fork: a project outside the owner filter drops out of the scope, like an unknown id does. A
+  // menu owner change also clears that scope (`updateMenuOwnerFilter`), so it cannot come back
+  // unseen when the owner filter goes.
   const scopedProjectId = useMemo(
-    () => resolveProjectScope(search.projectId, projects, projectsKnown),
-    [projects, projectsKnown, search.projectId],
+    () => resolveProjectScope(search.projectId, listProjects, projectsKnown),
+    [listProjects, projectsKnown, search.projectId],
   );
   const scopedProject = useMemo(
-    () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
-    [projects, scopedEnvironmentId, scopedProjectId],
+    () => findScopedProject(listProjects, scopedEnvironmentId, scopedProjectId),
+    [listProjects, scopedEnvironmentId, scopedProjectId],
   );
   const scopedProjects = useMemo(
-    () => pullRequestFilterProjects(projects, environmentLabels, scopedProject),
-    [environmentLabels, projects, scopedProject],
+    () => pullRequestFilterProjects(listProjects, environmentLabels, scopedProject),
+    [environmentLabels, listProjects, scopedProject],
   );
 
   // A link from a thread or the sidebar only knows the repository, so the owning project is
@@ -556,6 +640,8 @@ function PullRequestsRouteView() {
             ...(next.checks ? { checks: next.checks } : {}),
             ...(next.author ? { author: next.author } : {}),
             ...(next.labels && next.labels.length > 0 ? { labels: next.labels } : {}),
+            ...(next.owners && next.owners.length > 0 ? { owners: next.owners } : {}),
+            ...(next.ownerOperator === "is_not" ? { ownerOperator: next.ownerOperator } : {}),
           };
         },
         replace: true,
@@ -585,17 +671,7 @@ function PullRequestsRouteView() {
     updateSearch(patch);
   };
 
-  // Searching asks the hosts, which takes a round trip, so the text is held for a moment before
-  // it is sent. Until it lands, the rows already on screen are narrowed locally: the answer is
-  // late but the page is not.
-  const typedQuery = (search.q ?? "").trim();
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
-  const querySettled = typedQuery === sentQuery;
-  // What was typed, split into the qualifiers the hosts can act on and the words that are left.
-  // The URL keeps the line as it was written; only the request sees the two halves.
-  const typedParsed = useMemo(() => parsePullRequestQuery(typedQuery), [typedQuery]);
-  const sentParsed = useMemo(() => parsePullRequestQuery(sentQuery), [sentQuery]);
 
   // One record for the hosts, rebuilt only when the URL's own fields change so the listing
   // inputs stay identical between renders.
@@ -632,12 +708,12 @@ function PullRequestsRouteView() {
     () =>
       resolveQueryEnvironmentIds(
         environmentIds,
-        projects,
+        listProjects,
         scopedProject,
         scopedProjectId,
         projectsKnown,
       ),
-    [environmentIds, projects, projectsKnown, scopedProject, scopedProjectId],
+    [environmentIds, listProjects, projectsKnown, scopedProject, scopedProjectId],
   );
   /**
    * Which projects each server is asked about. Two servers holding the same repository would both
@@ -654,8 +730,12 @@ function PullRequestsRouteView() {
   }> => {
     const plain = queryEnvironmentIds.map((environmentId) => ({ environmentId }));
     if (!projectsKnown || scopedProjectId !== undefined) return plain;
+    // Fork: only the projects of the selected owners are assigned, so a server without them is not
+    // read. The totals below still count every project, so a server whose projects all match is
+    // asked without ids. Limit: the listing contract takes at most 100 ids, so a server with more
+    // matching projects fails its read. Revisit if one server holds that many projects of an owner.
     const assignment = assignProjectsToEnvironments(
-      projects,
+      listProjects,
       queryEnvironmentIds,
       queryEnvironmentIds[0],
     );
@@ -671,7 +751,7 @@ function PullRequestsRouteView() {
       if (projectIds.length === (totals.get(environmentId) ?? 0)) return [{ environmentId }];
       return [{ environmentId, projectIds }];
     });
-  }, [projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
+  }, [listProjects, projects, projectsKnown, queryEnvironmentIds, scopedProjectId]);
   // Part of the scope, since a different split is a different question and its answers must not
   // be filed under the same page state.
   const assignmentKey = useMemo(
@@ -1088,13 +1168,24 @@ function PullRequestsRouteView() {
     if (loaded === null || loaded.environmentKey !== environmentKey || loaded.scope === scopeKey) {
       return null;
     }
-    const entries = narrowPullRequestsToFilters(loaded.data.entries, {
+    const narrowedEntries = narrowPullRequestsToFilters(loaded.data.entries, {
       state: search.state,
       projectId: scopedProjectId,
       host: search.host,
     });
+    // Fork: the held rows also keep only the projects of the selected owners.
+    const entries =
+      keepRequestOwnerRow === null ? narrowedEntries : narrowedEntries.filter(keepRequestOwnerRow);
     return entries.length === 0 ? null : { ...loaded.data, entries };
-  }, [environmentKey, loaded, scopeKey, scopedProjectId, search.host, search.state]);
+  }, [
+    environmentKey,
+    keepRequestOwnerRow,
+    loaded,
+    scopeKey,
+    scopedProjectId,
+    search.host,
+    search.state,
+  ]);
   // With nothing typed and nothing to carry on from, the answer is taken from the read that is
   // keyed to exactly that question. Otherwise a search's answer lingers for a render after the
   // text has gone — the data cannot say which question it belongs to, but the read it came from
@@ -1294,7 +1385,10 @@ function PullRequestsRouteView() {
   );
 
   const entries = useMemo(() => {
-    const known = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+    const loadedEntries = ordered?.key === filterKey ? ordered.entries : (listData?.entries ?? []);
+    // Fork: a typed owner applies here at once, before the request with it comes back.
+    const known =
+      keepLocalOwnerRow === null ? loadedEntries : loadedEntries.filter(keepLocalOwnerRow);
     const involvementEntries = filterPullRequestsByInvolvement(known, viewers, search.involvement);
     // The hosts search more than the row shows — a body, a review, a commit message — so once
     // their answer is in, narrowing it again here would throw away matches the reader asked for.
@@ -1326,6 +1420,7 @@ function PullRequestsRouteView() {
   }, [
     filterKey,
     hasLocalFilters,
+    keepLocalOwnerRow,
     localFilters,
     listData,
     ordered,
@@ -1384,11 +1479,14 @@ function PullRequestsRouteView() {
         : rows.filter((entry) =>
             matchesPullRequestFilters(entry, localFilters, pullRequestEntryViewer(entry, viewers)),
           );
+    // Fork: the priority groups keep only the projects of the selected owners, like the feed.
+    const owned = (rows: ReadonlyArray<EnvironmentPullRequestEntry> | undefined) =>
+      rows === undefined || keepLocalOwnerRow === null ? rows : rows.filter(keepLocalOwnerRow);
     const authored = narrow(
-      partitionsWanted ? (authoredQuery.data?.entries ?? held?.authored) : undefined,
+      owned(partitionsWanted ? (authoredQuery.data?.entries ?? held?.authored) : undefined),
     );
     const reviewing = narrow(
-      partitionsWanted ? (reviewingQuery.data?.entries ?? held?.reviewing) : undefined,
+      owned(partitionsWanted ? (reviewingQuery.data?.entries ?? held?.reviewing) : undefined),
     );
     if (authored === undefined || reviewing === undefined) {
       return groupPullRequestsByInvolvement(entries, viewers);
@@ -1397,6 +1495,7 @@ function PullRequestsRouteView() {
   }, [
     hasLocalFilters,
     baselineEmpty,
+    keepLocalOwnerRow,
     localFilters,
     authoredQuery.data?.entries,
     entries,
@@ -1901,6 +2000,43 @@ function PullRequestsRouteView() {
   // in its own words and is left to.
   const carriedToNothing =
     showingCarried && listQuery.isPending && shownCount === 0 && typedQuery.length === 0;
+  // Fork: `pullRequestFilterChips`. The active menu filters show as chips above the list, and
+  // the empty list names the filters that emptied it.
+  const filterChipHosts = hosts.length > 0 ? hosts : expectedHosts;
+  const filterChipHost = filterChipHosts.find((entry) => entry.host === search.host);
+  const filterChips = filterChipsEnabled
+    ? pullRequestFilterChips({
+        search,
+        typed: typedParsed,
+        ownerFilters: ownerFiltersEnabled,
+        names: {
+          state: STATE_TABS.find((tab) => tab.value === search.state)?.label ?? search.state,
+          involvement:
+            INVOLVEMENT_TABS.find((tab) => tab.value === search.involvement)?.label ??
+            search.involvement,
+          project:
+            scopedProject === undefined
+              ? null
+              : (scopedProjects.find(
+                  (project) =>
+                    project.id === scopedProject.id &&
+                    project.environmentId === scopedProject.environmentId,
+                )?.title ?? scopedProject.title),
+          server:
+            scopedEnvironmentId === null
+              ? null
+              : (environmentLabels.get(scopedEnvironmentId) ?? scopedEnvironmentId),
+          host:
+            search.host === undefined
+              ? null
+              : filterChipHost
+                ? pullRequestHostLabel(filterChipHosts, filterChipHost)
+                : search.host,
+          review: REVIEW_OPTIONS.find((option) => option.value === search.review)?.label ?? null,
+          checks: CHECKS_OPTIONS.find((option) => option.value === search.checks)?.label ?? null,
+        },
+      })
+    : NO_FILTER_CHIPS;
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -1931,8 +2067,14 @@ function PullRequestsRouteView() {
             search.state !== "open" ||
             search.involvement !== "all" ||
             scopedProjectId !== undefined ||
-            search.host !== undefined
+            search.host !== undefined ||
+            menuOwners.length > 0
           }
+          onShowAllOwners={
+            menuOwners.length > 0 ? () => updateListScope({ owners: undefined }) : undefined
+          }
+          filterCauses={filterChips.map(filterSentence)}
+          onClearFilters={() => updateListScope(clearPullRequestFilterChips(filterChips))}
           searching={typedQuery.length > 0 && (!querySettled || showingCarried)}
           canLoadMore={listData?.truncated === true && (canContinue || pageSize < MAX_PAGE_SIZE)}
           loadingMore={loadingMore}
@@ -2057,6 +2199,23 @@ function PullRequestsRouteView() {
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
+  // Fork: an owner change that leaves the scoped project out drops the project scope too, the
+  // same way picking another server does.
+  const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) => {
+    const kept = projectsOfOwners(projects, pullRequestMenuOwnerFilter(owners, operator));
+    const keepsScope =
+      search.projectId === undefined ||
+      kept.some(
+        (project) =>
+          project.id === search.projectId &&
+          (search.environmentId === undefined || project.environmentId === search.environmentId),
+      );
+    updateListScope({
+      owners: owners.length === 0 ? undefined : owners,
+      ownerOperator: operator === "is_not" ? operator : undefined,
+      ...(keepsScope ? {} : { projectId: undefined }),
+    });
+  };
   const filtersMenu = (
     <PullRequestFiltersMenu
       onOpenChange={setFiltersOpen}
@@ -2096,6 +2255,17 @@ function PullRequestsRouteView() {
       onProject={(projectId, environmentId) =>
         updateListScope(environmentId === undefined ? { projectId } : { projectId, environmentId })
       }
+      owners={
+        ownerFiltersEnabled
+          ? {
+              selected: menuOwners,
+              operator: menuOwnerOperator,
+              options: ownerOptions,
+              onChange: (owners) => updateMenuOwnerFilter(owners, menuOwnerOperator),
+              onOperator: (operator) => updateMenuOwnerFilter(menuOwners, operator),
+            }
+          : undefined
+      }
     />
   );
   const columnProps = {
@@ -2112,6 +2282,7 @@ function PullRequestsRouteView() {
     searchInput,
     sortMenu,
     filtersMenu,
+    filterChips: <PullRequestFilterChips chips={filterChips} onChange={updateListScope} />,
     rightPanelControl:
       // Footprint reserve while the panel is closed: the toggle itself stays
       // mounted at the fixed titlebar inset in both states so it cannot move
@@ -2556,6 +2727,7 @@ function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  filterChips,
   rightPanelControl,
   titlebarControls,
   rightPanelOpen,
@@ -2576,6 +2748,8 @@ function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  /** Fork: the active filter chips. They render nothing while `pullRequestFilterChips` is off. */
+  filterChips: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
   rightPanelOpen: boolean;
@@ -2748,6 +2922,7 @@ function PullRequestsColumn({
                 <PullRequestRefreshControl refreshing={refreshing} onRefresh={onRefresh} />
               ) : null}
             </div>
+            {filterChips}
             {/* Scrolled past this marker, the controls are gone and the title takes over. */}
             <div ref={markerRef} aria-hidden className="-mt-3 h-px w-full" />
           </div>

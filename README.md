@@ -29,6 +29,11 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request, by author role, login and agent marker (`pullRequestWatchRemarkFilter`).
 - **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
 
+**Filters**
+
+- **Repository owner filters:** filter the pull request page and the sidebar by the account or organization that owns each repository. Show only some owners, or hide them. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`).
+- **Pull request filter chips:** the active pull request filters show as chips above the list. Flip a chip between "is" and "is not", or remove it. An empty list names the filters that emptied it (`pullRequestFilterChips`).
+
 **Scripts and terminal**
 
 - **Global scripts:** scripts for every project and pinned script buttons. Global pins show in the title bar and next to the thread details toggle; project pins show only next to the toggle. Right-click opens the in-app pin menu. A global script's preview opens as a floating popup. An action with "Open as an app overlay" opens its page in a large panel over the app instead, and runs its command only when the page is down (`previewOverlay`). Scripts can run in the background (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).

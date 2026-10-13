@@ -122,7 +122,13 @@ export const runPortalSession = <R1, R2>(input: {
           Effect.sync(() =>
             makeWebSocket(connectUrl(input.portalUrl), { headers: tokenHeaders(input.token) }),
           ),
-          (webSocket) => Effect.sync(() => webSocket.close(1000)),
+          (webSocket) =>
+            Effect.sync(() => {
+              // `ws` emits "error" when a socket closes before it opens. After release nothing
+              // else listens, and an unheard "error" event ends the whole server process.
+              webSocket.addEventListener("error", () => {});
+              webSocket.close(1000);
+            }),
         ),
         { openTimeout: Duration.seconds(15) },
       );

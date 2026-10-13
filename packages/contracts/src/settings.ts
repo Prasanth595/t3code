@@ -73,6 +73,16 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+/** Fork: the value of the `sidebarOwnerFilter` client setting. */
+export const SidebarOwnerFilter = Schema.Struct({
+  operator: Schema.Literals(["is", "is_not"]).pipe(
+    Schema.withDecodingDefault(Effect.succeed("is" as const)),
+  ),
+  owners: Schema.Array(Schema.NullOr(TrimmedNonEmptyString)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+});
+export type SidebarOwnerFilter = typeof SidebarOwnerFilter.Type;
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
 export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
 export const SidebarThreadPreviewCount = Schema.Int.check(
@@ -431,9 +441,20 @@ export const ClientSettingsSchema = Schema.Struct({
   forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
-   * sidebar, and split usage by owner.
+   * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
    */
   repositoryOwnerFilters: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the active pull request filters show as chips above the list, and an empty list names
+   * the filters that emptied it. Remove when upstream T3 Code shows its active filters itself.
+   */
+  pullRequestFilterChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the sidebar filter by repository owner. "is" shows only the projects of these owners,
+   * and "is_not" hides them. Null stands for projects without an owner. No owners shows every
+   * project. Applies only while `repositoryOwnerFilters` is on.
+   */
+  sidebarOwnerFilter: SidebarOwnerFilter.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -1866,6 +1887,8 @@ export const ClientSettingsPatch = Schema.Struct({
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
+  pullRequestFilterChips: Schema.optionalKey(Schema.Boolean),
+  sidebarOwnerFilter: Schema.optionalKey(SidebarOwnerFilter),
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),

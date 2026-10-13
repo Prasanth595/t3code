@@ -48,6 +48,10 @@ import {
   type PullRequestAuthorFacet,
   type PullRequestLabelFacet,
 } from "./pullRequestList.logic";
+import {
+  PullRequestOwnerSubmenu,
+  type PullRequestOwnerSubmenuProps,
+} from "./PullRequestOwnerSubmenu";
 import { PullRequestActorAvatar } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
@@ -152,7 +156,8 @@ const DRAFT_OPTIONS = [
   { value: "hide", label: "Hide drafts", Icon: EyeOffIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
-const REVIEW_OPTIONS = [
+/** Fork: exported for the filter chips. */
+export const REVIEW_OPTIONS = [
   { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
   { value: "approved", label: "Approved", Icon: CircleCheckIcon },
   { value: "changes-requested", label: "Changes requested", Icon: CircleXIcon },
@@ -160,7 +165,8 @@ const REVIEW_OPTIONS = [
   { value: "none", label: "No reviews", Icon: CircleSlashIcon },
 ] as const satisfies ReadonlyArray<PullRequestFilterOption<string>>;
 
-const CHECKS_OPTIONS = [
+/** Fork: exported for the filter chips. */
+export const CHECKS_OPTIONS = [
   { value: UNFILTERED_VALUE, label: "All", Icon: LayersIcon },
   { value: "passing", label: "Passing", Icon: CircleCheckIcon },
   { value: "failing", label: "Failing", Icon: CircleXIcon },
@@ -414,6 +420,7 @@ export function PullRequestFiltersMenu({
   projectEnvironmentId,
   unavailable,
   onProject,
+  owners,
 }: {
   onOpenChange?: (open: boolean) => void;
   state: PullRequestListState;
@@ -457,6 +464,8 @@ export function PullRequestFiltersMenu({
   unavailable: ReadonlyMap<string, string>;
   /** The environment comes with the project id, since picking a row picks a specific server's copy of it. */
   onProject: (projectId: ProjectId | undefined, environmentId: EnvironmentId | undefined) => void;
+  /** Fork: absent while the `repositoryOwnerFilters` setting is off. */
+  owners?: PullRequestOwnerSubmenuProps | undefined;
 }) {
   const selectedLabels = (filters.labels ?? []).flatMap((group) => group);
   const filterCount = [
@@ -470,6 +479,7 @@ export function PullRequestFiltersMenu({
     filters.checks,
     filters.author,
     ...selectedLabels,
+    ...(owners?.selected ?? []),
   ].filter(Boolean).length;
   const updateFilters = (next: Partial<PullRequestListFilters>) =>
     onFilters(
@@ -585,6 +595,7 @@ export function PullRequestFiltersMenu({
           </>
         ) : null}
         <MenuSeparator />
+        {owners ? <PullRequestOwnerSubmenu {...owners} /> : null}
         <PullRequestFilterRadioSubmenu
           label="Project"
           value={projectValue}
