@@ -1491,6 +1491,7 @@ export default function FilePreviewPanel({
               sizeBytes={attachment.sizeBytes}
               asset={{ environmentId, attachmentId: attachment.id }}
               htmlRender={attachment.htmlRender === true}
+              threadRef={threadRef}
             />
           ) : relativePath && officeKind !== null && absolutePath ? (
             <WorkspaceOfficePreview
