@@ -12,20 +12,41 @@ import * as Stream from "effect/Stream";
 async function* sseDataLines(response: Response): AsyncGenerator<string> {
   if (response.body === null) return;
   const decoder = new TextDecoder();
+  // Offset-based window: the old code re-sliced (copied) the whole remainder
+  // on every event, which is O(n^2) for large streams.
   let buffered = "";
+  let start = 0;
+  // One regex scan stops at the nearest separator of either style; two
+  // indexOf calls would scan to the end for whichever style is absent.
+  const separator = /\r\n\r\n|\n\n/g;
+  let separatorLength = 0;
+  const findSeparator = (from: number): number => {
+    separator.lastIndex = from;
+    const match = separator.exec(buffered);
+    if (match === null) return -1;
+    separatorLength = match[0].length;
+    return match.index;
+  };
   for await (const chunk of response.body) {
     buffered += decoder.decode(chunk as Uint8Array, { stream: true });
-    let separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
+    let separatorIndex = findSeparator(start);
     while (separatorIndex !== -1) {
-      const rawEvent = buffered.slice(0, separatorIndex);
-      buffered = buffered.slice(separatorIndex).replace(/^(?:\r?\n){2}/u, "");
+      const rawEvent = buffered.slice(start, separatorIndex);
+      start = separatorIndex + separatorLength;
       const data = rawEvent
         .split(/\r?\n/u)
         .filter((line) => line.startsWith("data:"))
         .map((line) => line.slice("data:".length).trimStart())
         .join("\n");
       if (data.length > 0) yield data;
-      separatorIndex = buffered.search(/\n\n|\r\n\r\n/u);
+      separatorIndex = findSeparator(start);
+    }
+    // Compact the consumed prefix every chunk so appends and scans only ever
+    // cover live tail bytes (never history). One tail copy per chunk replaces
+    // the old per-event remainder copies.
+    if (start > 0) {
+      buffered = buffered.slice(start);
+      start = 0;
     }
   }
 }

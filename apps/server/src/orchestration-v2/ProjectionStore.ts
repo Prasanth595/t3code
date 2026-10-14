@@ -647,13 +647,19 @@ export function upsertProviderTurn(
   turns: ReadonlyArray<OrchestrationV2ProviderTurn>,
   next: OrchestrationV2ProviderTurn,
 ): Array<OrchestrationV2ProviderTurn> {
-  const current = turns.find((turn) => turn.id === next.id);
-  return upsertById(turns, {
+  // Single scan: the old code ran find() then upsertById()'s findIndex().
+  const index = turns.findIndex((turn) => turn.id === next.id);
+  const current = index === -1 ? undefined : turns[index];
+  const merged: OrchestrationV2ProviderTurn = {
     ...next,
     ...((next.tokenUsage ?? current?.tokenUsage) === undefined
       ? {}
       : { tokenUsage: next.tokenUsage ?? current?.tokenUsage }),
-  });
+  };
+  if (index === -1) return [...turns, merged];
+  const updated = [...turns];
+  updated[index] = merged;
+  return updated;
 }
 
 /** A stale run snapshot must not erase fields that other events recorded on the run. */
@@ -1424,56 +1430,103 @@ function secretRequestAsPendingInput(
 export function threadShellFromProjection(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadShell {
-  const providerSession =
-    projection.providerSessions
-      .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-      )[0] ?? null;
+  // Single-pass maxima: the old code ran filter().toSorted()[0] (O(n log n)
+  // + two intermediate arrays) six times just to take the newest row.
+  let providerSession: OrchestrationV2ThreadProjection["providerSessions"][number] | null = null;
+  let providerSessionAt = Number.NEGATIVE_INFINITY;
+  for (const session of projection.providerSessions) {
+    if (session.providerInstanceId !== projection.thread.providerInstanceId) continue;
+    const at = DateTime.toEpochMillis(session.updatedAt);
+    if (providerSession === null || at > providerSessionAt) {
+      providerSession = session;
+      providerSessionAt = at;
+    }
+  }
   const latestRun =
     usageLimitRunPresentedAsLatest(
       projection.runs,
       projection.turnItems,
       providerSession?.lastError ?? null,
     ) ?? latestUnheldRun(projection.runs);
-  const activeRun =
-    projection.runs
-      .filter(isInterruptibleRunForShell)
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
-  const activityRun =
-    projection.runs
-      .filter(isActivityRunForShell)
-      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null;
-  const liveRunIds = new Set(projection.runs.filter(isActivityRunForShell).map((run) => run.id));
+  const activeRun = (() => {
+    let best: OrchestrationV2ThreadProjection["runs"][number] | null = null;
+    for (const run of projection.runs) {
+      if (!isInterruptibleRunForShell(run)) continue;
+      if (best === null || run.ordinal > best.ordinal) best = run;
+    }
+    return best;
+  })();
+  const activityRun = (() => {
+    let best:
+      | (OrchestrationV2ThreadProjection["runs"][number] & {
+          readonly status: ShellActivityRunStatus;
+        })
+      | null = null;
+    for (const run of projection.runs) {
+      if (!isActivityRunForShell(run)) continue;
+      if (best === null || run.ordinal > best.ordinal) best = run;
+    }
+    return best;
+  })();
+  const liveRunIds = new Set<string>();
+  for (const run of projection.runs) {
+    if (isActivityRunForShell(run)) liveRunIds.add(String(run.id));
+  }
+  let newestPendingRequest: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null =
+    null;
+  let newestPendingRequestAt = Number.NEGATIVE_INFINITY;
+  for (const request of projection.runtimeRequests) {
+    if (request.status !== "pending") continue;
+    const at = DateTime.toEpochMillis(request.createdAt);
+    if (newestPendingRequest === null || at > newestPendingRequestAt) {
+      newestPendingRequest = request;
+      newestPendingRequestAt = at;
+    }
+  }
+  let newestSecretRequest: Extract<
+    OrchestrationV2TurnItem,
+    { readonly type: "secret_request" }
+  > | null = null;
+  let newestSecretRequestAt = Number.NEGATIVE_INFINITY;
+  for (const item of projection.turnItems) {
+    if (
+      item.type !== "secret_request" ||
+      item.status !== "waiting" ||
+      item.runId === null ||
+      !liveRunIds.has(item.runId)
+    ) {
+      continue;
+    }
+    const at = DateTime.toEpochMillis(item.updatedAt);
+    if (newestSecretRequest === null || at > newestSecretRequestAt) {
+      newestSecretRequest = item;
+      newestSecretRequestAt = at;
+    }
+  }
   const pendingRuntimeRequest =
-    projection.runtimeRequests
-      .filter((request) => request.status === "pending")
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
-      )[0] ??
-    secretRequestAsPendingInput(
-      projection.turnItems
-        .filter(
-          (item) =>
-            item.type === "secret_request" &&
-            item.status === "waiting" &&
-            item.runId !== null &&
-            liveRunIds.has(item.runId),
-        )
-        .toSorted(
-          (left, right) =>
-            DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-        )[0] ?? null,
-    );
-  const userMessages = projection.messages
-    .filter((message) => message.role === "user")
-    .toSorted(
-      (left, right) =>
-        DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-    );
-  const latestUserMessage = userMessages[0] ?? null;
+    newestPendingRequest ?? secretRequestAsPendingInput(newestSecretRequest);
+  let latestUserMessage: OrchestrationV2ThreadProjection["messages"][number] | null = null;
+  let latestUserMessageAt = Number.NEGATIVE_INFINITY;
+  for (const message of projection.messages) {
+    if (message.role !== "user") continue;
+    const at = DateTime.toEpochMillis(message.updatedAt);
+    if (latestUserMessage === null || at > latestUserMessageAt) {
+      latestUserMessage = message;
+      latestUserMessageAt = at;
+    }
+  }
+  let latestUserAuthoredMessageAt: DateTime.Utc | null = null;
+  {
+    let atMax = Number.NEGATIVE_INFINITY;
+    for (const message of projection.messages) {
+      if (message.role !== "user" || message.createdBy !== "user") continue;
+      const at = DateTime.toEpochMillis(message.updatedAt);
+      if (latestUserAuthoredMessageAt === null || at > atMax) {
+        latestUserAuthoredMessageAt = message.updatedAt;
+        atMax = at;
+      }
+    }
+  }
   const pendingBackgroundTasks = derivePendingBackgroundWork({
     latestRun,
     providerThreads: projection.providerThreads,
@@ -1535,8 +1588,7 @@ export function threadShellFromProjection(
     // initial hydration and streaming updates independent of transcript size.
     latestVisibleMessage: null,
     latestUserMessageAt: latestUserMessage?.updatedAt ?? null,
-    latestUserAuthoredMessageAt:
-      userMessages.find((message) => message.createdBy === "user")?.updatedAt ?? null,
+    latestUserAuthoredMessageAt,
     hasActionableProposedPlan: projection.plans.some(
       (plan) => plan.kind === "proposed_plan" && plan.status === "active",
     ),

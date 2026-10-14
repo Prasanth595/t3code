@@ -766,14 +766,28 @@ export const makeEventNdjsonLogStore = Effect.fnUntraced(function* (
       if (payload === undefined) return;
       // Escaping can expand strings beyond their input size. Keep that bounded
       // serialization out of the file too, while retaining routing/error fields.
-      if (Buffer.byteLength(payload) > MAX_RECORD_CHARACTERS) {
+      // UTF-8 bytes only grow from UTF-16 length, so an over-long string is
+      // definitely oversized without scanning it first (common: huge ASCII
+      // tool outputs).
+      let payloadBytes: number;
+      if (payload.length > MAX_RECORD_CHARACTERS) {
         payload = yield* serializeEvent(summarizeProviderEvent(event));
         if (payload === undefined) return;
+        payloadBytes = Buffer.byteLength(payload);
+      } else {
+        payloadBytes = Buffer.byteLength(payload);
+        if (payloadBytes > MAX_RECORD_CHARACTERS) {
+          payload = yield* serializeEvent(summarizeProviderEvent(event));
+          if (payload === undefined) return;
+          payloadBytes = Buffer.byteLength(payload);
+        }
       }
 
       const observedAt = yield* DateTime.now.pipe(Effect.map(DateTime.formatIso));
-      const line = `[${observedAt}] ${resolveStreamLabel(stream)}: ${payload}\n`;
-      const bytes = Buffer.byteLength(line);
+      const prefix = `[${observedAt}] ${resolveStreamLabel(stream)}: `;
+      const line = `${prefix}${payload}\n`;
+      // Reuse the measured payload bytes instead of re-scanning the line.
+      const bytes = Buffer.byteLength(prefix) + payloadBytes + 1;
       const action = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
         if (state.closed) {
           return Effect.succeed([{ flush: false }, state] as const);

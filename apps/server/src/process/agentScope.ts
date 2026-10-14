@@ -92,8 +92,13 @@ function parseKeyValues(text: string): Map<string, string> {
   return values;
 }
 
-function parseCgroupCounter(text: string, key: string): number | undefined {
-  const match = new RegExp(`^${key} (\\d+)$`, "m").exec(text);
+const CGROUP_POPULATED_RE = /^populated (\d+)$/m;
+const CGROUP_OOM_KILL_RE = /^oom_kill (\d+)$/m;
+
+function parseCgroupCounter(text: string, pattern: RegExp): number | undefined {
+  const match = pattern.exec(text);
+  // Reset stateful regex state (harmless without /g, but future-proof).
+  pattern.lastIndex = 0;
   return match === null ? undefined : Number(match[1]);
 }
 
@@ -247,12 +252,12 @@ export const make = Effect.gen(function* () {
       const controlGroup = values.get("ControlGroup") ?? "";
       const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
       const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
-      const populated = parseCgroupCounter(cgroupEvents, "populated");
+      const populated = parseCgroupCounter(cgroupEvents, CGROUP_POPULATED_RE);
       return {
         loadState: values.get("LoadState") ?? "",
         activeState: values.get("ActiveState") ?? "",
         result: values.get("Result") ?? "",
-        oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
+        oomKills: parseCgroupCounter(memoryEvents, CGROUP_OOM_KILL_RE) ?? 0,
         populated: populated === undefined ? undefined : populated === 1,
       } satisfies ScopeState;
     });

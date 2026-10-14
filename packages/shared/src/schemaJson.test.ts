@@ -57,6 +57,11 @@ Done.`),
     expect(() => decodeLenientJson('{ "enabled": true,, }')).toThrow();
   });
 
+  it("rejects an unterminated block comment", () => {
+    expect(() => decodeLenientJson('{ "enabled": true } /* unfinished')).toThrow();
+    expect(() => decodeLenientJson('{ "enabled": true, /* unfinished }')).toThrow();
+  });
+
   it("preserves commas before brackets inside string values", () => {
     // A comma inside a string value that happens to precede `}`/`]` must not
     // be stripped as if it were a trailing comma.

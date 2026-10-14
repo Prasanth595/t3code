@@ -385,7 +385,13 @@ function workEntryIndicatesToolFailureFromOutput(
     }
     // Older servers/caches can still carry output. Read only the previous
     // preview-sized prefix for status, without exposing it in the row detail.
-    if (item.output && toolOutputIndicatesFailure(item.output.slice(0, 32_768))) {
+    // Short outputs skip the prefix copy.
+    if (
+      item.output &&
+      toolOutputIndicatesFailure(
+        item.output.length > 32_768 ? item.output.slice(0, 32_768) : item.output,
+      )
+    ) {
       return true;
     }
   }

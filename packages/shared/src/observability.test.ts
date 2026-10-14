@@ -139,6 +139,17 @@ describe("truncateTraceAttributes", () => {
     assert.equal(attributes.error.stack, stack);
   });
 
+  it("keeps unchanged array entries after a truncated one", () => {
+    const truncated = truncateTraceAttributes({
+      error: { nested: ["ok", "a".repeat(2_000), "kept", 3] },
+    });
+    const nested = (truncated["error"] as { nested: Array<unknown> }).nested;
+    assert.equal(nested.length, 4);
+    assert.equal(nested[0], "ok");
+    assert.equal(nested[2], "kept");
+    assert.equal(nested[3], 3);
+  });
+
   it("returns the same reference when nothing exceeds the limits", () => {
     const attributes = { short: "ok", nested: { fine: "also ok" } };
     assert.equal(truncateTraceAttributes(attributes), attributes);

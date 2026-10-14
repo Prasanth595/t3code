@@ -450,9 +450,11 @@ export function makeMcpAppHost(options: McpAppHostOptions): McpAppHost {
       const next = options.hostContext();
       const changes: Record<string, unknown> = {};
       for (const key of Object.keys(next) as Array<keyof McpAppHostContext>) {
-        if (JSON.stringify(next[key]) !== JSON.stringify(sentContext[key])) {
-          changes[key] = next[key];
-        }
+        const nextValue = next[key];
+        const sentValue = sentContext[key];
+        // The same reference cannot have changed; skip serializing it.
+        if (nextValue === sentValue) continue;
+        if (JSON.stringify(nextValue) !== JSON.stringify(sentValue)) changes[key] = nextValue;
       }
       sentContext = next;
       if (Object.keys(changes).length > 0) {

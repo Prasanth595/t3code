@@ -251,6 +251,12 @@ function mapContentMatchRanges(
   line: string,
   byteRanges: ReadonlyArray<readonly [number, number]>,
 ): Array<{ readonly start: number; readonly end: number }> {
+  // ASCII fast path (the common case for code): byte offsets ARE string
+  // indices, so skip the encode plus two prefix decodes per range entirely.
+  // Buffer.byteLength measures without allocating.
+  if (Buffer.byteLength(line) === line.length) {
+    return byteRanges.map(([startByte, endByte]) => ({ start: startByte, end: endByte }));
+  }
   const lineBytes = Buffer.from(line);
   const toStringIndex = (byteOffset: number) => lineBytes.subarray(0, byteOffset).toString().length;
   return byteRanges.map(([startByte, endByte]) => ({

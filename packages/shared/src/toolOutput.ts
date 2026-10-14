@@ -20,6 +20,9 @@ const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
 const encoder = new TextEncoder();
+// Scratch buffer for measuring string bytes without allocating per call.
+// Single-threaded JS: overwritten on each use, only the count is read.
+const measureBytesBuffer = new Uint8Array(MAX_PARSED_BYTES);
 
 interface ResultReadBudget {
   remainingBytes: number;
@@ -55,7 +58,11 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
       budget.exceeded = true;
       return { failed: false };
     }
-    const bytes = encoder.encode(value).byteLength;
+    // Measure into a reused buffer instead of allocating a throwaway
+    // Uint8Array per string node. remainingBytes never exceeds the scratch
+    // size, so a short write means the value truly did not fit.
+    const measured = encoder.encodeInto(value, measureBytesBuffer);
+    const bytes = measured.read < value.length ? budget.remainingBytes + 1 : measured.written;
     if (bytes > budget.remainingBytes) {
       budget.exceeded = true;
       return { failed: false };
@@ -102,10 +109,14 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
 }
 
 function boundedId(value: unknown): string | undefined {
-  if (typeof value !== "string" || value.length > MAX_ID_LENGTH || value.trim() === "") {
+  if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LENGTH) {
     return undefined;
   }
-  return Array.from(value).join("");
+  // Avoid Array.from().join("") (allocates N strings + joined copy for a no-op)
+  // and String.trim() (allocates a copy just to test emptiness): single native
+  // scan with no allocation. IDs are ASCII; any non-whitespace char accepts.
+  if (!/\S/.test(value)) return undefined;
+  return value;
 }
 
 /** Keeps only IDs and failure metadata used by T3's grouped tool summaries. */
@@ -164,21 +175,25 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
       }
     }
   }
-  const oversized = () => encoder.encode(JSON.stringify(output)).byteLength > MAX_METADATA_BYTES;
-  if (oversized()) {
+  // Size-check once; only re-serialize after a mutation. The common small
+  // output pays one stringify+encode instead of three.
+  let wireBytes = encoder.encode(JSON.stringify(output) ?? "").byteLength;
+  if (wireBytes > MAX_METADATA_BYTES) {
     delete output.threads;
     delete output.threadId;
     delete output.status;
+    wireBytes = encoder.encode(JSON.stringify(output) ?? "").byteLength;
   }
   // An app's declared origins are the only unbounded-ish part of its
   // reference; hosting works without them (the stored document carries its
   // own policy), so they go before the app does.
   const app = output[MCP_APP_OUTPUT_KEY];
-  if (app?.csp !== undefined && oversized()) {
+  if (app?.csp !== undefined && wireBytes > MAX_METADATA_BYTES) {
     const { csp: _csp, ...rest } = app;
     output[MCP_APP_OUTPUT_KEY] = rest;
+    wireBytes = encoder.encode(JSON.stringify(output) ?? "").byteLength;
   }
-  if (oversized()) delete output[MCP_APP_OUTPUT_KEY];
+  if (wireBytes > MAX_METADATA_BYTES) delete output[MCP_APP_OUTPUT_KEY];
   return Object.keys(output).length === 0 ? undefined : output;
 }
 

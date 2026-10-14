@@ -163,28 +163,103 @@ export const formatSchemaError = (cause: Cause.Cause<Schema.SchemaError>) => {
  */
 const decodeJsonString = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+/**
+ * Single-pass JSONC strip (comments + trailing commas): the old code ran
+ * three full-input regex replaces (three scans, three intermediate strings
+ * up to input size each). One O(n) walk emits a single output.
+ */
+function stripJsoncCommentsAndTrailingCommas(input: string): string {
+  const parts: string[] = [];
+  const length = input.length;
+  let chunkStart = 0;
+  let index = 0;
+  const flush = (to: number) => {
+    if (to > chunkStart) parts.push(input.slice(chunkStart, to));
+  };
+  const skipGaps = (from: number): number => {
+    let cursor = from;
+    for (;;) {
+      const character = input[cursor];
+      if (
+        character === " " ||
+        character === "\t" ||
+        character === "\n" ||
+        character === "\r" ||
+        character === "\f" ||
+        character === "\v" ||
+        character === "\u00a0"
+      ) {
+        cursor += 1;
+        continue;
+      }
+      if (character === "/" && input[cursor + 1] === "/") {
+        while (cursor < length && input[cursor] !== "\n") cursor += 1;
+        continue;
+      }
+      if (character === "/" && input[cursor + 1] === "*") {
+        const end = input.indexOf("*/", cursor + 2);
+        // An unterminated block comment is not a gap; JSON parsing rejects it.
+        if (end === -1) return cursor;
+        cursor = end + 2;
+        continue;
+      }
+      return cursor;
+    }
+  };
+  while (index < length) {
+    const character = input[index];
+    if (character === '"') {
+      // Copy string literals verbatim; only skip past them so comment and
+      // comma syntax inside strings is never interpreted.
+      let cursor = index + 1;
+      while (cursor < length) {
+        const inner = input[cursor];
+        if (inner === "\\") {
+          cursor += 2;
+          continue;
+        }
+        cursor += 1;
+        if (inner === '"') break;
+      }
+      index = cursor;
+      continue;
+    }
+    if (character === "/" && input[index + 1] === "/") {
+      flush(index);
+      while (index < length && input[index] !== "\n") index += 1;
+      chunkStart = index;
+      continue;
+    }
+    if (character === "/" && input[index + 1] === "*") {
+      const end = input.indexOf("*/", index + 2);
+      // Keep an unterminated block comment so JSON parsing rejects it.
+      if (end === -1) break;
+      flush(index);
+      index = end + 2;
+      chunkStart = index;
+      continue;
+    }
+    if (character === ",") {
+      // A comma is trailing when only gaps separate it from } or ].
+      const next = skipGaps(index + 1);
+      if (input[next] === "}" || input[next] === "]") {
+        flush(index);
+        index += 1;
+        chunkStart = index;
+        continue;
+      }
+    }
+    index += 1;
+  }
+  // Clean input (no comments or trailing commas) returns the original string
+  // with zero copies; the old code allocated three full-size intermediates.
+  if (chunkStart === 0) return input;
+  flush(length);
+  return parts.join("");
+}
+
 const parseLenientJsonGetter = SchemaGetter.transformEffect((input: string) => {
-  // Strip single-line comments - alternation preserves quoted strings.
-  let stripped = input.replace(
-    /("(?:[^"\\]|\\.)*")|\/\/[^\n]*/g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
-  );
-
-  // Strip multi-line comments.
-  stripped = stripped.replace(
-    /("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\//g,
-    (match, stringLiteral: string | undefined) => (stringLiteral ? match : ""),
-  );
-
-  // Strip trailing commas before `}` or `]`. The alternation preserves quoted
-  // strings so a comma inside a string value (e.g. `{"note":"a,]"}`) is not
-  // mistaken for a trailing comma and removed.
-  stripped = stripped.replace(
-    /("(?:[^"\\]|\\.)*")|,(\s*[}\]])/g,
-    (match, stringLiteral: string | undefined, bracket: string | undefined) =>
-      stringLiteral ? match : (bracket ?? ""),
-  );
-
+  const stripped = stripJsoncCommentsAndTrailingCommas(input);
   return decodeJsonString(stripped).pipe(Effect.mapError((error) => error.issue));
 });
 

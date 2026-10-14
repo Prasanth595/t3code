@@ -288,12 +288,15 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
   messageId: MessageId,
   attachments: ReadonlyArray<ChatAttachment | UploadChatAttachment>,
 ) {
-  const stored = attachments.filter(
-    (attachment): attachment is ChatAttachment => !("dataUrl" in attachment),
-  );
-  const uploads = attachments.filter(
-    (attachment): attachment is UploadChatAttachment => "dataUrl" in attachment,
-  );
+  // Single partition pass; the old code filtered twice. The server returns
+  // persisted attachments in upload order, so rebuild by index instead of an
+  // identity Map plus a flatMap that allocated per element.
+  const stored: Array<ChatAttachment> = [];
+  const uploads: Array<UploadChatAttachment> = [];
+  for (const attachment of attachments) {
+    if ("dataUrl" in attachment) uploads.push(attachment);
+    else stored.push(attachment);
+  }
   if (uploads.length === 0) return stored;
   const result = yield* request(WS_METHODS.assetsPersistChatAttachments, {
     threadId,
@@ -301,14 +304,17 @@ const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(f
     attachments: uploads,
   });
   if (stored.length === 0) return result.attachments;
-  const byUpload = new Map(
-    uploads.map((attachment, index) => [attachment, result.attachments[index]]),
-  );
-  return attachments.flatMap((attachment) => {
-    if (!("dataUrl" in attachment)) return [attachment];
-    const persisted = byUpload.get(attachment);
-    return persisted === undefined ? [] : [persisted];
-  });
+  const merged: Array<ChatAttachment> = [];
+  let uploadIndex = 0;
+  for (const attachment of attachments) {
+    if (!("dataUrl" in attachment)) {
+      merged.push(attachment);
+      continue;
+    }
+    const persisted = result.attachments[uploadIndex++];
+    if (persisted !== undefined) merged.push(persisted);
+  }
+  return merged;
 });
 
 const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (

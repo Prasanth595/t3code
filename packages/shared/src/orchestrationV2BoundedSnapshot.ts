@@ -40,10 +40,13 @@ export function omitLocalVisibleTurnItems(
 export function restoreLocalVisibleTurnItems(
   projection: OrchestrationV2ThreadProjection,
 ): OrchestrationV2ThreadProjection {
-  const local = projection.visibleTurnItems
-    .filter((row) => isLocalTimelineRow(projection, row))
-    .map((row) => row.item);
+  // Single pass: the old filter().map() built a throwaway array per snapshot.
+  const local: Array<OrchestrationV2ThreadProjection["turnItems"][number]> = [];
+  for (const row of projection.visibleTurnItems) {
+    if (isLocalTimelineRow(projection, row)) local.push(row.item);
+  }
   if (local.length === 0) return projection;
+  if (projection.turnItems.length === 0) return { ...projection, turnItems: local };
   return { ...projection, turnItems: [...local, ...projection.turnItems] };
 }
 

@@ -105,7 +105,16 @@ export function projectedRowBoundedSnapshotEncodedBytes(
 }
 
 function renumberPositions<Row extends HistoryRow>(items: ReadonlyArray<Row>): Row[] {
-  return items.map((row, position) => (row.position === position ? row : { ...row, position }));
+  // Fast path: densely-positioned pages skip every per-row spread. The array
+  // shell is still copied because callers may mutate it.
+  for (let position = 0; position < items.length; position += 1) {
+    if (items[position]!.position !== position) {
+      return items.map((row, index) =>
+        row.position === index ? row : { ...row, position: index },
+      );
+    }
+  }
+  return items.slice();
 }
 
 function encodeCursorPayload(payload: ThreadHistoryCursorPayload): string {

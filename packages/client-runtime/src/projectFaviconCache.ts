@@ -139,23 +139,35 @@ export function createProjectFaviconCache(input: {
     pending.add(task);
   };
 
+  // Running byte total: trim() was O(n) per resolve/put (re-summing up to
+  // 128 x 32KiB dataURLs per icon). Inserts/removes keep it exact instead.
+  let cachedBytes = 0;
+  const putEntry = (key: string, entry: ProjectFaviconEntry) => {
+    const previous = entries.get(key);
+    if (previous !== undefined) cachedBytes -= previous.dataUrl.length;
+    entries.set(key, entry);
+    cachedBytes += entry.dataUrl.length;
+  };
+
   const remove = (key: string) => {
     const entry = entries.get(key);
     if (!entry) return;
     entries.delete(key);
+    cachedBytes -= entry.dataUrl.length;
     persist(() => input.storage.remove(key, entry));
   };
 
   const trim = () => {
-    let bytes = 0;
-    for (const entry of entries.values()) bytes += entry.dataUrl.length;
-    while (
-      entries.size > PROJECT_FAVICON_CACHE_MAX_ENTRIES ||
-      bytes > PROJECT_FAVICON_CACHE_MAX_BYTES
-    ) {
+    for (;;) {
+      if (
+        entries.size <= PROJECT_FAVICON_CACHE_MAX_ENTRIES &&
+        cachedBytes <= PROJECT_FAVICON_CACHE_MAX_BYTES
+      ) {
+        break;
+      }
       const oldest = entries.entries().next().value;
       if (!oldest) break;
-      bytes -= oldest[1].dataUrl.length;
+      // remove() keeps the running counter in sync.
       remove(oldest[0]);
     }
   };
@@ -165,7 +177,7 @@ export function createProjectFaviconCache(input: {
       try {
         for (const record of await input.storage.list()) {
           const entry = decodeEntry(record);
-          if (Option.isSome(entry)) entries.set(keyFor(entry.value), entry.value);
+          if (Option.isSome(entry)) putEntry(keyFor(entry.value), entry.value);
         }
         trim();
       } catch {
@@ -193,6 +205,7 @@ export function createProjectFaviconCache(input: {
     const revision = getProjectFaviconCacheKey(target.environmentId, target.cwd, url);
     const cached = entries.get(key);
     if (cached) {
+      // Re-insert to refresh LRU order; the byte total is unchanged.
       entries.delete(key);
       entries.set(key, cached);
       if (cached.revision === revision) return cached.dataUrl;
@@ -214,7 +227,9 @@ export function createProjectFaviconCache(input: {
           revision,
           dataUrl,
         };
-        entries.set(key, entry);
+        // Another resolve may have replaced this key while loading, so the
+        // running total adjusts from the current entry, not `cached`.
+        putEntry(key, entry);
         persist(() => input.storage.put(key, entry));
         trim();
         return dataUrl;

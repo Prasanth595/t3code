@@ -38,7 +38,14 @@ function removeVisibleItem(
 function renumberVisibleItems(
   rows: OrchestrationV2ThreadProjection["visibleTurnItems"],
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
-  return rows.map((row, position) => (row.position === position ? row : { ...row, position }));
+  // Fast path: updates that do not move rows (the common live-update case)
+  // keep every position, so return the same array with zero allocations.
+  for (let position = 0; position < rows.length; position += 1) {
+    if (rows[position]!.position !== position) {
+      return rows.map((row, index) => (row.position === index ? row : { ...row, position: index }));
+    }
+  }
+  return rows;
 }
 
 function shouldShowLocalTurnItem(

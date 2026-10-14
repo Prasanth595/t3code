@@ -178,6 +178,16 @@ function dataUrlLength(blob: Blob): number {
 /** Base64 payload of a data URL decoded back into a `File`. */
 export function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
   const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
+  // Native base64 avoids the 1-char-per-byte intermediate string (which
+  // doubles peak memory for multi-MB images) plus the interpreted copy loop.
+  const fromBase64 = (
+    Uint8Array as unknown as {
+      fromBase64?: (input: string) => Uint8Array<ArrayBuffer>;
+    }
+  ).fromBase64;
+  if (typeof fromBase64 === "function") {
+    return new File([fromBase64(payload) as BlobPart], name, { type: mimeType });
+  }
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) {

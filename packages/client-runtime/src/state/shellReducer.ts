@@ -50,7 +50,10 @@ function upsertById<T extends { readonly id: unknown }>(
 ): ReadonlyArray<T> {
   const index = items.findIndex((candidate) => candidate.id === item.id);
   if (index === -1) return [...items, item];
-  return items.map((candidate, candidateIndex) => (candidateIndex === index ? item : candidate));
+  // Index assignment over map(): no per-element closure call.
+  const updated = [...items];
+  updated[index] = item;
+  return updated;
 }
 
 function retainRepositoryIdentity(

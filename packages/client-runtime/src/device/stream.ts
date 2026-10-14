@@ -240,8 +240,14 @@ export class AvccDemuxer {
     const chunks: AvccChunk[] = [];
     let offset = 0;
     while (this.length - offset >= 4) {
-      const view = new DataView(this.buffer.buffer, this.buffer.byteOffset + offset, 4);
-      const frameLength = view.getUint32(0, false);
+      // Manual big-endian u32: avoids a DataView allocation per envelope at
+      // video rate (30-60 fps).
+      const frameLength =
+        (this.buffer[offset]! * 0x1000000 +
+          ((this.buffer[offset + 1]! << 16) |
+            (this.buffer[offset + 2]! << 8) |
+            this.buffer[offset + 3]!)) >>>
+        0;
       if (this.length - offset - 4 < frameLength) break;
       if (frameLength >= 1) {
         const type = AVCC_TAGS[this.buffer[offset + 4]!];

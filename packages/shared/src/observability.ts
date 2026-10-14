@@ -226,12 +226,13 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
     if (markSeen(value, seen)) {
       return "[Circular]";
     }
-    return Object.fromEntries(
-      Array.from(value.entries(), ([key, entryValue]) => [
-        String(key),
-        normalizeJsonValue(entryValue, seen),
-      ]),
-    );
+    // Single loop: the old Array.from().map() + fromEntries() built two
+    // throwaway arrays per Map.
+    const normalized: Record<string, unknown> = {};
+    for (const [key, entryValue] of value.entries()) {
+      normalized[String(key)] = normalizeJsonValue(entryValue, seen);
+    }
+    return normalized;
   }
   if (value instanceof Set) {
     if (markSeen(value, seen)) {
@@ -245,21 +246,25 @@ function normalizeJsonValue(value: unknown, seen: WeakSet<object> = new WeakSet(
   if (markSeen(value, seen)) {
     return "[Circular]";
   }
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entryValue]) => [key, normalizeJsonValue(entryValue, seen)]),
-  );
+  const normalizedObject: Record<string, unknown> = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    normalizedObject[key] = normalizeJsonValue(entryValue, seen);
+  }
+  return normalizedObject;
 }
 
 export function compactTraceAttributes(
   attributes: Readonly<Record<string, unknown>>,
 ): TraceAttributes {
-  const entries: Array<[string, unknown]> = [];
+  // Assign directly: the old entries.push() + fromEntries() kept a throwaway
+  // pair array per attribute.
+  const compacted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(attributes)) {
     if (value !== undefined) {
-      entries.push([key, normalizeJsonValue(value)]);
+      compacted[key] = normalizeJsonValue(value);
     }
   }
-  return Object.fromEntries(entries);
+  return compacted;
 }
 
 function formatTraceExit(exit: Exit.Exit<unknown, unknown>): EffectTraceRecord["exit"] {
@@ -293,8 +298,19 @@ function truncateNestedValue(value: unknown): unknown {
       : `${value.slice(0, TRACE_ATTRIBUTE_MAX_LENGTH)}${TRACE_ATTRIBUTE_TRUNCATION_SUFFIX}`;
   }
   if (Array.isArray(value)) {
-    const truncated = value.map(truncateNestedValue);
-    return truncated.some((entry, index) => entry !== value[index]) ? truncated : value;
+    // Lazy copy like the object branch below: avoid allocating a full array
+    // when nothing inside needs clamping (the common case).
+    let truncated: Array<unknown> | undefined;
+    for (let index = 0; index < value.length; index += 1) {
+      const entry = value[index];
+      const next = truncateNestedValue(entry);
+      if (truncated !== undefined) truncated.push(next);
+      else if (next !== entry) {
+        truncated = value.slice(0, index);
+        truncated.push(next);
+      }
+    }
+    return truncated ?? value;
   }
   if (isPlainObject(value)) {
     let truncated: Record<string, unknown> | undefined;

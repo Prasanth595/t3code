@@ -934,7 +934,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     <Event extends OrchestrationV2DomainEvent>(event: Omit<Event, "id">) =>
       Effect.gen(function* () {
         const withId = yield* makeEvent(command, event);
-        yield* Ref.update(events, (existing) => [...existing, withId]);
+        // The buffer is per-command ephemeral: mutate in place instead of
+        // copying the whole array per event (O(k^2) for k events).
+        yield* Ref.update(events, (existing) => {
+          existing.push(withId);
+          return existing;
+        });
         return withId;
       });
 

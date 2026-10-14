@@ -210,20 +210,17 @@ async function guardMatches(
  * Builds the byte-level test for a format's `usageMarkers`: whether a line
  * contains any of them.
  *
- * One marker is a single `Buffer` search. Several would be one pass over the
- * line each, so they are matched together as one alternation over the line's
- * latin1 view instead: latin1 maps every byte to one character without
- * validating it, so an ASCII marker matches exactly where its bytes do.
+ * Every marker is a byte search: no per-line string allocation (lines can be
+ * megabytes for tool results) and no regex. Single- and multi-marker lines
+ * share the same byte semantics.
  */
 export function transcriptLineGate(markers: readonly [string, ...string[]]) {
-  if (markers.length === 1) {
-    const marker = Buffer.from(markers[0]);
-    return (line: Buffer) => line.includes(marker);
+  const needles = markers.map((marker) => Buffer.from(marker));
+  if (needles.length === 1) {
+    const needle = needles[0]!;
+    return (line: Buffer) => line.includes(needle);
   }
-  const pattern = new RegExp(
-    markers.map((marker) => marker.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-  );
-  return (line: Buffer) => pattern.test(line.toString("latin1"));
+  return (line: Buffer) => needles.some((needle) => line.includes(needle));
 }
 
 /**

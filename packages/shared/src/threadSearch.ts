@@ -16,11 +16,23 @@ function foldThreadSearchCase(text: string): string {
   return folded;
 }
 
+let lastSearchQuery: string | undefined;
+let lastFoldedQuery = "";
+
 function scanThreadSearchOccurrences(text: string, query: string, offsets?: number[]): number {
   if (text.length === 0 || query.length === 0) return 0;
 
   const foldedText = foldThreadSearchCase(text);
-  const foldedQuery = foldThreadSearchCase(query);
+  // Callers scan many segments with one query (per keystroke over a
+  // transcript): reuse the last folded query instead of re-folding it.
+  let foldedQuery: string;
+  if (query === lastSearchQuery) {
+    foldedQuery = lastFoldedQuery;
+  } else {
+    foldedQuery = foldThreadSearchCase(query);
+    lastSearchQuery = query;
+    lastFoldedQuery = foldedQuery;
+  }
   let count = 0;
   let cursor = 0;
 
