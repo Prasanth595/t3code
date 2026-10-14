@@ -67,6 +67,7 @@ import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
+import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -3383,6 +3384,8 @@ export function GeneralSettingsPanel() {
         <RepositoryOwnerFiltersSettingsRow />
 
         <PullRequestFilterChipsSettingsRow />
+
+        <SidebarGroupsSettingsRow />
 
         <SnoozeQuickOptionsSettingsRow />
 

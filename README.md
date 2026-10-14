@@ -32,6 +32,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Threads**
 
+- **Sidebar groups:** thread groups as tabs above the sidebar list. Drag threads into groups, or let rules on project, owner, status, provider, creator, background work and title sort them. Views such as "All" show other groups. The groups are a shared server setting, so every machine sees them (`sidebarGroupsEnabled`, `sidebarGroupSingleThreadOpens`, `sidebarGroups`).
 - **Snooze quick options:** edit the choices of the snooze menus. Each choice snoozes for a time, or until a time of day, with an optional label (`snoozeQuickOptions`).
 
 **Filters**

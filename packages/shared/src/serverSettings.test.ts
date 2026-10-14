@@ -53,6 +53,22 @@ describe("fallbackTextGenerationModelSelection", () => {
 });
 
 describe("serverSettings helpers", () => {
+  it("replaces the sidebar groups whole, so deleted groups and assignments stay deleted", () => {
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      sidebarGroups: {
+        groups: [{ id: "monitors", name: "Monitors", rules: [] }],
+        assignments: { "environment:thread-1": "monitors", "environment:thread-2": "default" },
+      },
+    });
+    const next = applyServerSettingsPatch(saved, {
+      sidebarGroups: { groups: [], assignments: { "environment:thread-2": "default" } },
+    });
+    expect(next.sidebarGroups).toEqual({
+      groups: [],
+      assignments: { "environment:thread-2": "default" },
+    });
+  });
+
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

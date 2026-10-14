@@ -424,6 +424,8 @@ export function applyServerSettingsPatch(
     pinnedProjectScriptIds: pinnedProjectScriptIdsPatch,
     // Replaced per surface: deepMerge would merge the layout rows index by index.
     threadCardLayouts: threadCardLayoutsPatch,
+    // Fork: replaced whole, so deleted groups and assignments do not come back.
+    sidebarGroups: sidebarGroupsPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
     // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -518,6 +520,7 @@ export function applyServerSettingsPatch(
     ...(threadCardLayoutsPatch === undefined
       ? {}
       : { threadCardLayouts: { ...current.threadCardLayouts, ...threadCardLayoutsPatch } }),
+    ...(sidebarGroupsPatch === undefined ? {} : { sidebarGroups: sidebarGroupsPatch }),
     favorites,
     providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined

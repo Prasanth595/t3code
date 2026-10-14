@@ -606,6 +606,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["snooze menu presets choices later tonight tomorrow next week remind wake"],
   },
   {
+    id: "sidebar-groups",
+    title: "Sidebar groups",
+    to: "/settings/general",
+    searchTerms: ["tabs folders groups organize threads drag rules monitors views sidebar"],
+  },
+  {
+    id: "sidebar-group-single-thread",
+    title: "Single-thread tabs",
+    to: "/settings/general",
+    searchTerms: ["sidebar group tab one thread open directly"],
+  },
+  {
     id: "pull-request-filter-chips",
     title: "Pull request filter chips",
     to: "/settings/general",
