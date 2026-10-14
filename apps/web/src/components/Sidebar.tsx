@@ -34,7 +34,7 @@ import {
   canSnooze,
   effectiveSnoozed,
   removeSnoozeFavorite,
-  snoozeFavoriteId,
+  snoozeFavoriteLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
@@ -618,7 +618,7 @@ function SnoozeMenuButton(props: {
       </Tooltip>
       <MenuPopup side="bottom" align="end">
         {presets.map((preset) => {
-          const favorite = snoozeFavorites.find((saved) => snoozeFavoriteId(saved) === preset.id);
+          const favorite = preset.favorite;
           const item = (
             <MenuItem
               key={preset.id}
@@ -648,8 +648,8 @@ function SnoozeMenuButton(props: {
               <MenuItem
                 data-favorite-remove=""
                 closeOnClick={false}
-                aria-label={`Remove ${preset.label} from favorites`}
-                label={`Remove ${preset.label} from favorites`}
+                aria-label={`Remove ${snoozeFavoriteLabel(favorite)} from favorites`}
+                label={`Remove ${snoozeFavoriteLabel(favorite)} from favorites`}
                 variant="ghost"
                 className="h-7 min-h-7 justify-center"
                 onClick={(event) => {

@@ -325,6 +325,47 @@ export const SnoozeFavorite = Schema.Struct({
 });
 export type SnoozeFavorite = typeof SnoozeFavorite.Type;
 
+export const MAX_SNOOZE_FAVORITES = 5;
+const SNOOZE_FAVORITE_UNIT_MS = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 } as const;
+// A century: past anything worth saving, and far inside the range a wake date can reach.
+const MAX_SNOOZE_FAVORITE_MS = 100 * 365 * SNOOZE_FAVORITE_UNIT_MS.days;
+
+/** How long a favorite snoozes for. Favorites with the same length are the same choice. */
+export function snoozeFavoriteDurationMs(favorite: SnoozeFavorite): number {
+  return favorite.amount * SNOOZE_FAVORITE_UNIT_MS[favorite.unit];
+}
+
+/**
+ * One favorite per length ("60 minutes" and "1 hour" are the same choice), at
+ * most {@link MAX_SNOOZE_FAVORITES} of them with the newest kept, and none
+ * too long to wake. Settings decoding applies it, so stored or imported
+ * favorites follow the same rules as saving one. Unchanged input is returned
+ * as is.
+ */
+export function normalizeSnoozeFavorites(
+  favorites: ReadonlyArray<SnoozeFavorite>,
+): ReadonlyArray<SnoozeFavorite> {
+  const seen = new Set<number>();
+  const kept = favorites.filter((favorite) => {
+    const durationMs = snoozeFavoriteDurationMs(favorite);
+    if (durationMs > MAX_SNOOZE_FAVORITE_MS || seen.has(durationMs)) return false;
+    seen.add(durationMs);
+    return true;
+  });
+  const capped = kept.slice(-MAX_SNOOZE_FAVORITES);
+  return capped.length === favorites.length ? favorites : capped;
+}
+
+const SnoozeFavorites = Schema.Array(SnoozeFavorite).pipe(
+  Schema.decodeTo(
+    Schema.Array(SnoozeFavorite),
+    SchemaTransformation.transform({
+      decode: normalizeSnoozeFavorites,
+      encode: (favorites) => favorites,
+    }),
+  ),
+);
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -444,9 +485,7 @@ export const ClientSettingsSchema = Schema.Struct({
   providerModelPreferences: ProviderModelPreferences.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
-  snoozeFavorites: Schema.Array(SnoozeFavorite).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
+  snoozeFavorites: SnoozeFavorites.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   pullRequestMergeMethodOverrides: Schema.Record(
     TrimmedNonEmptyString,
     PullRequestMergeMethod,
@@ -1732,7 +1771,7 @@ export const ClientSettingsPatch = Schema.Struct({
   persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
-  snoozeFavorites: Schema.optionalKey(Schema.Array(SnoozeFavorite)),
+  snoozeFavorites: Schema.optionalKey(SnoozeFavorites),
   pullRequestMergeMethodOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, PullRequestMergeMethod),
   ),

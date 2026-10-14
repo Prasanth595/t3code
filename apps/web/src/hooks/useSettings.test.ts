@@ -27,6 +27,10 @@ import {
   resolveEnvironmentIdentificationMode,
 } from "./useSettings";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import {
+  addSnoozeFavorite,
+  removeSnoozeFavorite,
+} from "@t3tools/client-runtime/state/thread-settled";
 
 beforeEach(() => {
   persistenceMocks.getClientSettings.mockReset().mockResolvedValue(null);
@@ -352,6 +356,40 @@ describe("persistClientSettingsUpdate", () => {
     expect(persist).toHaveBeenCalledTimes(2);
     expect(durableSettings.wordWrap).toBe(false);
     expect(durableSettings.browserProfiles).toContainEqual(importedProfile);
+  });
+
+  it("applies a favorite re-added while its removal is still being written", async () => {
+    const favorite = { amount: 2, unit: "hours" } as const;
+    let finishRemoval!: () => void;
+    const removal = new Promise<void>((resolve) => {
+      finishRemoval = resolve;
+    });
+    const persist = vi
+      .fn<(settings: typeof DEFAULT_CLIENT_SETTINGS) => Promise<void>>()
+      .mockImplementationOnce(() => removal)
+      .mockResolvedValue(undefined);
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, snoozeFavorites: [favorite] });
+
+    const removed = persistClientSettingsUpdate(
+      (current) => ({
+        ...current,
+        snoozeFavorites: removeSnoozeFavorite(current.snoozeFavorites, favorite),
+      }),
+      persist,
+    );
+    // Queued while the removal is in flight: it must see the removal, not skip as a duplicate.
+    const added = persistClientSettingsUpdate(
+      (current) => ({
+        ...current,
+        snoozeFavorites: addSnoozeFavorite(current.snoozeFavorites, favorite),
+      }),
+      persist,
+    );
+    finishRemoval();
+    await Promise.all([removed, added]);
+
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(getClientSettings().snoozeFavorites).toEqual([favorite]);
   });
 
   it("continues the queue after a rejected write", async () => {

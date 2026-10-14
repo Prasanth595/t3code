@@ -1,5 +1,9 @@
 // @effect-diagnostics globalDate:off -- UI snooze presets use local calendar boundaries and Intl labels.
-import type { SnoozeFavorite } from "@t3tools/contracts/settings";
+import {
+  normalizeSnoozeFavorites,
+  snoozeFavoriteDurationMs,
+  type SnoozeFavorite,
+} from "@t3tools/contracts/settings";
 import * as DateTime from "effect/DateTime";
 
 interface SettlementRunLike {
@@ -231,6 +235,8 @@ export interface SnoozePreset {
   readonly whenLabel: string;
   /** ISO wake time. */
   readonly snoozedUntil: string;
+  /** The saved favorite this row offers, which its remove control removes. */
+  readonly favorite?: SnoozeFavorite;
 }
 
 function snoozeTimeOfDayLabel(date: Date): string {
@@ -309,15 +315,11 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
   return presets;
 }
 
-export const MAX_SNOOZE_FAVORITES = 5;
-
-const SNOOZE_UNIT_MS = { minutes: 60_000, hours: HOUR_MS, days: 24 * HOUR_MS } as const;
-
 function sameSnoozeFavorite(a: SnoozeFavorite, b: SnoozeFavorite): boolean {
-  return a.amount === b.amount && a.unit === b.unit;
+  return snoozeFavoriteDurationMs(a) === snoozeFavoriteDurationMs(b);
 }
 
-export function snoozeFavoriteId(favorite: SnoozeFavorite): `favorite:${string}` {
+function snoozeFavoriteId(favorite: SnoozeFavorite): `favorite:${string}` {
   return `favorite:${favorite.amount}-${favorite.unit}`;
 }
 
@@ -326,13 +328,16 @@ export function snoozeFavoriteLabel(favorite: SnoozeFavorite): string {
   return `${favorite.amount} ${favorite.amount === 1 ? favorite.unit.slice(0, -1) : favorite.unit}`;
 }
 
-/** Appends a favorite. A duplicate is a no-op; past the cap the oldest is dropped. */
+/**
+ * Appends a favorite. One of the same length is a no-op; past the cap the
+ * oldest is dropped (see `normalizeSnoozeFavorites`).
+ */
 export function addSnoozeFavorite(
   favorites: ReadonlyArray<SnoozeFavorite>,
   favorite: SnoozeFavorite,
 ): ReadonlyArray<SnoozeFavorite> {
   if (favorites.some((existing) => sameSnoozeFavorite(existing, favorite))) return favorites;
-  return [...favorites, favorite].slice(-MAX_SNOOZE_FAVORITES);
+  return normalizeSnoozeFavorites([...favorites, favorite]);
 }
 
 export function removeSnoozeFavorite(
@@ -343,31 +348,41 @@ export function removeSnoozeFavorite(
 }
 
 /**
- * Saved custom durations as snooze presets, resolved against `now` so "In 2
- * hours" is relative to the menu opening, like the built-in presets.
- * `whenLabel` is the clock time; clients localize it like the other presets.
+ * The built-in presets in their usual order, then the saved favorites soonest
+ * first, all resolved against `now` so "In 2 hours" is relative to the menu
+ * opening. A favorite that wakes when a built-in does ("60 minutes" and "In 1
+ * hour") is not offered twice: it rides on that built-in's row as `favorite`,
+ * which is what the row's remove control removes.
  */
-export function resolveSnoozeFavoritePresets(
+export function resolveSnoozePresetsWithFavorites(
   favorites: ReadonlyArray<SnoozeFavorite>,
   now: Date,
 ): ReadonlyArray<SnoozePreset> {
-  return favorites.flatMap((favorite) => {
+  const presets: SnoozePreset[] = [...resolveSnoozePresets(now)];
+  const favoritePresets: SnoozePreset[] = [];
+  for (const favorite of favorites) {
     // A saved duration that no longer resolves (overflowing date) is skipped
     // so it cannot break the menus the user would remove it from.
     const snoozedUntil = resolveCustomSnooze(
       { mode: "duration", amount: String(favorite.amount), unit: favorite.unit },
       now,
     );
-    if (snoozedUntil === null) return [];
-    return [
-      {
-        id: snoozeFavoriteId(favorite),
-        label: `In ${snoozeFavoriteLabel(favorite)}`,
-        whenLabel: snoozeTimeOfDayLabel(new Date(snoozedUntil)),
-        snoozedUntil,
-      },
-    ];
-  });
+    if (snoozedUntil === null) continue;
+    const builtIn = presets.findIndex((preset) => preset.snoozedUntil === snoozedUntil);
+    if (builtIn !== -1) {
+      presets[builtIn] = { ...presets[builtIn]!, favorite };
+      continue;
+    }
+    favoritePresets.push({
+      id: snoozeFavoriteId(favorite),
+      label: `In ${snoozeFavoriteLabel(favorite)}`,
+      whenLabel: snoozeTimeOfDayLabel(new Date(snoozedUntil)),
+      snoozedUntil,
+      favorite,
+    });
+  }
+  favoritePresets.sort((a, b) => Date.parse(a.snoozedUntil) - Date.parse(b.snoozedUntil));
+  return [...presets, ...favoritePresets];
 }
 
 /**
@@ -400,7 +415,7 @@ export function resolveCustomSnooze(input: CustomSnoozeInput, now: Date): string
   if (input.mode === "duration") {
     const amount = Number(input.amount);
     if (!Number.isFinite(amount) || amount <= 0) return null;
-    const unitMs = SNOOZE_UNIT_MS[input.unit];
+    const unitMs = { minutes: 60_000, hours: HOUR_MS, days: 24 * HOUR_MS }[input.unit];
     wake = new Date(now.getTime() + amount * unitMs);
   } else {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !/^\d{2}:\d{2}$/.test(input.time)) return null;

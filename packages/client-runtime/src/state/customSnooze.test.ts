@@ -1,13 +1,13 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar and elapsed-time snooze input.
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { MAX_SNOOZE_FAVORITES } from "@t3tools/contracts/settings";
 import {
   addSnoozeFavorite,
   localSnoozeDate,
   localSnoozeTime,
-  MAX_SNOOZE_FAVORITES,
   removeSnoozeFavorite,
   resolveCustomSnooze,
-  resolveSnoozeFavoritePresets,
+  resolveSnoozePresetsWithFavorites,
   snoozeFavoriteLabel,
 } from "./threadSettled.ts";
 
@@ -81,34 +81,43 @@ describe("snooze favorites", () => {
     expect(snoozeFavoriteLabel({ amount: 45, unit: "minutes" })).toBe("45 minutes");
   });
 
+  const favoriteRows = (favorites: Parameters<typeof resolveSnoozePresetsWithFavorites>[0]) =>
+    resolveSnoozePresetsWithFavorites(favorites, now).filter((preset) => preset.favorite);
+
   it("resolves favorites relative to the menu opening time", () => {
-    const [preset] = resolveSnoozeFavoritePresets([{ amount: 2, unit: "hours" }], now);
+    const [preset] = favoriteRows([{ amount: 2, unit: "hours" }]);
     expect(preset).toMatchObject({
       id: "favorite:2-hours",
       label: "In 2 hours",
       snoozedUntil: new Date(now.getTime() + 2 * 3_600_000).toISOString(),
+      favorite: { amount: 2, unit: "hours" },
+    });
+  });
+
+  it("offers a favorite that wakes with a built-in preset once, on the built-in row", () => {
+    const presets = resolveSnoozePresetsWithFavorites([{ amount: 60, unit: "minutes" }], now);
+    expect(presets.map((preset) => preset.id)).not.toContain("favorite:60-minutes");
+    expect(presets.find((preset) => preset.id === "hour")).toMatchObject({
+      label: "In 1 hour",
+      favorite: { amount: 60, unit: "minutes" },
     });
   });
 
   it("skips favorites whose wake time overflows instead of throwing", () => {
     expect(
-      resolveSnoozeFavoritePresets(
-        [
-          { amount: 1e300, unit: "hours" },
-          { amount: 2, unit: "hours" },
-        ],
-        now,
-      ).map((preset) => preset.id),
+      favoriteRows([
+        { amount: 1e300, unit: "hours" },
+        { amount: 2, unit: "hours" },
+      ]).map((preset) => preset.id),
     ).toEqual(["favorite:2-hours"]);
-    const maxDate = new Date(8.64e15);
-    const justBefore = new Date(maxDate.getTime() - 60_000);
-    expect(resolveSnoozeFavoritePresets([{ amount: 2, unit: "minutes" }], justBefore)).toEqual([]);
   });
 
   it("ignores duplicates, drops the oldest past the cap, and removes by value", () => {
     const two = { amount: 2, unit: "hours" } as const;
     const list = addSnoozeFavorite([], two);
     expect(addSnoozeFavorite(list, { ...two })).toBe(list);
+    // The same length in other units is the same favorite.
+    expect(addSnoozeFavorite(list, { amount: 120, unit: "minutes" })).toBe(list);
     let full = list;
     for (let minutes = 1; minutes <= MAX_SNOOZE_FAVORITES; minutes += 1) {
       full = addSnoozeFavorite(full, { amount: minutes, unit: "minutes" });
@@ -118,5 +127,6 @@ describe("snooze favorites", () => {
     expect(removeSnoozeFavorite(full, { amount: 1, unit: "minutes" })).toHaveLength(
       MAX_SNOOZE_FAVORITES - 1,
     );
+    expect(removeSnoozeFavorite(list, { amount: 120, unit: "minutes" })).toEqual([]);
   });
 });

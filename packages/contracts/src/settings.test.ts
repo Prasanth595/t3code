@@ -1194,6 +1194,28 @@ describe("ClientSettings snooze favorites", () => {
     ).toEqual([{ amount: 2, unit: "hours" }]);
   });
 
+  it("keeps one favorite per length and the newest five wherever settings are decoded", () => {
+    const saved = [
+      { amount: 1, unit: "days" },
+      { amount: 1, unit: "hours" },
+      { amount: 60, unit: "minutes" },
+      { amount: 2, unit: "hours" },
+      { amount: 1e9, unit: "days" },
+      { amount: 3, unit: "hours" },
+      { amount: 4, unit: "hours" },
+      { amount: 5, unit: "hours" },
+    ] as const;
+    const expected = [
+      { amount: 1, unit: "hours" },
+      { amount: 2, unit: "hours" },
+      { amount: 3, unit: "hours" },
+      { amount: 4, unit: "hours" },
+      { amount: 5, unit: "hours" },
+    ];
+    expect(decodeClientSettings({ snoozeFavorites: saved }).snoozeFavorites).toEqual(expected);
+    expect(decodeClientSettingsPatch({ snoozeFavorites: saved }).snoozeFavorites).toEqual(expected);
+  });
+
   it.each([0, -1, Number.POSITIVE_INFINITY])(
     "rejects a non-positive or non-finite amount %s",
     (amount) => {
