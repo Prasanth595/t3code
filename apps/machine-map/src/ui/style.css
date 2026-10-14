@@ -789,21 +789,15 @@ p.error-text {
 .panel input[type="search"] {
   margin: 4px 0 8px;
 }
-/* A hint on hover or keyboard focus, for example the exact time of a history entry. */
-.tip {
-  position: relative;
-}
-.tip:hover::after,
-.tip:focus-visible::after {
-  content: attr(data-tip);
-  position: absolute;
-  z-index: 10;
-  left: 50%;
-  bottom: calc(100% + 6px);
-  transform: translateX(-50%);
+/* The one hint from Tooltip.tsx, on hover or keyboard focus. It sits in the top layer; the script sets left and top. */
+.tooltip {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  border: 0;
+  max-width: calc(100vw - 16px);
   padding: 3px 8px;
   font: 600 0.78rem/1.3 var(--sans);
-  white-space: nowrap;
   color: var(--surface);
   background: var(--ink);
   border-radius: var(--radius);
@@ -1137,10 +1131,6 @@ details.more[open] summary {
   .node .handle {
     opacity: 1;
   }
-}
-/* The hint of the handle would cover the machine name while the line moves. */
-.node.linking .handle::after {
-  content: none;
 }
 /* MM-1104: the connection line that follows the pointer. */
 .map line.live {
@@ -1610,6 +1600,11 @@ td .stickers,
   content: "";
   position: absolute;
   inset: 0;
+}
+/* A hint inside the row, such as the exact time, stays above the click area so hover reaches it. */
+.item-main [data-tip] {
+  position: relative;
+  z-index: 1;
 }
 .item-main:focus-visible {
   outline: none;
