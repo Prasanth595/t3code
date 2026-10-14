@@ -154,15 +154,20 @@ function sourceForNode(node: MarkdownAstNode, source: string): string {
   return start === undefined || end === undefined ? "" : source.slice(start, end);
 }
 
+function textContent(node: MarkdownAstNode): string {
+  return node.value ?? (node.children ?? []).map(textContent).join("");
+}
+
 function sourceForDirective(node: MarkdownAstNode, source: string, marker: ":" | "::"): string {
   const prefix = `${marker}${node.name ?? ""}`;
   const slicedSource = sourceForNode(node, source);
   if (slicedSource.startsWith(prefix)) return slicedSource;
 
+  const label = node.children?.length ? `[${textContent(node)}]` : "";
   const attributes = Object.entries(node.attributes ?? {}).map(([name, value]) =>
     value === null ? name : `${name}=${JSON.stringify(value)}`,
   );
-  return `${prefix}${attributes.length === 0 ? "" : `{${attributes.join(" ")}}`}`;
+  return `${prefix}${label}${attributes.length === 0 ? "" : `{${attributes.join(" ")}}`}`;
 }
 
 function restoreTextDirective(node: MarkdownAstNode, source: string): void {
@@ -204,13 +209,9 @@ function renderFileCitation(node: MarkdownAstNode, source: string, insideLink: b
   delete node.value;
 }
 
-function hasVisibleText(node: MarkdownAstNode): boolean {
-  return (node.value?.trim() ?? "") !== "" || (node.children ?? []).some(hasVisibleText);
-}
-
 /** Shows only the label. T3 has no suggestion UI, so the hidden prompt is not shown. */
 function renderFollowUp(node: MarkdownAstNode, source: string): void {
-  if (!node.attributes?.prompt?.trim() || !node.children?.some(hasVisibleText)) {
+  if (!node.attributes?.prompt?.trim() || !textContent(node).trim()) {
     restoreTextDirective(node, source);
     return;
   }

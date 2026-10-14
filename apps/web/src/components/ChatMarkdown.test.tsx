@@ -808,6 +808,17 @@ describe("ChatMarkdown Codex follow-up suggestions", () => {
     expect(html).not.toContain("codex-followup");
     expect(html).not.toContain("Prepare the document for printing.");
   });
+
+  it("keeps the label of a malformed follow-up created by over-indented list recovery", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="-       Next :codex-followup[Prepare print version]"
+      />,
+    );
+
+    expect(html).toContain("<li>Next :codex-followup[Prepare print version]</li>");
+  });
 });
 
 const ARTIFACT_TEMPLATE_DIRECTIVE =
