@@ -338,6 +338,17 @@ The server setting `worktreePathTemplate` decides where new worktrees go. It is 
 - A branch that you type, and a pull request branch, keep their names. If their folder already exists, the launch fails and names the folder. Use `{branch}` when different branches end in the same last part.
 - While a template is set, T3 marks each worktree that it creates with a `t3-created` file in the worktree's folder in the Git common dir. Storage cleanup and review diffs trust that mark, because the worktree can be outside the managed worktree folders. Cleanup never removes a worktree without the mark outside those folders.
 
+## Installed web app
+
+Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an app. Desktop Chrome and Edge show "Install" in the address bar. Android Chrome shows "Install app" in its menu. On iPhone, use Share > Add to Home Screen. The app has shortcuts for a new thread, pull requests and settings.
+
+The client setting `installedAppEnabled` adds a service worker. It is on by default. Turn it off in Settings > General > Installed app, in each browser and for each server.
+
+- An offline page shows when the device is offline, or when the tunnel answers but the server is down.
+- Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first. The page must still run, so a closed app shows nothing.
+- The app icon shows the same notification count as the browser tab icon.
+- The worker caches only the offline page. Pages and build files come from the server, so a new build shows at once and Cloudflare Access can ask for a new sign-in.
+
 ## Machine map
 
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.

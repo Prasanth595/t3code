@@ -3,6 +3,7 @@ import { CircleAlertIcon, CircleCheckIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 
 import { getClientSettings } from "~/hooks/useSettings";
+import { showInstalledAppNotification } from "~/installedApp";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -133,6 +134,9 @@ function GuideRunWatcher({ runKey, watch }: { runKey: string; watch: GuideRunWat
       });
     } catch {
       // Some browsers expose Notification but reject desktop presentation.
+      // Fork: the installed app shows it through its service worker.
+      const options = { body, tag: `guide:${runKey}`, url: "/pull-requests" };
+      void showInstalledAppNotification(title, options, open).catch(() => undefined);
     }
   }, [data, navigate, runKey, watch]);
 
