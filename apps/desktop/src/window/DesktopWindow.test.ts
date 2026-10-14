@@ -954,52 +954,57 @@ describe("DesktopWindow", () => {
 
         assert.equal(yield* Ref.get(createCount), 1);
         assert.equal(yield* Ref.get(destroyCount), 1);
+        // The destroyed splash is never loaded or shown.
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
+        assert.isFalse(fakeWindow.windowListeners.has("ready-to-show"));
       }).pipe(Effect.provide(layer));
     }),
   );
 
-  it.effect.each([false, true])("cancels setup after shutdown (destroyed: %s)", (destroyed) =>
-    Effect.gen(function* () {
-      const fakeWindow = makeFakeBrowserWindow();
-      fakeWindow.openDevTools.mockImplementation(() => {
-        if (fakeWindow.window.isDestroyed()) throw new Error("Object has been destroyed");
-      });
-      const createCount = yield* Ref.make(0);
-      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
-      const previewStarted = yield* Deferred.make<void>();
-      const releasePreview = yield* Deferred.make<void>();
-      const destroyCount = yield* Ref.make(0);
-      const layer = layerTest({
-        window: fakeWindow.window,
-        createCount,
-        mainWindow,
-        setPreviewMainWindow: () =>
-          Deferred.succeed(previewStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(releasePreview)),
-            Effect.asVoid,
-          ),
-        destroyAll: Ref.update(destroyCount, (count) => count + 1),
-      });
+  it.effect.each([false, true])(
+    "quietly cancels setup after shutdown (destroyed: %s)",
+    (destroyed) =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        fakeWindow.openDevTools.mockImplementation(() => {
+          if (fakeWindow.window.isDestroyed()) throw new Error("Object has been destroyed");
+        });
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const previewStarted = yield* Deferred.make<void>();
+        const releasePreview = yield* Deferred.make<void>();
+        const destroyCount = yield* Ref.make(0);
+        const layer = layerTest({
+          window: fakeWindow.window,
+          createCount,
+          mainWindow,
+          setPreviewMainWindow: () =>
+            Deferred.succeed(previewStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releasePreview)),
+              Effect.asVoid,
+            ),
+          destroyAll: Ref.update(destroyCount, (count) => count + 1),
+        });
 
-      yield* Effect.gen(function* () {
-        const desktopWindow = yield* DesktopWindow.DesktopWindow;
-        const desktopState = yield* DesktopState.DesktopState;
-        const creation = yield* desktopWindow
-          .handleBackendReady(new URL("http://127.0.0.1:3773"))
-          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          const desktopState = yield* DesktopState.DesktopState;
+          const creation = yield* desktopWindow
+            .handleBackendReady(new URL("http://127.0.0.1:3773"))
+            .pipe(Effect.forkChild({ startImmediately: true }));
 
-        yield* Deferred.await(previewStarted);
-        yield* Ref.set(desktopState.quitting, true);
-        fakeWindow.isDestroyed.mockReturnValue(destroyed);
-        yield* Deferred.succeed(releasePreview, undefined);
-        assert.isTrue(Exit.hasInterrupts(yield* Fiber.await(creation)));
+          yield* Deferred.await(previewStarted);
+          yield* Ref.set(desktopState.quitting, true);
+          fakeWindow.isDestroyed.mockReturnValue(destroyed);
+          yield* Deferred.succeed(releasePreview, undefined);
+          assert.isTrue(Exit.isSuccess(yield* Fiber.await(creation)));
 
-        assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
-        assert.equal(yield* Ref.get(destroyCount), 1);
-        assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
-        assert.equal(fakeWindow.openDevTools.mock.calls.length, 0);
-      }).pipe(Effect.provide(layer));
-    }),
+          assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+          assert.equal(yield* Ref.get(destroyCount), 1);
+          assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
+          assert.equal(fakeWindow.openDevTools.mock.calls.length, 0);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("destroys a main window whose creation finishes after shutdown starts", () =>
@@ -1030,10 +1035,11 @@ describe("DesktopWindow", () => {
           .handleBackendReady(new URL("http://127.0.0.1:3773"))
           .pipe(Effect.exit);
 
-        assert.isTrue(Exit.hasInterrupts(exit));
+        assert.isTrue(Exit.isSuccess(exit));
         assert.equal(yield* Ref.get(createCount), 1);
         assert.equal(yield* Ref.get(destroyCount), 1);
         assert.equal(yield* Ref.get(previewCount), 0);
+        assert.equal(fakeWindow.loadURL.mock.calls.length, 0);
         assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
       }).pipe(Effect.provide(layer));
     }),
@@ -1055,6 +1061,29 @@ describe("DesktopWindow", () => {
 
         assert.equal(yield* Ref.get(createCount), 0);
         assert.isTrue(Option.isNone(yield* Ref.get(mainWindow)));
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("drops a renderer event instead of opening a window after shutdown starts", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        const desktopState = yield* DesktopState.DesktopState;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        yield* Ref.set(mainWindow, Option.none());
+        yield* Ref.set(desktopState.quitting, true);
+
+        const exit = yield* Effect.exit(desktopWindow.dispatchMenuAction("open-settings"));
+
+        assert.isTrue(Exit.isSuccess(exit));
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.equal(fakeWindow.send.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
   );

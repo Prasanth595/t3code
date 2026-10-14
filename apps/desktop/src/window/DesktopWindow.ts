@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -903,6 +904,21 @@ export const make = Effect.gen(function* () {
     return yield* createMain;
   }).pipe(Effect.withSpan("desktop.window.ensureMain"));
 
+  // Window creation stops with an interrupt once shutdown starts. Callers that
+  // can go without the window get None for that case; other failures still fail.
+  const unlessShuttingDown = <A, E>(creation: Effect.Effect<A, E>) =>
+    creation.pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          if (Cause.hasInterruptsOnly(cause) && (yield* Ref.get(desktopState.quitting))) {
+            return Option.none<A>();
+          }
+          return yield* Effect.failCause(cause);
+        }),
+      ),
+    );
+
   const revealOrCreateMain = Effect.gen(function* () {
     const window = yield* ensureMain;
     yield* electronWindow.reveal(window);
@@ -921,7 +937,7 @@ export const make = Effect.gen(function* () {
     if (yield* waitingForBackend) return;
     const existingWindow = yield* currentMainWindow;
     if (Option.isSome(existingWindow)) return;
-    yield* createMain;
+    yield* unlessShuttingDown(createMain);
   }).pipe(Effect.withSpan("desktop.window.createMainIfBackendReady"));
 
   const showConnectingSplash = Effect.gen(function* () {
@@ -985,8 +1001,11 @@ export const make = Effect.gen(function* () {
   ) {
     const existingWindow = yield* reveal ? focusedMainWindow : electronWindow.main;
     if (Option.isNone(existingWindow) && (!reveal || (yield* waitingForBackend))) return;
-    const targetWindow = Option.isSome(existingWindow) ? existingWindow.value : yield* ensureMain;
-    if (targetWindow.isDestroyed()) return;
+    const window = Option.isSome(existingWindow)
+      ? existingWindow
+      : yield* unlessShuttingDown(ensureMain);
+    if (Option.isNone(window) || window.value.isDestroyed()) return;
+    const targetWindow = window.value;
     const send = Effect.sync(() => {
       if (!targetWindow.isDestroyed()) targetWindow.webContents.send(channel, payload);
     });

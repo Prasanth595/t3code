@@ -1656,6 +1656,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       yield* Fiber.join(mainWindowCleanupFiber);
       mainWindowCleanupFiber = undefined;
     }
+    // Shutdown can destroy the window while the previous window's cleanup runs;
+    // its closed event has then already fired, so it must not become the main window.
+    if (window.isDestroyed()) return;
     yield* SynchronizedRef.modifyEffect(frameCaptureSessionsRef, (sessions) =>
       Effect.gen(function* () {
         if (sessions.size > 0) {
