@@ -14,7 +14,9 @@
  * accounts never fall back to API billing.
  *
  * Muse runs are stateless, so a follow-up gets a bounded recap of the earlier
- * turns in this session instead of continuing one Muse conversation.
+ * turns in this session instead of continuing one Muse conversation. Required
+ * context the caller delivered explicitly (embedded skill entry and reference
+ * resources) is kept apart from that recap and sent again on every turn.
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -22,6 +24,13 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import {
+  buildPromptFile,
+  createEventTranslator,
+  mergeRequired,
+  requiredReceipts,
+  splitPrompt,
+} from "./muse-acp.logic.mjs";
 
 // The first model is the default. Ids must match the worker launcher's allowlist
 // (nofun-skills scripts/muse-worker.sh); Wonder runs on the same subscriptions.
@@ -34,9 +43,12 @@ const PROFILES = [
   { value: "muse-review", name: "Review (read-only)", description: "No writes, no shell." },
   { value: "muse-focused", name: "Focused (writes in place)", description: "Edits the workspace." },
   { value: "muse-build", name: "Build (new worktree)", description: "Starts a fresh worktree." },
-  { value: "muse-judge", name: "Judge (read-only, max)", description: "Max effort, no writes, no shell." },
+  {
+    value: "muse-judge",
+    name: "Judge (read-only, max)",
+    description: "Max effort, no writes, no shell.",
+  },
 ];
-const RECAP_LIMIT = 20_000;
 
 const args = process.argv.slice(2);
 const flag = (name) => {
@@ -76,7 +88,7 @@ const fail = (id, code, message) => send({ id, error: { code, message } });
 const update = (sessionId, body) =>
   send({ method: "session/update", params: { sessionId, update: body } });
 
-/** sessionId → { cwd, model, profile, history: [{prompt, answer}], run } */
+/** sessionId → { cwd, model, profile, history: [{prompt, answer}], required: Map<uri, entry>, run } */
 const sessions = new Map();
 
 const configOptions = (session) => [
@@ -98,30 +110,6 @@ const configOptions = (session) => [
   },
 ];
 
-function promptText(parts) {
-  return (parts ?? [])
-    .map((part) => {
-      if (part.type === "text") return part.text;
-      if (part.type === "resource_link") return `@${part.uri}`;
-      if (part.type === "resource") return part.resource?.text ?? `@${part.resource?.uri ?? ""}`;
-      return "";
-    })
-    .filter(Boolean)
-    .join("\n\n");
-}
-
-function withRecap(session, text) {
-  if (session.history.length === 0) return text;
-  let recap = session.history
-    .map(
-      (turn, index) =>
-        `### Turn ${index + 1}\nRequest:\n${turn.prompt}\n\nYour answer:\n${turn.answer}`,
-    )
-    .join("\n\n");
-  if (recap.length > RECAP_LIMIT) recap = `…${recap.slice(-RECAP_LIMIT)}`;
-  return `Earlier in this conversation (recap, for context only):\n\n${recap}\n\n---\n\nCurrent request:\n${text}`;
-}
-
 function runPrompt(id, params) {
   const session = sessions.get(params.sessionId);
   if (!session) return fail(id, -32602, "Unknown session.");
@@ -134,12 +122,19 @@ function runPrompt(id, params) {
   } catch (error) {
     return fail(id, -32000, error.message);
   }
-  const text = promptText(params.prompt);
+  const { request: text, required: delivered, problems } = splitPrompt(params.prompt);
+  if (problems.length > 0) return fail(id, -32000, problems.join(" "));
+  const merged = mergeRequired(session.required, delivered);
+  if (merged.error) return fail(id, -32000, merged.error);
+  session.required = merged.required;
   const taskId = `t3-${accountId}-${randomUUID().slice(0, 8)}`;
   const dir = join(tmpdir(), "muse-acp", params.sessionId);
   mkdirSync(dir, { recursive: true });
   const promptFile = join(dir, `${taskId}.md`);
-  writeFileSync(promptFile, withRecap(session, text));
+  writeFileSync(
+    promptFile,
+    buildPromptFile({ required: session.required, history: session.history, request: text }),
+  );
   const worker = expandHome(account.workerExecutable) ?? "muse-worker.sh";
   const child = spawn(
     worker,
@@ -161,6 +156,7 @@ function runPrompt(id, params) {
   );
   const run = { child, cancelled: false, settled: false, answer: "", streamed: "", stderr: "" };
   session.run = run;
+  const translator = createEventTranslator();
   const lines = createInterface({ input: child.stdout });
   lines.on("line", (line) => {
     let event;
@@ -169,18 +165,18 @@ function runPrompt(id, params) {
     } catch {
       return;
     }
-    const payload = event.payload ?? {};
-    if (event.payload_type === "run.output.delta" && typeof payload.text === "string") {
-      run.streamed += payload.text;
-      update(params.sessionId, {
-        sessionUpdate: "agent_message_chunk",
-        content: { type: "text", text: payload.text },
-      });
-    } else if (
-      event.payload_type === "run.terminal.completed" &&
-      typeof payload.text === "string"
-    ) {
-      run.answer = payload.text;
+    for (const action of translator.translate(event)) {
+      if (action.type === "delta") {
+        run.streamed += action.text;
+        update(params.sessionId, {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: action.text },
+        });
+      } else if (action.type === "final") {
+        run.answer = action.text;
+      } else {
+        update(params.sessionId, action.body);
+      }
     }
   });
   child.stderr.on("data", (chunk) => {
@@ -217,7 +213,12 @@ function runPrompt(id, params) {
       return fail(id, -32000, `Muse worker exited with code ${code}. ${detail}`.trim());
     }
     session.history.push({ prompt: text, answer });
-    reply(id, { stopReason: "end_turn" });
+    // Receipts say what the prompt carried (identity), never that a model used it.
+    const receipts = requiredReceipts(session.required);
+    reply(id, {
+      stopReason: "end_turn",
+      ...(receipts.length > 0 ? { _meta: { museAcp: { requiredContext: receipts } } } : {}),
+    });
   });
 }
 
@@ -266,6 +267,7 @@ function handle(message) {
         model: MODELS[0].value,
         profile: "muse-review",
         history: [],
+        required: new Map(),
         run: null,
       };
       sessions.set(sessionId, session);
