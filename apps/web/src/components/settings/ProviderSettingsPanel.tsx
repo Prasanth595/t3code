@@ -615,14 +615,22 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
-  // Edits per instance, in order, until the server's instance shows their
-  // combined result. Each save replays them onto the server's latest instance,
-  // so quick edits compose and a change from elsewhere to another field
-  // survives. Deleting or resetting the instance discards them.
+  // Edits per instance, in order, kept until no save is in flight and the
+  // server's instance is the one last sent: earlier saves' echoes can still
+  // arrive before that. Each save replays them onto the server's latest
+  // instance, so quick edits compose and a change from elsewhere to another
+  // field survives. Deleting or resetting the instance discards them.
   const pendingInstanceEditsRef = useRef(
     new Map<
       ProviderInstanceId,
-      ReadonlyArray<(current: ProviderInstanceConfig) => ProviderInstanceConfig>
+      {
+        readonly updates: ReadonlyArray<
+          (current: ProviderInstanceConfig) => ProviderInstanceConfig
+        >;
+        readonly saving: number;
+        // Compared by content: a default slot with no saved instance is a fresh object every render.
+        readonly lastSent: string;
+      }
     >(),
   );
 
@@ -849,14 +857,17 @@ export function EnvironmentProviderSettings({
     },
   ) => {
     const pendingEdits = pendingInstanceEditsRef.current;
-    const pending = pendingEdits.get(row.instanceId) ?? [];
-    const replay = (updates: typeof pending) =>
-      updates.reduce((current, apply) => apply(current), row.instance);
-    // Compared by content: a default slot with no saved instance is a fresh object every render.
-    const caughtUp = stableStringify(replay(pending)) === stableStringify(row.instance);
-    const updates = [...(caughtUp ? [] : pending), update];
-    const instance = replay(updates);
-    pendingEdits.set(row.instanceId, updates);
+    const pending = pendingEdits.get(row.instanceId);
+    const carried =
+      pending !== undefined &&
+      (pending.saving > 0 || pending.lastSent !== stableStringify(row.instance));
+    const updates = [...(carried ? pending.updates : []), update];
+    const instance = updates.reduce((current, apply) => apply(current), row.instance);
+    pendingEdits.set(row.instanceId, {
+      updates,
+      saving: (carried ? pending.saving : 0) + 1,
+      lastSent: stableStringify(instance),
+    });
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
@@ -867,12 +878,17 @@ export function EnvironmentProviderSettings({
       { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
-    if (result._tag === "Failure") {
-      // A failed edit is not replayed again; the card shows what the server kept.
-      pendingEdits.set(
-        row.instanceId,
-        (pendingEdits.get(row.instanceId) ?? []).filter((apply) => apply !== update),
-      );
+    const latest = pendingEdits.get(row.instanceId);
+    if (latest !== undefined) {
+      pendingEdits.set(row.instanceId, {
+        ...latest,
+        // A failed edit is not replayed again; the card shows what the server kept.
+        updates:
+          result._tag === "Failure"
+            ? latest.updates.filter((apply) => apply !== update)
+            : latest.updates,
+        saving: latest.saving - 1,
+      });
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

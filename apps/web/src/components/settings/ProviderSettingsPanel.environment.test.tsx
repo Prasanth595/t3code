@@ -461,6 +461,29 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(savedInstance(2)).not.toHaveProperty("accentColor");
   });
 
+  it("keeps a clear when an older save's echo arrives after it", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    onUpdate(setField("icon", "openai"));
+    finishFirstSave();
+    await flushPromises();
+    // The color save's echo arrives before the later ones.
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), accentColor: "#ff0000" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(3)).toMatchObject({ icon: "openai", displayName: "Work" });
+    expect(savedInstance(3)).not.toHaveProperty("accentColor");
+  });
+
   it("does not replay edits made before the provider was reset", async () => {
     atoms.providers = [provider()];
     settingsState.value = {
