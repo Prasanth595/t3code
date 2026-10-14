@@ -25,6 +25,7 @@ import {
   ManagerReservationOrdinal,
   ManagerReservationReason,
   MissionManagerReservation,
+  managerReservationState,
   type MissionManagerReservation as MissionManagerReservationValue,
 } from "../../../../packages/contracts/src/missionManagerTransfer.ts";
 import { MissionResultDisposition } from "../../../../packages/contracts/src/missionResult.ts";
@@ -67,9 +68,9 @@ import {
  * The private root producer/authority is not public MCP authentication; a
  * runtime/MCP owning guard adapter remains gated parent work.
  *
- * One unresolved intent per logical ROLE: in this reservation-only slice
- * every stored reservation is unresolved, so a different day, ordinal, or
- * epoch never releases a held intent for the role. History is never pruned
+ * One unresolved intent per logical ROLE: a different day, ordinal, or
+ * epoch never releases a held intent for the role; only trusted retirement
+ * recorded by `MissionManagerLifecycleStore` does. History is never pruned
  * by expiry or day. Fresh reserves commit the dedicated
  * `mission.manager-handoff-reserved` event, the projection snapshot CAS,
  * and the command receipt in ONE owning SQL transaction on the same
@@ -80,8 +81,10 @@ import {
  * alias, or fresh branch, so replaying an old accepted command after a
  * pause/stop/unsafe drift never returns authorizing success. The incumbent
  * manager remains exactly unchanged; the reserved successorThreadId is an
- * identifier only and no thread is created. No settlement, launch,
- * standby, owner-CAS, or session-teardown API exists in this slice.
+ * identifier only and no thread is created. This store only reserves:
+ * standby, quiesce, the owner-CAS, routing confirmation, and retirement
+ * records live in `MissionManagerLifecycleStore`; nothing here launches or
+ * tears down a session.
  */
 export class MissionManagerTransferStoreError extends Schema.TaggedError<MissionManagerTransferStoreError>()(
   "MissionManagerTransferStoreError",
@@ -662,7 +665,10 @@ const make = Effect.gen(function* () {
     const original = logged.find((event) => event.type === "mission.manager-handoff-reserved" && event.payload.reservationId === held.reservationId);
     if (original === undefined || original.type !== "mission.manager-handoff-reserved") return yield* new MissionManagerTransferStoreError({ operation: "reserve", category: "persistence" });
     const persisted = missionManagerReservations(original.payload.mission.execution ?? emptyMissionExecution()).find((entry) => entry.reservationId === held.reservationId);
-    if (persisted === undefined || stableStringify(persisted) !== stableStringify(held)) return yield* scopeDenied();
+    // Lifecycle progress is layered onto a reservation after it is reserved;
+    // the immutable reserved fields must still equal the original event.
+    const { lifecycle: _progress, ...heldAsReserved } = held;
+    if (persisted === undefined || stableStringify(persisted) !== stableStringify(heldAsReserved)) return yield* scopeDenied();
     return original.payload.mission;
   });
 
@@ -851,10 +857,10 @@ const make = Effect.gen(function* () {
       if (!authorityIsCurrent() || !factsIsCurrent(facts)) return yield* scopeDenied();
       return Result.succeed({ reservation: slotDuplicate, receipt, recovered: true, committed: false, eventSequence: captured.sequence });
     }
-    // One unresolved intent per logical ROLE: every stored reservation is
-    // unresolved in this slice, so any prior intent for the role blocks a
-    // fresh slot, whatever its day, ordinal, or epoch.
-    if (existing.some((entry) => entry.role === command.role)) {
+    // One unresolved intent per logical ROLE: a reservation stays unresolved
+    // whatever its day, ordinal, or epoch until the lifecycle store records
+    // trusted retirement. Retired records stay in the bounded history.
+    if (existing.some((entry) => entry.role === command.role && managerReservationState(entry) !== "retired")) {
       return yield* requestConflict();
     }
     // Fresh CAS ordering: expectedRevision mismatch is a request conflict

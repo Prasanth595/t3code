@@ -13,16 +13,18 @@ import { Sha256Hex } from "./missionRetro.ts";
  * Bounded durable manager-successor intent reservations for the canonical
  * mission aggregate.
  *
- * Reservation only: the incumbent manager stays authoritative while a
- * successor intent is held. No thread is launched, no epoch is switched, and
- * no session is retired in this slice. Leaf schemas only: one reserved
- * successor identity per logical role, metadata only (no snapshots, prompts,
- * credentials, session handles, or filesystem paths).
+ * A reservation holds one successor identity per logical role while the
+ * incumbent stays authoritative. Its optional `lifecycle` metadata records
+ * how far the trusted transition got (standby, quiesce, owner switch,
+ * routing confirmation, retirement); an absent `lifecycle` means the
+ * reservation is still only `reserved`, which keeps older snapshots valid.
+ * Leaf schemas only, metadata only: digests and counters, never snapshots,
+ * prompts, credentials, session handles, or filesystem paths.
  *
  * Durable writes live in the server
- * (`apps/server/src/orchestration-v2/MissionManagerTransferStore.ts`); this
- * module stays free of runtime logic per the contracts rule against heavy
- * runtime in leaf modules.
+ * (`apps/server/src/orchestration-v2/MissionManagerTransferStore.ts` reserves,
+ * `MissionManagerLifecycleStore.ts` advances); this module stays free of
+ * runtime logic per the contracts rule against heavy runtime in leaf modules.
  */
 
 /** Maximum persisted manager reservations per mission snapshot. */
@@ -97,6 +99,97 @@ export const ManagerProjectTimezone = TrimmedNonEmptyString.check(Schema.isMaxLe
 const BoundedManagerId = TrimmedNonEmptyString.check(Schema.isMaxLength(512));
 const ManagerCounter = NonNegativeInt.check(Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER));
 
+/** Every reservation lifecycle state in order; `reserved` is the absence of `lifecycle`. */
+export const ManagerLifecycleState = Schema.Literals([
+  "reserved",
+  "standby_ready",
+  "quiesced",
+  "transferred",
+  "routing_confirmed",
+  "retired",
+]);
+export type ManagerLifecycleState = typeof ManagerLifecycleState.Type;
+
+/** States a stored `lifecycle` record can name. */
+export const ManagerLifecycleProgress = Schema.Literals([
+  "standby_ready",
+  "quiesced",
+  "transferred",
+  "routing_confirmed",
+  "retired",
+]);
+export type ManagerLifecycleProgress = typeof ManagerLifecycleProgress.Type;
+
+const LIFECYCLE_RANK: Record<ManagerLifecycleProgress, number> = {
+  standby_ready: 1,
+  quiesced: 2,
+  transferred: 3,
+  routing_confirmed: 4,
+  retired: 5,
+};
+
+/**
+ * One committed lifecycle milestone: the stable command that committed it,
+ * the digest of the trusted evidence it was decided on (evidence itself is
+ * never stored), the canonical revision it produced, and its instant.
+ */
+const ManagerLifecycleMilestone = Schema.Struct({
+  commandId: CommandId.check(Schema.isMaxLength(512)),
+  evidenceDigest: Sha256Hex,
+  revision: ManagerCounter,
+  confirmedAt: IsoDateTime,
+});
+
+/** The canonical role-owner switch: the old role epoch advanced exactly once. */
+const ManagerLifecycleTransfer = Schema.Struct({
+  ...ManagerLifecycleMilestone.fields,
+  previousEpoch: ManagerCounter,
+  newEpoch: ManagerCounter,
+});
+
+/** Routing confirmed against the exact new role epoch. */
+const ManagerLifecycleRouting = Schema.Struct({
+  ...ManagerLifecycleMilestone.fields,
+  epoch: ManagerCounter,
+});
+
+/**
+ * Bounded lifecycle progress for one reservation. Each milestone is present
+ * exactly when the state has reached it, so a record can never claim a later
+ * state without the earlier trusted evidence.
+ */
+export const ManagerReservationLifecycle = Schema.Struct({
+  state: ManagerLifecycleProgress,
+  standby: ManagerLifecycleMilestone,
+  quiesce: Schema.optional(ManagerLifecycleMilestone),
+  transfer: Schema.optional(ManagerLifecycleTransfer),
+  routing: Schema.optional(ManagerLifecycleRouting),
+  retirement: Schema.optional(ManagerLifecycleMilestone),
+}).check(
+  Schema.makeFilter(
+    (value) => {
+      const rank = LIFECYCLE_RANK[value.state];
+      const present = [value.quiesce, value.transfer, value.routing, value.retirement].map(
+        (milestone) => milestone !== undefined,
+      );
+      const expected = [rank >= 2, rank >= 3, rank >= 4, rank >= 5];
+      if (present.some((has, index) => has !== expected[index])) return false;
+      if (
+        value.transfer !== undefined &&
+        value.transfer.newEpoch !== value.transfer.previousEpoch + 1
+      ) {
+        return false;
+      }
+      return value.routing === undefined || value.routing.epoch === value.transfer?.newEpoch;
+    },
+    {
+      expected:
+        "lifecycle milestones matching the stated state, with the epoch advanced exactly once",
+    },
+  ),
+);
+export type ManagerReservationLifecycle = typeof ManagerReservationLifecycle.Type;
+
 export const MissionManagerReservation = Schema.Struct({
   reservationId: BoundedManagerId,
   /** Reserved successor identifier ONLY; never an actually created thread. */
@@ -115,8 +208,15 @@ export const MissionManagerReservation = Schema.Struct({
   commandId: CommandId.check(Schema.isMaxLength(512)),
   requestDigest: Sha256Hex,
   reservedAt: IsoDateTime,
+  /** Absent means `reserved`. Only the lifecycle store writes it. */
+  lifecycle: Schema.optional(ManagerReservationLifecycle),
 }).check(Schema.makeFilter((value) => value.artifactRef === `manager-handoff:${value.artifactSha256}`, { expected: "handoff reference bound to its exact SHA-256" }));
 export type MissionManagerReservation = typeof MissionManagerReservation.Type;
+
+/** Lifecycle state of a reservation; older records without `lifecycle` are `reserved`. */
+export const managerReservationState = (
+  reservation: Pick<MissionManagerReservation, "lifecycle">,
+): ManagerLifecycleState => reservation.lifecycle?.state ?? "reserved";
 
 /** Bounded reservation history. The owning store denies writes at the bound. */
 export const MissionManagerReservations = Schema.Array(MissionManagerReservation).check(

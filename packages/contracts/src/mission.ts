@@ -1,4 +1,8 @@
-import { ManagerProjectTimezone } from "./missionManagerTransfer.ts";
+import {
+  ManagerLifecycleProgress,
+  ManagerLifecycleState,
+  ManagerProjectTimezone,
+} from "./missionManagerTransfer.ts";
 import * as Schema from "effect/Schema";
 
 import { ApplicationEventMetadata } from "./applicationEvent.ts";
@@ -318,6 +322,19 @@ export const MissionManagerHandoffReservedEvent = Schema.Struct({
 });
 export type MissionManagerHandoffReservedEvent = typeof MissionManagerHandoffReservedEvent.Type;
 
+export const MissionManagerLifecycleAdvancedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.manager-lifecycle-advanced"),
+  payload: Schema.Struct({
+    /** Full updated mission snapshot, advanced reservation lifecycle included. */
+    mission: Mission,
+    reservationId: TrimmedNonEmptyString,
+    from: ManagerLifecycleState,
+    to: ManagerLifecycleProgress,
+  }),
+});
+export type MissionManagerLifecycleAdvancedEvent = typeof MissionManagerLifecycleAdvancedEvent.Type;
+
 export const MissionEvent = Schema.Union([
   MissionCreatedEvent,
   MissionRevisedEvent,
@@ -327,5 +344,6 @@ export const MissionEvent = Schema.Union([
   MissionRetroAnalysisUpdatedEvent,
   MissionRetroReportReceivedEvent,
   MissionManagerHandoffReservedEvent,
+  MissionManagerLifecycleAdvancedEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;

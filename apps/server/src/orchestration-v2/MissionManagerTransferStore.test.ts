@@ -534,6 +534,128 @@ it.effect("keeps the earlier unresolved role intent held across local days", () 
   }).pipe(Effect.provide(harness(world)));
 });
 
+/** A schema-valid lifecycle record at the given state, for stores that only read lifecycle state. */
+const lifecycleAt = (state: "standby_ready" | "quiesced" | "transferred" | "routing_confirmed" | "retired") => {
+  const milestone = (revision: number) => ({
+    commandId: `lifecycle-${revision}`,
+    evidenceDigest: "a".repeat(64),
+    revision,
+    confirmedAt: "2026-10-14T12:30:00.000Z",
+  });
+  const order = ["standby_ready", "quiesced", "transferred", "routing_confirmed", "retired"] as const;
+  const rank = order.indexOf(state);
+  return {
+    state,
+    standby: milestone(2),
+    ...(rank >= 1 ? { quiesce: milestone(3) } : {}),
+    ...(rank >= 2 ? { transfer: { ...milestone(4), previousEpoch: 3, newEpoch: 4 } } : {}),
+    ...(rank >= 3 ? { routing: { ...milestone(5), epoch: 4 } } : {}),
+    ...(rank >= 4 ? { retirement: milestone(6) } : {}),
+  };
+};
+
+/** Replaces the reservations in the canonical snapshot, as the lifecycle store would leave them. */
+const setReservations = (missionId: string, reservations: ReadonlyArray<unknown>) =>
+  Effect.gen(function* () {
+    const canonical = yield* currentMission(missionId);
+    const next = decodeMission({ ...canonical, execution: { ...canonical.execution, managerReservations: reservations } });
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE projection_missions SET snapshot_json = ${encodeMissionJson(next)} WHERE mission_id = ${canonical.id}`;
+  });
+
+it.effect("only a retired reservation releases the role for the next intent", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    const store = yield* TransferStore.MissionManagerTransferStore;
+    yield* seed("mission-1");
+    const first = prepare(yield* currentMission("mission-1"));
+    world.facts = first.facts;
+    const reserved = ok(yield* store.reserve(first.command));
+    // Every lifecycle state short of retirement still holds the role, whatever the day.
+    for (const state of ["standby_ready", "quiesced", "transferred", "routing_confirmed"] as const) {
+      yield* setReservations("mission-1", [{ ...reserved.reservation, lifecycle: lifecycleAt(state) }]);
+      const next = prepare(yield* currentMission("mission-1"), {
+        nowIso: "2026-10-15T12:00:00.000Z",
+        lastSlot: { localDate: first.command.localDate, ordinal: first.command.ordinal },
+        commandId: `next-while-${state}`,
+      });
+      world.facts = next.facts;
+      const denied = yield* Effect.flip(store.reserve(next.command));
+      assert.strictEqual(denied.category, "request_conflict");
+      assert.strictEqual((yield* reservationsOf("mission-1")).length, 1);
+    }
+    yield* setReservations("mission-1", [{ ...reserved.reservation, lifecycle: lifecycleAt("retired") }]);
+    const released = prepare(yield* currentMission("mission-1"), {
+      nowIso: "2026-10-15T12:00:00.000Z",
+      lastSlot: { localDate: first.command.localDate, ordinal: first.command.ordinal },
+      commandId: "next-after-retired",
+    });
+    world.facts = released.facts;
+    const out = ok(yield* store.reserve(released.command));
+    assert.isTrue(out.committed);
+    assert.notStrictEqual(out.reservation.reservationId, reserved.reservation.reservationId);
+    assert.notStrictEqual(out.reservation.successorThreadId, reserved.reservation.successorThreadId);
+    // The retired record is kept, and the other role never gained or lost a slot.
+    const history = yield* reservationsOf("mission-1");
+    assert.strictEqual(history.length, 2);
+    assert.strictEqual(history[0]?.lifecycle?.state, "retired");
+    assert.isUndefined(history[1]?.lifecycle);
+  }).pipe(Effect.provide(harness(world)));
+});
+
+it.effect("a reserve replay still recovers once lifecycle progress is layered onto the reservation", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    const store = yield* TransferStore.MissionManagerTransferStore;
+    yield* seed("mission-1");
+    const p = prepare(yield* currentMission("mission-1"));
+    world.facts = p.facts;
+    const first = ok(yield* store.reserve(p.command));
+    yield* setReservations("mission-1", [{ ...first.reservation, lifecycle: lifecycleAt("standby_ready") }]);
+    world.facts = refreshedFacts(p.facts, yield* currentMission("mission-1"));
+    const replay = ok(yield* store.reserve(structuredClone(p.command)));
+    assert.isTrue(replay.recovered);
+    assert.strictEqual(replay.reservation.reservationId, first.reservation.reservationId);
+    assert.strictEqual(replay.eventSequence, first.eventSequence);
+    // Lifecycle metadata is the only allowed difference: drift in a reserved field still denies.
+    yield* setReservations("mission-1", [
+      { ...first.reservation, successorThreadId: "00000000-0000-4000-8000-000000000001", lifecycle: lifecycleAt("standby_ready") },
+    ]);
+    const tampered = yield* Effect.flip(store.reserve({ ...structuredClone(p.command), commandId: CommandId.make("reserve-after-tamper") }));
+    assert.strictEqual(tampered.category, "scope_denied");
+    assert.strictEqual(yield* eventCount("mission-1"), 2);
+  }).pipe(Effect.provide(harness(world)));
+});
+
+it.effect("the history bound counts retired records and never prunes them", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    const store = yield* TransferStore.MissionManagerTransferStore;
+    yield* seed("mission-1");
+    const p = prepare(yield* currentMission("mission-1"));
+    world.facts = p.facts;
+    const first = ok(yield* store.reserve(p.command));
+    const retired = { ...first.reservation, lifecycle: lifecycleAt("retired") };
+    const filler = Array.from({ length: 63 }, (_, i) => ({
+      ...retired,
+      reservationId: `mgr-filler-${i}`,
+      successorThreadId: `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`,
+      localDate: `2026-11-${String((i % 28) + 1).padStart(2, "0")}`,
+    }));
+    yield* setReservations("mission-1", [retired, ...filler]);
+    assert.strictEqual((yield* reservationsOf("mission-1")).length, 64);
+    // Nothing is unresolved, so the only thing left to stop a new intent is the bound.
+    const next = prepare(yield* currentMission("mission-1"), {
+      nowIso: "2026-10-15T12:00:00.000Z",
+      lastSlot: { localDate: p.command.localDate, ordinal: p.command.ordinal },
+      commandId: "next-at-bound",
+    });
+    world.facts = next.facts;
+    assert.strictEqual(rejectionCode(yield* store.reserve(next.command)), "reservation_bound");
+    assert.strictEqual((yield* reservationsOf("mission-1")).length, 64);
+  }).pipe(Effect.provide(harness(world)));
+});
+
 it.effect("denies accepted receipt replay after canonical pause", () => {
   const world = makeWorld();
   return Effect.gen(function* () {
