@@ -6,7 +6,7 @@
 #
 # Environment:
 #   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
-#                            (default: stable; preview is a maintainers' test train)
+#                            (fork default: nightly; preview is a maintainers' test train)
 #   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
 #   T3CODE_HOME              T3 home directory (default: ~/.t3)
 #   T3CODE_INSTALL_BIN_DIR   where the `t3` symlink goes (default: ~/.local/bin)
@@ -17,7 +17,8 @@
 # instead of fetching the release again.
 set -eu
 
-repo="pingdotgg/t3code"
+# Fork: install from the fork releases.
+repo="Yarden-zamir/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"
@@ -142,7 +143,8 @@ else
   fail "sha256sum or shasum is required"
 fi
 
-channel="${T3CODE_CHANNEL:-stable}"
+# Fork: the fork publishes only nightly releases.
+channel="${T3CODE_CHANNEL:-nightly}"
 version="${T3CODE_VERSION:-}"
 if [ -z "$version" ]; then
   # Tags are v<semver>; the channel is the prerelease identifier, or none for
@@ -165,7 +167,7 @@ case "$version" in
       "t3 ${version} is a preview build." \
       "  Preview builds are cut by maintainers from unreleased branches to exercise the release" \
       "  pipeline. They can be broken, receive no fixes, and are never offered as updates." \
-      "  Set T3CODE_CHANNEL=stable (the default) for a supported build." >&2
+      "  Set T3CODE_CHANNEL=nightly (the fork default) for a supported build." >&2
     if [ "$channel" != "preview" ] && [ -z "${T3CODE_VERSION:-}" ]; then
       fail "refusing a preview build that was not explicitly requested"
     fi
