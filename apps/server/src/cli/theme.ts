@@ -230,7 +230,7 @@ const readSettingsObject = Effect.fn(function* (settingsPath: string) {
  */
 const CONCURRENT_WRITE_ATTEMPTS = 5;
 
-const writeDefaultTheme = Effect.fn(function* (input: {
+export const writeDefaultTheme = Effect.fn(function* (input: {
   readonly settingsPath: string;
   readonly themeId: string;
 }) {
@@ -453,7 +453,7 @@ const publishThemeFile = Effect.fn(function* (input: {
  * purpose -- web and desktop cannot resolve it and mobile does not follow this
  * setting, so naming it would be the silent no-op this check exists to stop.
  */
-const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
+export const resolvableThemeIds = Effect.fn(function* (themesDir: string) {
   const published = yield* readPublishedThemes(themesDir);
   return [...BUILT_IN_THEME_IDS, ...published.map((theme) => theme.id)].toSorted();
 });

@@ -63,6 +63,7 @@ import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerConfig from "../../config.ts";
+import * as EnvironmentTheme from "../../environmentTheme.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { isMachineSubject, peersWithChangedLevel, reachablePeers } from "./machineAccess.ts";
@@ -70,6 +71,7 @@ import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
 import * as MachineTunnel from "./MachineTunnel.ts";
+import { applyThemeSettings, THEME_SETTING_KEYS, withSharedThemes } from "./themeSync.ts";
 import {
   PORTAL_CLOSE_CODES,
   type PortalMessage,
@@ -188,6 +190,7 @@ const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const resources = yield* MachineResources.MachineResources;
   const settings = yield* ServerSettings.ServerSettingsService;
+  const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const sessionStore = yield* SessionStore.SessionStore;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -246,14 +249,18 @@ const make = Effect.gen(function* () {
   // Uptime always moves; it alone is not a change.
   const statusKey = (status: MachineStatus) => stableStringify({ ...status, uptimeSeconds: 0 });
 
-  /** The settings as the portal sees them: encoded, secrets redacted, without `machineMap`. */
+  /**
+   * The settings as the portal sees them: encoded, secrets redacted, without `machineMap`, with
+   * the published themes (MM-408).
+   */
   const reportedServerSettings = (current: typeof ServerSettingsSchema.Type) =>
-    encodeServerSettings(ServerSettings.redactServerSettingsForClient(current)).pipe(
-      Effect.map((encoded) => {
-        const { machineMap: _machineMap, ...rest } = encoded as Record<string, unknown>;
-        return rest as Readonly<Record<string, unknown>>;
-      }),
-    );
+    Effect.gen(function* () {
+      const encoded = yield* encodeServerSettings(
+        ServerSettings.redactServerSettingsForClient(current),
+      );
+      const { machineMap: _machineMap, ...rest } = encoded as Record<string, unknown>;
+      return withSharedThemes(rest, yield* environmentThemes.current);
+    });
 
   // --- MM-402: apply the server settings of a desired state ----------------------------------
 
@@ -261,8 +268,15 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const current = yield* reportedServerSettings(yield* settings.getSettings);
       const changed: Record<string, unknown> = {};
+      const changedThemeSettings: Record<string, unknown> = {};
       const skipped: Array<string> = [];
       for (const [key, value] of Object.entries(values)) {
+        if (THEME_SETTING_KEYS.has(key)) {
+          if (stableStringify(current[key]) !== stableStringify(value)) {
+            changedThemeSettings[key] = value;
+          }
+          continue;
+        }
         if (UNMANAGED_SERVER_SETTINGS.has(key) || !Object.hasOwn(ServerSettingsPatch.fields, key)) {
           skipped.push(key);
           continue;
@@ -281,6 +295,13 @@ const make = Effect.gen(function* () {
       if (Object.keys(changed).length > 0) {
         yield* settings.updateSettings(yield* decodePatch(changed));
       }
+      // After the patch: `t3 theme set` merges into the settings file that the patch wrote.
+      yield* applyThemeSettings({
+        settingsPath: config.settingsPath,
+        themesDir: config.environmentThemesDir,
+        changed: changedThemeSettings,
+        current,
+      });
     });
 
   // --- MM-1306: end the sessions of peers whose level changed --------------------------------
@@ -621,10 +642,14 @@ const make = Effect.gen(function* () {
 
   // --- MM-404: settings that change outside the map ------------------------------------------
 
-  const watchLocalSettings = settings.streamChanges.pipe(
-    Stream.runForEach((current) =>
+  // A change in the themes folder is a change of `sharedThemes` (MM-408).
+  const watchLocalSettings = Stream.merge(
+    settings.streamChanges.pipe(Stream.as(undefined)),
+    environmentThemes.streamChanges.pipe(Stream.as(undefined)),
+  ).pipe(
+    Stream.runForEach(() =>
       Effect.gen(function* () {
-        const next = yield* reportedServerSettings(current);
+        const next = yield* reportedServerSettings(yield* settings.getSettings);
         const before = yield* Ref.getAndSet(settingsBaseline, next);
         const local = yield* state.snapshot;
         if (!local.enabled || local.saved.desired === null) return;

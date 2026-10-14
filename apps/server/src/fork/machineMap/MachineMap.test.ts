@@ -24,6 +24,7 @@ import {
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -37,6 +38,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
+import * as EnvironmentTheme from "../../environmentTheme.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -240,6 +242,7 @@ const layerMachineMap = (input: {
       ),
     ),
     Layer.provide(ServerSecretStore.layer),
+    Layer.provide(EnvironmentTheme.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-machine-map-" })),
   );
 };
@@ -275,18 +278,29 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
             Effect.sync(() => socket.send(encodePortalMessage(message)));
 
           // MM-402, MM-603: apply, save, confirm. The map's own write is no local change.
+          const theme = {
+            json: { name: "Ocean", appearance: "dark", canvas: "#001122", accent: "#3388ff" },
+            css: null,
+          };
           yield* send({
             _tag: "desired",
             state: desiredState({
               revision: 1,
               arrowsIn: [arrow(PEER, SELF, "read")],
-              server: { preferOriginRemote: true, machineMap: { enabled: false } },
+              server: {
+                preferOriginRemote: true,
+                machineMap: { enabled: false },
+                sharedThemes: { "ocean-sync": theme },
+              },
             }),
           });
           expect(yield* nextOf(portal.received, "applied")).toEqual({
             _tag: "applied",
             revision: 1,
           });
+          const { environmentThemesDir } = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          expect(yield* fs.readDirectory(environmentThemesDir)).toEqual(["ocean-sync.json"]);
           const afterApply = yield* settings.getSettings;
           expect(afterApply.preferOriginRemote).toBe(true);
           // The map never turns its own connection off.
@@ -309,9 +323,15 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
           const ownerSession = yield* auth.issueSession({ subject: "one-time-token" });
           yield* send({
             _tag: "desired",
-            state: desiredState({ revision: 2, arrowsIn: [arrow(PEER, SELF, "none")] }),
+            state: desiredState({
+              revision: 2,
+              arrowsIn: [arrow(PEER, SELF, "none")],
+              // MM-409: an id that is not a file name in the themes folder is refused.
+              server: { sharedThemes: { "../escape": theme } },
+            }),
           });
           yield* nextOf(portal.received, "applied");
+          expect(yield* fs.exists(`${environmentThemesDir}/../escape.json`)).toBe(false);
           const sessionIds = (yield* auth.listSessions()).map((session) => session.sessionId);
           expect(sessionIds).not.toContain(peerSession.sessionId);
           expect(sessionIds).toContain(ownerSession.sessionId);
