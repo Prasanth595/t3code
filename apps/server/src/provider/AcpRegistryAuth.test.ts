@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId, type ProviderAuthState } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
@@ -10,17 +6,20 @@ import * as AcpRegistrySupport from "@t3tools/provider-acp-registry/server/AcpRe
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 const instanceId = ProviderInstanceId.make("acpRegistry_mock");
-const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-const mockAgentPath = NodePath.join(__dirname, "../../scripts/acp-mock-agent.ts");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 
 /** Signs in to the mock ACP agent over its real stdio wire, like the provider settings row. */
 const signIn = (agentEnvironment: Record<string, string>) =>
   Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
     const changed: Array<boolean> = [];
     const controller = yield* makeAcpRegistryAuth({
       instanceId,
@@ -95,17 +94,28 @@ describe("ACP Registry sign-in", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("shows the agent's reason when its own sign-in fails", () =>
+  it.effect("names a recognized agent sign-in failure without copying the agent's text", () =>
     Effect.gen(function* () {
-      const { changed, settled } = yield* signIn({
-        T3_ACP_AUTHENTICATE_ERROR_MESSAGE: "Browser sign-in status could not be retrieved.",
-      });
-      expect(yield* settled("succeeded")).toMatchObject({
-        phase: "failed",
-        message:
+      const secret = "https://console.example.test/callback?code=sk-secret-123";
+      for (const [agentMessage, message] of [
+        [
+          "Browser sign-in status could not be retrieved.",
           "The ACP agent could not complete sign-in: Browser sign-in status could not be retrieved.",
-      });
-      expect(changed).toEqual([]);
+        ],
+        [
+          `Browser sign-in status could not be retrieved. Last poll: ${secret}`,
+          "The ACP agent could not complete sign-in: Browser sign-in status could not be retrieved.",
+        ],
+        [`Sign-in failed at ${secret}`, "The ACP agent could not complete sign-in."],
+      ] as const) {
+        const { changed, settled } = yield* signIn({
+          T3_ACP_AUTHENTICATE_ERROR_MESSAGE: agentMessage,
+        });
+        const state = yield* settled("succeeded");
+        expect(state).toMatchObject({ phase: "failed", message });
+        expect(JSON.stringify(state)).not.toContain("sk-secret-123");
+        expect(changed).toEqual([]);
+      }
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

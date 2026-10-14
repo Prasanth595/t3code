@@ -30,22 +30,20 @@ type Runtime = Pick<
 >;
 
 const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
-const MAX_AGENT_REASON_LENGTH = 300;
+// Mistral Vibe's JSON-RPC error message when its own browser sign-in status poll
+// fails (`POLL_FAILED` in vibe/setup/auth/http_browser_sign_in_gateway.py, #15118).
+const BROWSER_SIGN_IN_POLL_FAILED = "Browser sign-in status could not be retrieved.";
 
 /**
- * Appends the agent's own JSON-RPC error message to a sign-in failure. Agents
- * that sign in themselves (method type "agent") explain failures only there,
- * for example Mistral Vibe's "Browser sign-in status could not be retrieved."
+ * Adds canonical text for a recognized sign-in failure an agent sent. The
+ * agent's own message is never copied and stays in `cause`.
  */
 function withAgentReason(detail: string, cause: unknown) {
-  if (!isAcpRequestError(cause) || cause.operation !== "receive-response") return detail;
-  const reason = cause.errorMessage.replace(/\s+/gu, " ").trim();
-  if (!reason) return detail;
-  const bounded =
-    reason.length > MAX_AGENT_REASON_LENGTH
-      ? `${reason.slice(0, MAX_AGENT_REASON_LENGTH - 1)}…`
-      : reason;
-  return `${detail.replace(/\.$/u, "")}: ${bounded}`;
+  return isAcpRequestError(cause) &&
+    cause.operation === "receive-response" &&
+    cause.errorMessage.includes(BROWSER_SIGN_IN_POLL_FAILED)
+    ? `${detail.replace(/\.$/u, "")}: ${BROWSER_SIGN_IN_POLL_FAILED}`
+    : detail;
 }
 
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
