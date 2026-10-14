@@ -1021,6 +1021,30 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /**
+   * Marks the link revoked after the relay answered 401 to `credential`, usually
+   * because the environment was deregistered. Retrying cannot fix that, and
+   * relinking is the user's call, so only mark it. Nothing stored is removed:
+   * the relay also answers 401 for a skewed clock, and the next accepted
+   * registration clears the mark. Returns false, without marking, when a relink
+   * replaced the credential while the rejected request was in flight.
+   */
+  const markLinkRevoked = (credential: string, cause: RelayRequestError) =>
+    endpointRuntime.withLinkStateLock(
+      Effect.gen(function* () {
+        const current = yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
+        if (Option.isNone(current) || bytesToString(current.value) !== credential) {
+          return false;
+        }
+        yield* Effect.logWarning(
+          "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
+          { cause },
+        );
+        yield* secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"));
+        return true;
+      }),
+    );
+
   const registerManagedTunnelRecovery = Effect.fn(
     "environment.cloud.registerManagedCloudTunnelRecovery",
   )(function* (localOrigin: string, options?: { readonly retryRuntimeFailures?: boolean }) {
@@ -1075,28 +1099,11 @@ const make = Effect.gen(function* () {
       },
       schema: RelayManagedEndpointRecoveryRegistrationResponse,
     }).pipe(
-      // A 401 here means the relay no longer accepts this link, usually because
-      // the environment was deregistered. Retrying cannot fix that, and relinking
-      // is the user's call, so only mark it. Nothing stored is removed: the relay
-      // also answers 401 for a skewed clock, and the next accepted registration
-      // clears the mark. A relink that landed while this request was in flight
-      // replaced the credential, so the rejection belongs to the old link.
       Effect.catchTags({
         RelayRequestError: (error) =>
           error.rejection === "unauthorized"
-            ? endpointRuntime.withLinkStateLock(
-                Effect.gen(function* () {
-                  const current = yield* secrets.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET);
-                  if (Option.isNone(current) || bytesToString(current.value) !== credential) {
-                    return "superseded" as const;
-                  }
-                  yield* Effect.logWarning(
-                    "T3 Connect no longer accepts this environment's link. Link it again to restore remote access.",
-                    { cause: error },
-                  );
-                  yield* secrets.set(CLOUD_LINK_REVOKED, stringToBytes("true"));
-                  return "revoked" as const;
-                }),
+            ? markLinkRevoked(credential, error).pipe(
+                Effect.map((marked) => (marked ? ("revoked" as const) : ("superseded" as const))),
               )
             : Effect.fail(error),
       }),
@@ -1169,9 +1176,10 @@ const make = Effect.gen(function* () {
       relayUrl: relayUrlValue,
       origin,
     });
+    const credential = bytesToString(environmentCredential.value);
     const recovered = yield* relayClientRequest({
       url: `${relayUrlValue}/v1/environments/${encodeURIComponent(environmentId)}/tunnel`,
-      token: bytesToString(environmentCredential.value),
+      token: credential,
       payload: {
         cloudUserId: cloudUserIdValue,
         origin,
@@ -1179,7 +1187,13 @@ const make = Effect.gen(function* () {
       },
       schema: RelayManagedEndpointRecoveryResponse,
       timeout: MANAGED_ENDPOINT_PROVISION_REQUEST_TIMEOUT,
-    });
+    }).pipe(
+      // A running host learns of a Deregister here, when its dead tunnel asks
+      // for a replacement. The rejection still fails the recovery.
+      Effect.tapError((error) =>
+        error.rejection === "unauthorized" ? markLinkRevoked(credential, error) : Effect.void,
+      ),
+    );
     if (recovered.endpointRuntime.providerKind !== "cloudflare_tunnel") {
       return yield* new CloudLinkInternalError({ operation: "unsupported-recovered-tunnel" });
     }
