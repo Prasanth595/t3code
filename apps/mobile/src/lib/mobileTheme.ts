@@ -10,6 +10,7 @@ import {
   type ThemeAppearance,
   type ThemeColors,
 } from "@t3tools/shared/themePalettes";
+import { findMobileThemeDefinition, getCustomMobileThemes } from "./customThemes";
 import {
   STANDARD_THEME_PREVIEW_COLORS,
   type ThemePreviewColors,
@@ -17,11 +18,13 @@ import {
 
 export const DEFAULT_MOBILE_THEME_ID = MOBILE_DEFAULT_THEME_ID;
 export const MOBILE_THEME_IDS = [...SHARED_MOBILE_THEME_IDS, "material-you"] as const;
-export type MobileThemeId = SharedMobileThemeId | "material-you";
+/** Built-in ids plus the id of any installed custom theme, see `customThemes.ts`. */
+export type MobileThemeId = SharedMobileThemeId | "material-you" | (string & {});
 export type MobileThemeAppearance = ThemeAppearance;
 export type MobileThemeMode = MobileThemeAppearance | "system";
 export type MobileThemeIds = Readonly<Record<MobileThemeAppearance, MobileThemeId>>;
 
+/** Built-in palettes in picker order. Custom themes are listed by the settings screen. */
 export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   readonly id: MobileThemeId;
   readonly label: string;
@@ -31,15 +34,31 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
 ];
 
+/** Every theme the picker shows: built-ins and installed custom themes, in install order. */
+export function getMobileThemeOptions(): ReadonlyArray<{
+  readonly id: MobileThemeId;
+  readonly label: string;
+  readonly custom: boolean;
+}> {
+  return [
+    ...MOBILE_THEME_OPTIONS.map((option) => ({ ...option, custom: false })),
+    ...getCustomMobileThemes().map((theme) => ({
+      id: theme.id,
+      label: theme.label,
+      custom: true,
+    })),
+  ];
+}
+
 // Closed set: every key `createMobileThemeVariables` writes. Reads of a
 // misspelled variable then fail to compile instead of yielding undefined.
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
 export function normalizeMobileThemeId(value: unknown): MobileThemeId {
-  return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
-    ? (value as MobileThemeId)
-    : DEFAULT_MOBILE_THEME_ID;
+  if (typeof value !== "string") return DEFAULT_MOBILE_THEME_ID;
+  if ((MOBILE_THEME_IDS as readonly string[]).includes(value)) return value as MobileThemeId;
+  return findMobileThemeDefinition(value) ? (value as MobileThemeId) : DEFAULT_MOBILE_THEME_ID;
 }
 
 export function normalizeMobileThemeMode(value: unknown): MobileThemeMode {
@@ -373,18 +392,18 @@ export const MOBILE_THEME_VARIABLE_NAMES = Object.keys(
 ) as ReadonlyArray<MobileThemeVariable>;
 
 export function getMobileThemeColors(
-  themeId: SharedMobileThemeId,
+  themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
 ): ThemeColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID) {
     return appearance === "dark" ? T3_CODE_DARK_THEME_COLORS : T3_CODE_LIGHT_THEME_COLORS;
   }
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
+  const theme = findMobileThemeDefinition(themeId) ?? T3_CHAT_THEME;
   return getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
 }
 
 export function getMobileThemeVariables(
-  themeId: SharedMobileThemeId,
+  themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
@@ -435,7 +454,7 @@ export function getMobileThemePreviewColors(
 ): ThemePreviewColors {
   if (themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you")
     return STANDARD_THEME_PREVIEW_COLORS[appearance];
-  const theme = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ?? T3_CHAT_THEME;
+  const theme = findMobileThemeDefinition(themeId) ?? T3_CHAT_THEME;
   const colors = getThemeColorsForAppearance(theme, appearance) ?? theme.colors;
   return {
     canvas: themeColorToNativeColor(colors.canvas),

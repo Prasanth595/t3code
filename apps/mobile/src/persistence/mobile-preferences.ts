@@ -17,7 +17,13 @@ import {
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
-import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
+import {
+  isSelectableThemeId,
+  parseStoredCustomThemes,
+  themeDefinitionToFile,
+  type ThemeFile,
+} from "../lib/customThemes";
+import { type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
 import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-storage";
@@ -60,6 +66,8 @@ export interface Preferences {
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
   readonly themeMode?: MobileThemeMode;
+  /** Imported palettes, stored as theme files so they round-trip with the web format. */
+  readonly customThemes?: ReadonlyArray<ThemeFile>;
   readonly baseFontSize?: number;
   readonly terminalFontSize?: number | null;
   readonly markdownFontSize?: number;
@@ -143,6 +151,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
     themeMode?: MobileThemeMode;
+    customThemes?: ReadonlyArray<ThemeFile>;
     baseFontSize?: number;
     terminalFontSize?: number | null;
     markdownFontSize?: number;
@@ -180,22 +189,18 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   if (typeof parsed.liveActivitiesEnabled === "boolean") {
     preferences.liveActivitiesEnabled = parsed.liveActivitiesEnabled;
   }
-  if (
-    typeof parsed.themeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId)
-  ) {
+  // Custom ids are kept only while their theme is still stored, so a
+  // selection never outlives the palette it names. Built-in ids pass through.
+  const storedCustomThemes = Array.isArray(parsed.customThemes)
+    ? parseStoredCustomThemes(parsed.customThemes)
+    : [];
+  if (isSelectableThemeId(parsed.themeId, storedCustomThemes)) {
     preferences.themeId = parsed.themeId as MobileThemeId;
   }
-  if (
-    typeof parsed.lightThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId)
-  ) {
+  if (isSelectableThemeId(parsed.lightThemeId, storedCustomThemes)) {
     preferences.lightThemeId = parsed.lightThemeId as MobileThemeId;
   }
-  if (
-    typeof parsed.darkThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId)
-  ) {
+  if (isSelectableThemeId(parsed.darkThemeId, storedCustomThemes)) {
     preferences.darkThemeId = parsed.darkThemeId as MobileThemeId;
   }
   if (
@@ -204,6 +209,13 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     parsed.themeMode === "dark"
   ) {
     preferences.themeMode = parsed.themeMode;
+  }
+  if (Array.isArray(parsed.customThemes)) {
+    // Stored themes are re-parsed here, so an entry written by a different build
+    // is skipped instead of failing the whole preferences load.
+    preferences.customThemes = parseStoredCustomThemes(parsed.customThemes).map(
+      themeDefinitionToFile,
+    );
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {

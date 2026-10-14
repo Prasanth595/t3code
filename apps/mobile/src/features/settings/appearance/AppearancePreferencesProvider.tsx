@@ -29,8 +29,17 @@ import { materialYouPaletteToMobileThemeVariables } from "../../../lib/materialY
 import { getMobileThemeRuntimeVariables } from "../../../lib/mobileThemeVariables";
 import type { MobileThemeVariables } from "../../../lib/mobileTheme";
 import {
+  isBuiltInThemeId,
+  parseStoredCustomThemes,
+  parseThemeFile,
+  setCustomMobileThemes,
+  themeDefinitionToFile,
+  type ThemeFile,
+} from "../../../lib/customThemes";
+import {
   createMobileThemePairPatch,
   createMobileThemeSelectionPatch,
+  DEFAULT_MOBILE_THEME_ID,
   normalizeMobileThemeMode,
   resolveMobileThemeIds,
   type MobileThemeAppearance,
@@ -65,6 +74,10 @@ interface AppearancePreferencesContextValue {
   ) => void;
   readonly setThemeIdForBothAppearances: (value: MobileThemeId) => void;
   readonly setThemeMode: (value: MobileThemeMode) => void;
+  /** Parses a theme file, installs it, and returns its id. Throws with a user-facing message. */
+  readonly importCustomTheme: (file: unknown) => MobileThemeId;
+  /** Removes an installed custom theme and clears any appearance that selected it. */
+  readonly removeCustomTheme: (themeId: MobileThemeId) => void;
   readonly setBaseFontSize: (value: number) => void;
   /** Pass null to clear the override and follow the base font size. */
   readonly setTerminalFontSize: (value: number | null) => void;
@@ -82,6 +95,13 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
     : null;
+  const customThemes = useMemo(
+    () => parseStoredCustomThemes(storedPreferences?.customThemes),
+    [storedPreferences?.customThemes],
+  );
+  // Palette lookups read the registry during render, so it must hold the
+  // installed themes before ids resolve. Assigning it here is idempotent.
+  setCustomMobileThemes(customThemes);
   const preferences = useMemo(
     () => resolveAppearancePreferences(storedPreferences),
     [storedPreferences],
@@ -213,6 +233,43 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [updateThemePreferences],
   );
 
+  const importCustomTheme = useCallback(
+    (file: unknown): MobileThemeId => {
+      const theme = parseThemeFile(file);
+      if (isBuiltInThemeId(theme.id)) {
+        throw new Error(`A built-in theme already uses the id "${theme.id}".`);
+      }
+      if (customThemes.some((existing) => existing.id === theme.id)) {
+        throw new Error(`A theme named "${theme.label}" is already installed.`);
+      }
+      const nextThemes = [...customThemes, theme];
+      const nextFiles: ReadonlyArray<ThemeFile> = nextThemes.map(themeDefinitionToFile);
+      updateThemePreferences({ customThemes: nextFiles });
+      return theme.id;
+    },
+    [customThemes, updateThemePreferences],
+  );
+
+  const removeCustomTheme = useCallback(
+    (themeId: MobileThemeId) => {
+      const remaining = customThemes.filter((theme) => theme.id !== themeId);
+      const selection = resolveMobileThemeIds(storedPreferences ?? {});
+      // An appearance that selected the removed theme falls back to the default palette.
+      const patch = {
+        customThemes: remaining.map(themeDefinitionToFile),
+        lightThemeId: selection.light === themeId ? DEFAULT_MOBILE_THEME_ID : selection.light,
+        darkThemeId: selection.dark === themeId ? DEFAULT_MOBILE_THEME_ID : selection.dark,
+        themeId:
+          selection[themeAppearance] === themeId
+            ? DEFAULT_MOBILE_THEME_ID
+            : selection[themeAppearance],
+      };
+      selectedThemeIdsRef.current = resolveMobileThemeIds(patch);
+      updateThemePreferences(patch);
+    },
+    [customThemes, storedPreferences, themeAppearance, updateThemePreferences],
+  );
+
   const setThemeMode = useCallback(
     (value: MobileThemeMode) => {
       const current = appliedRuntimeStateRef.current ?? runtimeState;
@@ -288,6 +345,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
+      importCustomTheme,
+      removeCustomTheme,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,
@@ -307,6 +366,8 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       setThemeIdForAppearance,
       setThemeIdForBothAppearances,
       setThemeMode,
+      importCustomTheme,
+      removeCustomTheme,
       setBaseFontSize,
       setTerminalFontSize,
       setCodeFontSize,

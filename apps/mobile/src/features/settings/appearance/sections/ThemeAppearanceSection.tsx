@@ -1,5 +1,7 @@
-import { memo, useId } from "react";
-import { Pressable, View } from "react-native";
+import { memo, useCallback, useId, useRef, useState } from "react";
+import { Alert, Pressable, View } from "react-native";
+import { File } from "expo-file-system";
+import { getDocumentAsync } from "expo-document-picker";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
 import { ScopedTheme, ScopedVariables } from "uniwind";
 
@@ -8,8 +10,8 @@ import { mixThemePreviewBase, THEME_PREVIEW_RENDER_SPECS } from "@t3tools/shared
 import { SymbolView } from "../../../../components/AppSymbol";
 import { AppText as Text } from "../../../../components/AppText";
 import {
+  getMobileThemeOptions,
   getMobileThemePreviewColors,
-  MOBILE_THEME_OPTIONS,
   type MobileThemeAppearance,
   type MobileThemeId,
   type MobileThemeIds,
@@ -119,6 +121,7 @@ function ThemeCard(props: {
   readonly label: string;
   readonly lightSelected: boolean;
   readonly onSelectBoth: () => void;
+  readonly onRemove?: () => void;
   readonly onSelect: (appearance: MobileThemeAppearance) => void;
   readonly themeId: MobileThemeId;
 }) {
@@ -152,6 +155,25 @@ function ThemeCard(props: {
 
   return (
     <View className="min-w-36 flex-1 basis-[47%] gap-3 rounded-[24px] border border-border bg-grouped-card px-2 py-4">
+      {props.onRemove ? (
+        <Pressable
+          accessibilityHint="Deletes this imported theme"
+          accessibilityLabel={`Remove ${props.label} theme`}
+          accessibilityRole="button"
+          className="absolute right-2 top-2 z-10 size-8 items-center justify-center rounded-full active:bg-subtle"
+          disabled={props.disabled}
+          hitSlop={8}
+          onPress={props.onRemove}
+        >
+          <SymbolView
+            name="xmark"
+            size={12}
+            tintColorClassName="accent-icon"
+            type="monochrome"
+            weight="medium"
+          />
+        </Pressable>
+      ) : null}
       <Pressable
         accessibilityHint="Sets both light and dark appearances"
         accessibilityLabel={`${props.label} theme`}
@@ -286,7 +308,9 @@ function SectionLabel({ children }: { readonly children: string }) {
 
 export function ThemeAppearanceSection() {
   const {
+    importCustomTheme,
     isReady,
+    removeCustomTheme,
     setThemeIdForAppearance,
     setThemeIdForBothAppearances,
     setThemeMode,
@@ -294,6 +318,48 @@ export function ThemeAppearanceSection() {
     themeMode,
     systemColorsAvailable,
   } = useAppearancePreferences();
+  const [importing, setImporting] = useState(false);
+  // A ref, not state, so a second tap before the re-render cannot start a second import.
+  const importInFlight = useRef(false);
+
+  const importTheme = useCallback(async () => {
+    if (importInFlight.current) return;
+    importInFlight.current = true;
+    setImporting(true);
+    try {
+      const result = await getDocumentAsync({
+        type: ["application/json", "text/plain"],
+        copyToCacheDirectory: true,
+      });
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset) return;
+      const text = await new File(asset.uri).text();
+      importCustomTheme(JSON.parse(text));
+    } catch (error) {
+      Alert.alert(
+        "Could not import theme",
+        error instanceof SyntaxError
+          ? "That file is not valid JSON."
+          : error instanceof Error
+            ? error.message
+            : "The theme could not be imported.",
+      );
+    } finally {
+      importInFlight.current = false;
+      setImporting(false);
+    }
+  }, [importCustomTheme]);
+
+  const confirmRemove = useCallback(
+    (themeId: MobileThemeId, label: string) => {
+      Alert.alert("Remove theme?", `"${label}" will be deleted from this device.`, [
+        { text: "Cancel", style: "cancel" },
+        { text: "Remove", style: "destructive", onPress: () => removeCustomTheme(themeId) },
+      ]);
+    },
+    [removeCustomTheme],
+  );
 
   return (
     <View className="gap-6">
@@ -317,20 +383,40 @@ export function ThemeAppearanceSection() {
       <View className="gap-3">
         <SectionLabel>Themes</SectionLabel>
         <View className="flex-row flex-wrap gap-3">
-          {MOBILE_THEME_OPTIONS.filter(
-            (theme) => theme.id !== "material-you" || systemColorsAvailable,
-          ).map((theme) => (
-            <ThemeCard
-              disabled={!isReady}
-              key={theme.id}
-              label={theme.label}
-              darkSelected={theme.id === themeIds.dark}
-              lightSelected={theme.id === themeIds.light}
-              onSelect={(appearance) => setThemeIdForAppearance(appearance, theme.id)}
-              onSelectBoth={() => setThemeIdForBothAppearances(theme.id)}
-              themeId={theme.id}
+          {getMobileThemeOptions()
+            .filter((theme) => theme.id !== "material-you" || systemColorsAvailable)
+            .map((theme) => (
+              <ThemeCard
+                disabled={!isReady}
+                key={theme.id}
+                label={theme.label}
+                darkSelected={theme.id === themeIds.dark}
+                lightSelected={theme.id === themeIds.light}
+                onRemove={theme.custom ? () => confirmRemove(theme.id, theme.label) : undefined}
+                onSelect={(appearance) => setThemeIdForAppearance(appearance, theme.id)}
+                onSelectBoth={() => setThemeIdForBothAppearances(theme.id)}
+                themeId={theme.id}
+              />
+            ))}
+          <Pressable
+            accessibilityHint="Chooses a JSON theme file to add to this device"
+            accessibilityLabel="Import theme"
+            accessibilityRole="button"
+            className="min-w-36 flex-1 basis-[47%] items-center justify-center gap-2 rounded-[24px] border border-dashed border-border bg-grouped-card px-2 py-4 active:bg-subtle"
+            disabled={!isReady || importing}
+            onPress={importTheme}
+          >
+            <SymbolView
+              name="plus"
+              size={20}
+              tintColorClassName="accent-icon"
+              type="monochrome"
+              weight="medium"
             />
-          ))}
+            <Text className="text-center text-base font-t3-medium text-foreground-muted">
+              {importing ? "Importing…" : "Import theme"}
+            </Text>
+          </Pressable>
         </View>
       </View>
     </View>

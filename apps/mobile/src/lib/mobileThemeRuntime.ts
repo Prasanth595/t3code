@@ -38,13 +38,24 @@ const UNIWIND_THEME_NAMES: ReadonlyArray<"light" | "dark" | MobileUniwindThemeNa
   ]),
 ];
 
+/**
+ * Custom themes have no generated Uniwind variant, so they scope the base
+ * appearance theme and carry their palette as runtime variables. See
+ * `getMobileThemeRuntimeVariables`.
+ */
 export function getMobileUniwindThemeName(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
 ): MobileUniwindThemeName {
-  return themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you"
+  return themeId === DEFAULT_MOBILE_THEME_ID ||
+    themeId === "material-you" ||
+    !isBuiltInUniwindThemeId(themeId)
     ? appearance
     : `${themeId}-${appearance}`;
+}
+
+function isBuiltInUniwindThemeId(themeId: string): themeId is BuiltInThemeId {
+  return (BUILT_IN_THEME_IDS as readonly string[]).includes(themeId);
 }
 
 /**
