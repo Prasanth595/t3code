@@ -237,6 +237,7 @@ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
+import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -3232,6 +3233,7 @@ export const layer = Layer.unwrap(
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
         const sessions = yield* SessionStore.SessionStore;
         const analytics = yield* AnalyticsService.AnalyticsService;
+        const machineMapState = yield* Effect.serviceOption(MachineMapState.MachineMapState);
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request).pipe(
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
@@ -3314,6 +3316,15 @@ export const layer = Layer.unwrap(
                   SessionCredentialVerificationError: (error) =>
                     failEnvironmentInternal("internal_error", error),
                 }),
+              ),
+            ).pipe(
+              // Fork: MM-718. The pause closes the socket at once; the upgrade then refuses it.
+              Effect.raceFirst(
+                Option.isNone(machineMapState)
+                  ? Effect.never
+                  : machineMapState.value
+                      .awaitLockFor(session.subject)
+                      .pipe(Effect.as(HttpServerResponse.empty())),
               ),
             ),
           () => sessions.markDisconnected(session.sessionId),
