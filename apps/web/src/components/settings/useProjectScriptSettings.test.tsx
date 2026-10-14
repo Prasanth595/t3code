@@ -66,6 +66,8 @@ const input = (keybinding: string | null): NewProjectScriptInput => ({
   keybinding,
   previewUrl: null,
   autoOpenPreview: false,
+  previewOverlay: false,
+  runInBackground: false,
 });
 
 type ProjectScriptSettings = ReturnType<typeof useProjectScriptSettings>;
