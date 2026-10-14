@@ -66,6 +66,14 @@ therefore means the intent committed, not that the provider, checkpoint, or othe
 finished. Keep external I/O out of command decisions and the database transaction. Effects tied to
 a lost provider process cannot simply replay; recovery retires them before admitting new work.
 
+The log does not keep every intermediate state. Node, message, and turn-item updates carry the
+entity's full state, and for those written without a command only each entity's first and latest
+event survive; [EventSnapshotRetirement](../../apps/server/src/orchestration-v2/EventSnapshotRetirement.ts)
+deletes the rest as new ones are stored. Anything that reads a range of events must treat them as
+replacements and tolerate gaps in sequences and stream versions. The first event stays because
+clients drop an unknown turn item that arrives after a later one. Subagent items stay whole because
+later rows point at the row holding the prompt.
+
 Persisted events must remain decodable on replay. Changing a schema affects old environments at
 startup as well as live RPC traffic. Compatibility work must account for stored history, not just
 what the newest client sends.

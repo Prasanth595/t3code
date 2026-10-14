@@ -30,6 +30,7 @@ import { projectDomainEventForWire } from "./WireProjection.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
+import { retireSupersededSnapshots } from "./EventSnapshotRetirement.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -351,6 +352,9 @@ const layerBase: Layer.Layer<
         yield* Effect.forEach(storedEvents, (stored) => projectionStore.apply(stored.event), {
           concurrency: 1,
         });
+        yield* retireSupersededSnapshots(storedEvents).pipe(
+          Effect.provideService(SqlClient.SqlClient, sql),
+        );
         const sequence = storedEvents.at(-1)?.sequence;
         if (sequence !== undefined) {
           const now = DateTime.formatIso(yield* DateTime.now);

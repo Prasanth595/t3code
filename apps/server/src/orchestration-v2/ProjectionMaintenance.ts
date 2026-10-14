@@ -51,10 +51,6 @@ type ProjectionMetadataRow = {
   readonly last_sequence: number;
 };
 
-const encodeEntityKey = Schema.encodeSync(
-  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.String, Schema.NullOr(Schema.String)])),
-);
-
 export const layer: Layer.Layer<
   ProjectionMaintenanceV2,
   never,
@@ -230,14 +226,14 @@ export const layer: Layer.Layer<
     ];
 
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
-    // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
     const COMPACTION_PAGE_SIZE = 500;
 
     /**
-     * Scan newest first to retain the newest state for each entity.
+     * Scan newest first to retain the newest state for each thread.
      * Page every event, including non-candidates: filtering before LIMIT could
      * still scan the entire history when superseded events are sparse.
-     * turn-item.updated stays intact because replay assigns positions on first write.
+     * Node, message and turn-item snapshots are retired as they are written
+     * (EventSnapshotRetirement.ts), which keeps each entity's first snapshot too.
      */
     const compactEventStore = Effect.gen(function* () {
       const bounds = yield* sql<{
@@ -251,7 +247,6 @@ export const layer: Layer.Layer<
       let throughSequence = bounds[0]?.event_sequence ?? 0;
       let throughReceiptRowId = bounds[0]?.receipt_row_id ?? 0;
       const retainedThreadIds = new Set<string>();
-      const retainedEntityKeys = new Set<string>();
       let deletedEventCount = 0;
       let deletedReceiptCount = 0;
 
@@ -262,7 +257,6 @@ export const layer: Layer.Layer<
           readonly aggregate_kind: string;
           readonly stream_id: string;
           readonly event_type: string;
-          readonly entity_id: string | null;
           readonly imported_legacy_thread: number;
         }>`
           SELECT
@@ -271,12 +265,6 @@ export const layer: Layer.Layer<
             event.aggregate_kind,
             event.stream_id,
             event.event_type,
-            CASE
-              WHEN event.application_event_version = 2
-                AND event.event_type IN ('message.updated', 'node.updated')
-              THEN json_extract(event.payload_json, '$.id')
-              ELSE NULL
-            END AS entity_id,
             CASE
               WHEN event.application_event_version = 1 AND event.aggregate_kind = 'thread'
               THEN EXISTS (
@@ -295,18 +283,13 @@ export const layer: Layer.Layer<
         for (const row of rows) {
           if (row.imported_legacy_thread === 1) {
             obsolete.push(row.sequence);
-          } else if (row.application_event_version === 2) {
-            if (
-              row.aggregate_kind === "thread" &&
-              supersedableThreadEventTypes.has(row.event_type)
-            ) {
-              if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
-              else retainedThreadIds.add(row.stream_id);
-            } else if (row.event_type === "message.updated" || row.event_type === "node.updated") {
-              const key = encodeEntityKey([row.event_type, row.stream_id, row.entity_id]);
-              if (retainedEntityKeys.has(key)) obsolete.push(row.sequence);
-              else retainedEntityKeys.add(key);
-            }
+          } else if (
+            row.application_event_version === 2 &&
+            row.aggregate_kind === "thread" &&
+            supersedableThreadEventTypes.has(row.event_type)
+          ) {
+            if (retainedThreadIds.has(row.stream_id)) obsolete.push(row.sequence);
+            else retainedThreadIds.add(row.stream_id);
           }
         }
         // Both discovery and deletion use the synchronous connection. Yield even
