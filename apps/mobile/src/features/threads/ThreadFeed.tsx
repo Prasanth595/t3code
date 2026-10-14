@@ -2160,9 +2160,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const linkedMessageId = props.linkedMessageId ?? null;
   const onLinkedMessageHandled = props.onLinkedMessageHandled;
   const handledLinkedMessageIdRef = useRef<string | null>(null);
-  // The feed a load through the linked message started from. The message is missing once a
-  // finished load leaves the feed unchanged.
+  // The feed a load through the linked message started from, so a finished load that left it
+  // unchanged is known. Keyed by message, so a newer link never reads an older link's load.
   const [linkedMessageLoad, setLinkedMessageLoad] = useState<{
+    readonly messageId: string;
     readonly feed: ReadonlyArray<ThreadFeedEntry>;
     readonly inFlight: boolean;
   } | null>(null);
@@ -2340,25 +2341,25 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           )
         : null;
     const runId = foldRunId !== null && !expandedTurnIds.has(foldRunId) ? foldRunId : null;
+    const ownLoad = linkedMessageLoad?.messageId === linkedMessageId ? linkedMessageLoad : null;
     const step = resolveLinkedMessageStep({
       presented: index >= 0,
       inFeed,
       foldedRunId: runId,
       synced: props.threadSynced ?? true,
-      historyLoading:
-        props.historyControls?.loading === true || linkedMessageLoad?.inFlight === true,
+      historyLoading: props.historyControls?.loading === true || ownLoad?.inFlight === true,
       // An error from before this link's own load is not about the linked message.
-      historyError: linkedMessageLoad === null ? null : (props.historyControls?.error ?? null),
+      historyError: ownLoad === null ? null : (props.historyControls?.error ?? null),
       hasMoreHistory: props.historyControls?.hasMoreHistory === true,
-      lastLoadChangedNothing: linkedMessageLoad?.feed === props.feed,
+      lastLoadChangedNothing: ownLoad?.feed === props.feed,
     });
     if (step === "wait") return;
     if (step === "load") {
-      const load = { feed: props.feed, inFlight: true };
+      const load = { messageId: linkedMessageId, feed: props.feed, inFlight: true };
       setLinkedMessageLoad(load);
       void Promise.resolve(props.historyControls?.onLoadEarlier(linkedMessageId)).finally(() =>
         setLinkedMessageLoad((current) =>
-          current === load ? { feed: load.feed, inFlight: false } : current,
+          current === load ? { ...load, inFlight: false } : current,
         ),
       );
       return;
