@@ -582,7 +582,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
         ? ["Auto-settle inactive threads"]
         : []),
-      ...(settings.sidebarAutoSettleScope !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope
+      ...(settings.sidebarAutoSettleKeepPullRequests !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests
         ? ["Keep threads with a PR"]
         : []),
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
@@ -711,7 +712,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
-      settings.sidebarAutoSettleScope,
+      settings.sidebarAutoSettleKeepPullRequests,
       settings.sidebarAutoSettleOnMerge,
       settings.autoResumeLimitedThreads,
       settings.snoozeLimitedThreads,
@@ -819,7 +820,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
-      sidebarAutoSettleScope: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleScope,
+      sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
@@ -2489,15 +2490,15 @@ export function GeneralSettingsPanel() {
             {settings.sidebarAutoSettleAfterDays !== null && supportsAutoSettlementScope ? (
               <SettingsRow
                 serverScoped
-                settingKeys={["sidebarAutoSettleScope"]}
+                settingKeys={["sidebarAutoSettleKeepPullRequests"]}
                 title="Keep threads with a PR"
                 description="Inactivity does not settle threads with a pull request. Merge and close still do."
                 control={
                   <ScopedSwitch
-                    settingKeys={["sidebarAutoSettleScope"]}
-                    checked={settings.sidebarAutoSettleScope === "without-pr"}
+                    settingKeys={["sidebarAutoSettleKeepPullRequests"]}
+                    checked={settings.sidebarAutoSettleKeepPullRequests}
                     onCheckedChange={(checked) =>
-                      updateSettings({ sidebarAutoSettleScope: checked ? "without-pr" : "all" })
+                      updateSettings({ sidebarAutoSettleKeepPullRequests: checked })
                     }
                     aria-label="Keep threads with a PR"
                   />

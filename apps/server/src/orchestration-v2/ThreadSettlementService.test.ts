@@ -251,7 +251,7 @@ describe("threadHasQueuedTurnStart", () => {
 });
 
 describe("resolveAutoSettlementAt", () => {
-  it("skips threads with a PR for inactivity only under the without-pr scope", () => {
+  it("keeps threads with a PR from inactivity settlement only when asked", () => {
     const input = {
       thread: shell({
         latestUserMessageAt: at(-4 * DAY_MS),
@@ -266,11 +266,14 @@ describe("resolveAutoSettlementAt", () => {
       nowMs: NOW_MS,
       autoSettleAfterDays: 3,
       autoSettleOnMerge: true,
-      autoSettleScope: "without-pr" as const,
+      autoSettleKeepPullRequests: true,
     };
     expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
     expect(
-      ThreadSettlementService.resolveAutoSettlementAt({ ...input, autoSettleScope: "all" }),
+      ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
+        autoSettleKeepPullRequests: false,
+      }),
     ).toEqual(at(-4 * DAY_MS));
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
@@ -723,52 +726,6 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
-  it.effect("keeps saved and not-yet-synced PRs until the scope changes back", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(NOW));
-        const fixture = yield* makeHarness({
-          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleScope: "without-pr" },
-          snapshot: makeSnapshot([
-            makeThread("open-linked", {
-              linkedPullRequest: {
-                projectId: PROJECT_ID,
-                repository: "owner/repository",
-                number: 42,
-                url: "https://example.test/owner/repository/pull/42",
-              },
-            }),
-            makeThread("no-pr-branch", { branch: "unlinked" }),
-            makeThread("unsynced-branch", { branch: "unsynced" }),
-            makeThread("exploration"),
-          ]),
-          pullRequestSummary: (reference) =>
-            Effect.succeed(makePullRequestSummary({ ...reference, state: "open" })),
-          // The projection has no pull request for this branch yet; only the lookup knows.
-          branchPullRequest: ({ branch }) =>
-            Effect.succeed(branch === "unsynced" ? makeBranchPullRequest("open") : null),
-        });
-        yield* Effect.gen(function* () {
-          const reactor = yield* ThreadSettlementService.ThreadSettlementServiceV2;
-          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
-          const settled = Effect.map(Ref.get(fixture.commands), (commands) =>
-            [...new Set(commands.map(({ threadId }) => threadId))].sort(),
-          );
-          assert.deepStrictEqual(yield* settled, ["exploration", "no-pr-branch"]);
-          yield* fixture.updateSettings({ sidebarAutoSettleScope: "all" });
-          yield* Queue.take(fixture.snapshotReads);
-          yield* reactor.drain;
-          assert.deepStrictEqual(yield* settled, [
-            "exploration",
-            "no-pr-branch",
-            "open-linked",
-            "unsynced-branch",
-          ]);
-        }).pipe(Effect.provide(fixture.layer));
-      }),
-    ),
-  );
-
   it.effect("settles a merged pull request stored only in the thread links", () =>
     Effect.scoped(
       Effect.gen(function* () {
