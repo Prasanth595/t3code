@@ -132,6 +132,8 @@ export interface CanvasBundleInput {
   readonly stamp: ArtifactStamp;
   /** Original spec, tsx, or page file. Copied under `source/` as a regular file. */
   readonly sourceFile: { readonly name: string; readonly bytes: Buffer };
+  /** Optional `stamp.json` `linked` value. Omitted when unset. */
+  readonly linked?: string;
 }
 
 export interface CanvasManifest {
@@ -165,6 +167,26 @@ export function writeCanvasBundle(input: CanvasBundleInput): CanvasManifest {
   const sourceHash = createHash("sha256").update(input.sourceFile.bytes).digest("hex");
   const html = stripNetworkUrls(withCanvasFrame(withStamp(input.html, stamp), background));
   const sha256 = createHash("sha256").update(html).digest("hex");
+  const stampFile: {
+    components: string;
+    compiler: string;
+    lane: ArtifactStamp["lane"];
+    theme: string;
+    at: string;
+    linked?: string;
+  } = {
+    components: stamp.components,
+    compiler: stamp.compiler,
+    lane: stamp.lane,
+    theme: stamp.theme,
+    at,
+  };
+  if (input.linked) stampFile.linked = input.linked;
+  const sourceMeta: { kind: ArtifactStamp["lane"]; file: string; theme?: string } = {
+    kind: stamp.lane,
+    file: sourceName,
+  };
+  if (stamp.theme) sourceMeta.theme = stamp.theme;
   const manifest: CanvasManifest = {
     format: CANVAS_FORMAT,
     version: 1,
@@ -182,11 +204,11 @@ export function writeCanvasBundle(input: CanvasBundleInput): CanvasManifest {
   };
   NodeFs.mkdirSync(outDir, { recursive: true });
   writeRegular(NodePath.join(outDir, "index.html"), html);
-  writeRegular(NodePath.join(outDir, "stamp.json"), `${JSON.stringify(stamp, null, 2)}\n`);
+  writeRegular(NodePath.join(outDir, "stamp.json"), `${JSON.stringify(stampFile, null, 2)}\n`);
   writeRegular(NodePath.join(outDir, "source", sourceName), input.sourceFile.bytes);
   writeRegular(
     NodePath.join(outDir, "source", "meta.json"),
-    `${JSON.stringify({ lane: stamp.lane, theme: stamp.theme, size: manifest.size }, null, 2)}\n`,
+    `${JSON.stringify(sourceMeta, null, 2)}\n`,
   );
   writeRegular(NodePath.join(outDir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;

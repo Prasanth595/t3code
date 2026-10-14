@@ -11,7 +11,8 @@ import { MANIFEST_KEYS, stripNetworkUrls, writeCanvasBundle } from "../src/canva
 import { assertComponentsDir, componentsDir, pinnedCacheDir } from "../src/live/source.ts";
 import { readStamp, type ArtifactStamp } from "../src/stamp.ts";
 
-const MCP = "/Users/nofun/Documents/Codex/2026-10-13/canvas-design/wt/int2/mcp/nofun-canvas-mcp";
+const MCP =
+  "/Users/nofun/Documents/Codex/2026-10-13/canvas-design/wt/r3-c2/.muse/worktrees/20261014-bedf/mcp/nofun-canvas-mcp";
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const DASHBOARD = fileURLToPath(new URL("../examples/dashboard.spec.json", import.meta.url));
 
@@ -80,18 +81,20 @@ test("canvas bundle manifest keys, sha256, and stamp", () => {
   assert.equal(Function(`return ${literal}`)(), "http://www.w3.org/2000/svg");
   const stamp = readStamp(html.toString("utf8"));
   assert.deepEqual(stamp, STAMP);
-  assert.deepEqual(
-    JSON.parse(NodeFs.readFileSync(NodePath.join(out, "stamp.json"), "utf8")),
-    STAMP,
-  );
+  const stampFile = JSON.parse(
+    NodeFs.readFileSync(NodePath.join(out, "stamp.json"), "utf8"),
+  ) as Record<string, unknown>;
+  assert.deepEqual(Object.keys(stampFile), ["components", "compiler", "lane", "theme", "at"]);
+  assert.deepEqual(stampFile, STAMP);
   const meta = JSON.parse(
     NodeFs.readFileSync(NodePath.join(out, "source", "meta.json"), "utf8"),
-  ) as {
-    lane: string;
-    theme: string;
-    size: { width: number; height: number };
-  };
-  assert.deepEqual(meta, { lane: "spec", theme: "kobra", size: { width: 960, height: 600 } });
+  ) as { kind: string; file: string; theme?: string };
+  assert.deepEqual(Object.keys(meta), ["kind", "file", "theme"]);
+  assert.deepEqual(meta, { kind: "spec", file: "dashboard.spec.json", theme: "kobra" });
+  assert.equal(
+    NodeFs.readFileSync(NodePath.join(out, "source", meta.file), "utf8"),
+    source.toString("utf8"),
+  );
   assert.equal(
     createHash("sha256").update(source).digest("hex"),
     (written.source as { ref: string }).ref.split("@")[0],
@@ -101,7 +104,18 @@ test("canvas bundle manifest keys, sha256, and stamp", () => {
     [
       "-I",
       "-c",
-      "import sys; sys.path.insert(0, sys.argv[1]); import server; print(server.validate_bundle(sys.argv[2])[0]['name'])",
+      [
+        "import sys",
+        "from pathlib import Path",
+        "sys.path.insert(0, sys.argv[1])",
+        "import server",
+        "root = Path(sys.argv[2])",
+        "print(server.validate_bundle(sys.argv[2])[0]['name'])",
+        "kind, src, theme = server._read_source_meta(root)",
+        "stamp = server._read_stamp(root)",
+        "assert kind == 'spec' and src.name == 'dashboard.spec.json' and theme == 'kobra', (kind, src, theme)",
+        "assert set(stamp) == {'components', 'compiler', 'lane', 'theme', 'at'}, stamp",
+      ].join("\n"),
       MCP,
       out,
     ],

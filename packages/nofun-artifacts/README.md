@@ -35,9 +35,9 @@ The output directory is a Canvas bundle:
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `manifest.json`    | Bundle v1. `format` is `nofun-canvas-artifact-bundle`. `sha256` is the hex digest of `index.html`. `source.ref` is `<sha256 of the input file>@components=<commit>`.            |
 | `index.html`       | The page. Dark `color-scheme`. `http://` and `https://` are written as `\u002f` escapes so JavaScript still sees them (React's SVG namespace) and the Canvas MCP lint does not. |
-| `stamp.json`       | `components`, `compiler`, `lane`, `theme`, `at`. The same line is the `nofun-artifact` meta tag. `readStamp(html)` parses it.                                                   |
-| `source/<file>`    | The input file.                                                                                                                                                                 |
-| `source/meta.json` | `lane`, `theme`, `size`.                                                                                                                                                        |
+| `stamp.json`       | Exactly `components`, `compiler`, `lane`, `theme`, `at`, and `linked` only when set. The meta tag carries the same line without `linked`. `readStamp(html)` parses it.          |
+| `source/<file>`    | The input file. `source/meta.json` `file` is this name, relative to `source/`.                                                                                                  |
+| `source/meta.json` | `{kind: spec\|tsx\|page, file, theme?}`. `file` stays inside `source/` (no absolute path, no `..`).                                                                             |
 
 Compile failures exit 2 and print the message. The compiler allows a 24 MiB page; Canvas still
 rejects an entry over 2 MiB and a bundle over 20 MiB.
