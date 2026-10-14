@@ -14,10 +14,13 @@ import {
   MachineCommand,
   MachineDesiredState,
   MachineLevel,
+  MachineMapDocument,
+  MachinePresence,
   MapTime,
   PeerMachine,
   SettingValues,
 } from "./machineMap.ts";
+import { ResourcesOverview } from "./machineMapResources.ts";
 
 /**
  * - `off`: the `machineMap` setting is off.
@@ -120,6 +123,39 @@ export const MachineMapDesktopReport = Schema.Struct({
   clientSettings: Schema.optionalKey(SettingValues),
 });
 export type MachineMapDesktopReport = typeof MachineMapDesktopReport.Type;
+
+/** MM-1701: the part of a `machines_read` result that the Machines panel shows. */
+export const MachinesReadResult = Schema.TaggedStruct("read", {
+  map: MachineMapDocument,
+  presence: Schema.Record(Schema.String, MachinePresence),
+  commands: Schema.Array(MachineCommand),
+  resources: ResourcesOverview,
+});
+export type MachinesReadResult = typeof MachinesReadResult.Type;
+
+/**
+ * MM-1701: what the Machines panel gets. `unavailable` says why there is no map:
+ * - `off`: the `machineMap` setting is off or no machine token is saved.
+ * - `paused`: the emergency pause is on, and the portal refuses `machines_read` (MM-711).
+ * - `not-connected`, `timed-out`, `refused`: the portal call failed.
+ * - `unreadable`: the portal answered with a result that this server does not understand.
+ */
+export const MachineMapPanelState = Schema.Union([
+  MachinesReadResult,
+  Schema.TaggedStruct("unavailable", {
+    reason: Schema.Literals([
+      "off",
+      "paused",
+      "not-connected",
+      "timed-out",
+      "refused",
+      "unreadable",
+    ]),
+    /** A message safe to show. Never a secret. */
+    detail: Schema.String,
+  }),
+]);
+export type MachineMapPanelState = typeof MachineMapPanelState.Type;
 
 export class MachineMapRequestError extends Schema.TaggedError<MachineMapRequestError>()(
   "MachineMapRequestError",

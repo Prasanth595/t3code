@@ -78,6 +78,7 @@ import {
   MachineMapClientState,
   MachineMapDesktopReport,
   MachineMapJoinInput,
+  MachineMapPanelState,
   MachineMapRequestError,
 } from "./machineMapClient.ts";
 import {
@@ -611,6 +612,7 @@ export const WS_METHODS = {
   machineMapJoin: "machineMap.join",
   machineMapLeave: "machineMap.leave",
   machineMapReportDesktop: "machineMap.reportDesktop",
+  machineMapRead: "machineMap.read",
 } as const;
 
 const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
@@ -662,6 +664,13 @@ const WsMachineMapLeaveRpc = Rpc.make(WS_METHODS.machineMapLeave, {
 const WsMachineMapReportDesktopRpc = Rpc.make(WS_METHODS.machineMapReportDesktop, {
   payload: MachineMapDesktopReport,
   success: Schema.Struct({}),
+  error: machineMapError,
+});
+
+/** Fork: MM-1701. `machines_read` through the portal connection, for the Machines panel. */
+const WsMachineMapReadRpc = Rpc.make(WS_METHODS.machineMapRead, {
+  payload: Schema.Struct({}),
+  success: MachineMapPanelState,
   error: machineMapError,
 });
 
@@ -2157,4 +2166,5 @@ export const WsRpcGroup = RpcGroup.make(
   WsMachineMapJoinRpc,
   WsMachineMapLeaveRpc,
   WsMachineMapReportDesktopRpc,
+  WsMachineMapReadRpc,
 ).middleware(RpcScopeAuthorization);

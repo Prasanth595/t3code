@@ -238,7 +238,7 @@ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
-import { isLocalDesktopSubject } from "./fork/machineMap/machineAccess.ts";
+import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -553,6 +553,9 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
+// Fork: one handler object for every RPC is too deep a type for tsc, so fork RPCs added after
+// this point get their own handler layers in `layerWsRpc`.
+const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(WS_METHODS.machineMapRead);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -1208,7 +1211,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  ServerWsRpcGroup.toLayer(
+  ServerWsRpcGroupCore.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1843,7 +1846,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = ServerWsRpcGroup.of({
+      const handlers = ServerWsRpcGroupCore.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3172,6 +3175,26 @@ const layerWsRpc = (
       });
       return handlers;
     }),
+  ).pipe(
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.machineMapRead,
+        MachineMap.MachineMap.pipe(
+          Effect.map(
+            (machineMap) => () =>
+              // MM-1701: another machine reaches this server through an arrow, not a map role.
+              // It must not read the map through the map role of this machine.
+              isMachineSubject(currentSession.subject)
+                ? Effect.succeed({
+                    _tag: "unavailable" as const,
+                    reason: "refused" as const,
+                    detail: "Other machines read the map with their own map role.",
+                  })
+                : machineMap.readPanel,
+          ),
+        ),
+      ),
+    ),
   );
 
 // A defect in a handler's effect fails only its own request. RpcServer's default

@@ -33,6 +33,7 @@ import {
   FileDiff,
   Files,
   Globe2,
+  Network,
   Plus,
   TerminalSquare,
 } from "lucide-react";
@@ -142,6 +143,7 @@ interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  onAddMachines: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -149,6 +151,7 @@ interface RightPanelTabsProps {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
+  machinesAvailable: boolean;
   deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
@@ -177,6 +180,7 @@ const SURFACE_DISABLED_REASONS = {
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
+  machines: "Machines are only available from a thread.",
   device: "Devices are only available from a thread.",
 } as const;
 
@@ -200,6 +204,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
+  machines: "Available from a thread.",
   device: "Available from a thread.",
 } as const;
 
@@ -340,6 +345,7 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  onAddMachines: () => void;
   onAddDevice: () => void;
   browserAvailable: boolean;
   terminalAvailable: boolean;
@@ -347,6 +353,7 @@ function RightPanelEmptyState(props: {
   filesAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
+  machinesAvailable: boolean;
   deviceAvailable: boolean;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
@@ -400,6 +407,15 @@ function RightPanelEmptyState(props: {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
       onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Machines",
+      description: "The machine map: presence, work, access and tasks.",
+      icon: Network,
+      shortcut: "N",
+      available: props.machinesAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.machines,
+      onClick: props.onAddMachines,
     },
     {
       label: "Device",
@@ -618,6 +634,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return "Pull requests";
+    case "machines":
+      return "Machines";
     case "device":
       return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
@@ -701,6 +719,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "machines":
+      return <Network className="size-3 shrink-0" />;
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
@@ -982,6 +1002,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.pullRequestsAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
       onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Machines",
+      icon: Network,
+      shortcut: "N",
+      available: props.machinesAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.machines,
+      onClick: props.onAddMachines,
     },
     {
       label: "Device",
@@ -1482,6 +1510,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
+            onAddMachines={props.onAddMachines}
             onAddDevice={props.onAddDevice}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1489,6 +1518,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             filesAvailable={props.filesAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
+            machinesAvailable={props.machinesAvailable}
             deviceAvailable={props.deviceAvailable}
           />
         ) : (

@@ -1,5 +1,6 @@
 import {
   createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, type MachineMapClientState, WS_METHODS } from "@t3tools/contracts";
@@ -43,3 +44,14 @@ export function useMachineMapState(environmentId: EnvironmentId | null): {
   );
   return { state: query.data, error: query.error };
 }
+
+/**
+ * MM-1701: the map for the Machines panel. Each read is one portal call, so a result stays fresh
+ * for 15 seconds and drops soon after the panel closes.
+ */
+export const machinesRead = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
+  label: "environment-data:machine-map:read",
+  tag: WS_METHODS.machineMapRead,
+  staleTimeMs: 15_000,
+  idleTtlMs: 30_000,
+});

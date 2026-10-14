@@ -21,6 +21,8 @@ import {
   type MachineMapClientState,
   type MachineMapDesktopReport,
   type MachineMapJoinInput,
+  type MachineMapPanelState,
+  MachinesReadResult,
   MachineMapRequestError,
   type MachineStatus,
   type MachineToPortal,
@@ -108,6 +110,7 @@ const EnrollResponse = Schema.Struct({
 const EnrollRefusal = Schema.Struct({ error: Schema.optionalKey(Schema.String) });
 
 const decodePatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
+const decodeMachinesRead = Schema.decodeUnknownEffect(MachinesReadResult);
 const encodeServerSettings = Schema.encodeEffect(ServerSettingsSchema);
 
 export class MachineMapToolError extends Schema.TaggedError<MachineMapToolError>()(
@@ -158,6 +161,8 @@ export class MachineMap extends Context.Service<
       readonly threadId: string | null;
       readonly threadTitle: string | null;
     }) => Effect.Effect<unknown, MachineMapToolError>;
+    /** MM-1701: the map for the Machines panel, or why there is none. */
+    readonly readPanel: Effect.Effect<MachineMapPanelState>;
   }
 >()("t3/fork/machineMap/MachineMap") {}
 
@@ -918,6 +923,36 @@ const make = Effect.gen(function* () {
       return result.result;
     });
 
+  const unavailable = (
+    reason: Extract<MachineMapPanelState, { readonly _tag: "unavailable" }>["reason"],
+    detail: string,
+  ): MachineMapPanelState => ({ _tag: "unavailable", reason, detail });
+
+  const readPanel: MachineMap["Service"]["readPanel"] = Effect.gen(function* () {
+    const local = yield* state.snapshot;
+    if (!local.enabled || local.token === null) {
+      return unavailable("off", "This machine is not on the machine map. Join it in Settings.");
+    }
+    if (local.saved.desired?.paused === true) {
+      return unavailable("paused", "The emergency pause is on. Only the owner can resume it.");
+    }
+    return yield* callMapTool({
+      tool: "machines_read",
+      input: {},
+      threadId: null,
+      threadTitle: null,
+    }).pipe(
+      Effect.flatMap(decodeMachinesRead),
+      Effect.catchTags({
+        MachineMapToolError: (error) => Effect.succeed(unavailable(error.reason, error.detail)),
+        SchemaError: (error) =>
+          Effect.logWarning("Machine map read result is unreadable.", { cause: String(error) }).pipe(
+            Effect.as(unavailable("unreadable", "The portal answered with an unknown format.")),
+          ),
+      }),
+    );
+  });
+
   // --- Start ---------------------------------------------------------------------------------
 
   // MM-607: the saved desired state applies before the server accepts requests. The layer
@@ -941,7 +976,7 @@ const make = Effect.gen(function* () {
   yield* forkParked(watchLocalSettings);
   yield* forkParked(statusLoop);
 
-  return MachineMap.of({ join, leave, clientStates, reportDesktop, callMapTool });
+  return MachineMap.of({ join, leave, clientStates, reportDesktop, callMapTool, readPanel });
 });
 
 export const layer = Layer.effect(MachineMap, make);

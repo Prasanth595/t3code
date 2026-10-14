@@ -215,7 +215,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 ## 17. Machines panel in T3 Code
 
-- **MM-1701** T3 Code has a Machines panel, opened like the pull requests panel. It shows the machine map natively from the data of `machines_read`: the machines, their presence and work, the arrows, the queue and the tasks. It works in the web, desktop and mobile clients.
+- **MM-1701** T3 Code has a Machines panel, opened like the pull requests panel. It shows the machine map natively from the data of `machines_read`: the machines, their presence and work, the arrows, the queue and the tasks. It works in the web and desktop clients. It is read only and links to the portal. Without a portal connection or while paused, it says why it has no map.
 
 ## Later
 
@@ -225,3 +225,4 @@ These ideas are not in scope yet:
 - Scheduled presets, for example "at night, Windows cannot use Mac".
 - Push notifications from the portal to the phone: a machine went offline, a proposal waits, a command failed.
 - Groups on the map, for example "home" and "cloud".
+- The Machines panel (MM-1701) in the mobile app.
