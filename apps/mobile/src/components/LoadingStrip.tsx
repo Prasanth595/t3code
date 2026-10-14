@@ -56,8 +56,6 @@ function IndeterminateLoadingStrip() {
     };
   }, [travelProgress]);
 
-  // Keep the animated style transform-only. On Android a layout prop here would
-  // make every frame a shadow-tree commit instead of a synchronous UI update.
   const indicatorStyle = useAnimatedStyle(
     () => ({
       transform: [
@@ -65,16 +63,14 @@ function IndeterminateLoadingStrip() {
           translateX: (containerWidth + indicatorWidth) * travelProgress.value - indicatorWidth,
         },
       ],
+      width: indicatorWidth,
     }),
     [containerWidth, indicatorWidth],
   );
 
   return (
     <LoadingStripFrame onLayout={setContainerWidth}>
-      <Animated.View
-        className="h-full rounded-full bg-primary"
-        style={[{ width: indicatorWidth }, indicatorStyle]}
-      />
+      <Animated.View className="h-full rounded-full bg-primary" style={indicatorStyle} />
     </LoadingStripFrame>
   );
 }

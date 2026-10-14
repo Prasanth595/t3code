@@ -106,18 +106,9 @@ Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.
 ## Mobile looping animations
 
 `apps/mobile/package.json` sets Reanimated's `DISABLE_COMMIT_PAUSING_MECHANISM` so keyboard
-avoiding animates on iOS. Without commit pausing, an animation that commits to the shadow tree on
-every frame can starve React's commits: the JS thread keeps retrying the same commit, which looks
-like a frozen screen where back does nothing. Release builds retry forever; dev builds abort with
-`ShadowTree.cpp: assertion failed (attempts < 1024)`.
-
-`ANDROID_SYNCHRONOUSLY_UPDATE_UI_PROPS` keeps Android out of that loop by applying the props in
-Reanimated's `SynchronousPropNames.h` (transform, opacity, border radii, and numeric background,
-border, and tint colors) directly to views. Keep looping animations (`withRepeat`, shimmers,
-spinners) on those props. Any other animated prop on the same view, such as `width` or text
-`color`, sends that view's whole update back through the shadow tree every frame, so pass static
-sizes as a plain style.
-
-These flags are compiled into the native build. `apps/mobile/fingerprint.config.js` hashes them,
-because Expo's fingerprint otherwise ignores `package.json` beyond `scripts` and a flag change
-would ship as an OTA update that never reaches the binary.
+avoiding animates on iOS. Reanimated commits each animation frame to the shadow tree, and without
+commit pausing those commits can starve React's: the JS thread keeps retrying its commit, the
+screen freezes, and back does nothing. Release builds retry forever; dev builds abort with
+`ShadowTree.cpp: assertion failed (attempts < 1024)`. A looping animation that stays on screen
+while heavy content renders, such as the running-thread shimmer in `thread-work-log.tsx`, runs on
+React Native's `Animated` with `useNativeDriver: true`, which updates views without commits.
