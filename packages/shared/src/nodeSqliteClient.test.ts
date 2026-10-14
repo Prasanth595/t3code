@@ -153,17 +153,18 @@ it.effect("keeps large text and blob parameters off cached statements", () =>
 
     const small = "small";
     const queries = [
-      (value: string | Uint8Array) => sql`SELECT length(${value}) AS size`,
-      (value: string | Uint8Array) =>
+      (value: string | Uint8Array | ArrayBuffer) => sql`SELECT length(${value}) AS size`,
+      (value: string | Uint8Array | ArrayBuffer) =>
         sql.unsafe("SELECT length($value) AS size", [{ $value: value }]),
-      (value: string | Uint8Array) =>
+      (value: string | Uint8Array | ArrayBuffer) =>
         sql.unsafe("SELECT length($value) AS callable", [
           Object.assign(() => {}, { $value: value }),
         ]),
     ];
     const cached = new Set<NodeSqlite.StatementSync>();
     const large = new Set<NodeSqlite.StatementSync>();
-    for (const value of [small, largeText, new Uint8Array(64 * 1024 + 1), small]) {
+    const largeBlobs = [new Uint8Array(64 * 1024 + 1), new ArrayBuffer(64 * 1024 + 1)];
+    for (const value of [small, largeText, ...largeBlobs, small]) {
       const expected = typeof value === "string" ? value.length : value.byteLength;
       for (const query of queries) {
         assert.deepEqual((yield* query(value)).map(Object.values), [[expected]]);
@@ -177,7 +178,7 @@ it.effect("keeps large text and blob parameters off cached statements", () =>
     // Small parameters keep reusing the one cached statement for each query.
     assert.equal(cached.size, queries.length);
     // Each large execution gets a statement that nothing holds on to afterwards.
-    assert.equal(large.size, queries.length * 4);
+    assert.equal(large.size, queries.length * 6);
     assert.isTrue(cached.isDisjointFrom(large));
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
@@ -213,6 +214,16 @@ it.effect("leaves a parameter it cannot measure for the statement to handle", ()
     };
     const error = yield* sql.unsafe("SELECT length($value) AS size", [throwing]).pipe(Effect.flip);
     assert.equal(error.reason.operation, "execute");
+
+    // Only the statement reads a getter, so it runs once as it would natively.
+    let reads = 0;
+    const counting = {
+      get $value(): number {
+        return ++reads;
+      },
+    };
+    assert.deepEqual(yield* sql.unsafe("SELECT $value AS value", [counting]), [{ value: 1 }]);
+    assert.equal(reads, 1);
   }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
 );
 

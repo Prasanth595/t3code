@@ -5,6 +5,7 @@
  * @module SqliteClient
  */
 import * as NodeSqlite from "node:sqlite";
+import * as NodeUtil from "node:util";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as Cache from "effect/Cache";
@@ -131,15 +132,20 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
  * statement is bound again or finalized, and `node:sqlite` cannot clear them.
  * A cached statement would hold its last payload for as long as it stays
  * cached, so executions binding more than this many string code units and
- * blob bytes get a throwaway statement instead.
+ * blob bytes, or a named parameter behind a getter, get a throwaway statement
+ * instead.
  */
 const LARGE_BINDING_SIZE = 64 * 1024;
+
+// `node:sqlite` binds both buffer views and raw buffers as blobs.
+const isBlob = (value: unknown): value is ArrayBufferView | ArrayBufferLike =>
+  ArrayBuffer.isView(value) || NodeUtil.types.isAnyArrayBuffer(value);
 
 const bindingSize = (value: unknown): number => {
   if (typeof value === "string") {
     return value.length;
   }
-  return ArrayBuffer.isView(value) ? value.byteLength : 0;
+  return isBlob(value) ? value.byteLength : 0;
 };
 
 const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
@@ -149,11 +155,14 @@ const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
       if (
         (typeof param === "object" || typeof param === "function") &&
         param !== null &&
-        !ArrayBuffer.isView(param)
+        !isBlob(param)
       ) {
         // `node:sqlite` takes named parameters as one object, callable or not.
-        for (const value of Object.values(param)) {
-          size += bindingSize(value);
+        // Read data properties only: calling a getter here would run it twice.
+        for (const property of Object.values(Object.getOwnPropertyDescriptors(param))) {
+          if (!property.enumerable) continue;
+          if (!("value" in property)) return true;
+          size += bindingSize(property.value);
         }
       } else {
         size += bindingSize(param);
