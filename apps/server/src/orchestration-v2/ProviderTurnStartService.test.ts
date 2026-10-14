@@ -367,6 +367,7 @@ function makeLocalCommandHarness(input: {
   // A steering restart superseded this attempt but could not stop its provider turn.
   const interruptedAttemptId = RunAttemptId.make("attempt-native-account-command-interrupted");
   const interruptedProviderTurnId = ProviderTurnId.make("provider-turn-native-account-command");
+  const interruptedRootNodeId = NodeId.make("root-native-account-command-interrupted");
   const addInterruptedProviderTurn = () => {
     projection = {
       ...projection,
@@ -374,6 +375,7 @@ function makeLocalCommandHarness(input: {
         {
           ...projection.attempts[0]!,
           id: interruptedAttemptId,
+          rootNodeId: interruptedRootNodeId,
           reason: "initial",
           status: "superseded",
           startedAt: now,
@@ -389,7 +391,7 @@ function makeLocalCommandHarness(input: {
         {
           id: interruptedProviderTurnId,
           providerThreadId,
-          nodeId: rootNodeId,
+          nodeId: interruptedRootNodeId,
           runAttemptId: interruptedAttemptId,
           nativeTurnRef: null,
           ordinal: 1,
@@ -596,6 +598,7 @@ function makeLocalCommandHarness(input: {
     dropAttempts,
     addInterruptedProviderTurn,
     interruptedProviderTurnId,
+    interruptedRootNodeId,
     failStartingRun: (failedRunId: RunId = runId) =>
       Effect.gen(function* () {
         yield* (yield* ProviderTurnStart.ProviderTurnStartServiceV2).failStartingRun({
@@ -862,6 +865,9 @@ effectIt.effect("stops the provider turn a failed restart could not interrupt", 
       { id: harness.interruptedProviderTurnId, status: "interrupted" },
     ]);
     expect(projection.providerTurns[0]?.completedAt).not.toBeNull();
+    expect(harness.events.find((event) => event.type === "provider-turn.updated")?.nodeId).toBe(
+      harness.interruptedRootNodeId,
+    );
   }),
 );
 

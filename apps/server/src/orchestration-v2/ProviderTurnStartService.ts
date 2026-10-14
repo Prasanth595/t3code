@@ -378,17 +378,19 @@ export const layer: Layer.Layer<
                 ]),
             ...(input.interruptedProviderTurns ?? []).map((providerTurn) => ({
               type: "provider-turn.updated" as const,
+              // A restarted run's earlier turn belongs to the root it replaced.
+              nodeId: providerTurn.nodeId,
               payload: { ...providerTurn, status: "interrupted" as const, completedAt: now },
             })),
           ] as const;
           const events = yield* Effect.forEach(eventPayloads, (event) =>
             Effect.gen(function* () {
               return {
+                nodeId: rootNode.id,
                 ...event,
                 id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
                 threadId: projection.thread.id,
                 runId,
-                nodeId: rootNode.id,
                 providerInstanceId: input.providerInstanceId,
                 occurredAt: now,
               } satisfies OrchestrationV2DomainEvent;
