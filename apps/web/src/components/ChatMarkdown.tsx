@@ -106,7 +106,7 @@ import { parseComposerContextHref } from "@t3tools/shared/composerContextReferen
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
-import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import {
   artifactTemplateFromHastProperties,
   renderCodexFileCitationsAsMarkdown,
@@ -2090,8 +2090,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         return;
       }
 
-      // A remote file's host OS can differ from the browser's OS.
-      const clipboardPath = isWindowsAbsolutePath(targetPath) ? path.replaceAll("/", "\\") : path;
+      const clipboardPath = formatFilePathForClipboard(path, targetPath);
       void navigator.clipboard.writeText(clipboardPath).then(
         () => {
           toastManager.add({
