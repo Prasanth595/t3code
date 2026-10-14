@@ -12,6 +12,9 @@ export class DesktopShutdown extends Context.Service<
     readonly markComplete: Effect.Effect<void>;
     readonly awaitComplete: Effect.Effect<void>;
     readonly isComplete: Effect.Effect<boolean>;
+    readonly runUntilRequested: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A | void, E, R>;
   }
 >()("@t3tools/desktop/app/DesktopShutdown") {}
 
@@ -29,6 +32,7 @@ const make = Effect.gen(function* () {
     ),
     awaitComplete: Deferred.await(completed),
     isComplete: Ref.get(completedRef),
+    runUntilRequested: (effect) => Effect.raceFirst(effect, Deferred.await(requested)),
   });
 });
 

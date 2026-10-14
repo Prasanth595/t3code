@@ -373,7 +373,7 @@ const scopedProgram = Effect.scoped(
       ),
     );
 
-    yield* startup;
+    yield* shutdown.runUntilRequested(startup);
     yield* shutdown.awaitRequest;
   }),
 );

@@ -183,6 +183,7 @@ describe("DesktopLifecycle", () => {
         markComplete: Deferred.succeed(allowShutdown, undefined).pipe(Effect.asVoid),
         awaitComplete: Deferred.await(allowShutdown),
         isComplete: Deferred.isDone(allowShutdown),
+        runUntilRequested: (effect) => Effect.raceFirst(effect, Deferred.await(shutdownRequested)),
       });
 
       const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
