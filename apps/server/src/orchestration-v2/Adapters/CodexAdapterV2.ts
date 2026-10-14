@@ -1891,31 +1891,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           string,
           { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
         >();
-        const allowedForSession = (
+        /**
+         * The allowed kinds for an approval request's turn. Read it when the
+         * request arrives and add to that same set when the user answers, so a
+         * late answer from a turn whose mode has since ended is dropped.
+         */
+        const sessionAllowance = (
           nativeThreadId: string,
           context: ActiveCodexTurnContext,
-          kind: ProviderRequestKind,
-        ) => {
-          const allowed = sessionApprovals.get(nativeThreadId);
-          return (
-            allowed?.runtimeMode === context.input.runtimePolicy.runtimeMode &&
-            allowed.kinds.has(kind)
-          );
-        };
-        const rememberSessionApproval = (
-          nativeThreadId: string,
-          context: ActiveCodexTurnContext,
-          kind: ProviderRequestKind,
-          decision: ProviderApprovalDecision,
-        ) => {
-          if (decision !== "acceptForSession" && decision !== "acceptAlways") return;
+        ): Set<ProviderRequestKind> => {
           const runtimeMode = context.input.runtimePolicy.runtimeMode;
           const allowed = sessionApprovals.get(nativeThreadId);
-          if (allowed?.runtimeMode === runtimeMode) {
-            allowed.kinds.add(kind);
-          } else {
-            sessionApprovals.set(nativeThreadId, { runtimeMode, kinds: new Set([kind]) });
-          }
+          if (allowed?.runtimeMode === runtimeMode) return allowed.kinds;
+          if (allowed !== undefined) return new Set();
+          const kinds = new Set<ProviderRequestKind>();
+          sessionApprovals.set(nativeThreadId, { runtimeMode, kinds });
+          return kinds;
         };
         /**
          * Turn contexts retained past turn/completed while background command
@@ -5113,7 +5104,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            if (allowedForSession(payload.threadId, context, "command")) {
+            const allowance = sessionAllowance(payload.threadId, context);
+            if (allowance.has("command")) {
               return {
                 decision: "acceptForSession",
               } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
@@ -5166,7 +5158,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            rememberSessionApproval(payload.threadId, context, "command", resolved);
+            if (resolved === "acceptForSession" || resolved === "acceptAlways") {
+              allowance.add("command");
+            }
             return {
               decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
             } satisfies CodexSchema.CommandExecutionRequestApprovalResponse;
@@ -5182,7 +5176,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            if (allowedForSession(payload.threadId, context, "file-change")) {
+            const allowance = sessionAllowance(payload.threadId, context);
+            if (allowance.has("file-change")) {
               return {
                 decision: "acceptForSession",
               } satisfies CodexSchema.FileChangeRequestApprovalResponse;
@@ -5232,7 +5227,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            rememberSessionApproval(payload.threadId, context, "file-change", resolved);
+            if (resolved === "acceptForSession" || resolved === "acceptAlways") {
+              allowance.add("file-change");
+            }
             return {
               decision: resolved === "acceptAlways" ? "acceptForSession" : resolved,
             } satisfies CodexSchema.FileChangeRequestApprovalResponse;
@@ -5392,7 +5389,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            if (allowedForSession(payload.conversationId, context, "command")) {
+            const allowance = sessionAllowance(payload.conversationId, context);
+            if (allowance.has("command")) {
               return {
                 decision: "approved_for_session",
               } satisfies CodexSchema.ExecCommandApprovalResponse;
@@ -5443,7 +5441,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            rememberSessionApproval(payload.conversationId, context, "command", resolved);
+            if (resolved === "acceptForSession" || resolved === "acceptAlways") {
+              allowance.add("command");
+            }
             return {
               decision: approvalDecisionToLegacyReviewDecision(resolved),
             } satisfies CodexSchema.ExecCommandApprovalResponse;
@@ -5459,7 +5459,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 payload,
               );
             }
-            if (allowedForSession(payload.conversationId, context, "file-change")) {
+            const allowance = sessionAllowance(payload.conversationId, context);
+            if (allowance.has("file-change")) {
               return {
                 decision: "approved_for_session",
               } satisfies CodexSchema.ApplyPatchApprovalResponse;
@@ -5509,7 +5510,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 }),
               ),
             );
-            rememberSessionApproval(payload.conversationId, context, "file-change", resolved);
+            if (resolved === "acceptForSession" || resolved === "acceptAlways") {
+              allowance.add("file-change");
+            }
             return {
               decision: approvalDecisionToLegacyReviewDecision(resolved),
             } satisfies CodexSchema.ApplyPatchApprovalResponse;

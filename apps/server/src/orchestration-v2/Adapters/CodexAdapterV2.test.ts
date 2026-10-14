@@ -2882,6 +2882,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           },
         });
+        const [patchRequest, patchDecision] = approval({
+          id: 102,
+          turnId: turnIds[0]!,
+          kind: "fileChange",
+          itemId: "first-patch",
+          decision: "acceptForSession",
+        });
         const transcript = makeCodexReplayTranscript({
           scenario: "codex-session-approvals",
           entries: [
@@ -2898,6 +2905,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               itemId: "first-command",
               decision: "acceptForSession",
             }),
+            // Only commands were allowed, so a file change still asks. The user
+            // answers it after the turn ended and the mode changed.
+            patchRequest!,
             // Answered without asking: Codex alone would ask for every new command.
             ...approval({
               id: 101,
@@ -2906,24 +2916,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               itemId: "second-command",
               decision: "acceptForSession",
             }),
-            // Only commands were allowed, so a file change still asks.
-            ...approval({
-              id: 102,
-              turnId: turnIds[0]!,
-              kind: "fileChange",
-              itemId: "first-patch",
-              decision: "accept",
-            }),
             turnEvent("turn/completed", turnIds[0]!),
             ...startTurn(1),
+            patchDecision!,
             turnEvent("turn/completed", turnIds[1]!),
             ...startTurn(2),
-            // Back in the first mode, the allowance does not come back.
+            // Back in the first mode, neither allowance comes back.
             ...approval({
               id: 103,
               turnId: turnIds[2]!,
               kind: "commandExecution",
               itemId: "third-command",
+              decision: "accept",
+            }),
+            ...approval({
+              id: 104,
+              turnId: turnIds[2]!,
+              kind: "fileChange",
+              itemId: "second-patch",
               decision: "accept",
             }),
             turnEvent("turn/completed", turnIds[2]!),
@@ -2969,14 +2979,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
 
         yield* runTurn(0);
         yield* answer(1, "command", "acceptForSession");
-        yield* answer(2, "file-change", "accept");
+        yield* awaitUntil(() => requests().length === 2, "file change request");
         yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn 1");
         yield* runTurn(1);
+        yield* answer(2, "file-change", "acceptForSession");
         yield* awaitUntil(() => harness.terminalEvents().length === 2, "turn 2");
         yield* runTurn(2);
         yield* answer(3, "command", "accept");
+        yield* answer(4, "file-change", "accept");
         yield* awaitUntil(() => harness.terminalEvents().length === 3, "turn 3");
-        assert.lengthOf(requests(), 3);
+        assert.lengthOf(requests(), 4);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
