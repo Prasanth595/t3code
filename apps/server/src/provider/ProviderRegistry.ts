@@ -522,8 +522,9 @@ export const layer = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(
       cachedProviders.map((provider) => classifyCompatibility(provider, initialManifest)),
     );
+    // Running workspace scans by instance and cwd, completed when each scan settles.
     const workspaceRefreshesRef = yield* Ref.make<
-      ReadonlyMap<ProviderInstance, ReadonlySet<string>>
+      ReadonlyMap<ProviderInstance, ReadonlyMap<string, Deferred.Deferred<void>>>
     >(new Map());
     const maintenanceActionStatesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstanceId, { readonly update?: ServerProviderUpdateState | undefined }>
@@ -1075,15 +1076,22 @@ export const layer = Layer.effect(
       const scannedAt = DateTime.formatIso(now);
       const instance = yield* instanceRegistry.getInstance(input.instanceId);
       if (!instance?.snapshotForCwd) return providers;
-      const claimed = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
+      const settled = Deferred.makeUnsafe<void>();
+      const running = yield* Ref.modify(workspaceRefreshesRef, (refreshes) => {
         const current = refreshes.get(instance);
-        if (current?.has(input.cwd)) return [false, refreshes] as const;
+        const inFlight = current?.get(input.cwd);
+        if (inFlight) return [inFlight, refreshes] as const;
         const next = new Map(refreshes);
-        next.set(instance, new Set(current).add(input.cwd));
-        return [true, next] as const;
+        next.set(instance, new Map(current).set(input.cwd, settled));
+        return [undefined, next] as const;
       });
-      // A fresh scan never joins a running one, which may predate the change.
-      if (!claimed && !input.fresh) return yield* Ref.get(providersRef);
+      const claimed = running === undefined;
+      // Callers wait for a running scan, since a turn checks its skills against
+      // the result. A fresh scan never joins one, which may predate the change.
+      if (running && !input.fresh) {
+        yield* Deferred.await(running);
+        return yield* Ref.get(providersRef);
+      }
       // Fresh scans also re-read the machine snapshot after invalidating caches.
       const refreshMachineSnapshot = input.fresh
         ? (instance.invalidateCaches ?? Effect.void).pipe(
@@ -1118,12 +1126,12 @@ export const layer = Layer.effect(
           claimed
             ? Ref.update(workspaceRefreshesRef, (refreshes) => {
                 const next = new Map(refreshes);
-                const current = new Set(next.get(instance));
+                const current = new Map(next.get(instance));
                 current.delete(input.cwd);
                 if (current.size) next.set(instance, current);
                 else next.delete(instance);
                 return next;
-              })
+              }).pipe(Effect.andThen(Deferred.succeed(settled, undefined)))
             : Effect.void,
         ),
       );

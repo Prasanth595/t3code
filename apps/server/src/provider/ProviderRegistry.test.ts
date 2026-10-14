@@ -1791,7 +1791,11 @@ it.layer(
           assert.strictEqual(yield* Ref.get(snapshotCalls), 2);
           yield* Deferred.succeed(releaseProbe, undefined);
           yield* Fiber.join(firstRefresh);
-          yield* Fiber.join(duplicateRefresh);
+          // A caller that joins a running scan gets its result, not the empty cache.
+          assert.deepStrictEqual(
+            (yield* Fiber.join(duplicateRefresh))[0]?.workspaceSnapshots?.[0]?.skills,
+            scopedProvider.skills,
+          );
           const published = yield* Fiber.join(workspaceUpdate);
           assert.strictEqual(published._tag, "Some");
           const providers = yield* registry.getProviders;

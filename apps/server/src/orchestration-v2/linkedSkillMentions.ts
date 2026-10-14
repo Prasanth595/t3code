@@ -1,5 +1,6 @@
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { markdownLinkStartOffsets } from "@t3tools/shared/markdownPipeline";
 import * as Schema from "effect/Schema";
 
 /**
@@ -26,48 +27,14 @@ export class UnavailableSkillMentionError extends Schema.TaggedError<Unavailable
   }
 }
 
-/** Fenced blocks and backtick spans, where a link is literal text, not a pick. */
-function markdownCodeRanges(text: string): ReadonlyArray<readonly [number, number]> {
-  const ranges: Array<readonly [number, number]> = [];
-  let fence: { readonly start: number; readonly marker: string } | undefined;
-  let outsideStart = 0;
-  const addSpans = (start: number, end: number) => {
-    for (const span of text.slice(start, end).matchAll(/(`+)(?!`)[\s\S]*?(?<!`)\1(?!`)/g)) {
-      ranges.push([start + span.index, start + span.index + span[0].length]);
-    }
-  };
-  for (const line of text.matchAll(/^.*(?:\n|$)/gm)) {
-    if (line[0].length === 0) break;
-    const marker = /^ {0,3}(`{3,}|~{3,})/.exec(line[0])?.[1];
-    if (fence === undefined && marker !== undefined) {
-      addSpans(outsideStart, line.index);
-      fence = { start: line.index, marker };
-    } else if (
-      fence !== undefined &&
-      marker !== undefined &&
-      marker[0] === fence.marker[0] &&
-      marker.length >= fence.marker.length &&
-      line[0].trim() === marker
-    ) {
-      ranges.push([fence.start, line.index + line[0].length]);
-      fence = undefined;
-      outsideStart = line.index + line[0].length;
-    }
-  }
-  if (fence === undefined) addSpans(outsideStart, text.length);
-  else ranges.push([fence.start, text.length]);
-  return ranges;
-}
-
 export function collectLinkedSkillMentions(text: string): ReadonlyArray<LinkedSkillMention> {
   // Tokens need a delimiter after them; a sent prompt may end on a mention.
   const tokens = collectComposerInlineTokens(`${text} `);
   if (!tokens.some((token) => token.type === "skill" && token.path !== undefined)) return [];
-  const code = markdownCodeRanges(text);
+  // Only a link the chat renders as a chip is a pick; code shows it as text.
+  const links = markdownLinkStartOffsets(text);
   return tokens.flatMap((token) =>
-    token.type === "skill" &&
-    token.path !== undefined &&
-    !code.some(([start, end]) => token.start >= start && token.start < end)
+    token.type === "skill" && token.path !== undefined && links.has(token.start)
       ? [{ name: token.value, path: token.path, start: token.start, end: token.end }]
       : [],
   );

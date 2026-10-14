@@ -1,9 +1,10 @@
-import type { Processor } from "unified";
+import { unified, type Processor } from "unified";
 import { isWindowsAbsolutePath } from "./path.ts";
 import type { PluggableList } from "unified";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkBreaks from "remark-breaks";
+import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
@@ -286,6 +287,28 @@ function remarkKeepWindowsPathDestinations(this: Processor) {
       definitionDestinationString: keepWindowsPathDestination,
     },
   });
+}
+
+const userMarkdownParser = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS);
+
+/**
+ * Where each link of a user message starts, as the chat renders it. Link-shaped
+ * text inside code, at any nesting, is not a link.
+ */
+export function markdownLinkStartOffsets(markdown: string): ReadonlySet<number> {
+  const starts = new Set<number>();
+  type Node = {
+    type: string;
+    position?: { start: { offset?: number | undefined } } | undefined;
+    children?: Node[];
+  };
+  const visit = (node: Node) => {
+    const offset = node.position?.start.offset;
+    if (node.type === "link" && offset !== undefined) starts.add(offset);
+    node.children?.forEach(visit);
+  };
+  visit(userMarkdownParser.parse(markdown));
+  return starts;
 }
 
 export function shouldPreserveAssistantLineBreaks(text: string): boolean {

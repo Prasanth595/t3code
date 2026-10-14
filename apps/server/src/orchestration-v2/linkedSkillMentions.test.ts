@@ -29,6 +29,24 @@ describe("collectLinkedSkillMentions", () => {
       projectReview,
     ]);
   });
+
+  it("skips code blocks inside quotes and lists, and indented code", () => {
+    const text = [
+      `> Quoted [$review](${projectReview}) runs.`,
+      "> ```",
+      `> [$review](${userReview})`,
+      "> ```",
+      "",
+      `    [$review](${userReview})`,
+      "",
+      "- ```",
+      `  [$review](${userReview})`,
+      "  ```",
+    ].join("\n");
+    expect(collectLinkedSkillMentions(text).map((mention) => mention.path)).toEqual([
+      projectReview,
+    ]);
+  });
 });
 
 describe("findUnavailableSkillMention", () => {
