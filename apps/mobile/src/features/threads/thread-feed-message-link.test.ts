@@ -29,6 +29,9 @@ describe("resolveLinkedMessageStep", () => {
   it("waits for the sync and any history load before deciding the message is older", () => {
     expect(resolveLinkedMessageStep({ ...absent, synced: false })).toBe("wait");
     expect(resolveLinkedMessageStep({ ...absent, historyLoading: true })).toBe("wait");
+    expect(resolveLinkedMessageStep({ ...absent, presented: true, historyLoading: true })).toBe(
+      "wait",
+    );
   });
 
   it("loads earlier history until it runs out, then reports the message missing", () => {

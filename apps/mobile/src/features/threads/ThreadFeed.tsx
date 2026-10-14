@@ -2155,13 +2155,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       userScrollSettleTimerRef.current = null;
     }
   }, []);
+  // A message link opens the feed at that message, loading earlier history through it and
+  // expanding the turn that hides it. That is a manual navigation, so live follow stops.
+  const linkedMessageId = props.linkedMessageId ?? null;
+  const onLinkedMessageHandled = props.onLinkedMessageHandled;
+  const handledLinkedMessageIdRef = useRef<string | null>(null);
+  // The feed a load through the linked message started from. The message is missing once a
+  // finished load leaves the feed unchanged.
+  const [linkedMessageLoad, setLinkedMessageLoad] = useState<{
+    readonly feed: ReadonlyArray<ThreadFeedEntry>;
+    readonly inFlight: boolean;
+  } | null>(null);
+  const finishLinkedMessage = useCallback(() => {
+    if (linkedMessageId === null) return;
+    handledLinkedMessageIdRef.current = linkedMessageId;
+    setLinkedMessageLoad(null);
+    onLinkedMessageHandled?.();
+  }, [linkedMessageId, onLinkedMessageHandled]);
   const handleScrollBeginDrag = useCallback(() => {
+    // The user takes over from a message link that is still loading or unfolding.
+    if (linkedMessageId !== null && handledLinkedMessageIdRef.current !== linkedMessageId) {
+      finishLinkedMessage();
+    }
     clearUserScrollSettle();
     userScrollSessionRef.current = true;
     // Pause before the first scroll event. Otherwise a stream update can run
     // maintainScrollAtEnd between touch-down and the drag leaving its threshold.
     transitionEndFollow({ type: "user-scroll-begin" });
-  }, [clearUserScrollSettle, transitionEndFollow]);
+  }, [clearUserScrollSettle, finishLinkedMessage, linkedMessageId, transitionEndFollow]);
   const finishUserScroll = useCallback(
     (releaseIsAtEnd?: boolean) => {
       clearUserScrollSettle();
@@ -2264,6 +2285,10 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.latestRun,
     ],
   );
+  const presentedFeedRef = useRef(presentedFeed);
+  useLayoutEffect(() => {
+    presentedFeedRef.current = presentedFeed;
+  }, [presentedFeed]);
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
   );
@@ -2292,17 +2317,6 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       ),
     [presentedFeed, props.anchorMessageId, anchorTopInset],
   );
-  // A message link opens the feed at that message, loading earlier history through it and
-  // expanding the turn that hides it. That is a manual navigation, so live follow stops.
-  const linkedMessageId = props.linkedMessageId ?? null;
-  const onLinkedMessageHandled = props.onLinkedMessageHandled;
-  const handledLinkedMessageIdRef = useRef<string | null>(null);
-  // The feed a load through the linked message started from. The message is missing once a
-  // finished load leaves the feed unchanged.
-  const [linkedMessageLoad, setLinkedMessageLoad] = useState<{
-    readonly feed: ReadonlyArray<ThreadFeedEntry>;
-    readonly inFlight: boolean;
-  } | null>(null);
   useEffect(() => {
     if (linkedMessageId === null) {
       handledLinkedMessageIdRef.current = null;
@@ -2355,9 +2369,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       }));
       return;
     }
-    handledLinkedMessageIdRef.current = linkedMessageId;
-    setLinkedMessageLoad(null);
-    onLinkedMessageHandled?.();
+    finishLinkedMessage();
     if (step === "missing") {
       Alert.alert("Message not found", "It may have been deleted from this thread.");
       return;
@@ -2365,14 +2377,24 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const listRef = props.listRef;
     const viewOffset = anchorTopInset + CHAT_LIST_ANCHOR_OFFSET;
     requestAnimationFrame(() => {
-      void listRef.current?.scrollToIndex({ index, viewPosition: 0, viewOffset, animated: false });
+      // Rows can change before the frame, so find the message again.
+      const latestIndex = presentedFeedRef.current.findIndex(
+        (entry) => entry.type === "message" && entry.id === linkedMessageId,
+      );
+      if (latestIndex < 0) return;
+      void listRef.current?.scrollToIndex({
+        index: latestIndex,
+        viewPosition: 0,
+        viewOffset,
+        animated: false,
+      });
     });
   }, [
     anchorTopInset,
     expandedTurnIds,
     linkedMessageId,
     linkedMessageLoad,
-    onLinkedMessageHandled,
+    finishLinkedMessage,
     presentedFeed,
     props.activeWorkStartedAt,
     props.feed,

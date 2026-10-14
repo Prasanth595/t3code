@@ -111,9 +111,15 @@ export function useLinkedMessageTarget({
     const cancel = () => {
       setFinishedKey(key);
       const scrollNode = listRef.current?.getScrollableNode();
-      // Supersede a queued list scroll before the user's gesture runs.
+      // Supersede a queued list scroll before the user's gesture runs. Legend may defer this
+      // call too, so it reads the user's position when it executes.
       if (scrollNode instanceof HTMLElement)
-        void listRef.current?.scrollToOffset({ offset: scrollNode.scrollTop, animated: false });
+        void listRef.current?.scrollToOffset({
+          get offset() {
+            return scrollNode.scrollTop;
+          },
+          animated: false,
+        });
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key))

@@ -15,10 +15,12 @@ export function resolveLinkedMessageStep(input: {
   /** Earlier history remains, and the last load through the message changed the feed. */
   readonly canLoadEarlier: boolean;
 }): "scroll" | "expand" | "wait" | "load" | "missing" {
+  // History lands in stages, so a message shown mid-load can still move.
+  if (input.historyLoading) return "wait";
   if (input.presented) return "scroll";
   if (input.foldedRunId !== null) return "expand";
   // Loaded but hidden by something other than a fold: more history cannot reveal it.
   if (input.inFeed) return "missing";
-  if (!input.synced || input.historyLoading) return "wait";
+  if (!input.synced) return "wait";
   return input.canLoadEarlier ? "load" : "missing";
 }
