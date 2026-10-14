@@ -24,6 +24,7 @@ import {
   type AuthWebSocketTicketResult,
   DpopFailureReason,
   type DpopFailureReason as DpopFailureReasonType,
+  type EnvironmentAuthInvalidReason,
 } from "@t3tools/contracts";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Context from "effect/Context";
@@ -405,16 +406,35 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   }
 }
 
+/** Fork: MM-718. A valid session that the machine map pause locks. */
+export class ServerAuthMachinePausedError extends Schema.TaggedError<ServerAuthMachinePausedError>()(
+  "ServerAuthMachinePausedError",
+  {},
+) {
+  override get message(): string {
+    return "The machine map pause locks this client.";
+  }
+}
+
 export const ServerAuthCredentialError = Schema.Union([
   ServerAuthMissingCredentialError,
   ServerAuthInvalidCredentialError,
+  ServerAuthMachinePausedError,
 ]);
 export type ServerAuthCredentialError = typeof ServerAuthCredentialError.Type;
 export const isServerAuthCredentialError = Schema.is(ServerAuthCredentialError);
 export const serverAuthCredentialReason = (
   error: ServerAuthCredentialError,
-): "missing_credential" | "invalid_credential" =>
-  error._tag === "ServerAuthMissingCredentialError" ? "missing_credential" : "invalid_credential";
+): EnvironmentAuthInvalidReason => {
+  switch (error._tag) {
+    case "ServerAuthMissingCredentialError":
+      return "missing_credential";
+    case "ServerAuthInvalidCredentialError":
+      return "invalid_credential";
+    case "ServerAuthMachinePausedError":
+      return "machine_paused";
+  }
+};
 
 export const serverAuthDpopFailureReason = (
   error: ServerAuthCredentialError,
@@ -753,13 +773,25 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
+  // Fork: machine map (MM-718, MM-1305). Absent outside the server: no pause lock, no grants.
+  const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
+  const rejectWhilePaused = <S extends { readonly subject: string }>(session: S) =>
+    Option.isNone(machineMap)
+      ? Effect.succeed(session)
+      : machineMap.value
+          .lockedFor(session.subject)
+          .pipe(
+            Effect.flatMap((locked) =>
+              locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.succeed(session),
+            ),
+          );
   const devAuth = resolveReusableDevAuth(config);
 
   const authenticateToken = (
     token: string,
   ): Effect.Effect<
     AuthenticatedSession,
-    ServerAuthInvalidCredentialError | ServerAuthInternalError
+    ServerAuthInvalidCredentialError | ServerAuthMachinePausedError | ServerAuthInternalError
   > =>
     sessions.verify(token).pipe(
       Effect.tapError((cause) =>
@@ -773,6 +805,7 @@ export const make = Effect.gen(function* () {
       ),
       mapSessionVerificationErrors,
       Effect.flatMap(rejectMcpClientAudience),
+      Effect.flatMap(rejectWhilePaused),
       Effect.map((session) => ({
         sessionId: session.sessionId,
         subject: session.subject,
@@ -875,10 +908,11 @@ export const make = Effect.gen(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchIf(isServerAuthCredentialError, () =>
+      Effect.catchIf(isServerAuthCredentialError, (error) =>
         Effect.succeed({
           authenticated: false,
           auth: descriptor,
+          ...(error._tag === "ServerAuthMachinePausedError" ? { machinePaused: true } : {}),
         } satisfies AuthSessionState),
       ),
       Effect.withSpan("EnvironmentAuth.getSessionState"),
@@ -1200,8 +1234,6 @@ export const make = Effect.gen(function* () {
     config.cloudflareAccess === undefined
       ? undefined
       : makeCloudflareAccessVerifier(config.cloudflareAccess);
-  // Fork: machine map (MM-1305). Absent outside the server, so other machines get nothing.
-  const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
 
   const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
     (request) =>
@@ -1330,6 +1362,7 @@ export const make = Effect.gen(function* () {
           return yield* sessions.verifyWebSocketToken(websocketTicket).pipe(
             mapSessionVerificationErrors,
             Effect.flatMap(rejectMcpClientAudience),
+            Effect.flatMap(rejectWhilePaused),
             Effect.map((session) => ({
               sessionId: session.sessionId,
               subject: session.subject,

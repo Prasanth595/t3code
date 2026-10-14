@@ -1,7 +1,7 @@
 /**
  * Fork: machine map. The upstream auth hooks: Cloudflare Access pairing for machine tokens
  * (`EnvironmentAuth.issueCloudflareAccessPairingCredential`, MM-1305) and machine sessions at
- * `/mcp` (`McpOAuth.layerMcpClientAuthenticator`, MM-1307).
+ * `/mcp` (`McpOAuth.layerMcpClientAuthenticator`, MM-1307), and the pause lock (MM-718).
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -16,7 +16,10 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { HttpServerRequest } from "effect/http";
 import { exportJWK, generateKeyPair, SignJWT } from "jose";
 
@@ -27,6 +30,7 @@ import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../../mcp/McpHttpServer.ts";
+import * as SessionStore from "../../auth/SessionStore.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import { isLocalDesktopSubject } from "./machineAccess.ts";
@@ -223,6 +227,142 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
             }),
           ),
           Layer.provideMerge(layerAuth("on")),
+        ),
+      ),
+    ),
+  );
+});
+
+const pausedReason = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.exit,
+    Effect.map(
+      (exit) =>
+        Exit.isFailure(exit) &&
+        exit.cause.reasons.some(
+          (reason) =>
+            reason._tag === "Fail" &&
+            EnvironmentAuth.isServerAuthCredentialError(reason.error) &&
+            EnvironmentAuth.serverAuthCredentialReason(reason.error) === "machine_paused",
+        ),
+    ),
+  );
+
+/** One session of each kind that the pause must tell apart. */
+const sessionsOfEachKind = Effect.gen(function* () {
+  const auth = yield* EnvironmentAuth.EnvironmentAuth;
+  const sessions = yield* SessionStore.SessionStore;
+  const desktop = yield* auth.issueSession({ subject: "desktop-bootstrap" });
+  const mobile = yield* auth.issueSession({ subject: "one-time-token" });
+  const pairing = yield* auth.issuePairingCredential();
+  const browser = yield* auth.createBrowserSession(pairing.credential, { deviceType: "desktop" });
+  const cookieRequest = HttpServerRequest.fromWeb(
+    new Request("http://127.0.0.1/api/auth/session", {
+      headers: { cookie: `${sessions.cookieName}=${browser.sessionToken}` },
+    }),
+  );
+  const mcp = yield* auth.issueMcpClientSession({
+    label: "agent",
+    access: "full-access",
+    client: { deviceType: "bot" },
+  });
+  return { auth, desktop, mobile, cookieRequest, mcp };
+});
+
+it.layer(NodeServices.layer)("machine map pause lock (MM-718)", (it) => {
+  it.effect("while paused, only the desktop app and MCP clients authenticate", () =>
+    Effect.gen(function* () {
+      const { auth, desktop, mobile, cookieRequest, mcp } = yield* sessionsOfEachKind;
+      yield* saveDesired(desiredState({ paused: true }));
+
+      expect((yield* auth.authenticateHttpRequest(bearerRequest(desktop.token))).subject).toBe(
+        "desktop-bootstrap",
+      );
+      expect(yield* pausedReason(auth.authenticateHttpRequest(bearerRequest(mobile.token)))).toBe(
+        true,
+      );
+      expect(yield* pausedReason(auth.authenticateWebSocketUpgrade(cookieRequest))).toBe(true);
+      expect(yield* auth.getSessionState(cookieRequest)).toMatchObject({
+        authenticated: false,
+        machinePaused: true,
+      });
+      // A ticket minted before the pause does not open a socket during it.
+      const ticket = yield* auth.issueWebSocketTicket({ sessionId: mobile.sessionId });
+      const ticketRequest = HttpServerRequest.fromWeb(
+        new Request(`http://127.0.0.1/ws?wsTicket=${ticket.ticket}`),
+      );
+      expect(yield* pausedReason(auth.authenticateWebSocketUpgrade(ticketRequest))).toBe(true);
+      // MM-711 governs agents; the pause does not lock the MCP endpoint.
+      expect((yield* auth.authenticateMcpClient(bearerRequest(mcp.token))).sessionId).toBe(
+        mcp.sessionId,
+      );
+    }).pipe(Effect.provide(layerAuth("on"))),
+  );
+
+  it.effect("paused false or an absent flag unlocks at once, and open sockets close on pause", () =>
+    Effect.gen(function* () {
+      const { auth, mobile, cookieRequest } = yield* sessionsOfEachKind;
+      const state = yield* MachineMapState.MachineMapState;
+      yield* saveDesired(desiredState({ paused: true }));
+      // The socket of a locked session ends at once.
+      yield* state.awaitLockFor("one-time-token");
+      expect(yield* state.lockedFor("desktop-bootstrap")).toBe(false);
+
+      yield* saveDesired(desiredState({ paused: false }));
+      expect((yield* auth.authenticateHttpRequest(bearerRequest(mobile.token))).subject).toBe(
+        "one-time-token",
+      );
+      yield* saveDesired(desiredState({ paused: true }));
+      yield* saveDesired(desiredState({}));
+      expect((yield* auth.getSessionState(cookieRequest)).authenticated).toBe(true);
+    }).pipe(Effect.provide(layerAuth("on"))),
+  );
+
+  it.effect("with the machineMap setting off, a saved pause does not lock (MM-1301)", () =>
+    Effect.gen(function* () {
+      const { auth, mobile } = yield* sessionsOfEachKind;
+      yield* saveDesired(desiredState({ paused: true }));
+      expect((yield* auth.authenticateHttpRequest(bearerRequest(mobile.token))).subject).toBe(
+        "one-time-token",
+      );
+    }).pipe(Effect.provide(layerAuth("off"))),
+  );
+
+  it.effect("an unreadable state file locks until the portal sends a desired state", () =>
+    Effect.gen(function* () {
+      const { auth, mobile } = yield* sessionsOfEachKind;
+      expect(yield* pausedReason(auth.authenticateHttpRequest(bearerRequest(mobile.token)))).toBe(
+        true,
+      );
+      yield* saveDesired(desiredState({}));
+      expect((yield* auth.authenticateHttpRequest(bearerRequest(mobile.token))).subject).toBe(
+        "one-time-token",
+      );
+    }).pipe(
+      Effect.provide(
+        EnvironmentAuth.layer.pipe(
+          Layer.provideMerge(SqlitePersistence.layerMemory),
+          Layer.provideMerge(
+            layerState(true).pipe(
+              Layer.provide(
+                Layer.effectDiscard(
+                  Effect.gen(function* () {
+                    const config = yield* ServerConfig.ServerConfig;
+                    const fileSystem = yield* FileSystem.FileSystem;
+                    const path = yield* Path.Path;
+                    yield* fileSystem.makeDirectory(config.stateDir, { recursive: true });
+                    yield* fileSystem.writeFileString(
+                      path.join(config.stateDir, "machine-map.json"),
+                      "{ not json",
+                    );
+                  }),
+                ),
+              ),
+            ),
+          ),
+          Layer.provide(ServerSecretStore.layer),
+          Layer.provide(ServerEnvironment.layerIdentity),
+          Layer.provideMerge(layerConfig),
         ),
       ),
     ),

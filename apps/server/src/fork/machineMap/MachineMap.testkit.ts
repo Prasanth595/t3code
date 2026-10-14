@@ -42,6 +42,7 @@ export const desiredState = (input: {
   readonly arrowsOut?: ReadonlyArray<ArrowRecord>;
   readonly server?: Readonly<Record<string, unknown>>;
   readonly client?: Readonly<Record<string, unknown>>;
+  readonly paused?: boolean;
 }): MachineDesiredState => ({
   revision: input.revision ?? 1,
   self: {
@@ -58,4 +59,5 @@ export const desiredState = (input: {
   arrowsIn: input.arrowsIn ?? [],
   arrowsOut: input.arrowsOut ?? [],
   settings: { server: input.server ?? {}, client: input.client ?? {} },
+  ...(input.paused === undefined ? {} : { paused: input.paused }),
 });

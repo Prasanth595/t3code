@@ -34,6 +34,7 @@ import { DesktopWebLinkCoordinator } from "../components/desktop/DesktopWebLinkC
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { DesktopUpdateIdleInstall } from "../components/desktop/DesktopUpdateIdleInstall";
 import { MachineMapDesktop } from "../components/desktop/MachineMapDesktop";
+import { MachinePausedSurface, MachinePauseWatcher } from "../components/auth/MachinePausedSurface";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { DesktopUpdateLaunchNotice } from "../components/sidebar/updateEverythingRun";
 import { NightlyMobileBetaNotice } from "../components/NightlyMobileBeta";
@@ -171,6 +172,15 @@ function RootRouteView() {
     };
   }, [pathname]);
 
+  if (authGateState.status === "machine-paused") {
+    return (
+      <>
+        <DocumentTitleSync />
+        <MachinePausedSurface />
+      </>
+    );
+  }
+
   if (pathname === "/pair" || pathname === "/connect" || pathname === "/connect-agent") {
     return (
       <>
@@ -256,6 +266,7 @@ function RootRouteView() {
           {isElectron ? <RunningThreadKeepAlive /> : null}
           {isElectron ? <DesktopUpdateIdleInstall /> : null}
           {isElectron && primaryEnvironmentAuthenticated ? <MachineMapDesktop /> : null}
+          {primaryEnvironmentAuthenticated ? <MachinePauseWatcher /> : null}
           <RelayClientInstallDialog />
           <ConnectOnboardingDialog />
           <SshPasswordPromptDialog />

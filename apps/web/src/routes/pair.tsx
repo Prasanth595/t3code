@@ -38,6 +38,11 @@ function PairRouteView() {
     return <HostedPairingRouteSurface />;
   }
 
+  // The root route shows the lock page instead of this route (MM-718).
+  if (authGateState.status === "machine-paused") {
+    return null;
+  }
+
   return (
     <PairingRouteSurface
       auth={authGateState.auth}

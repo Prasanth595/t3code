@@ -465,6 +465,8 @@ export const AuthSessionState = Schema.Struct({
   permissions: authScopeResponseFields.permissions,
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
+  /** Fork: MM-718. True while the machine map pause locks this client. Absent means false. */
+  machinePaused: Schema.optionalKey(Schema.Boolean),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
 

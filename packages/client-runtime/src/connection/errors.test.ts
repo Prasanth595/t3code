@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  MACHINE_PAUSED_MESSAGE,
   mapManagedRelayError,
   mapRemoteDpopEnvironmentError,
   mapRemoteEnvironmentError,
@@ -160,5 +161,25 @@ describe("mapRemoteDpopEnvironmentError", () => {
     );
 
     expect(mapped.message).toBe(`The environment credential is invalid. ${DPOP_RETRY_HINT}`);
+  });
+});
+
+describe("machine map pause (MM-718)", () => {
+  it("keeps the credential and retries, on every route", () => {
+    const error = new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "machine_paused",
+      traceId: "trace-paused",
+    });
+    for (const mapped of [
+      mapRemoteEnvironmentError(error),
+      mapRemoteEnvironmentError(error, "relay"),
+      mapRemoteDpopEnvironmentError(error),
+    ]) {
+      expect(mapped).toMatchObject({
+        _tag: "ConnectionTransientError",
+        detail: MACHINE_PAUSED_MESSAGE,
+      });
+    }
   });
 });

@@ -133,6 +133,8 @@ export interface ServerClientSessionRecord {
 
 type ServerAuthGateState =
   | { status: "authenticated" }
+  // Fork: MM-718. The machine map pause locks this client; pairing cannot help.
+  | { status: "machine-paused" }
   | {
       status: "requires-auth";
       auth: AuthSessionState["auth"];
@@ -311,6 +313,9 @@ function isTransientBootstrapError(error: unknown): boolean {
 
 async function bootstrapServerAuth(urlCredential: string | null): Promise<ServerAuthGateState> {
   const currentSession = await fetchSessionState();
+  if (currentSession.machinePaused === true) {
+    return { status: "machine-paused" };
+  }
   if (currentSession.authenticated && !urlCredential) {
     return { status: "authenticated" };
   }
@@ -441,7 +446,9 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
   }
   if (explicitPairingRequested) {
     const currentSession = await fetchSessionState();
-    return { status: "requires-auth", auth: currentSession.auth };
+    return currentSession.machinePaused === true
+      ? { status: "machine-paused" }
+      : { status: "requires-auth", auth: currentSession.auth };
   }
 
   const urlCredential = takePairingTokenFromUrl();

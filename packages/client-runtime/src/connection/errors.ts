@@ -10,6 +10,18 @@ import {
   ConnectionTransientError,
 } from "./model.ts";
 
+/** Fork: MM-718. What a client shows while the machine map pause locks the environment. */
+export const MACHINE_PAUSED_MESSAGE =
+  "Paused from the machine map portal. Only the desktop app on this machine works until Resume.";
+
+// The pause ends without a client action, so the client keeps the credential and retries.
+const machinePausedError = (traceId: string) =>
+  new ConnectionTransientError({
+    reason: "remote-unavailable",
+    detail: MACHINE_PAUSED_MESSAGE,
+    traceId,
+  });
+
 export function profileMissingError(connectionId: string): ConnectionBlockedError {
   return new ConnectionBlockedError({
     reason: "configuration",
@@ -133,6 +145,7 @@ export function mapRemoteEnvironmentError(
   const networkHint = connectionMethod === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
   switch (error._tag) {
     case "EnvironmentAuthInvalidError":
+      if (error.reason === "machine_paused") return machinePausedError(error.traceId);
       return new ConnectionBlockedError({
         reason: "authentication",
         detail: "The environment credential is invalid.",
