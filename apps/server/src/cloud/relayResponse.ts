@@ -11,8 +11,8 @@ import { isHttpClientError } from "effect/http/HttpClientError";
 /**
  * A relay request that did not succeed. `unavailable` means it may succeed on
  * retry; the relay refused the other kinds. A refusal with `clockSkewSeconds`
- * happened while this machine's clock was that far from the relay's, so it can
- * succeed once the clock is corrected. The description is safe to show: it
+ * happened while this machine's clock was that far from the relay's, so it is
+ * retried in case fixing the clock is all it needs. The description is safe to show: it
  * carries the relay's own explanation and trace ID, never request details.
  */
 export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
@@ -39,13 +39,16 @@ export function relayRequestError(cause: unknown): RelayRequestError {
       });
 }
 
-/** Whether a failure may succeed on retry: anything but a relay refusal. */
+/**
+ * Whether a failure may succeed on retry: anything but a relay refusal, unless
+ * the clock was off when the relay refused.
+ */
 export const shouldRetryRelayRequest = (error: unknown): boolean =>
   !isRelayRequestError(error) ||
   error.rejection === "unavailable" ||
   error.clockSkewSeconds !== undefined;
 
-/** A relay refusal caused by this machine's clock, which clears once the clock is fixed. */
+/** A relay refusal that came while this machine's clock was too far off to trust. */
 export const isRelayClockSkewError = (error: unknown): error is RelayRequestError =>
   isRelayRequestError(error) && error.clockSkewSeconds !== undefined;
 
@@ -81,14 +84,14 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
   // The relay checks the timestamps this machine signs against its own clock
-  // and answers 400 or 401 when they fall outside its window. With a skewed
-  // clock that is the likely cause, and nothing but fixing the clock helps.
+  // and answers 400 or 401 when they fall outside its window. A skewed clock
+  // explains that refusal, and the request cannot succeed until it is fixed.
   // Other refusals (a tunnel limit, a missing link) are about the request.
-  const clockCaused =
+  const clockSuspected =
     clockSkewSeconds !== null && (response.status === 400 || response.status === 401);
   const platform = yield* HostProcess.Platform;
   const refusal = (rejection: "unauthorized" | "forbidden" | "rejected") =>
-    !clockCaused
+    !clockSuspected
       ? new RelayRequestError({ rejection, description })
       : new RelayRequestError({
           rejection,

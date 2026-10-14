@@ -5,7 +5,7 @@
  */
 
 // The relay accepts proofs issued up to 60 seconds in its future. Past that, a
-// rejection is the clock's fault rather than a coincidence.
+// skewed clock is enough on its own to explain a rejection.
 export const CLOCK_SKEW_LIMIT_SECONDS = 60;
 
 /**
