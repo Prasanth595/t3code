@@ -6468,6 +6468,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         );
         assert.lengthOf(harness.continuationRequests, 1);
 
+        // Session-task lifecycle results arrive before T3 opens the wake run.
+        // They must not replace the root's terminal usage-limit result.
+        for (const index of [1, 2, 3]) {
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.offerAndWait(
+            makeResultFrame({
+              uuid: `00000000-0000-4000-8000-00000000064${index}`,
+              result: "",
+              numTurns: 0,
+              origin: { kind: "task-notification" },
+              terminalReason: null,
+            }),
+          );
+        }
+
         yield* harness.runtime.startTurn(
           makeClaudeTestTurnInput({
             threadId: harness.threadId,
@@ -6813,7 +6828,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness.sdkMessages,
           makeResultFrame({
             uuid: "00000000-0000-4000-8000-00000000010f",
-            result: "Wake result with no model turns.",
+            result: "",
             numTurns: 0,
             origin: { kind: "task-notification" },
           }),
