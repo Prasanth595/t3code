@@ -558,6 +558,11 @@ export function NewTaskDraftScreen(props: {
     });
     return () => cancelAnimationFrame(frame);
   }, [navigation, preventRemove, submitNavigationAction]);
+  // The sent model stands in only while this draft leaves. If the screen goes
+  // before its closing navigation runs, the sheet's next draft resolves its
+  // model normally.
+  const { setSubmittedModelSelection } = flow;
+  useEffect(() => () => setSubmittedModelSelection(null), [setSubmittedModelSelection]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
     (consumedIncomingShareIdRef.current === props.incomingShareId ||
