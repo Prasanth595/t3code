@@ -18,7 +18,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
-import type { AcpError } from "effect-acp/errors";
+import * as AcpErrors from "effect-acp/errors";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
@@ -69,6 +69,31 @@ import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./Antigra
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
+const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
+const MAX_AGENT_DETAILS_LENGTH = 300;
+
+/**
+ * Appends the reason Antigravity sent with a JSON-RPC error, bounded to one
+ * line. Its runtime answers "Internal error" and explains only in
+ * `data.details`, for example "python-socks is required to use a SOCKS proxy".
+ * Local and transport failures keep the given detail.
+ */
+function withAgentDetails(detail: string, cause: unknown) {
+  if (
+    !isAcpRequestError(cause) ||
+    cause.operation !== "receive-response" ||
+    !isAcpErrorDetails(cause.data)
+  )
+    return detail;
+  const details = cause.data.details.replace(/\s+/gu, " ").trim();
+  if (!details) return detail;
+  const bounded =
+    details.length > MAX_AGENT_DETAILS_LENGTH
+      ? `${details.slice(0, MAX_AGENT_DETAILS_LENGTH - 1)}…`
+      : details;
+  return `${detail} Antigravity reported: ${bounded}`;
+}
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation.AntigravityInstallation
@@ -171,7 +196,7 @@ export const AntigravityDriver: ProviderDriver<
         input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
       ): Effect.fn.Return<
         AcpSessionRuntime.AcpSessionRuntime["Service"],
-        AcpError | ProviderSetupError,
+        AcpErrors.AcpError | ProviderSetupError,
         Scope.Scope
       > {
         if (authConfigIssue !== null) {
@@ -496,7 +521,10 @@ export const AntigravityDriver: ProviderDriver<
                   : cause._tag === "ProviderSetupError" &&
                       (cause.operation === "configure" || cause.operation === "start")
                     ? cause.detail
-                    : "Could not refresh Antigravity models. The previous model list is unchanged.",
+                    : withAgentDetails(
+                        "Could not refresh Antigravity models. The previous model list is unchanged.",
+                        cause,
+                      ),
                 cause,
               }),
         ),
