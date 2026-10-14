@@ -17,12 +17,19 @@ export type ApplyOrchestrationV2ProjectionEventOptions = {
 function upsertEntity<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
   item: T,
+  index = findEntityIndex(items, item.id),
 ): ReadonlyArray<T> {
-  const index = items.findIndex((candidate) => candidate.id === item.id);
   if (index === -1) return [...items, item];
-  const next = [...items];
+  const next = items.slice();
   next[index] = item;
   return next;
+}
+
+/** Streaming typically updates the newest entity; older updates still search normally. */
+function findEntityIndex<T extends { readonly id: unknown }>(items: ReadonlyArray<T>, id: unknown) {
+  return items.at(-1)?.id === id
+    ? items.length - 1
+    : items.findIndex((candidate) => candidate.id === id);
 }
 
 function removeVisibleItem(
@@ -152,7 +159,10 @@ function upsertVisibleTurnItem(
   latestLocalTurnOrdinal: number | null | undefined,
 ): OrchestrationV2ThreadProjection["visibleTurnItems"] {
   const rows = projection.visibleTurnItems;
-  const index = rows.findIndex((row) => row.sourceItemId === item.id);
+  const index =
+    rows.at(-1)?.sourceItemId === item.id
+      ? rows.length - 1
+      : rows.findIndex((row) => row.sourceItemId === item.id);
   const next = {
     position: 0,
     visibility: "local" as const,
@@ -177,15 +187,27 @@ function upsertVisibleTurnItem(
   ) {
     return rows;
   }
-  const updated = index === -1 ? [...rows] : [...rows.slice(0, index), ...rows.slice(index + 1)];
-  const insertionIndex = updated.findIndex(
-    (row) =>
+  const insertionIndex = rows.findIndex(
+    (row, rowIndex) =>
+      rowIndex !== index &&
       row.visibility === "local" &&
       (row.item.ordinal > item.ordinal ||
         (row.item.ordinal === item.ordinal &&
           String(row.item.id).localeCompare(String(item.id)) > 0)),
   );
-  updated.splice(insertionIndex === -1 ? updated.length : insertionIndex, 0, next);
+  const targetIndex =
+    insertionIndex === -1
+      ? rows.length - (index === -1 ? 0 : 1)
+      : insertionIndex - (index !== -1 && index < insertionIndex ? 1 : 0);
+  // A text update normally keeps its slot. Copy once and replace it directly,
+  // retaining the full insertion rule for ordinal changes and borrowed rows.
+  const updated = rows.slice();
+  if (index !== -1 && targetIndex === index) {
+    updated[index] = next;
+  } else {
+    if (index !== -1) updated.splice(index, 1);
+    updated.splice(targetIndex, 0, next);
+  }
   return renumberVisibleItems(updated);
 }
 
@@ -289,17 +311,18 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
+      const itemIndex = findEntityIndex(projection.turnItems, event.payload.id);
       if (
         partialTimeline &&
-        !projection.turnItems.some((candidate) => candidate.id === event.payload.id) &&
+        itemIndex === -1 &&
         shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal)
       ) {
         return projection;
       }
-      const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
+      const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload, itemIndex) };
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
-      const previous = projection.turnItems.find((item) => item.id === event.payload.id);
+      const previous = projection.turnItems[itemIndex];
       const visible =
         event.payload.type === "run_interrupt_request" || previous?.type === "run_interrupt_request"
           ? { ...next, visibleTurnItems: activeVisibleTurnItems(next) }
