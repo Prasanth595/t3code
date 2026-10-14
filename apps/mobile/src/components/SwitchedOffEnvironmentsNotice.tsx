@@ -82,7 +82,7 @@ export function SwitchedOffEnvironmentsNotice() {
             if (failed.length === 0) return;
             Alert.alert(
               `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
-              "Switch it on in Settings → Environments.",
+              `Switch ${failed.length === 1 ? "it" : "them"} on in Settings → Environments.`,
             );
           },
         },

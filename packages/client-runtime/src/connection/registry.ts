@@ -1026,12 +1026,13 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // An incompatible environment retries by dropping its block: the socket
-  // handshake checks the protocol again and blocks it anew if still mismatched.
+  // An incompatible environment the user left on retries by dropping its
+  // block: the socket handshake checks the protocol again and blocks it anew
+  // if still mismatched. A switched-off one has no handshake to re-check it.
   const retryNow = (environmentId: EnvironmentId) =>
     getEntry(environmentId).pipe(
       Effect.flatMap((entry) =>
-        entry.unsupportedReason !== undefined
+        entry.unsupportedReason !== undefined && entry.enabled
           ? setCompatibility(environmentId, null)
           : acquireSupervisor(environmentId).pipe(
               Effect.flatMap((supervisor) => supervisor.retryNow),

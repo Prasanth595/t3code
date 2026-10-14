@@ -76,7 +76,7 @@ export function SwitchedOffEnvironmentsNotice() {
         stackedThreadToast({
           type: "error",
           title: `Could not switch on ${failed.map(({ environment }) => environment.label).join(", ")}`,
-          description: "Switch it on in Settings → Connections.",
+          description: `Switch ${failed.length === 1 ? "it" : "them"} on in Settings → Connections.`,
         }),
       );
     };

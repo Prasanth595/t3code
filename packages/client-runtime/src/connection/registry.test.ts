@@ -1171,6 +1171,29 @@ describe("EnvironmentRegistry", () => {
     }),
   );
 
+  it.effect("retrying a switched-off blocked environment keeps its block", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([RELAY_TARGET], [], [], {
+        initialDisabled: [RELAY_TARGET.environmentId],
+      });
+      const error = new ConnectionBlockedError({
+        reason: "unsupported",
+        detail: "Use a compatible client.",
+      });
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.start;
+        yield* registry.setCompatibility(RELAY_TARGET.environmentId, error);
+        yield* registry.retryNow(RELAY_TARGET.environmentId);
+        // Nothing re-checked the host, so it is not known to be compatible.
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(RELAY_TARGET.environmentId),
+        ).toMatchObject({ enabled: false, unsupportedReason: error.message });
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(0);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
   it.effect("returning to the app retries blocked environments the user left on", () =>
     Effect.gen(function* () {
       const error = new ConnectionBlockedError({
