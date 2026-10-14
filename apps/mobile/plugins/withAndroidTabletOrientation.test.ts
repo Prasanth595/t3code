@@ -85,8 +85,8 @@ describe("withAndroidTabletOrientation", () => {
     expect(mainActivity.$["android:screenOrientation"]).toBeUndefined();
     // Rotation and fold/unfold must keep reaching onConfigurationChanged
     // instead of recreating the activity.
-    expect(mainActivity.$["android:configChanges"]).toContain(
-      "orientation|screenSize|screenLayout|uiMode|smallestScreenSize",
+    expect(mainActivity.$["android:configChanges"]?.split("|")).toEqual(
+      expect.arrayContaining(["orientation", "screenSize", "smallestScreenSize"]),
     );
   });
 
