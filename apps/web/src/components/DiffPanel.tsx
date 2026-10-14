@@ -43,7 +43,13 @@ import {
   resolveFileDiffPath,
 } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
-import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollapse";
+import {
+  areAllDiffFilesCollapsed,
+  isFileDiffCollapsed,
+  setDiffFileCollapsed,
+  toggleAllDiffFiles,
+  type DiffFilesCollapseState,
+} from "../lib/diffCollapse";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadProjection, useThreadShell } from "../state/entities";
@@ -112,9 +118,8 @@ function getCachedFileEntry(fileDiff: FileDiffMetadata) {
   return entry;
 }
 
-interface CollapsedDiffFilesState {
+interface CollapsedDiffFilesState extends DiffFilesCollapseState {
   readonly scopeKey: string | null;
-  readonly fileKeys: ReadonlySet<string>;
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
@@ -212,7 +217,8 @@ export default function DiffPanel({
   const [baseRefQuery, setBaseRefQuery] = useState("");
   const [collapsedDiffFiles, setCollapsedDiffFiles] = useState<CollapsedDiffFilesState>(() => ({
     scopeKey: null,
-    fileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
+    foldOverride: null,
+    toggledFileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
   }));
   const [codeViewRevision, setCodeViewRevision] = useState(0);
   const [codeView, setCodeView] = useState<AnnotatableCodeViewHandle | null>(null);
@@ -511,17 +517,32 @@ export default function DiffPanel({
     () => renderableFiles.map(getCachedFileEntry),
     [renderableFiles],
   );
-  const defaultCollapsedDiffFileKeys = useMemo(
-    () =>
-      settings.diffFilesCollapsed
-        ? new Set(renderableFileEntries.map((file) => file.fileKey))
-        : EMPTY_COLLAPSED_DIFF_FILE_KEYS,
-    [renderableFileEntries, settings.diffFilesCollapsed],
+  const defaultCollapsedDiffFiles = useMemo<DiffFilesCollapseState>(
+    () => ({
+      foldOverride: settings.diffFilesCollapsed ? "folded" : "expanded",
+      toggledFileKeys: EMPTY_COLLAPSED_DIFF_FILE_KEYS,
+    }),
+    [settings.diffFilesCollapsed],
   );
-  const collapsedDiffFileKeys =
+  const effectiveCollapsedDiffFiles =
     collapsedDiffFiles.scopeKey === collapseScopeKey
-      ? collapsedDiffFiles.fileKeys
-      : defaultCollapsedDiffFileKeys;
+      ? collapsedDiffFiles
+      : defaultCollapsedDiffFiles;
+  const collapsedDiffFileKeys = useMemo(
+    () =>
+      new Set(
+        renderableFileEntries
+          .filter(({ fileKey }) =>
+            isFileDiffCollapsed(
+              fileKey,
+              effectiveCollapsedDiffFiles.foldOverride,
+              effectiveCollapsedDiffFiles.toggledFileKeys,
+            ),
+          )
+          .map(({ fileKey }) => fileKey),
+      ),
+    [renderableFileEntries, effectiveCollapsedDiffFiles],
+  );
   const renderLoadingBoundary = useCallback(
     () =>
       settledFileCount < renderableFiles.length ? (
@@ -594,11 +615,12 @@ export default function DiffPanel({
       const file = renderableFileEntries[index];
       if (!file) return;
       setCollapsedDiffFiles((current) => {
-        const next = new Set(
-          current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
+        const next = setDiffFileCollapsed(
+          file.fileKey,
+          current.scopeKey === collapseScopeKey ? current : defaultCollapsedDiffFiles,
+          false,
         );
-        next.delete(file.fileKey);
-        return { scopeKey: collapseScopeKey, fileKeys: next };
+        return { ...next, scopeKey: collapseScopeKey };
       });
       if (lazySource && index >= settledFileCount) {
         requestFile(index);
@@ -608,7 +630,7 @@ export default function DiffPanel({
     [
       renderableFileEntries,
       collapseScopeKey,
-      defaultCollapsedDiffFileKeys,
+      defaultCollapsedDiffFiles,
       requestTreeReveal,
       lazySource,
       settledFileCount,
@@ -657,49 +679,44 @@ export default function DiffPanel({
     },
     [activeCwd, activeRepositoryRoot, openInPreferredEditor, routeThreadRef],
   );
-  const collapseDefaultsRef = useRef({ collapseScopeKey, defaultCollapsedDiffFileKeys });
+  const collapseDefaultsRef = useRef({ collapseScopeKey, defaultCollapsedDiffFiles });
   useLayoutEffect(() => {
-    collapseDefaultsRef.current = { collapseScopeKey, defaultCollapsedDiffFileKeys };
-  }, [collapseScopeKey, defaultCollapsedDiffFileKeys]);
+    collapseDefaultsRef.current = { collapseScopeKey, defaultCollapsedDiffFiles };
+  }, [collapseScopeKey, defaultCollapsedDiffFiles]);
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
-    const { collapseScopeKey, defaultCollapsedDiffFileKeys } = collapseDefaultsRef.current;
+    const { collapseScopeKey, defaultCollapsedDiffFiles } = collapseDefaultsRef.current;
     setCollapsedDiffFiles((current) => {
-      const next = new Set(
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys,
+      const state = current.scopeKey === collapseScopeKey ? current : defaultCollapsedDiffFiles;
+      const next = setDiffFileCollapsed(
+        fileKey,
+        state,
+        !isFileDiffCollapsed(fileKey, state.foldOverride, state.toggledFileKeys),
       );
-      if (next.has(fileKey)) {
-        next.delete(fileKey);
-      } else {
-        next.add(fileKey);
-      }
-      return { scopeKey: collapseScopeKey, fileKeys: next };
+      return { ...next, scopeKey: collapseScopeKey };
     });
   }, []);
   // Find can ask again before the unfolded file reaches the viewer, so this must never fold.
   const unfoldDiffFile = useCallback((fileKey: string) => {
-    const { collapseScopeKey, defaultCollapsedDiffFileKeys } = collapseDefaultsRef.current;
+    const { collapseScopeKey, defaultCollapsedDiffFiles } = collapseDefaultsRef.current;
     setCollapsedDiffFiles((current) => {
-      const fileKeys =
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys;
-      if (!fileKeys.has(fileKey)) return current;
-      const next = new Set(fileKeys);
-      next.delete(fileKey);
-      return { scopeKey: collapseScopeKey, fileKeys: next };
+      const state = current.scopeKey === collapseScopeKey ? current : defaultCollapsedDiffFiles;
+      const next = setDiffFileCollapsed(fileKey, state, false);
+      if (next === state) return current;
+      return { ...next, scopeKey: collapseScopeKey };
     });
   }, []);
 
   const toggleDiffFileCollapse = useCallback(() => {
     setCodeViewRevision((current) => current + 1);
     setCollapsedDiffFiles((current) => {
-      const currentKeys =
-        current.scopeKey === collapseScopeKey ? current.fileKeys : defaultCollapsedDiffFileKeys;
+      const state = current.scopeKey === collapseScopeKey ? current : defaultCollapsedDiffFiles;
 
       return {
+        ...toggleAllDiffFiles(diffFileKeys, state),
         scopeKey: collapseScopeKey,
-        fileKeys: toggleAllDiffFiles(diffFileKeys, currentKeys),
       };
     });
-  }, [collapseScopeKey, defaultCollapsedDiffFileKeys, diffFileKeys]);
+  }, [collapseScopeKey, defaultCollapsedDiffFiles, diffFileKeys]);
 
   const selectTurn = (runId: RunId) => {
     if (!routeThreadRef) return;
