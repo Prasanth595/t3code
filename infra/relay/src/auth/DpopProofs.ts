@@ -5,7 +5,11 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { lt } from "drizzle-orm";
 
-import { DpopVerificationFailureCode, verifyDpopProof } from "@t3tools/shared/dpop";
+import {
+  DPOP_REPLAY_WINDOW_SECONDS,
+  DpopVerificationFailureCode,
+  verifyDpopProof,
+} from "@t3tools/shared/dpop";
 import * as RelayDb from "../db.ts";
 import { relayDpopProofs } from "../persistence/schema.ts";
 
@@ -129,7 +133,7 @@ const make = Effect.gen(function* () {
       thumbprint: result.thumbprint,
       jti: result.jti,
       iat: result.iat,
-      expiresAt: DateTime.add(input.now, { minutes: 5 }),
+      expiresAt: DateTime.add(input.now, { seconds: DPOP_REPLAY_WINDOW_SECONDS }),
     });
     if (!consumed) {
       yield* Effect.logWarning("relay dpop proof replay rejected", {
