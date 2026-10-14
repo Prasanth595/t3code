@@ -131,10 +131,10 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
 }
 
 /**
- * A thread may be snoozed unless the agent is blocked on the user: hiding a
- * pending approval or user-input request defeats the request, and a queued
- * turn start (a message no turn has adopted yet) is invisible pending work
- * the same way it is for settle. A running session IS snoozable — snooze
+ * A thread may be snoozed unless the agent or one of its subagents is blocked
+ * on the user: hiding a pending approval or user-input request defeats the
+ * request, and a queued turn start (a message no turn has adopted yet) is
+ * invisible pending work the same way it is for settle. A running session IS snoozable — snooze
  * only affects visibility, never the agent. Client-side twin of the server
  * invariants so the UI can reject before a round trip.
  */
@@ -143,6 +143,7 @@ export function canSnooze(
     ThreadSnoozeShell,
     | "hasPendingApprovals"
     | "hasPendingUserInput"
+    | "pendingSubagentRequest"
     | "latestUserMessageAt"
     | "latestTurn"
     | "latestRun"
@@ -152,6 +153,7 @@ export function canSnooze(
   options: { readonly now: string },
 ): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
+  if (shell.pendingSubagentRequest != null) return false;
   if (hasQueuedTurnStart(shell, options)) return false;
   return true;
 }
