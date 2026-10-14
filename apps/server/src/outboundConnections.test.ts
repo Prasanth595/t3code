@@ -94,7 +94,14 @@ it("keeps an explicit Node attempt timeout from the command line", () => {
 it.each([
   [
     "a path",
-    (dir: string) => [`--experimental-config-file=${NodePath.join(dir, "node.config.json")}`],
+    (dir: string) => {
+      const file = NodePath.join(dir, "node.config.json");
+      // Node 22.16 garbles the path in the `=` form and exits before running
+      // any code; it reads the separate argument correctly.
+      return process.versions.node.startsWith("22.16.")
+        ? ["--experimental-config-file", file]
+        : [`--experimental-config-file=${file}`];
+    },
   ],
   ["the default file", () => ["--experimental-default-config-file"]],
 ] as const)("keeps an explicit Node attempt timeout from a config file given %s", (_, flags) => {
