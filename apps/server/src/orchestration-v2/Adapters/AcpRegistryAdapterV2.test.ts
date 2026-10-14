@@ -1,14 +1,27 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import {
+  MessageId,
+  NodeId,
+  ProjectId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  type ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -331,6 +344,283 @@ describe("AcpRegistryAdapterV2", () => {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
       });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("launches Claude Agent on ACP v2 unless its instance environment decides", () =>
+    Effect.gen(function* () {
+      const launchSwitch = Effect.fn("launchSwitch")(function* (
+        config: Record<string, unknown>,
+        environment: NodeJS.ProcessEnv = {},
+      ) {
+        let launched: NodeJS.ProcessEnv | undefined;
+        const instanceId = ProviderInstanceId.make("acp-registry-launch-environment");
+        const adapter = yield* makeAcpRegistryAdapterV2({
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings(config),
+          environment,
+        }).pipe(
+          Effect.provide(
+            Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
+              resolve: (_settings, _cwd, launchEnvironment) => {
+                launched = launchEnvironment;
+                return Effect.fail(
+                  new AcpRegistrySupport.AcpRegistryError({
+                    reason: "runner_unavailable",
+                    detail: "Recorded the launch environment.",
+                  }),
+                );
+              },
+            }),
+          ),
+        );
+        yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-acp-registry-launch-environment"),
+            providerSessionId: ProviderSessionId.make("provider-session-launch-environment"),
+            modelSelection: { instanceId, model: "default" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.flip);
+        return launched?.CLAUDE_AGENT_ACP_EXPERIMENTAL_V2;
+      });
+
+      assert.equal(yield* launchSwitch({ agentId: "claude-acp" }), "1");
+      assert.equal(
+        yield* launchSwitch(
+          { source: "local", commandPath: "/opt/bin/claude-agent-acp" },
+          { PATH: "/opt/bin" },
+        ),
+        "1",
+      );
+      assert.equal(
+        yield* launchSwitch({ agentId: "claude-acp" }, { CLAUDE_AGENT_ACP_EXPERIMENTAL_V2: "0" }),
+        "0",
+      );
+      assert.isUndefined(yield* launchSwitch({ agentId: "gemini" }));
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect("keeps Claude Agent's session while any subagent runs, until Stop ends them", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const replayDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-claude-pending-work-",
+      });
+      const root = "claude-session";
+      const update = (sessionId: string, sessionUpdate: Record<string, unknown>) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "session/update",
+          params: { sessionId, update: sessionUpdate },
+        },
+      });
+      const childState = (parent: string, child: string, state: string) =>
+        update(parent, { sessionUpdate: "subagent_update", sessionId: child, state: { state } });
+      const prompt = (ordinal: number) => [
+        {
+          type: "expect_outbound",
+          frame: { kind: "request", method: "session/prompt", params: "<any>" },
+        },
+        update(root, {
+          sessionUpdate: "user_message",
+          messageId: `user-${ordinal}`,
+          content: [{ type: "text", text: "test prompt" }],
+        }),
+        {
+          type: "emit_inbound",
+          frame: {
+            kind: "response",
+            method: "session/prompt",
+            result: { messageId: `user-${ordinal}` },
+          },
+        },
+        update(root, { sessionUpdate: "state_update", state: "running" }),
+      ];
+      const transcript = yield* decodeAcpReplayTranscript(
+        {
+          provider: ACP_REGISTRY_PROVIDER,
+          protocol: "acp.ndjson-jsonrpc",
+          version: "1",
+          scenario: "claude-pending-work",
+          entries: [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 2,
+                  info: { name: "@agentclientprotocol/claude-agent-acp", version: "0.90.0" },
+                  capabilities: { session: {} },
+                  authMethods: [],
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/new", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/new", result: { sessionId: root } },
+            },
+            // Run 1 ends while only a nested subagent still runs.
+            ...prompt(1),
+            childState(root, "child-1", "running"),
+            childState("child-1", "grandchild-1", "running"),
+            childState(root, "child-1", "idle"),
+            update(root, { sessionUpdate: "state_update", state: "idle", stopReason: "end_turn" }),
+            // Run 2 starts another subagent and is stopped with a restart.
+            ...prompt(2),
+            childState(root, "child-2", "running"),
+            update(root, {
+              sessionUpdate: "agent_message_chunk",
+              messageId: "msg-2",
+              content: { type: "text", text: "Working on it." },
+            }),
+            // Its subagents run on after a cancel, so Stop closes the session:
+            // Claude's teardown ends its query and with it every subagent,
+            // then answers.
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "session/close", params: { sessionId: root } },
+            },
+            update(root, { sessionUpdate: "state_update", state: "idle", stopReason: "cancelled" }),
+            {
+              type: "emit_inbound",
+              frame: { kind: "response", method: "session/close", result: {} },
+            },
+            { type: "runtime_exit", status: "success" },
+          ] as never,
+        },
+        ACP_REGISTRY_PROVIDER,
+      );
+      const instanceId = ProviderInstanceId.make("acp-registry-claude-pending-work");
+      const adapter = yield* makeAcpRegistryAdapterV2({
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "claude-acp" }),
+        environment: {},
+        continuationRequests: { offer: () => Effect.void },
+        makeRuntime: makeAcpReplayRuntime({
+          transcript,
+          statusPath: path.join(replayDir, "status.json"),
+          scriptPath: yield* path.fromFileUrl(
+            new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
+          ),
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          fileSystem,
+        }),
+      }).pipe(Effect.provide(layerInjectedRuntimeCatalog));
+      const threadId = ThreadId.make("thread-acp-registry-claude-pending-work");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: replayDir,
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-claude-pending-work"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const hasPendingBackgroundWork = runtime.hasPendingBackgroundWork;
+      if (hasPendingBackgroundWork === undefined) {
+        return yield* Effect.die("Claude Agent's runtime must report pending background work");
+      }
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* runtime.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const turnInput = (ordinal: number): ProviderAdapter.ProviderAdapterV2TurnInput => ({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project-claude-pending-work"),
+          title: "Claude pending work",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make(`run-claude-pending-work-${ordinal}`),
+        runOrdinal: ordinal,
+        providerTurnOrdinal: ordinal,
+        attemptId: RunAttemptId.make(`attempt-claude-pending-work-${ordinal}`),
+        rootNodeId: NodeId.make(`node-claude-pending-work-${ordinal}`),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make(`message-claude-pending-work-${ordinal}`),
+          text: "test prompt",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnEnd = Effect.gen(function* () {
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (event.type === "turn.terminal") return event.status;
+        }
+      });
+
+      yield* runtime.startTurn(turnInput(1));
+      assert.equal(yield* turnEnd, "completed");
+      assert.isTrue(yield* hasPendingBackgroundWork, "a running nested subagent keeps the session");
+
+      yield* runtime.startTurn(turnInput(2));
+      // Stop once Claude has taken the prompt in and is working on it.
+      let secondTurnId: ProviderTurnId | undefined;
+      while (true) {
+        const event = yield* Queue.take(events);
+        if (event.type === "provider_turn.updated" && event.providerTurn.status === "running") {
+          secondTurnId = event.providerTurn.id;
+        }
+        if (event.type === "message.updated" && secondTurnId !== undefined) break;
+      }
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: secondTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.equal(yield* turnEnd, "interrupted");
+      assert.isFalse(yield* hasPendingBackgroundWork, "Stop ended the subagents");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

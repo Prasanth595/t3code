@@ -229,6 +229,12 @@ function flushInbound(): void {
     const entry = transcript.entries[cursor];
     if (entry === undefined || entry.type === "expect_outbound") return;
     if (entry.type === "runtime_exit") {
+      if (entry.status === "error") {
+        // A recorded crash: the agent's process ends here, after the frames
+        // before it, and the client reads its stdout to the end.
+        advance();
+        process.exit(1);
+      }
       if (entry.status !== "success" && entry.status !== "cancelled") {
         stopWithFailure(`Recorded runtime exit was ${entry.status ?? "unknown"}`, entry.error);
         return;

@@ -425,6 +425,22 @@ export function routeProviderEvent(
       return [true, addProviderThread(event.node.providerThreadId)];
     }
     case "subagent.updated": {
+      const moved = event.subagent;
+      if (
+        state.rootTurnEnded &&
+        moved.threadId === input.threadId &&
+        moved.runId !== null &&
+        !ownsRun(moved.runId) &&
+        moved.childThreadId !== null &&
+        ownsChildThread(moved.childThreadId)
+      ) {
+        // Another run shows this subagent now (a resumed subagent moves to the
+        // run that resumes it) and takes its child thread, so one run ingests
+        // that thread at a time.
+        const ownedThreadIds = new Set(state.ownedThreadIds);
+        ownedThreadIds.delete(moved.childThreadId);
+        return [false, { ...state, ownedThreadIds }];
+      }
       const belongs = ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId);
       const coordinator = event.subagent;
       if (
