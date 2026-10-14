@@ -1314,15 +1314,14 @@ export class CodexAppServerClientFactory extends Context.Service<
  *
  * - Codex 0.152 made the `update_plan` checklist tool opt-in; T3 renders it as
  *   the todo list.
- * - By default Codex waits only 1 s for MCP servers before the first model
- *   request and leaves out any server still starting. `0` makes it wait for each
- *   server to be ready or fail, as the Claude CLI does. Each startup phase of a
- *   server is bounded by its `startup_timeout_sec` (30 s by default). Later
- *   turns do not wait again.
+ * - Codex waits this long for MCP servers before the first model request and
+ *   leaves out any server still starting (default 1 s, too short for cold
+ *   `npx`/`uvx` servers). 10 s covers most slow starts, and a hung server
+ *   delays only the first turn of a session by 10 s, not its 30 s timeout.
  */
 export const CODEX_THREAD_CONFIG = {
   "tools.update_plan.enabled": true,
-  mcp_optional_startup_grace_ms: 0,
+  mcp_optional_startup_grace_ms: 10_000,
 } as const;
 
 export function codexThreadRuntimeParams(input: {
