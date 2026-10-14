@@ -1730,21 +1730,25 @@ export function togglePendingUserInputOptionSelection(
   };
 }
 
+/**
+ * Answers keyed by question id, or null while any question is unanswered.
+ * Entries rather than assignment, so an id such as `__proto__` stays an own key.
+ */
 export function buildPendingUserInputAnswers(
   questions: ReadonlyArray<ThreadUserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,
 ): Record<string, string | ReadonlyArray<string>> | null {
-  const answers: Record<string, string | ReadonlyArray<string>> = {};
+  const entries: Array<[string, string | ReadonlyArray<string>]> = [];
 
   for (const question of questions) {
     const answer = resolvePendingUserInputAnswer(question, draftAnswers[question.id]);
     if (answer === null) {
       return null;
     }
-    answers[question.id] = answer;
+    entries.push([question.id, answer]);
   }
 
-  return answers;
+  return Object.fromEntries(entries);
 }
 
 /**
