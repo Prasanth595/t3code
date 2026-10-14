@@ -237,8 +237,9 @@ describe("AcpRegistryAdapterV2", () => {
           }),
         })
         .pipe(Effect.asVoid, Effect.scoped, Effect.exit);
-      // Closing the session stops the agent, which writes its replay status in
-      // the same tick as its last answer. The script must be consumed exactly.
+      // Closing the session stops the agent. It records its replay status before
+      // sending each answer, so the status is final once T3 has read the last
+      // one. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return opened;
     });
