@@ -475,7 +475,9 @@ for (const kind of ["browser", "reveal"] as const) {
           );
         } finally {
           watcher.close();
-          NodeFS.rmSync(tempDir, { recursive: true, force: true });
+          // The recording stub's cmd.exe can still hold the directory for a
+          // moment after it publishes its output, which Windows reports as EPERM.
+          NodeFS.rmSync(tempDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
         }
       }),
     { timeout: 30_000 },
