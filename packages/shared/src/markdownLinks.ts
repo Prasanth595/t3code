@@ -1,4 +1,8 @@
-import { isWindowsAbsolutePath, stripSlashPrefixedWindowsDrive } from "./path.ts";
+import {
+  isWindowsAbsolutePath,
+  stripSlashPrefixedWindowsDrive,
+  workspaceRelativeFilePath,
+} from "./path.ts";
 import {
   type FilePathPosition,
   formatFilePathPosition,
@@ -175,7 +179,7 @@ function looksLikeHostname(segment: string, hasPosition: boolean): boolean {
  * Picks path-shaped inline code for the client's markdown file-link resolver.
  * It does not resolve paths or turn plain prose and fenced code into links.
  */
-export function inlineCodeFilePathCandidate(codeText: string): string | null {
+export function inlineCodeFilePathCandidate(codeText: string, cwd?: string): string | null {
   const trimmed = codeText.trim();
   if (trimmed.length === 0 || INLINE_CODE_DISQUALIFIER_PATTERN.test(trimmed)) return null;
 
@@ -198,6 +202,14 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
         .at(-1) ?? "";
     if (VERSION_SUFFIX_PATTERN.test(basename)) return null;
     if (!hasPosition && !FILE_EXTENSION_PATTERN.test(basename)) return null;
+  }
+  // `/images/logo.jpg` in code is usually a URL path, not a file.
+  if (
+    candidate.startsWith("/") &&
+    !POSIX_FILE_ROOT_PREFIXES.some((prefix) => candidate.startsWith(prefix)) &&
+    workspaceRelativeFilePath(candidate, cwd) === null
+  ) {
+    return null;
   }
   return candidate;
 }
