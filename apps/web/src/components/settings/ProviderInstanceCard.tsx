@@ -602,7 +602,11 @@ interface ProviderInstanceCardProps {
   readonly onSelect?: (() => void) | undefined;
   readonly readOnly?: boolean | undefined;
   readonly canWriteSettings?: boolean;
-  readonly onUpdate: (nextInstance: ProviderInstanceConfig) => void;
+  /**
+   * Receives each edit as a change to apply to the newest instance, so quick
+   * edits to different fields compose instead of each sending a stale copy.
+   */
+  readonly onUpdate: (update: (current: ProviderInstanceConfig) => ProviderInstanceConfig) => void;
   /**
    * Pass `undefined` to hide the delete footer entirely. Built-in default
    * instance slots use `undefined` — they can't be deleted without losing
@@ -786,14 +790,19 @@ export function ProviderInstanceCard({
     liveModels: liveProvider?.models,
     customModels,
   });
+  // Sets or, given `undefined`, removes one field of the newest instance.
+  const updateField = <Key extends keyof ProviderInstanceConfig>(
+    key: Key,
+    value: ProviderInstanceConfig[Key] | undefined,
+  ) =>
+    onUpdate((current) => {
+      const { [key]: _omit, ...rest } = current;
+      return (value === undefined ? rest : { ...rest, [key]: value }) as ProviderInstanceConfig;
+    });
+
   const updateDisplayName = (value: string) => {
     const trimmed = value.trim();
-    const { displayName: _omit, ...rest } = instance;
-    onUpdate(
-      trimmed.length > 0
-        ? ({ ...rest, displayName: trimmed } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("displayName", trimmed.length > 0 ? trimmed : undefined);
   };
 
   const updateEnabled = (value: boolean) => {
@@ -801,62 +810,39 @@ export function ProviderInstanceCard({
       projectOverride.onChange(value);
       return;
     }
-    onUpdate({ ...instance, enabled: value });
+    updateField("enabled", value);
   };
 
   const updateAccentColor = (value: string) => {
-    const normalized = normalizeProviderAccentColor(value);
-    const { accentColor: _omit, ...rest } = instance;
-    onUpdate(
-      normalized
-        ? ({ ...rest, accentColor: normalized } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("accentColor", normalizeProviderAccentColor(value));
   };
 
   const updateIcon = (icon: string | undefined) => {
-    const { icon: _omit, ...rest } = instance;
-    onUpdate(
-      icon ? ({ ...rest, icon } as ProviderInstanceConfig) : (rest as ProviderInstanceConfig),
-    );
+    updateField("icon", icon || undefined);
   };
 
   const updateBadgeLabel = (badgeLabel: string | undefined) => {
-    const { badgeLabel: _omit, ...rest } = instance;
-    onUpdate(
-      badgeLabel
-        ? ({ ...rest, badgeLabel } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("badgeLabel", badgeLabel || undefined);
   };
 
   const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
-    const { config: _omit, ...rest } = instance;
-    onUpdate(
-      nextConfig !== undefined
-        ? ({ ...rest, config: nextConfig } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("config", nextConfig);
   };
 
   const updateCustomModels = (next: ReadonlyArray<CustomModelDefinition>) => {
-    const nextConfig = nextConfigBlobWithValue(
-      instance.config,
-      "customModels",
-      next.map(toCustomModelSetting),
-    );
-    const { config: _omit, ...rest } = instance;
-    onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
+    onUpdate((current) => ({
+      ...current,
+      config: nextConfigBlobWithValue(
+        current.config,
+        "customModels",
+        next.map(toCustomModelSetting),
+      ),
+    }));
   };
 
   const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
     const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
-    const { environment: _omit, ...rest } = instance;
-    onUpdate(
-      cleaned.length > 0
-        ? ({ ...rest, environment: cleaned } as ProviderInstanceConfig)
-        : (rest as ProviderInstanceConfig),
-    );
+    updateField("environment", cleaned.length > 0 ? cleaned : undefined);
   };
   // Drivers that need a named secret (Cursor's API key) get a dedicated field;
   // the generic editor only shows the remaining variables.

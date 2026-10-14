@@ -17,7 +17,6 @@ import {
   hasChangedBackgroundActivitySettings,
   isProjectGroupingEnabled,
   projectGroupingModeFromToggle,
-  rebaseProviderInstanceEdit,
   resolveBackgroundActivityProfileOption,
 } from "./SettingsPanels.logic";
 
@@ -212,36 +211,6 @@ describe("buildProviderInstanceUpdatePatch", () => {
 
     expect(patch.providerInstances).toEqual({ [otherId]: other, [instanceId]: nextInstance });
     expect(patch).not.toHaveProperty("textGenerationModelSelection");
-  });
-});
-
-describe("rebaseProviderInstanceEdit", () => {
-  const rendered = {
-    driver: ProviderDriverKind.make("claudeAgent"),
-    displayName: "Work",
-    icon: "claude",
-  } satisfies ProviderInstanceConfig;
-
-  it("keeps a badge label still being saved when an icon is picked from the same render", () => {
-    const pending = { ...rendered, badgeLabel: "PX" };
-    const edited = { ...rendered, icon: "anthropic" };
-
-    expect(rebaseProviderInstanceEdit({ rendered, edited, pending })).toEqual({
-      ...rendered,
-      badgeLabel: "PX",
-      icon: "anthropic",
-    });
-  });
-
-  it("applies a cleared field over the pending edit", () => {
-    const pending = { ...rendered, badgeLabel: "PX" };
-    const { icon: _icon, ...edited } = rendered;
-
-    expect(rebaseProviderInstanceEdit({ rendered, edited, pending })).toEqual({
-      driver: rendered.driver,
-      displayName: "Work",
-      badgeLabel: "PX",
-    });
   });
 });
 

@@ -272,29 +272,6 @@ export function buildProviderInstanceUpdatePatch(input: {
   };
 }
 
-/**
- * Re-applies what an edit changed relative to the instance it was built from
- * onto `pending`, an earlier edit that is still being saved. A provider card
- * builds every edit from the instance it rendered, so without this a second
- * quick edit (an icon picked before a badge label's save returns) would send
- * the first edit's field back at its old value.
- */
-export function rebaseProviderInstanceEdit(input: {
-  readonly rendered: ProviderInstanceConfig;
-  readonly edited: ProviderInstanceConfig;
-  readonly pending: ProviderInstanceConfig;
-}): ProviderInstanceConfig {
-  const rendered: Record<string, unknown> = input.rendered;
-  const edited: Record<string, unknown> = input.edited;
-  const rebased: Record<string, unknown> = { ...input.pending };
-  for (const key of new Set([...Object.keys(rendered), ...Object.keys(edited)])) {
-    if (rendered[key] === edited[key]) continue;
-    if (edited[key] === undefined) delete rebased[key];
-    else rebased[key] = edited[key];
-  }
-  return rebased as ProviderInstanceConfig;
-}
-
 // ── Background-activity interval helpers ─────────────────────────────
 // Shared by the General panel's interval rows and the Providers panel's
 // health-check row.

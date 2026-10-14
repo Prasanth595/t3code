@@ -106,7 +106,6 @@ import {
   durationToSeconds,
   normalizeIntervalSeconds,
   PROVIDER_HEALTH_INTERVAL_STEP_SECONDS,
-  rebaseProviderInstanceEdit,
 } from "./SettingsPanels.logic";
 import {
   PolicyTooltip,
@@ -615,13 +614,20 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
-  // The newest edit sent for each instance, kept while its save is in flight
-  // and until the card renders fresh server state, so the next edit builds on
-  // it rather than on the instance the card last rendered.
+  // Edits per instance that the server may not have sent back yet. Each save
+  // replays them onto the server's latest instance, so quick edits compose and
+  // a change from elsewhere to another field survives. They are dropped once
+  // their saves finish and the server's instance changes.
   const pendingInstanceEditsRef = useRef(
     new Map<
       ProviderInstanceId,
-      { instance: ProviderInstanceConfig; rendered: ProviderInstanceConfig; saving: number }
+      {
+        updates: ReadonlyArray<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
+        saving: number;
+        // The server's instance when the last edit was made, as JSON: a default slot
+        // with no saved instance gets a fresh object on every render.
+        server: string;
+      }
     >(),
   );
 
@@ -840,7 +846,7 @@ export function EnvironmentProviderSettings({
 
   const updateProviderInstance = async (
     row: InstanceRow,
-    next: ProviderInstanceConfig,
+    update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
     options?: {
       readonly textGenerationModelSelection?: Parameters<
         typeof buildProviderInstanceUpdatePatch
@@ -848,17 +854,17 @@ export function EnvironmentProviderSettings({
     },
   ) => {
     const pendingEdits = pendingInstanceEditsRef.current;
+    const server = JSON.stringify(row.instance);
     const pending = pendingEdits.get(row.instanceId);
-    const instance =
-      pending !== undefined && (pending.saving > 0 || pending.rendered === row.instance)
-        ? rebaseProviderInstanceEdit({
-            rendered: row.instance,
-            edited: next,
-            pending: pending.instance,
-          })
-        : next;
-    const edit = { instance, rendered: row.instance, saving: (pending?.saving ?? 0) + 1 };
-    pendingEdits.set(row.instanceId, edit);
+    // Once their saves are done and the server's instance has changed, it holds those edits.
+    const carried = pending !== undefined && (pending.saving > 0 || pending.server === server);
+    const updates = [...(carried ? pending.updates : []), update];
+    const instance = updates.reduce((current, apply) => apply(current), row.instance);
+    pendingEdits.set(row.instanceId, {
+      updates,
+      saving: (carried ? pending.saving : 0) + 1,
+      server,
+    });
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
@@ -870,10 +876,13 @@ export function EnvironmentProviderSettings({
       patch,
     );
     const latest = pendingEdits.get(row.instanceId);
-    if (latest !== undefined) latest.saving -= 1;
-    if (result._tag === "Failure") {
-      // The server kept its own state; the next edit starts from what it renders.
-      if (latest !== undefined && latest.saving === 0) pendingEdits.delete(row.instanceId);
+    if (latest !== undefined) {
+      // A failed edit is not replayed again; the card shows what the server kept.
+      const updates =
+        result._tag === "Failure"
+          ? latest.updates.filter((apply) => apply !== update)
+          : latest.updates;
+      pendingEdits.set(row.instanceId, { ...latest, updates, saving: latest.saving - 1 });
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -1024,7 +1033,9 @@ export function EnvironmentProviderSettings({
               authMethod={readAntigravityAuthMethod(row.instance.config)}
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
-              onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+              onEnable={() =>
+                updateProviderInstance(row, (current) => ({ ...current, enabled: true }))
+              }
             />
           ) : mode === "editor" &&
             row.driver === "codex" &&
@@ -1037,17 +1048,17 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onModeChange={(setupMode) =>
-                updateProviderInstance(row, {
-                  ...row.instance,
+                updateProviderInstance(row, (current) => ({
+                  ...current,
                   enabled: true,
                   config: {
-                    ...(row.instance.config !== null && typeof row.instance.config === "object"
-                      ? row.instance.config
+                    ...(current.config !== null && typeof current.config === "object"
+                      ? current.config
                       : {}),
                     enabled: true,
                     setupMode,
                   },
-                })
+                }))
               }
             />
           ) : mode === "editor" &&
@@ -1073,16 +1084,16 @@ export function EnvironmentProviderSettings({
             />
           ) : null
         }
-        onUpdate={(next) => {
+        onUpdate={(update) => {
           const wasEnabled = resolveProviderInstanceEnabled(row.instance);
-          const isDisabling = next.enabled === false && wasEnabled;
+          const isDisabling = update(row.instance).enabled === false && wasEnabled;
           const shouldClearTextGen =
             isDisabling &&
             textGenInstanceId === row.instanceId &&
             readEnvironmentScope(environmentId, AuthSettingsWriteScope);
           updateProviderInstance(
             row,
-            next,
+            update,
             shouldClearTextGen
               ? {
                   textGenerationModelSelection:

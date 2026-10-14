@@ -336,36 +336,91 @@ describe("EnvironmentProviderSettings routing", () => {
     });
   });
 
-  it("keeps a badge label still being saved when an icon is picked before it returns", async () => {
-    atoms.providers = [provider()];
-    let finishFirstSave!: () => void;
-    settingsState.mutateProviderInstance.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishFirstSave = () => resolve({ _tag: "Success", value: {} });
-        }),
-    );
-    const panel = renderPanel();
-    const providerCard = visitElements(
+  type InstanceUpdate = (current: ProviderInstanceConfig) => ProviderInstanceConfig;
+  const setField =
+    <Key extends keyof ProviderInstanceConfig>(key: Key, value: ProviderInstanceConfig[Key]) =>
+    (current: ProviderInstanceConfig): ProviderInstanceConfig => ({ ...current, [key]: value });
+  const clearField =
+    (key: keyof ProviderInstanceConfig) =>
+    (current: ProviderInstanceConfig): ProviderInstanceConfig => {
+      const { [key]: _omit, ...rest } = current;
+      return rest as ProviderInstanceConfig;
+    };
+  const codexCardUpdate = (panel: ReactElement<Record<string, unknown>>) =>
+    visitElements(
       panel,
       (element) =>
         element.props.instanceId === codexId && typeof element.props.onUpdate === "function",
+    )?.props.onUpdate as (update: InstanceUpdate) => void;
+  const savedInstance = (call: number) =>
+    (settingsState.mutateProviderInstance.mock.calls[call]?.[0] as { instance: unknown }).instance;
+  const holdFirstSave = () => {
+    let finish!: () => void;
+    settingsState.mutateProviderInstance.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ _tag: "Success", value: {} });
+        }),
     );
-    const rendered = providerCard?.props.instance as ProviderInstanceConfig;
-    const onUpdate = providerCard?.props.onUpdate as (next: ProviderInstanceConfig) => void;
+    return () => finish();
+  };
 
-    // Both edits are built from the same render, as the card's two controls build them.
-    onUpdate({ ...rendered, badgeLabel: "PX" });
-    onUpdate({ ...rendered, icon: "openai" });
+  it("keeps a badge label still being saved when an icon is picked before it returns", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+
+    onUpdate(setField("badgeLabel", "PX"));
+    onUpdate(setField("icon", "openai"));
     finishFirstSave();
     await flushPromises();
 
-    expect(settingsState.mutateProviderInstance).toHaveBeenCalledTimes(2);
-    expect(settingsState.mutateProviderInstance.mock.calls[1]?.[0]).toMatchObject({
-      operation: "upsert",
-      instanceId: codexId,
-      instance: { badgeLabel: "PX", icon: "openai" },
+    expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "openai" });
+  });
+
+  it("clears a color that is still being saved", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    const onUpdate = codexCardUpdate(renderPanel());
+
+    onUpdate(setField("accentColor", "#ff0000"));
+    onUpdate(clearField("accentColor"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(1)).not.toHaveProperty("accentColor");
+  });
+
+  it("keeps another client's change that arrives while an edit is saving", async () => {
+    atoms.providers = [provider()];
+    const finishFirstSave = holdFirstSave();
+    codexCardUpdate(renderPanel())(setField("badgeLabel", "PX"));
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), icon: "anthropic" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    finishFirstSave();
+    await flushPromises();
+
+    expect(savedInstance(1)).toMatchObject({
+      icon: "anthropic",
+      badgeLabel: "PX",
+      displayName: "Work",
     });
+  });
+
+  it("keeps a saved edit when the default slot rerenders before the server sends it back", async () => {
+    atoms.providers = [provider()];
+    codexCardUpdate(renderPanel())(setField("badgeLabel", "PX"));
+    await flushPromises();
+    // The unconfigured default slot is a fresh object on this render, with the same content.
+    codexCardUpdate(renderPanel())(setField("icon", "openai"));
+    await flushPromises();
+
+    expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "openai" });
   });
 
   it("starts the next edit from the server's state after a save fails", async () => {
@@ -373,25 +428,15 @@ describe("EnvironmentProviderSettings routing", () => {
     settingsState.mutateProviderInstance.mockResolvedValueOnce(
       AsyncResult.failure(Cause.fail(new Error("settings write failed"))),
     );
-    const panel = renderPanel();
-    const providerCard = visitElements(
-      panel,
-      (element) =>
-        element.props.instanceId === codexId && typeof element.props.onUpdate === "function",
-    );
-    const rendered = providerCard?.props.instance as ProviderInstanceConfig;
-    const onUpdate = providerCard?.props.onUpdate as (next: ProviderInstanceConfig) => void;
+    const onUpdate = codexCardUpdate(renderPanel());
 
-    onUpdate({ ...rendered, badgeLabel: "PX" });
+    onUpdate(setField("badgeLabel", "PX"));
     await flushPromises();
-    onUpdate({ ...rendered, icon: "openai" });
+    onUpdate(setField("icon", "openai"));
     await flushPromises();
 
-    const retried = settingsState.mutateProviderInstance.mock.calls[1]?.[0] as {
-      readonly instance: ProviderInstanceConfig;
-    };
-    expect(retried.instance).toMatchObject({ icon: "openai" });
-    expect(retried.instance).not.toHaveProperty("badgeLabel");
+    expect(savedInstance(1)).toMatchObject({ icon: "openai" });
+    expect(savedInstance(1)).not.toHaveProperty("badgeLabel");
   });
 
   it("opens the requested provider instance instead of the first provider", () => {
@@ -606,7 +651,7 @@ describe("EnvironmentProviderSettings routing", () => {
       enabled: false,
       displayName: "Work",
     };
-    (card?.props.onUpdate as ((instance: typeof next) => void) | undefined)?.(next);
+    (card?.props.onUpdate as ((update: () => typeof next) => void) | undefined)?.(() => next);
     await flushPromises();
 
     expect(settingsState.mutateProviderInstance).toHaveBeenCalledWith(
