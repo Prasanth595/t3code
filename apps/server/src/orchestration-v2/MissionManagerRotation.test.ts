@@ -410,3 +410,20 @@ describe("rotation instant and authority bounds", () => {
     assert.strictEqual(evaluateManagerRotation(unsafeEpoch).kind, "hold");
   });
 });
+
+
+describe("unknown rotation fact null guards", () => {
+  const evaluateUnknown = (value: unknown) => evaluateManagerRotation(value as EvaluateManagerRotationInput);
+  it.each([null, undefined])("holds non-object top-level input %s", (value) => {
+    expect(evaluateUnknown(value).kind).toBe("hold");
+  });
+  it("holds a null manager slot", () => {
+    const input = baseInput();
+    const value: unknown = { ...input, mission: { ...input.mission, managers: { delivery: null } } };
+    expect(evaluateUnknown(value).kind).toBe("hold");
+  });
+  it("holds null context-pressure facts on the current day", () => {
+    const value: unknown = { ...baseInput({ lastSlot: { localDate: "2026-10-14", ordinal: 0 } }), contextPressure: null };
+    expect(evaluateUnknown(value).kind).toBe("hold");
+  });
+});

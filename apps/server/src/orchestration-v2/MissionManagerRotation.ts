@@ -240,6 +240,7 @@ const noop = (
 export const evaluateManagerRotation = (
   input: EvaluateManagerRotationInput,
 ): ManagerRotationDecision => {
+  if (!isRecord(input)) return hold("unknown", "delivery", "invalid_role", "Rotation input must be an object.");
   const missionId =
     isRecord(input) && typeof input.mission?.id === "string" ? input.mission.id : "unknown";
   const role = (input as { role?: unknown }).role;
@@ -282,7 +283,7 @@ export const evaluateManagerRotation = (
   const assignment =
     role === "delivery" ? mission.managers?.delivery : mission.managers?.retro;
   if (
-    assignment === undefined ||
+    !isRecord(assignment) ||
     typeof assignment.threadId !== "string" ||
     assignment.threadId.length === 0 ||
     typeof assignment.epoch !== "number" ||
@@ -332,6 +333,10 @@ export const evaluateManagerRotation = (
     boundaryFlags.some((flag) => typeof boundary[flag] !== "boolean")
   ) {
     return hold(missionId, role, "unknown_safe_boundary", "Safe-boundary facts are unknown.");
+  }
+
+  if (input.contextPressure !== undefined && (!isRecord(input.contextPressure) || typeof input.contextPressure.requested !== "boolean")) {
+    return hold(missionId, role, "unknown_safe_boundary", "Context-pressure facts are unknown.");
   }
 
   const today = toLocalDate(nowMs, timezone);
