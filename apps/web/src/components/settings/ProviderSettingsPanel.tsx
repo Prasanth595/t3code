@@ -27,7 +27,6 @@ import {
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { stableStringify } from "@t3tools/shared/relaySigning";
 import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
@@ -615,22 +614,15 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
-  // Edits per instance, in order, kept until no save is in flight and the
-  // server's instance is the one last sent: earlier saves' echoes can still
-  // arrive before that. Each save replays them onto the server's latest
-  // instance, so quick edits compose and a change from elsewhere to another
-  // field survives. Deleting or resetting the instance discards them.
-  const pendingInstanceEditsRef = useRef(
+  // The edits made here to each instance, in order. Every save replays them onto
+  // the server's latest instance, so quick edits compose whatever the server
+  // has sent back so far, and a change from elsewhere to a field not edited
+  // here survives. Deleting or resetting the instance discards them; leaving
+  // the page does too.
+  const instanceEditsRef = useRef(
     new Map<
       ProviderInstanceId,
-      {
-        readonly updates: ReadonlyArray<
-          (current: ProviderInstanceConfig) => ProviderInstanceConfig
-        >;
-        readonly saving: number;
-        // Compared by content: a default slot with no saved instance is a fresh object every render.
-        readonly lastSent: string;
-      }
+      ReadonlyArray<(current: ProviderInstanceConfig) => ProviderInstanceConfig>
     >(),
   );
 
@@ -856,18 +848,10 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
-    const pendingEdits = pendingInstanceEditsRef.current;
-    const pending = pendingEdits.get(row.instanceId);
-    const carried =
-      pending !== undefined &&
-      (pending.saving > 0 || pending.lastSent !== stableStringify(row.instance));
-    const updates = [...(carried ? pending.updates : []), update];
+    const edits = instanceEditsRef.current;
+    const updates = [...(edits.get(row.instanceId) ?? []), update];
     const instance = updates.reduce((current, apply) => apply(current), row.instance);
-    pendingEdits.set(row.instanceId, {
-      updates,
-      saving: (carried ? pending.saving : 0) + 1,
-      lastSent: stableStringify(instance),
-    });
+    edits.set(row.instanceId, updates);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
@@ -878,17 +862,13 @@ export function EnvironmentProviderSettings({
       { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
-    const latest = pendingEdits.get(row.instanceId);
-    if (latest !== undefined) {
-      pendingEdits.set(row.instanceId, {
-        ...latest,
-        // A failed edit is not replayed again; the card shows what the server kept.
-        updates:
-          result._tag === "Failure"
-            ? latest.updates.filter((apply) => apply !== update)
-            : latest.updates,
-        saving: latest.saving - 1,
-      });
+    const latest = edits.get(row.instanceId);
+    if (result._tag === "Failure" && latest !== undefined) {
+      // A failed edit is not replayed again; the card shows what the server kept.
+      edits.set(
+        row.instanceId,
+        latest.filter((apply) => apply !== update),
+      );
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -901,7 +881,7 @@ export function EnvironmentProviderSettings({
   };
 
   const deleteProviderInstance = async (row: InstanceRow) => {
-    pendingInstanceEditsRef.current.delete(row.instanceId);
+    instanceEditsRef.current.delete(row.instanceId);
     const updateResult = await persistProviderInstance({
       operation: "remove",
       instanceId: row.instanceId,
@@ -939,7 +919,7 @@ export function EnvironmentProviderSettings({
   };
 
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
-    pendingInstanceEditsRef.current.delete(defaultInstanceIdForDriver(driverKind));
+    instanceEditsRef.current.delete(defaultInstanceIdForDriver(driverKind));
     const result = await persistProviderInstance({
       operation: "remove",
       instanceId: defaultInstanceIdForDriver(driverKind),
