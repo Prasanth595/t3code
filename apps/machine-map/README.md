@@ -21,7 +21,9 @@ Create these Access apps before the first deploy:
 2. **Machine connections.** Self-hosted app for `t3.yarden-zamir.com/connect`. Give it no identity login. The portal adds a "Service Auth" policy named `t3 machine map tokens` for the machine tokens. Copy its audience tag into `CONNECT_AUD` and its app id into `CONNECT_ACCESS_APP_ID`.
 3. **Enrollment.** Self-hosted app for `t3.yarden-zamir.com/enroll` with one Bypass policy for everyone. The join code is the credential (MM-204).
 
-`MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy and edits no other policy.
+`MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy and edits no other policy. It also adds and removes the hostname of each machine tunnel (MM-213). That update sends back the whole app with its policies, and the portal checks that the app keeps each policy.
+
+`MACHINE_DOMAIN` and `MACHINE_ZONE_ID` in `wrangler.jsonc` name the DNS zone of the machine hostnames. A new machine gets `t3-<slug>.<MACHINE_DOMAIN>`.
 
 The Worker refuses every owner and machine request while a value in `wrangler.jsonc` starts with `REPLACE_`.
 
@@ -30,7 +32,8 @@ The Worker refuses every owner and machine request while a value in `wrangler.js
 Set secrets with `wrangler secret put <NAME>` in this folder.
 
 - `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it with `openssl rand -base64 32`. A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
-- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with only "Access: Service Tokens Edit" and "Access: Apps and Policies Edit" on the account. With it, "Add machine" creates the machine token, "Rotate token" works, "Remove machine" deletes the token, and the Clients view lists Access sessions. Without it, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
+- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
+- `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
 
 ## Deploy
 
@@ -48,7 +51,7 @@ Local development skips the Access JWT: `DEV_FAKE_ACCESS=1` on a loopback hostna
 
 The T3 server side follows `machineMap.ts`. These details are not in the types:
 
-- Join: `POST /enroll` with `{ "code": "K7QM-2XPA" }`. The answer is `EnrollResponse` in `src/api.ts`. Each code works once. Ten attempts per address in 15 minutes.
+- Join: `POST /enroll` with `{ "code": "K7QM-2XPA" }`. The answer is `EnrollResponse` in `src/api.ts`. Its `tunnel` is `MachineTunnelGrant` from the contracts, or null. It holds the tunnel token: never log it. Each code works once. Ten attempts per address in 15 minutes.
 - Connect: open a WebSocket to `wss://t3.yarden-zamir.com/connect` with the headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Send `hello` first. A new connection closes the older one of the same machine (code 4000). A removed machine gets code 4004.
 - Liveness: send the text `ping`. The portal answers `pong` without waking the Durable Object (MM-1001).
 - Tool calls: `toolResult.result` has the shape `MapToolResult` in `src/api.ts`. A write answers `applied` with a revision, or `proposed` with a proposal id.

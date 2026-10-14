@@ -32,18 +32,19 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 ## 2. Machines and enrollment
 
-- **MM-201** "Add machine" asks for a name and a kind: laptop, desktop or server. The portal creates a machine token named `t3-machine-<name>`. It adds the token to the Access policies of the machine hostnames and of `/connect`.
+- **MM-201** "Add machine" asks for a name and a kind: laptop, desktop or server. The portal creates a machine token named `t3-machine-<name>`. It adds the token to the Access policies of the machine hostnames and of `/connect`. It also makes the tunnel of the machine (MM-213).
 - **MM-202** "Add machine" shows a one-time join code. The code expires after 10 minutes and works once. The portal never shows the token secret.
 - **MM-203** A machine joins with the code in one of three ways: in T3 Settings > Machines, with `t3 machine-map join <code>`, or with the agent tool `machines_join`.
-- **MM-204** The join exchanges the code at `/enroll`, which a bypass Access app leaves open. The response holds the token id and secret. The machine keeps the secret in its server secret store and turns on `machineMap`.
+- **MM-204** The join exchanges the code at `/enroll`, which a bypass Access app leaves open. The response holds the token id and secret, and the tunnel of MM-213 or null. The machine keeps the secret in its server secret store and turns on `machineMap`.
 - **MM-205** A new machine shows on the map as "waiting" until its first connection. Then it shows as online.
 - **MM-206** The owner can rename a machine, change its kind and icon, and move it on the map. Positions are part of the map and sync to every page. A new machine takes the place that the owner picked (MM-1110), or else the free spot farthest from the other machines. The page shows cards that overlap apart, without saving it.
 - **MM-207** "Rotate token" makes a new secret for a machine token. An online machine gets the new secret on its connection, saves it, and confirms. Then the old secret stops working. An offline machine gets the rotation as a queued command.
-- **MM-208** "Remove machine" deletes the machine token, removes its arrows and its settings overrides, and drops its queue. A removed machine cannot connect again with its old secret.
+- **MM-208** "Remove machine" deletes the machine token and what MM-213 made, removes its arrows and its settings overrides, and drops its queue. A removed machine cannot connect again with its old secret.
 - **MM-209** Each machine reports its tunnel hostname. Arrows out of other machines use it to connect.
 - **MM-210** Without the Cloudflare API token of MM-1205, "Add machine" takes the client id and secret of an existing machine token, instead of creating one. The join code then delivers that secret.
-- **MM-211** The join dialog starts with step 0, "Install T3 Code (Yarden-zamir's fork)". It links to the newest fork nightly from `GET /api/fork-release`, which caches the GitHub answer for 10 minutes and falls back to the releases page. A split button copies `install.sh` with `--join <code>`. Its menu copies the macOS command and the Windows PowerShell command, and links the `.dmg` and the `.exe`.
+- **MM-211** The join dialog starts with "Install and join in one step". It shows one command for Mac, one for Linux and one for Windows PowerShell, each with the code and a Copy button. Each command installs the fork and joins with the code. It links to the newest fork nightly from `GET /api/fork-release`, which caches the GitHub answer for 10 minutes and falls back to the releases page, and links the `.dmg` and the `.exe`. A server install joins at once. An app install writes the code to `<T3 home>/userdata/machine-map-join-code`. The server joins with that file at its next start and deletes it first, so a bad code does not repeat.
 - **MM-212** When the machine uses the code, the portal sends every page an `enrolled` event with the machine id and no part of the code. The open join dialog then plays a short sound and a one-shot pop, "joined" stamp and confetti on the code. It says "<name> joined", shows if the machine is connected, and has "Open machine". A code that expires unused shows "This code expired" with "New code". With reduced motion, the dialog keeps the state change and the sound and drops the motion.
+- **MM-213** With the permissions of MM-1205, "Add machine" makes a remotely managed tunnel `t3-<slug>` with the ingress `t3-<slug>.<MACHINE_DOMAIN>` to `http://127.0.0.1:3773` and then 404. It adds a proxied CNAME to the tunnel and adds the hostname to the Access app of the machine hostnames. It reuses a tunnel with that name, or the tunnel that a CNAME with that name points at, and never makes a second one. Another DNS record with that name, or a locally managed tunnel, skips the tunnel. A failure undoes what the step made. Without a tunnel, "Add machine" works as before and the join dialog says why. The join code delivers the tunnel token, the hostname and the Access login: the team domain, the audience of the machine Access app, and the owner emails with `MACHINE_ACCESS_SUBJECTS`. "Remove machine" deletes only what "Add machine" made.
 
 ## 3. Arrows
 
@@ -172,11 +173,11 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 ## 12. Security
 
-- **MM-1201** The Durable Object stores no token secret at rest. During a join (MM-204) and a rotation (MM-207), it keeps the secret encrypted with a Worker secret. It deletes the secret when the machine takes it, or when the code or rotation expires.
+- **MM-1201** The Durable Object stores no token secret at rest. During a join (MM-204) and a rotation (MM-207), it keeps the secret and the tunnel token (MM-213) encrypted with a Worker secret. It deletes the secret when the machine takes it, or when the code or rotation expires.
 - **MM-1202** A machine gets only its own desired state, its own queue and the public facts of other machines: name, kind, hostname, presence and the arrows that touch it.
 - **MM-1203** Every write records its actor. The portal refuses writes from a machine without the map role for them.
 - **MM-1204** `/enroll` limits attempts per address and refuses expired or used codes.
-- **MM-1205** The Worker keeps one Cloudflare API token as a secret. The token can only edit Access service tokens and Access apps.
+- **MM-1205** The Worker keeps one Cloudflare API token as a secret. The token can only edit Access service tokens, Access apps, Cloudflare Tunnels of the account, and DNS of the zone of the machine hostnames. Without the tunnel and DNS permissions, MM-213 skips the tunnel.
 - **MM-1206** A machine trusts the Cloudflare Access JWT header only because its T3 server listens on loopback behind its tunnel, as the fork login already requires.
 
 ## 13. T3 server
@@ -189,6 +190,9 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-1306** When the level of an arrow into the server changes, the server revokes every session with the subject of the source machine.
 - **MM-1307** The server accepts T3 tool calls from a machine session only when its arrow has "agent tools".
 - **MM-1308** Fork code lives in new files. Changes to upstream files are small hooks, and each hook has a test.
+- **MM-1309** A join with a tunnel (MM-213) saves the tunnel token in the server secret store and the hostname and Access login in `<stateDir>/machine-map-tunnel.json`. The server then restarts through its supervisor. At start, the server uses that tunnel as its tunnel URL and Access login. It downloads the official `cloudflared` for its system into `<stateDir>/bin`, runs it as a child process with the token in its environment, starts it again after each exit, and stops it with the server. "Leave" forgets the tunnel.
+- **MM-1310** A tunnel URL or Access login from the environment or the desktop settings wins over the tunnel of a join. Then the join keeps the tunnel of the server and starts no `cloudflared`.
+- **MM-1311** While the map is on, the server trusts the origin `https://<hostname>` of each peer in its desired state like a trusted browser origin: credentialed CORS, cookie sessions, and the `trustedBrowserOrigins` that clients read. Explicit trusted origins stay in addition.
 
 ## 14. Desktop app
 

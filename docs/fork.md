@@ -144,7 +144,7 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 
 ## Install the fork
 
-`scripts/fork-install/` installs the fork on a new machine. The join dialog of the machine map copies these commands with the join code (MM-211).
+`scripts/fork-install/` installs the fork on a new machine and joins the machine map. The join dialog of the machine map shows these commands with the join code (MM-211).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
@@ -154,8 +154,9 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
 ```
 
-- On macOS, `install.sh` downloads the newest nightly `.dmg`, copies the app to `/Applications` and opens it. It keeps an installed app, because the app updates itself. `--force` replaces it. The join code goes to the clipboard for Settings > Machines.
-- On Windows, `install.ps1` downloads and runs the newest nightly `.exe`. The join code goes to the clipboard.
+- On macOS, `install.sh` downloads the newest nightly `.dmg`, copies the app to `/Applications` and opens it. It keeps an installed app, because the app updates itself. `--force` replaces it.
+- On Windows, `install.ps1` downloads and runs the newest nightly `.exe`.
+- With a join code, the app installs write it to `~/.t3/userdata/machine-map-join-code` (or below `T3CODE_HOME`). The app server joins with it at its next start and deletes it. If the app was open already, quit it and open it again. The code expires after 10 minutes.
 - Both read the release list of the GitHub API, because the nightlies are pre-releases and `releases/latest` skips them.
 - On Linux with a display (`DISPLAY` or `WAYLAND_DISPLAY`), `install.sh` downloads the newest nightly AppImage to `~/Applications/T3-Code.AppImage`, adds a menu entry and starts it. Like on macOS, it keeps an installed app and `--force` replaces it. The app updates itself from `nightly-linux.yml` or `nightly-linux-arm64.yml`. AppImages need FUSE 2, for example `sudo apt install libfuse2t64`.
 - On Linux without a display, `install.sh` downloads the newest server archive `t3-<version>-linux-<arch>.tar.gz` and checks its `.sha256` file. It unpacks it to `~/.local/share/t3code-fork-server/<version>` and points `current` at it. It keeps the previous version and removes older ones. It installs `~/.local/bin/t3` and the systemd user service `t3code-fork.service` on `127.0.0.1:3773`. Then it runs `t3 machine-map join <code>`. The machine needs no Node.
@@ -163,32 +164,35 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS, with the same command and service. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
 - On Linux without a display, `install.sh` turns on lingering, so the server keeps running after logout. If that needs an administrator, it prints `sudo loginctl enable-linger <user>`. Upstream `t3 service install` does the same, see [background-service.md](user/background-service.md#troubleshooting).
-- To reach the server from other machines, publish it with a tunnel. See "Set up a headless Linux machine".
+- The join gives the machine its tunnel when the portal can make one (MM-213). See "Set up a headless Linux machine".
 - Run `install.sh --help` for the options.
 
 ## Set up a headless Linux machine
 
 These steps set up a Linux server without a display, for example an Oracle Cloud Ubuntu 24.04 machine on Ampere (arm64). Run them over SSH as the normal user, for example `ubuntu`. Do not run the installer with `sudo` or `su`, because the server runs as a systemd user service.
 
-Before you start:
-
-1. In the portal, click "Add machine" and keep the join code.
-2. In Cloudflare Zero Trust, create a tunnel, for example `t3-oracle`. Give it the public hostname `t3-oracle.yarden-zamir.com` with the service `http://127.0.0.1:3773`. Keep the tunnel token.
-3. Make sure that the Access app "T3 Code servers" covers the new hostname.
-
-Install the server and check it:
+1. In the portal, click "Add machine". The join dialog shows the Linux command with the join code.
+2. On the machine, run that command:
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl tar ca-certificates
-curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash
-sudo loginctl enable-linger "$(id -un)"
-systemctl --user status t3code-fork.service
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3773/
+curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
 ```
 
-The last command prints `200` when the server runs. If not, read the log with `journalctl --user -u t3code-fork.service -n 50`.
+The installer starts the server and joins the map. The portal made a tunnel `t3-<name>.yarden-zamir.com` for the machine (MM-213). The server saves it, restarts once, downloads `cloudflared` into its state folder and runs it as a child process (MM-1309). The join dialog in the portal then shows that the machine joined.
 
-Install `cloudflared` and run the tunnel as a system service:
+- The join code expires after 10 minutes. If it expired, make a new code in the machine panel of the portal.
+- The tunnel connects outbound, and the server listens only on `127.0.0.1`. Thus the cloud firewall needs no change. On Oracle Cloud, keep the default security list and the `iptables` rules of the image.
+- To check the server, run `systemctl --user status t3code-fork.service`. Read the log with `journalctl --user -u t3code-fork.service -n 50`. The `cloudflared` log is `~/.t3/userdata/logs/cloudflared.log`.
+- To update the server, run the `install.sh` command again without `--join`.
+
+### Set up the tunnel by hand
+
+Use these steps only when the join dialog says "No tunnel", for example when the portal token lacks "Cloudflare Tunnel: Edit". A tunnel from the environment wins over the tunnel of a join (MM-1310).
+
+1. In Cloudflare Zero Trust, create a tunnel, for example `t3-oracle`. Give it the public hostname `t3-oracle.yarden-zamir.com` with the service `http://127.0.0.1:3773`. Keep the tunnel token.
+2. Make sure that the Access app "T3 Code servers" covers the new hostname.
+3. Install `cloudflared` and run the tunnel as a system service:
 
 ```sh
 curl -fsSLo /tmp/cloudflared.deb "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture).deb"
@@ -196,7 +200,7 @@ sudo dpkg -i /tmp/cloudflared.deb
 sudo cloudflared service install <tunnel-token>
 ```
 
-Give the server its tunnel hostname and the Cloudflare Access login. The machine reports this hostname to the map (MM-209). Copy the Access values from the server environment of the VPS. The subjects list holds the owner email and the client id of the service token that the desktop app uses for remote machines. Without that client id, the desktop app cannot open this machine. The installer replaces only the unit file, so this drop-in file stays after an update.
+4. Give the server its tunnel hostname and the Cloudflare Access login. Copy the Access values from the server environment of the VPS. The subjects list holds the owner email and the client id of the service token that the desktop app uses for remote machines. Without that client id, the desktop app cannot open this machine. The installer replaces only the unit file, so this drop-in file stays after an update.
 
 ```sh
 mkdir -p ~/.config/systemd/user/t3code-fork.service.d
@@ -209,16 +213,6 @@ Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>,<client id of the de
 EOF
 systemctl --user daemon-reload && systemctl --user restart t3code-fork.service
 ```
-
-Join the map on this machine:
-
-```sh
-~/.local/bin/t3 machine-map join <code> --portal https://t3.yarden-zamir.com
-```
-
-- The join code expires after 10 minutes. If it expired, get a new one from "Add machine".
-- The tunnel connects outbound, and the server listens only on `127.0.0.1`. Thus the cloud firewall needs no change. On Oracle Cloud, keep the default security list and the `iptables` rules of the image.
-- To update the server, run the `install.sh` command again.
 
 ## Deploy to the VPS
 
@@ -367,6 +361,8 @@ The server setting `machineMap` connects this server to the machine map portal. 
 - Join: in the portal, "Add machine" shows a one-time join code. A machine without the fork installs it first with the step 0 command of the dialog, see "Install the fork". On the machine, enter it in Settings > Machines, run `t3 machine-map join <code>`, or ask an agent to use the `machines_join` tool. The join saves the machine token in the server secret store and turns `machineMap` on.
 - The Machines panel in the right panel of a thread shows the map from `machines_read`, read only. Open it from the "+" menu of the panel or with "Show machines" in the command palette.
 - Settings > Machines shows the connection status, the last error, the portal link, this machine's name, and the machines that it can use with their levels. "Leave" forgets the token and turns `machineMap` off. Join and leave need the `settings:write` scope.
+- When the portal makes a tunnel for the machine (MM-213), the join saves it and the server runs `cloudflared` itself (MM-1309). A tunnel from the environment or the desktop settings wins (MM-1310).
+- Each joined server trusts the browser origins of the other machines on the map (MM-1311). One browser page then reaches every machine without `T3CODE_TRUSTED_BROWSER_ORIGINS`. Explicit trusted origins stay in addition.
 - The server keeps one outbound WebSocket to the portal. It applies its desired state (settings and arrows) live, and saves it, so a restart applies it before other machines can connect.
 - The desktop app reads the machine map state of its own server. It acts only while that server is joined, because only then does the server send it the token headers.
   - It saves one environment for each machine that it can use, with the machine token as request headers for that origin only, and pairs it through `/api/auth/cloudflare-access/pairing-credential`. When the machine leaves the list, the app removes the environment and its headers. It pairs again once when the target ends the session after a level change. Environments that the user saved by hand stay as they are.
