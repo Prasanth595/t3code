@@ -305,6 +305,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
       >
         <EnrichedMarkdownText
           markdown={markdown}
+          writingDirection="majority"
           markdownStyle={markdownStyle}
           onDocumentAssets={onDocumentAssets}
           renderMedia={renderImage ? renderMedia : undefined}

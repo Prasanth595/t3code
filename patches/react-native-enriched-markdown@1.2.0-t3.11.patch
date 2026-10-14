@@ -1,0 +1,541 @@
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdown.kt
+@@ -57,6 +57,26 @@
+   context: Context,
+ ) : ContainerNodeView(context),
+   ImagePressHost {
++  var majorityDirection = false
++    private set
++
++  fun setWritingDirection(value: String?) {
++    majorityDirection = value == "majority"
++    MeasurementStore.updateMajorityDirection(id, majorityDirection)
++    MeasurementStore.invalidate(id)
++    // Existing segment views must discard their cached paragraph layout too.
++    fun refresh(view: View) {
++      if (view is com.swmansion.enriched.markdown.accessibility.AccessibleMarkdownTextView) {
++        view.majorityDirection = majorityDirection
++      }
++      if (view is android.view.ViewGroup) {
++        for (i in 0 until view.childCount) refresh(view.getChildAt(i))
++      }
++    }
++    refresh(this)
++    requestLayout()
++  }
++
+   private enum class DirtyFlag {
+     RECREATE_SEGMENTS,
+     FORCE_HEIGHT,
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownManager.kt
+@@ -113,6 +113,7 @@
+     MeasurementStore.clearStreamingTableMode(view.id)
+     MeasurementStore.clearStreamingCodeBlockMode(view.id)
+     MeasurementStore.clearBreakStrategy(view.id)
++    MeasurementStore.clearMajorityDirection(view.id)
+     MeasurementStore.clearFontScalingSettings(view.id)
+   }
+ 
+@@ -343,7 +344,7 @@
+     view: EnrichedMarkdown?,
+     value: String?,
+   ) {
+-    // No-op on Android — first-strong per-paragraph resolution is the platform default
++    view?.setWritingDirection(value)
+   }
+ 
+   @ReactProp(name = "streamingAnimation", defaultBoolean = false)
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/EnrichedMarkdownTextManager.kt
+@@ -108,6 +108,7 @@
+     view.cleanup()
+     MeasurementStore.clearFontScalingSettings(view.id)
+     MeasurementStore.clearBreakStrategy(view.id)
++    MeasurementStore.clearMajorityDirection(view.id)
+     view.layoutManager.releaseMeasurementStore()
+   }
+ 
+@@ -262,7 +263,11 @@
+     view: EnrichedMarkdownText?,
+     value: String?,
+   ) {
+-    // No-op on Android — first-strong per-paragraph resolution is the platform default
++    view?.let {
++      it.majorityDirection = value == "majority"
++      MeasurementStore.updateMajorityDirection(it.id, it.majorityDirection)
++      MeasurementStore.invalidate(it.id)
++    }
+   }
+ 
+   @ReactProp(name = "streamingAnimation", defaultBoolean = false)
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/MeasurementStore.kt
+@@ -84,6 +84,21 @@
+ 
+   private val fontScalingSettings = ConcurrentHashMap<Int, FontScalingSettings>()
+ 
++  private val majorityDirections = ConcurrentHashMap<Int, Boolean>()
++
++  fun updateMajorityDirection(viewId: Int, enabled: Boolean) {
++    majorityDirections[viewId] = enabled
++  }
++
++  fun clearMajorityDirection(viewId: Int) {
++    majorityDirections.remove(viewId)
++  }
++
++  private fun resolveTextDirection(viewId: Int?): android.text.TextDirectionHeuristic =
++    if (viewId != null && majorityDirections[viewId] == true)
++      com.swmansion.enriched.markdown.utils.text.MajorityTextDirection
++    else android.text.TextDirectionHeuristics.FIRSTSTRONG_LTR
++
+   private val breakStrategies = ConcurrentHashMap<Int, String>()
+ 
+   // The measure path and the display TextView resolve the same clamp. 0 means unlimited.
+@@ -689,6 +704,7 @@
+     prepareWidthAwareSpans(text, widthPx)
+     return StaticLayout.Builder
+       .obtain(text, 0, text.length, measurePaint, widthPx)
++      .setTextDirection(resolveTextDirection(viewId))
+       .setIncludePad(false)
+       .setLineSpacing(0f, 1f)
+       .apply {
+@@ -778,6 +794,7 @@
+     val builder =
+       StaticLayout.Builder
+         .obtain(content, 0, content.length, paint, safeWidth)
++        .setTextDirection(resolveTextDirection(viewId))
+         .setIncludePad(false)
+         .setLineSpacing(0f, 1f)
+ 
+@@ -884,6 +901,7 @@
+     val layout =
+       StaticLayout.Builder
+         .obtain(content, 0, content.length, paint, widthPx)
++        .setTextDirection(resolveTextDirection(viewId))
+         .setIncludePad(false)
+         .setLineSpacing(0f, 1f)
+         .apply {
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt b/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
+--- a/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
++++ b/android/src/main/java/com/swmansion/enriched/markdown/accessibility/AccessibleMarkdownTextView.kt
+@@ -17,6 +17,26 @@
+     attrs: AttributeSet? = null,
+     defStyleAttr: Int = 0,
+   ) : AppCompatTextView(context, attrs, defStyleAttr) {
++    var majorityDirection = false
++      set(value) {
++        if (field == value) return
++        field = value
++        breakStrategy = breakStrategy
++        requestLayout()
++      }
++
++    override fun getTextDirectionHeuristic(): android.text.TextDirectionHeuristic {
++      if (majorityDirection) return com.swmansion.enriched.markdown.utils.text.MajorityTextDirection
++      var ancestor = parent
++      while (ancestor is android.view.View) {
++        if (ancestor is com.swmansion.enriched.markdown.EnrichedMarkdown && ancestor.majorityDirection) {
++          return com.swmansion.enriched.markdown.utils.text.MajorityTextDirection
++        }
++        ancestor = ancestor.parent
++      }
++      return super.getTextDirectionHeuristic()
++    }
++
+     val accessibilityHelper = MarkdownAccessibilityHelper(this)
+ 
+     override fun setText(
+diff --git a/android/src/main/java/com/swmansion/enriched/markdown/utils/text/MajorityTextDirection.kt b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/MajorityTextDirection.kt
+new file mode 100644
+--- /dev/null
++++ b/android/src/main/java/com/swmansion/enriched/markdown/utils/text/MajorityTextDirection.kt
+@@ -0,0 +1,43 @@
++package com.swmansion.enriched.markdown.utils.text
++
++import android.text.Spanned
++import android.text.TextDirectionHeuristic
++import com.swmansion.enriched.markdown.spans.CodeSpan
++import com.swmansion.enriched.markdown.spans.CodeBlockSpan
++import com.swmansion.enriched.markdown.spans.LinkPillSpan
++
++/** Resolve each paragraph from prose letters without changing the copied text. */
++object MajorityTextDirection : TextDirectionHeuristic {
++  override fun isRtl(text: CharSequence, start: Int, count: Int): Boolean {
++    var rtl = 0
++    var ltr = 0
++    var offset = start
++    val end = start + count
++    while (offset < end) {
++      val runEnd = if (text is Spanned) text.nextSpanTransition(offset, end, Any::class.java) else end
++      if (text is Spanned) {
++        val spans = text.getSpans(offset, offset + 1, Any::class.java)
++        val excluded = spans.firstOrNull { it is CodeSpan || it is CodeBlockSpan || it is LinkPillSpan }
++        if (excluded != null) {
++          offset = runEnd
++          continue
++        }
++      }
++      while (offset < runEnd) {
++        val codePoint = Character.codePointAt(text, offset)
++        offset += Character.charCount(codePoint)
++        if (codePoint == 0x200E) return false
++        if (codePoint == 0x200F || codePoint == 0x061C) return true
++        if (!Character.isLetter(codePoint)) continue
++        when (Character.getDirectionality(codePoint)) {
++          Character.DIRECTIONALITY_RIGHT_TO_LEFT, Character.DIRECTIONALITY_RIGHT_TO_LEFT_ARABIC -> rtl++
++          else -> ltr++
++        }
++      }
++    }
++    return rtl > ltr
++  }
++
++  override fun isRtl(text: CharArray, start: Int, count: Int): Boolean =
++    isRtl(String(text, start, count), 0, count)
++}
+diff --git a/ios/EnrichedMarkdown.mm b/ios/EnrichedMarkdown.mm
+--- a/ios/EnrichedMarkdown.mm
++++ b/ios/EnrichedMarkdown.mm
+@@ -436,6 +436,8 @@
+   ENRMBlockquoteContainerView *view = [[ENRMBlockquoteContainerView alloc] initWithConfig:_config];
+   view.allowFontScaling = _fontScaleObserver.allowFontScaling;
+   view.lineBreakStrategy = _lineBreakStrategy;
++  view.writingDirectionMode = _writingDirectionMode;
++  view.resolvedLayoutDirection = _resolvedLayoutDirection;
+   view.dynamicProps = _dynamicBlockProps;
+   view.accessibilityLabels = _accessibilityLabels;
+ 
+diff --git a/ios/input/EnrichedMarkdownTextInput.mm b/ios/input/EnrichedMarkdownTextInput.mm
+--- a/ios/input/EnrichedMarkdownTextInput.mm
++++ b/ios/input/EnrichedMarkdownTextInput.mm
+@@ -1313,6 +1313,7 @@
+       return NO;
+     case ENRMWritingDirectionModeRTL:
+       return YES;
++    case ENRMWritingDirectionModeMajority:
+     case ENRMWritingDirectionModeFirstStrong:
+       return _resolvedLayoutDirection == NSWritingDirectionRightToLeft;
+     case ENRMWritingDirectionModeAuto:
+diff --git a/ios/internals/ENRMViewFreeMeasurement.h b/ios/internals/ENRMViewFreeMeasurement.h
+--- a/ios/internals/ENRMViewFreeMeasurement.h
++++ b/ios/internals/ENRMViewFreeMeasurement.h
+@@ -350,7 +350,9 @@
+                                                                       maxWidth:maxWidth
+                                                               pointScaleFactor:pointScaleFactor
+                                                               allowFontScaling:typedProps.allowFontScaling
+-                                                             lineBreakStrategy:lineBreakStrategy];
++                                                             lineBreakStrategy:lineBreakStrategy
++                                                 writingDirectionMode:writingDirectionMode
++                                              resolvedLayoutDirection:resolvedLayoutDirection];
+         maxContentWidth = maxWidth;
+         if (shouldAddBottomMargin) {
+           yOffset += config.blockquoteMarginBottom;
+diff --git a/ios/segments/ENRMBlockquoteContainerView.h b/ios/segments/ENRMBlockquoteContainerView.h
+--- a/ios/segments/ENRMBlockquoteContainerView.h
++++ b/ios/segments/ENRMBlockquoteContainerView.h
+@@ -3,6 +3,7 @@
+ #import "ENRMCodeBlockContainerView.h"
+ #import "ENRMContainerNodeView.h"
+ #import "StyleConfig.h"
++#import "ParagraphStyleUtils.h"
+ 
+ @class MarkdownASTNode;
+ @class ENRMAccessibilityLabels;
+@@ -52,13 +53,17 @@
+                                  maxWidth:(CGFloat)maxWidth
+                          pointScaleFactor:(CGFloat)pointScaleFactor
+                          allowFontScaling:(BOOL)allowFontScaling
+-                        lineBreakStrategy:(NSLineBreakStrategy)lineBreakStrategy;
++                        lineBreakStrategy:(NSLineBreakStrategy)lineBreakStrategy
++                     writingDirectionMode:(ENRMWritingDirectionMode)writingDirectionMode
++                  resolvedLayoutDirection:(NSWritingDirection)resolvedLayoutDirection;
+ 
+ // Consumer text props threaded into the quote's inner content so it honors them
+ // the same way the root document path does, instead of assuming defaults. Set by
+ // the host (root view or parent quote) at creation; propagated to nested quotes.
+ @property (nonatomic, assign) BOOL allowFontScaling;
+ @property (nonatomic, assign) NSLineBreakStrategy lineBreakStrategy;
++@property (nonatomic, assign) ENRMWritingDirectionMode writingDirectionMode;
++@property (nonatomic, assign) NSWritingDirection resolvedLayoutDirection;
+ 
+ // YES when this quote is nested directly inside another quote. A nested quote
+ // carries no vertical margin (only the outermost quote does, applied by the root
+diff --git a/ios/segments/ENRMBlockquoteContainerView.mm b/ios/segments/ENRMBlockquoteContainerView.mm
+--- a/ios/segments/ENRMBlockquoteContainerView.mm
++++ b/ios/segments/ENRMBlockquoteContainerView.mm
+@@ -113,6 +113,7 @@
+ @property (nonatomic, copy, nullable) NSString *admonitionType;
+ @property (nonatomic, copy) NSString *cachedMarkdown;
+ @property (nonatomic, copy) NSString *cachedPlainText;
++@property (nonatomic, assign) BOOL rightToLeft;
+ @end
+ 
+ #if !TARGET_OS_OSX
+@@ -132,6 +133,8 @@
+     // Preserved prior defaults until the host overrides them at creation.
+     _allowFontScaling = YES;
+     _lineBreakStrategy = NSLineBreakStrategyNone;
++    _writingDirectionMode = ENRMWritingDirectionModeFirstStrong;
++    _resolvedLayoutDirection = NSWritingDirectionNatural;
+     _dynamicProps = [[ENRMDynamicBlockProps alloc] init];
+     _cachedMarkdown = @"";
+     _cachedPlainText = @"";
+@@ -153,6 +156,31 @@
+   self.cachedPlainText = plainTextFromASTNode(node);
+   NSArray<ENRMRenderedSegment *> *rendered =
+       ENRMRenderBlockquoteChildren(node, self.config, self.allowFontScaling, self.lineBreakStrategy);
++  self.rightToLeft = NO;
++  __block BOOL foundDirection = NO;
++  for (ENRMRenderedSegment *segment in rendered) {
++    if (segment.textResult) {
++      NSMutableAttributedString *text = segment.textResult.attributedText;
++      ENRMApplyWritingDirectionMode(text, self.writingDirectionMode, self.resolvedLayoutDirection);
++      if (!foundDirection && text.length > 0) {
++        [text enumerateAttribute:NSParagraphStyleAttributeName inRange:NSMakeRange(0, text.length) options:0
++                      usingBlock:^(NSParagraphStyle *style, NSRange range, BOOL *stop) {
++          if (style && style.baseWritingDirection != NSWritingDirectionNatural) {
++            self.rightToLeft = ENRMParagraphIsRTL(style);
++            foundDirection = YES;
++            *stop = YES;
++          }
++        }];
++      }
++    }
++  }
++  if (self.rightToLeft) {
++    UIEdgeInsets insets = self.contentInsets;
++    CGFloat left = insets.left;
++    insets.left = insets.right;
++    insets.right = left;
++    self.contentInsets = insets;
++  }
+   [self applySegments:rendered reset:NO];
+ #if !TARGET_OS_OSX
+   [self setNeedsDisplay];
+@@ -291,6 +319,8 @@
+                             if (strongSelf) {
+                               view.allowFontScaling = strongSelf.allowFontScaling;
+                               view.lineBreakStrategy = strongSelf.lineBreakStrategy;
++                              view.writingDirectionMode = strongSelf.writingDirectionMode;
++                              view.resolvedLayoutDirection = strongSelf.resolvedLayoutDirection;
+                               view.dynamicProps = strongSelf.dynamicProps;
+                               view.accessibilityLabels = strongSelf.accessibilityLabels;
+                               view.onCopyPress = strongSelf.onCopyPress;
+@@ -413,15 +443,22 @@
+                          pointScaleFactor:(CGFloat)pointScaleFactor
+                          allowFontScaling:(BOOL)allowFontScaling
+                         lineBreakStrategy:(NSLineBreakStrategy)lineBreakStrategy
++                     writingDirectionMode:(ENRMWritingDirectionMode)writingDirectionMode
++                  resolvedLayoutDirection:(NSWritingDirection)resolvedLayoutDirection
+ {
+   UIEdgeInsets insets = ENRMBlockquoteContentInsetsForNode(config, ENRMAdmonitionTypeForNode(node) != nil);
+   CGFloat innerWidth = MAX(maxWidth - insets.left - insets.right, 1);
+ 
+   NSArray<ENRMRenderedSegment *> *rendered =
+       ENRMRenderBlockquoteChildren(node, config, allowFontScaling, lineBreakStrategy);
++  for (ENRMRenderedSegment *segment in rendered) {
++    if (segment.textResult) {
++      ENRMApplyWritingDirectionMode(segment.textResult.attributedText, writingDirectionMode, resolvedLayoutDirection);
++    }
++  }
+   CGFloat childrenHeight = ENRMMeasureSegmentsHeightViewFree(
+-      rendered, config, innerWidth, /*allowTrailingMargin*/ NO, pointScaleFactor, ENRMWritingDirectionModeFirstStrong,
+-      NSWritingDirectionNatural, allowFontScaling, lineBreakStrategy);
++      rendered, config, innerWidth, /*allowTrailingMargin*/ NO, pointScaleFactor, writingDirectionMode,
++      resolvedLayoutDirection, allowFontScaling, lineBreakStrategy);
+ 
+   return childrenHeight + insets.top + insets.bottom;
+ }
+@@ -457,7 +494,7 @@
+     RCTUIColor *borderColor =
+         admonitionType ? [config admonitionColorForType:admonitionType] : config.blockquoteBorderColor;
+     if (borderColor) {
+-      CGRect barRect = CGRectMake(0, 0, borderWidth, bounds.size.height);
++      CGRect barRect = CGRectMake(self.rightToLeft ? bounds.size.width - borderWidth : 0, 0, borderWidth, bounds.size.height);
+       [borderColor setFill];
+ #if !TARGET_OS_OSX
+       CGContextRef ctx = UIGraphicsGetCurrentContext();
+diff --git a/ios/segments/ENRMSegmentHeightMeasurer.mm b/ios/segments/ENRMSegmentHeightMeasurer.mm
+--- a/ios/segments/ENRMSegmentHeightMeasurer.mm
++++ b/ios/segments/ENRMSegmentHeightMeasurer.mm
+@@ -71,7 +71,9 @@
+                                                              maxWidth:contentWidth
+                                                      pointScaleFactor:pointScaleFactor
+                                                      allowFontScaling:allowFontScaling
+-                                                    lineBreakStrategy:lineBreakStrategy];
++                                                    lineBreakStrategy:lineBreakStrategy
++                                                 writingDirectionMode:writingDirectionMode
++                                              resolvedLayoutDirection:resolvedLayoutDirection];
+     }
+ #if ENRICHED_MARKDOWN_MATH
+     else if (segment.kind == ENRMSegmentKindMath && segment.mathSegment) {
+diff --git a/ios/utils/MajorityTextDirection.h b/ios/utils/MajorityTextDirection.h
+new file mode 100644
+--- /dev/null
++++ b/ios/utils/MajorityTextDirection.h
+@@ -0,0 +1,36 @@
++#pragma once
++#import <Foundation/Foundation.h>
++#import <TargetConditionals.h>
++#if TARGET_OS_OSX
++#import <AppKit/AppKit.h>
++#else
++#import <UIKit/UIKit.h>
++#endif
++
++// Explicit direction marks win; otherwise count letters, with LTR winning ties.
++static NSWritingDirection ENRMMajorityTextDirection(NSString *text)
++{
++  NSUInteger rtl = 0, ltr = 0;
++  NSCharacterSet *letters = NSCharacterSet.letterCharacterSet;
++  NSCharacterSet *marks = NSCharacterSet.nonBaseCharacterSet;
++  for (NSUInteger i = 0; i < text.length;) {
++    UTF32Char c = [text characterAtIndex:i++];
++    if (CFStringIsSurrogateHighCharacter(c) && i < text.length) {
++      unichar low = [text characterAtIndex:i];
++      if (CFStringIsSurrogateLowCharacter(low)) {
++        c = CFStringGetLongCharacterForSurrogatePair(c, low);
++        i++;
++      }
++    }
++    if (c == 0x200E) return NSWritingDirectionLeftToRight;
++    if (c == 0x200F || c == 0x061C) return NSWritingDirectionRightToLeft;
++    if (![letters longCharacterIsMember:c] || [marks longCharacterIsMember:c]) continue;
++    BOOL isRTL = (c >= 0x0590 && c <= 0x08FF) || (c >= 0xFB1D && c <= 0xFDFF) ||
++                 (c >= 0xFE70 && c <= 0xFEFF) || (c >= 0x10800 && c <= 0x10FFF) ||
++                 (c >= 0x1E800 && c <= 0x1EEFF);
++    if (isRTL) rtl++; else ltr++;
++  }
++  if (rtl == 0 && ltr == 0) return NSWritingDirectionNatural;
++  return rtl > ltr ? NSWritingDirectionRightToLeft : NSWritingDirectionLeftToRight;
++}
++
+diff --git a/ios/utils/ParagraphStyleUtils.h b/ios/utils/ParagraphStyleUtils.h
+--- a/ios/utils/ParagraphStyleUtils.h
++++ b/ios/utils/ParagraphStyleUtils.h
+@@ -25,6 +25,7 @@
+   ENRMWritingDirectionModeLTR,
+   ENRMWritingDirectionModeRTL,
+   ENRMWritingDirectionModeFirstStrong,
++  ENRMWritingDirectionModeMajority,
+ };
+ 
+ ENRMWritingDirectionMode ENRMResolveWritingDirectionMode(NSString *_Nullable value);
+diff --git a/ios/utils/ParagraphStyleUtils.m b/ios/utils/ParagraphStyleUtils.m
+--- a/ios/utils/ParagraphStyleUtils.m
++++ b/ios/utils/ParagraphStyleUtils.m
+@@ -1,4 +1,6 @@
+ #import "ParagraphStyleUtils.h"
++#import "CodeBackground.h"
++#import "MajorityTextDirection.h"
+ #import "ENRMFeatureFlags.h"
+ #import "ENRMImageAttachment.h"
+ #import "ENRMLinkPillAttachment.h"
+@@ -56,6 +58,9 @@
+   }
+   if ([value isEqualToString:@"auto"]) {
+     return ENRMWritingDirectionModeAuto;
++  }
++  if ([value isEqualToString:@"majority"]) {
++    return ENRMWritingDirectionModeMajority;
+   }
+   return ENRMWritingDirectionModeFirstStrong;
+ }
+@@ -86,6 +91,21 @@
+   }
+   return [[RCTI18nUtil sharedInstance] isRTL];
+ }
++
++// Code and attachments do not vote for the surrounding prose paragraph.
++static NSWritingDirection ENRMMajorityDirection(NSAttributedString *text, NSRange range)
++{
++  NSMutableString *prose = [NSMutableString string];
++  [text enumerateAttributesInRange:range options:0 usingBlock:^(NSDictionary *attrs, NSRange run, BOOL *stop) {
++    if (!attrs[CodeAttributeName] && !attrs[CodeBlockAttributeName] && !attrs[NSAttachmentAttributeName]) {
++      [prose appendString:[text.string substringWithRange:run]];
++    }
++  }];
++  return ENRMMajorityTextDirection(prose);
++}
++
++static void ENRMApplyContentParagraphDirections(NSMutableAttributedString *output, NSWritingDirection fallback,
++                                                BOOL majority);
+ 
+ void ENRMApplyWritingDirectionMode(NSMutableAttributedString *output, ENRMWritingDirectionMode mode,
+                                    NSWritingDirection layoutDirection)
+@@ -103,10 +123,19 @@
+     case ENRMWritingDirectionModeFirstStrong:
+       ENRMApplyFirstStrongParagraphDirections(output, layoutDirection);
+       break;
++    case ENRMWritingDirectionModeMajority:
++      ENRMApplyContentParagraphDirections(output, layoutDirection, YES);
++      break;
+   }
+ }
+ 
+ void ENRMApplyFirstStrongParagraphDirections(NSMutableAttributedString *output, NSWritingDirection fallback)
++{
++  ENRMApplyContentParagraphDirections(output, fallback, NO);
++}
++
++static void ENRMApplyContentParagraphDirections(NSMutableAttributedString *output, NSWritingDirection fallback,
++                                                BOOL majority)
+ {
+   if (output.length == 0) {
+     return;
+@@ -128,7 +157,8 @@
+       continue;
+     }
+ 
+-    NSWritingDirection direction = ENRMFirstStrongDirection([string substringWithRange:paragraphRange]);
++    NSWritingDirection direction = majority ? ENRMMajorityDirection(output, paragraphRange)
++                                           : ENRMFirstStrongDirection([string substringWithRange:paragraphRange]);
+     if (direction == NSWritingDirectionNatural) {
+       direction = fallback;
+     }
+diff --git a/lib/typescript/src/types/MarkdownTextProps.d.ts b/lib/typescript/src/types/MarkdownTextProps.d.ts
+--- a/lib/typescript/src/types/MarkdownTextProps.d.ts
++++ b/lib/typescript/src/types/MarkdownTextProps.d.ts
+@@ -499,6 +499,7 @@
+     lineBreakStrategyIOS?: 'none' | 'standard' | 'hangul-word' | 'push-out';
+     /**
+      * Paragraph writing direction.
++     * - `'majority'`: follows the dominant prose script per paragraph, excluding code.
+      * - `'first-strong'` (default): resolves each paragraph from its first strong
+      *   directional character. Neutral-only paragraphs fall back to the view's
+      *   resolved layout direction (inherits ancestor `direction` style). Library
+@@ -511,7 +512,7 @@
+      * @default 'first-strong'
+      * @platform ios
+      */
+-    writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong';
++    writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong' | 'majority';
+     /**
+      * Maximum number of lines to display before the text is truncated. `0` (the
+      * default) means unlimited. Matches React Native `Text`'s `numberOfLines`.
+diff --git a/src/types/MarkdownTextProps.ts b/src/types/MarkdownTextProps.ts
+--- a/src/types/MarkdownTextProps.ts
++++ b/src/types/MarkdownTextProps.ts
+@@ -513,6 +513,7 @@
+   lineBreakStrategyIOS?: 'none' | 'standard' | 'hangul-word' | 'push-out';
+   /**
+    * Paragraph writing direction.
++   * - `'majority'`: follows the dominant prose script per paragraph, excluding code.
+    * - `'first-strong'` (default): resolves each paragraph from its first strong
+    *   directional character. Neutral-only paragraphs fall back to the view's
+    *   resolved layout direction (inherits ancestor `direction` style). Library
+@@ -525,7 +526,7 @@
+    * @default 'first-strong'
+    * @platform ios
+    */
+-  writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong';
++  writingDirection?: 'auto' | 'ltr' | 'rtl' | 'first-strong' | 'majority';
+   /**
+    * Maximum number of lines to display before the text is truncated. `0` (the
+    * default) means unlimited. Matches React Native `Text`'s `numberOfLines`.
