@@ -462,6 +462,83 @@ describe("AcpRegistryAdapterV2", () => {
         assert.equal(published?.currentModelId, "hermes-default");
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
+
+    // A pick of "auto" or "default" is a real model only when the agent's
+    // model option advertises that exact value, flat or inside a group.
+    const pickPlaceholderThenOpus = (input: {
+      readonly options: ReadonlyArray<unknown>;
+      readonly placeholder: string;
+      readonly placeholderIsAdvertised: boolean;
+    }) =>
+      Effect.gen(function* () {
+        const option = (currentValue: string) => ({
+          ...modelOption(currentValue),
+          options: input.options,
+        });
+        const setModel = (value: string): ReadonlyArray<Frame> => [
+          outbound("session/set_config_option", {
+            sessionId: "agent-session",
+            configId: "model",
+            value,
+          }),
+          answer("session/set_config_option", { configOptions: [option(value)] }),
+        ];
+        const { published, plans } = yield* openWithStoredPicks({
+          setup: { configOptions: [option("opus")] },
+          storedModel: "opus",
+          turnModels: [input.placeholder, "opus"],
+          // The session already runs opus, so only a real switch away from it
+          // makes the return to opus a native write.
+          pickFrames: input.placeholderIsAdvertised
+            ? [...setModel(input.placeholder), ...prompt(), ...setModel("opus"), ...prompt()]
+            : [...prompt(), ...prompt()],
+        });
+        assert.deepEqual(plans, ["apply_on_next_turn", "apply_on_next_turn"]);
+        assert.equal(published?.currentModelId, "opus");
+        return published;
+      }).pipe(Effect.provide(layerTest), Effect.scoped);
+
+    it.effect("switches to an advertised auto model and back", () =>
+      Effect.gen(function* () {
+        const published = yield* pickPlaceholderThenOpus({
+          options: ["auto", "opus"].map((value) => ({ value, name: value })),
+          placeholder: "auto",
+          placeholderIsAdvertised: true,
+        });
+        assert.deepEqual(
+          published?.models.map((model) => model.id),
+          ["auto", "opus"],
+        );
+      }),
+    );
+
+    it.effect("switches to an advertised default model inside a group and back", () =>
+      Effect.gen(function* () {
+        const published = yield* pickPlaceholderThenOpus({
+          options: [
+            {
+              group: "anthropic",
+              name: "Anthropic",
+              options: ["default", "opus"].map((value) => ({ value, name: value })),
+            },
+          ],
+          placeholder: "default",
+          placeholderIsAdvertised: true,
+        });
+        assert.deepEqual(
+          published?.models.map((model) => model.id),
+          ["default", "opus"],
+        );
+      }),
+    );
+
+    it.effect("leaves the model alone for an auto pick the agent does not advertise", () =>
+      pickPlaceholderThenOpus({
+        options: ["sonnet", "opus"].map((value) => ({ value, name: value })),
+        placeholder: "auto",
+        placeholderIsAdvertised: false,
+      }),
+    );
   });
 
   it.effect("offers client terminals to Devin only and client fs to no registry agent", () =>

@@ -6312,11 +6312,23 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Route by the live options, which the picker lists: agents can
             // add or drop their model config option after setup.
             const modelOption = (yield* runtime.getConfigOptions).find(
-              (option) => option.category === "model" && option.type === "select",
+              (
+                option,
+              ): option is Extract<
+                EffectAcpSchema.SessionConfigOption,
+                { readonly type: "select" }
+              > => option.category === "model" && option.type === "select",
             );
             const modelState = startResult.sessionSetupResult.models;
             if (modelOption !== undefined) {
-              if (!isPlaceholder) {
+              if (
+                !isPlaceholder ||
+                modelOption.options.some((entry) =>
+                  "value" in entry
+                    ? entry.value === requestedModel
+                    : entry.options.some((choice) => choice.value === requestedModel),
+                )
+              ) {
                 yield* runtime.setConfigOption(modelOption.id, requestedModel);
                 appliedModel = requestedModel;
               }
