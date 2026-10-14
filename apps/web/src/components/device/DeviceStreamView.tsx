@@ -1,4 +1,5 @@
 import type { DevicePlatform, EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -23,9 +24,12 @@ import {
   type DeviceStreamStatus,
 } from "@t3tools/client-runtime/device/stream";
 import { observeResize } from "~/lib/observeResize";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 
 const AX_POLL_INTERVAL_MS = 2_000;
 const CONTROLS_RAIL_WIDTH = 56;
+const DEVICE_PRESENTATION_STORAGE_KEY = "t3code:device-presentation";
+const DevicePresentation = Schema.Literals(["phone", "flat"]);
 
 export interface DeviceViewControls {
   readonly phone: boolean;
@@ -74,7 +78,11 @@ export function DeviceStreamView(props: {
   });
   const model = deviceModel(props.platform, props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
-  const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
+  const [presentation, setPresentation] = useLocalStorage(
+    DEVICE_PRESENTATION_STORAGE_KEY,
+    "phone",
+    DevicePresentation,
+  );
   const [keyboardAttached, setKeyboardAttached] = useState(false);
   const [phoneUnavailable, setPhoneUnavailable] = useState(false);
   const onPhoneUnavailable = useCallback(() => setPhoneUnavailable(true), []);
