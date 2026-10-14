@@ -22,6 +22,7 @@ import {
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
+  PullRequestUnavailableError,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
@@ -2466,63 +2467,214 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("ends a watch it cannot read, and tells the agent", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("runtime-pull-request-watch-unreadable");
-      const projectId = ProjectId.make("pr-watch-unreadable-project");
-      yield* seedProject({
-        projectId,
-        title: "Watch unreadable",
-        workspaceRoot: "/workspace/watch-unreadable",
-        defaultModelSelection: null,
-        createdAt: "2026-10-01T00:00:00.000Z",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("pr-watch-unreadable-create"),
-        threadId,
-        projectId,
-        title: "Watch unreadable",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.pull-request.watch",
-        commandId: CommandId.make("pr-watch-unreadable-start"),
-        threadId,
-        host: "github.com",
-        repository: "pingdotgg/t3code",
-        number: 8,
-        watching: true,
-        link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
-      });
-      const reactor = yield* PullRequestWatchReactor.make.pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            Layer.mock(PullRequestService.PullRequestService)({
-              detail: () => Effect.die("host unreachable"),
-              activity: () => Effect.die("host unreachable"),
-            }),
-          ),
-        ),
-      );
-      for (let pass = 0; pass < 15; pass += 1) yield* reactor.sweep;
+  const privateFailure =
+    "https://private.example.test/repo?token=secret-token stdout=private stderr=private";
+  const providerReadFailure = (reason: PullRequestProviderError["reason"]) =>
+    new PullRequestOperationError({
+      operation: privateFailure,
+      detail: privateFailure,
+      cause: new PullRequestProviderError({
+        provider: SourceControlProviderKind.make("private-provider"),
+        operation: privateFailure,
+        reason,
+        detail: privateFailure,
+        cause: new Error(privateFailure),
+      }),
+    });
 
-      const thread = yield* orchestrator.getThreadShell(threadId);
-      assert.isUndefined(thread?.pullRequests?.[0]?.watch);
-      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
-      assert.deepEqual(
-        messages.flatMap((message) => message.notification?.summary ?? []),
-        ["#8: stopped watching, could not read it"],
-      );
-    }),
+  it.effect.each([
+    {
+      name: "unexpected-defect",
+      failure: Effect.die(new Error(privateFailure)),
+      diagnostic: "An unexpected error occurred.",
+      recover: false,
+      pause: false,
+    },
+    {
+      name: "opaque-operation",
+      failure: Effect.fail(
+        new PullRequestOperationError({
+          operation: privateFailure,
+          detail: privateFailure,
+          cause: new Error(privateFailure),
+        }),
+      ),
+      diagnostic: "The pull request operation failed.",
+      recover: false,
+      pause: false,
+    },
+    {
+      name: "not-found",
+      failure: Effect.fail(
+        new PullRequestOperationError({
+          operation: privateFailure,
+          detail: privateFailure,
+          reason: "not-found",
+        }),
+      ),
+      diagnostic: "The pull request was not found or is not accessible.",
+      recover: false,
+      pause: false,
+    },
+    ...(
+      [
+        ["failed", "The host request failed."],
+        ["not-found", "The pull request was not found or is not accessible."],
+        ["missing-tool", "The host tool or credentials are not configured."],
+        ["unauthenticated", "The host rejected its credentials."],
+      ] as const
+    ).map(([reason, diagnostic]) => ({
+      name: `provider-${reason}`,
+      failure: Effect.fail(providerReadFailure(reason)),
+      diagnostic,
+      recover: reason === "failed",
+      pause: reason === "unauthenticated",
+    })),
+    ...(
+      [
+        ["cli-missing", "The tool this host is read through is not installed or set up."],
+        ["cli-unauthenticated", "This host has no working credentials."],
+        ["provider-unsupported", "Change requests cannot be browsed for this project's host yet."],
+      ] as const
+    ).map(([reason, diagnostic]) => ({
+      name: reason,
+      failure: Effect.fail(
+        new PullRequestUnavailableError({
+          reason,
+          provider: SourceControlProviderKind.make("private-provider"),
+          cause: new Error(privateFailure),
+        }),
+      ),
+      diagnostic,
+      recover: false,
+      pause: false,
+    })),
+  ])(
+    "ends an unreadable watch with a safe diagnostic: $name",
+    ({ name, failure, diagnostic, recover, pause }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-unreadable-${name}`);
+        const projectId = ProjectId.make(`pr-watch-unreadable-project-${name}`);
+        yield* seedProject({
+          projectId,
+          title: "Watch unreadable",
+          workspaceRoot: "/workspace/watch-unreadable",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`pr-watch-unreadable-create-${name}`),
+          threadId,
+          projectId,
+          title: "Watch unreadable",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`pr-watch-unreadable-start-${name}`),
+          threadId,
+          host: "github.com",
+          repository: "pingdotgg/t3code",
+          number: 8,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/8", source: "agent" },
+        });
+        let host: "failed" | "open" | "rate-limited" = "failed";
+        let reads = 0;
+        const reactor = yield* PullRequestWatchReactor.make.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              Layer.mock(PullRequestService.PullRequestService)({
+                watchFingerprint: () => Effect.succeed(null),
+                detail: (input) =>
+                  Effect.suspend(
+                    (): Effect.Effect<PullRequestDetail, PullRequestService.PullRequestError> => {
+                      if (input.projectId === projectId) reads += 1;
+                      if (host === "failed") return failure;
+                      if (host === "rate-limited")
+                        return Effect.fail(providerReadFailure("rate-limited"));
+                      return Effect.succeed({
+                        ...watchedPullRequestDetail({
+                          projectId,
+                          number: 8,
+                          at: "2026-10-02T12:00:00.000Z",
+                        }),
+                        checks: [{ name: "lint", status: "pending", description: null, url: null }],
+                      });
+                    },
+                  ),
+                activity: () =>
+                  Effect.succeed({
+                    comments: [],
+                    commentCount: 0,
+                    commentsTruncated: false,
+                    reviewThreads: [],
+                    commits: [],
+                  }),
+              }),
+            ),
+          ),
+        );
+        const watching = Effect.map(
+          orchestrator.getThreadShell(threadId),
+          (thread) => thread?.pullRequests?.[0]?.watch !== undefined,
+        );
+        const messages = Effect.map(
+          orchestrator.getThreadRecords(threadId, ["messages"]),
+          (records) => records.messages,
+        );
+        for (let pass = 0; pass < 7; pass += 1) yield* reactor.sweep;
+        assert.equal(reads, 7);
+        assert.isTrue(yield* watching);
+        assert.deepEqual(yield* messages, []);
+
+        if (recover) {
+          host = "open";
+          yield* reactor.sweep;
+          host = "failed";
+          for (let pass = 0; pass < 7; pass += 1) yield* reactor.sweep;
+          assert.equal(reads, 15);
+          assert.isTrue(yield* watching);
+          assert.deepEqual(yield* messages, []);
+        }
+        if (pause) {
+          host = "rate-limited";
+          for (let pass = 0; pass < 20; pass += 1) yield* reactor.sweep;
+          assert.equal(reads, 27);
+          assert.isTrue(yield* watching);
+          assert.deepEqual(yield* messages, []);
+          host = "failed";
+        }
+        yield* reactor.sweep;
+        assert.equal(reads, recover ? 16 : pause ? 28 : 8);
+
+        const thread = yield* orchestrator.getThreadShell(threadId);
+        assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+        const stopped = yield* messages;
+        assert.deepEqual(
+          stopped.flatMap((message) => message.notification?.summary ?? []),
+          ["#8: stopped watching, could not read it"],
+        );
+        assert.equal(
+          stopped[0]?.text,
+          `T3 Code stopped watching pull request #8 (https://github.com/pingdotgg/t3code/pull/8) because it failed to read it from the host 8 times in a row. Last read failure: ${diagnostic} Check it yourself, and call watch_pull_request to watch it again.`,
+        );
+        assert.notInclude(JSON.stringify(stopped), "private.example.test");
+        assert.notInclude(JSON.stringify(stopped), "secret-token");
+        assert.notInclude(JSON.stringify(stopped), "stdout=private");
+        assert.notInclude(JSON.stringify(stopped), "stderr=private");
+        yield* reactor.sweep;
+        assert.deepEqual(yield* messages, stopped);
+      }),
   );
 
   it.effect(

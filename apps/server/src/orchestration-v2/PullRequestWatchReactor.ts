@@ -67,6 +67,33 @@ const isRateLimited = (cause: Cause.Cause<PullRequestService.PullRequestError>) 
       error.cause.reason === "rate-limited",
   });
 
+/** Only typed categories reach the wake message; host errors can contain credentials or output. */
+const readFailureSummary = (cause: Cause.Cause<PullRequestService.PullRequestError>) =>
+  Option.match(Cause.findErrorOption(cause), {
+    onNone: () => "An unexpected error occurred.",
+    onSome: (error) => {
+      if (error._tag === "PullRequestUnavailableError") return error.message;
+      if (error.reason === "not-found") {
+        return "The pull request was not found or is not accessible.";
+      }
+      if (isProviderError(error.cause)) {
+        switch (error.cause.reason) {
+          case "missing-tool":
+            return "The host tool or credentials are not configured.";
+          case "unauthenticated":
+            return "The host rejected its credentials.";
+          case "not-found":
+            return "The pull request was not found or is not accessible.";
+          case "rate-limited":
+            return "The host rate limit was reached.";
+          case "failed":
+            return "The host request failed.";
+        }
+      }
+      return "The pull request operation failed.";
+    },
+  });
+
 const logFailure =
   (message: string, fields: Record<string, unknown>) =>
   <E>(cause: Cause.Cause<E>): Effect.Effect<void> =>
@@ -325,9 +352,9 @@ export const make = Effect.gen(function* () {
 
   // A watch that cannot read its pull request ends with a wake saying so, rather than showing
   // "Watching" while it learns nothing.
-  const giveUp = (target: WatchTarget) =>
+  const giveUp = (target: WatchTarget, cause: Cause.Cause<PullRequestService.PullRequestError>) =>
     record(target, null, {
-      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request to watch it again.`,
+      text: `T3 Code stopped watching pull request #${target.link.number} (${target.link.url}) because it failed to read it from the host ${READ_FAILURE_LIMIT} times in a row. Last read failure: ${readFailureSummary(cause)} Check it yourself, and call watch_pull_request to watch it again.`,
       notification: {
         source: { kind: "monitor" },
         outcome: "failed",
@@ -500,7 +527,10 @@ export const make = Effect.gen(function* () {
       readFailures.set(group.key, failures);
       // The count stays until every stop lands, so a failed stop is tried again on the next
       // failed read, and a watch started after the stops begins from zero.
-      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
+      if (
+        failures >= READ_FAILURE_LIMIT &&
+        (yield* eachTarget(group, (target) => giveUp(target, read.cause)))
+      ) {
         readFailures.delete(group.key);
       }
       return yield* Effect.failCause(read.cause);
