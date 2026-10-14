@@ -109,6 +109,7 @@ Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.
 avoiding animates on iOS. Reanimated commits each animation frame to the shadow tree, and without
 commit pausing those commits can starve React's: the JS thread keeps retrying its commit, the
 screen freezes, and back does nothing. Release builds retry forever; dev builds abort with
-`ShadowTree.cpp: assertion failed (attempts < 1024)`. A looping animation that stays on screen
-while heavy content renders, such as the running-thread shimmer in `thread-work-log.tsx`, runs on
-React Native's `Animated` with `useNativeDriver: true`, which updates views without commits.
+`ShadowTree.cpp: assertion failed (attempts < 1024)`. Looping animations that stay on screen while
+heavy content renders should use React Native's `Animated` with `useNativeDriver: true`, which
+updates views without commits, not Reanimated's `withRepeat`. The running-thread shimmer in
+`thread-work-log.tsx` is the example.

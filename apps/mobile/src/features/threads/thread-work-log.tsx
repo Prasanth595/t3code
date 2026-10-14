@@ -40,6 +40,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  useAnimatedValue,
   View,
 } from "react-native";
 import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
@@ -264,7 +265,7 @@ export function ShimmeringWorkContent(props: {
   const [appIsActive, setAppIsActive] = useState(AppState.currentState === "active");
   const [reducedMotion, setReducedMotion] = useState(true);
   const screenIsFocused = useIsFocused();
-  const [progress] = useState(() => new NativeAnimated.Value(0));
+  const progress = useAnimatedValue(0);
   const gradientId = `work-shimmer-${useId().replaceAll(":", "")}`;
   const contentWidth = Math.min(
     availableWidth,
@@ -307,15 +308,20 @@ export function ShimmeringWorkContent(props: {
   }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
 
   // One timing covers the sweep and the pause, so the native driver can loop it.
-  const sweepInputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
-  const sweepTranslateX = progress.interpolate({
-    inputRange: sweepInputRange,
-    outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
-  });
-  const counterSweepTranslateX = progress.interpolate({
-    inputRange: sweepInputRange,
-    outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
-  });
+  // Memoized so re-renders don't rebuild the native animation nodes.
+  const { sweepTranslateX, counterSweepTranslateX } = useMemo(() => {
+    const inputRange = [0, SHIMMER_SWEEP_MS / (SHIMMER_SWEEP_MS + SHIMMER_PAUSE_MS), 1];
+    return {
+      sweepTranslateX: progress.interpolate({
+        inputRange,
+        outputRange: [-SHIMMER_WIDTH, contentWidth, contentWidth],
+      }),
+      counterSweepTranslateX: progress.interpolate({
+        inputRange,
+        outputRange: [SHIMMER_WIDTH, -contentWidth, -contentWidth],
+      }),
+    };
+  }, [contentWidth, progress]);
 
   return (
     <View
