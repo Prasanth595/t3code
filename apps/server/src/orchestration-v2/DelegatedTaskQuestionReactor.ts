@@ -71,12 +71,16 @@ export const make = Effect.gen(function* () {
       const label = reportLabel(task.title?.trim() || task.prompt);
       // Keyed by the request, so a request updated while still pending wakes the parent once.
       const key = `${parentThreadId}:${event.payload.id}`;
+      const situation =
+        event.payload.responseCapability.type === "message"
+          ? `Delegated task ${taskId} asked a question and is still working.`
+          : `Delegated task ${taskId} is blocked on a question and cannot continue until it is answered.`;
       yield* engine.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(`server:delegated-task-question:${key}`),
         threadId: parentThreadId,
         messageId: MessageId.make(`message:delegated-task-question:${key}`),
-        text: `Delegated task ${taskId} is blocked on a question and cannot continue until it is answered. Read it with t3_pending_request_list and t3_pending_request_read using threadId ${child.id}. Answer it with t3_pending_request_respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, someone already answered it.`,
+        text: `${situation} Read it with t3_pending_request_list and t3_pending_request_read using threadId ${child.id}. Answer it with t3_pending_request_respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
         notification: {
           source: { kind: "delegated_task", taskIds: [taskId], childThreadId: child.id },
           outcome: "updated",

@@ -452,10 +452,11 @@ persisted events and then follows live events, so finalization also runs after
 a server restart. An existing `subagent_result` transfer makes finalization
 idempotent.
 
-A child question blocks the child until someone answers it, and users rarely
-watch child threads. When a child opens a pending `user_input` request, the
-parent gets a notification message telling it to answer with the pending
-request tools or ask the user. Approvals are not routed, because those tools
+Users rarely watch child threads, so a child question would otherwise go
+unanswered. When a child opens a pending `user_input` request, the parent gets
+a notification message telling it to answer with the pending request tools or
+ask the user. The message says whether the child is blocked or, for a Codex
+async question, still working. Approvals are not routed, because those tools
 cannot answer them.
 
 A failed run exposes its provider error before any progress text. Successful
