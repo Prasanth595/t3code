@@ -5,9 +5,11 @@ import {
   type OrchestrationV2ServerCommand,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -61,6 +63,7 @@ const runCascade = (input: {
 
 const parentId = ThreadId.make("thread:cascade-parent");
 const childId = ThreadId.make("thread:cascade-child");
+const siblingId = ThreadId.make("thread:cascade-sibling");
 const grandchildId = ThreadId.make("thread:cascade-grandchild");
 const now = DateTime.makeUnsafe("2026-10-01T00:00:00.000Z");
 const active = (id: ThreadId) =>
@@ -77,6 +80,7 @@ const childCommandId = `command:archive-parent:subagent:${childId}`;
 const cascade = (input: {
   readonly operation?: SubagentLifecycleOperation;
   readonly threads: ReadonlyArray<OrchestrationV2AppThread>;
+  readonly siblingIds?: ReadonlyArray<ThreadId>;
   /** What a re-read after a failed dispatch sees, when it differs from the listing. */
   readonly reread?: ReadonlyArray<OrchestrationV2AppThread>;
   readonly receipts?: Record<string, CommandReceiptV2Status>;
@@ -99,7 +103,7 @@ const cascade = (input: {
         getSubagentChildThreads: (threadId) =>
           Effect.succeed(
             threadId === parentId
-              ? [thread(childId)]
+              ? [thread(childId), ...(input.siblingIds ?? []).map(thread)]
               : threadId === childId
                 ? [thread(grandchildId)]
                 : [],
@@ -180,6 +184,69 @@ it.effect("fails a rejected child command while the child is still short of the 
     }).pipe(Effect.flip);
     assert.instanceOf(failure, OrchestratorDispatchError);
   }),
+);
+
+it.effect.each(["archive", "unarchive", "delete"] as const)(
+  "continues %s to healthy siblings while retaining a child failure",
+  (operation) =>
+    Effect.gen(function* () {
+      const before = operation === "unarchive" ? archived : active;
+      const after = operation === "archive" ? archived : operation === "delete" ? deleted : active;
+      const threads = [before(childId), before(siblingId)];
+      const attempted: Array<ThreadId> = [];
+      const failure = new OrchestratorDispatchError({
+        commandId: CommandId.make(childCommandId),
+        commandType: `thread.${operation}`,
+        cause: new ProjectionStore.ProjectionStoreReadError({
+          threadId: childId,
+          cause: "Invalid child execution record.",
+        }),
+      });
+      // The child shell remains readable, but loading its execution records fails.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const error = yield* cascade({
+          operation,
+          threads,
+          siblingIds: [siblingId],
+          outcome: (command) => {
+            if (!("threadId" in command)) return Effect.die("Unexpected command.");
+            attempted.push(command.threadId);
+            return command.threadId === childId
+              ? Effect.fail(failure)
+              : Effect.sync(() => {
+                  threads[1] = after(siblingId);
+                });
+          },
+        }).pipe(Effect.flip);
+        assert.strictEqual(error, failure);
+        assert.deepEqual(threads[1], after(siblingId));
+      }
+      assert.deepEqual(attempted, [childId, siblingId, childId, childId, childId, childId]);
+    }),
+);
+
+it.effect.each(["defect", "interruption"] as const)(
+  "stops before later siblings on child %s",
+  (outcome) =>
+    Effect.gen(function* () {
+      const attempted: Array<ThreadId> = [];
+      const exit = yield* cascade({
+        threads: [active(childId), active(siblingId)],
+        siblingIds: [siblingId],
+        outcome: (command) => {
+          if (!("threadId" in command)) return Effect.die("Unexpected command.");
+          attempted.push(command.threadId);
+          return outcome === "defect" ? Effect.die("Broken child.") : Effect.interrupt;
+        },
+      }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(exit));
+      if (Exit.isFailure(exit)) {
+        assert.isTrue(
+          outcome === "defect" ? Cause.hasDies(exit.cause) : Cause.hasInterrupts(exit.cause),
+        );
+      }
+      assert.deepEqual(attempted, [childId]);
+    }),
 );
 
 it.effect("keeps replaying an accepted child command", () =>

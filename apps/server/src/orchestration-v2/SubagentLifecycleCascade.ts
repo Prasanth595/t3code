@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -111,39 +112,42 @@ const make = Effect.gen(function* () {
       .getSubagentChildThreads(input.threadId, { includeDeleted: operation === "delete" })
       .pipe(
         Effect.flatMap((children) =>
-          Effect.forEach(
-            children,
-            (child) => {
-              const derived = CommandId.make(`${input.commandId}:subagent:${child.id}`);
-              const descend = commandIdFrom(derived).pipe(
-                Effect.flatMap((commandId) =>
-                  cascadeSubagentLifecycle({ ...input, commandId, threadId: child.id }),
-                ),
-              );
-              if (reachedState(child, operation)) return descend;
-              return commandIdFrom(derived).pipe(
-                Effect.flatMap((commandId) =>
-                  threads.dispatch({ type: `thread.${operation}`, commandId, threadId: child.id }),
-                ),
-                Effect.asVoid,
-                // A concurrent command may have already moved the child, which
-                // rejects this one. Only a child still short of the state fails.
-                Effect.catch((cause) =>
-                  projections
-                    .getThread(child.id)
-                    .pipe(
-                      Effect.flatMap((current) =>
-                        !reachedState(current, operation)
-                          ? Effect.fail(cause)
-                          : current.deletedAt === null || operation === "delete"
-                            ? descend
-                            : Effect.void,
-                      ),
+          Effect.forEach(children, (child) => {
+            const derived = CommandId.make(`${input.commandId}:subagent:${child.id}`);
+            const descend = commandIdFrom(derived).pipe(
+              Effect.flatMap((commandId) =>
+                cascadeSubagentLifecycle({ ...input, commandId, threadId: child.id }),
+              ),
+            );
+            if (reachedState(child, operation)) return descend.pipe(Effect.result);
+            return commandIdFrom(derived).pipe(
+              Effect.flatMap((commandId) =>
+                threads.dispatch({ type: `thread.${operation}`, commandId, threadId: child.id }),
+              ),
+              Effect.asVoid,
+              // A concurrent command may have already moved the child, which
+              // rejects this one. Only a child still short of the state fails.
+              Effect.catch((cause) =>
+                projections
+                  .getThread(child.id)
+                  .pipe(
+                    Effect.flatMap((current) =>
+                      !reachedState(current, operation)
+                        ? Effect.fail(cause)
+                        : current.deletedAt === null || operation === "delete"
+                          ? descend
+                          : Effect.void,
                     ),
-                ),
-              );
-            },
-            { discard: true },
+                  ),
+              ),
+              Effect.result,
+            );
+          }).pipe(
+            // Attempt healthy siblings before returning a typed failure for retry.
+            Effect.flatMap((results) => {
+              const failed = results.find(Result.isFailure);
+              return failed === undefined ? Effect.void : Effect.fail(failed.failure);
+            }),
           ),
         ),
         Effect.withSpan("SubagentLifecycleCascade.cascade"),
