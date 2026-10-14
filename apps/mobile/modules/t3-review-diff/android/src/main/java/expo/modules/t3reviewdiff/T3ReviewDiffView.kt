@@ -139,10 +139,6 @@ class T3ReviewDiffView(context: Context, appContext: AppContext) : ExpoView(cont
     canvasView.style = canvasView.style.copy(rowHeightPx = dp(value))
   }
 
-  fun setContentWidth(value: Float) {
-    canvasView.contentWidthPx = max(width, dp(value).toInt())
-  }
-
   fun setContentInsetBottom(value: Float) {
     canvasView.setPadding(0, 0, 0, max(0, dp(value).toInt()))
     canvasView.setVerticalOffset(canvasView.verticalOffset())
@@ -718,6 +714,9 @@ private class DiffCanvasView(context: Context) : View(context) {
   private var codeWrap = CodeWrapLayout.NONE
   private var verticalOffset = 0
   private var horizontalOffset = 0
+
+  // Unwrapped rows scroll until the end of the widest one clears the right edge.
+  private var contentWidthPx = 0
   private val headerPathOffsetsByFileId = mutableMapOf<String, Int>()
   private var lastVisibleRange: Pair<Int, Int>? = null
   var rows: List<DiffRow> = emptyList()
@@ -726,6 +725,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
+      measureContentWidth()
       rebuildOffsets()
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
@@ -764,14 +764,8 @@ private class DiffCanvasView(context: Context) : View(context) {
   var style: DiffStyle = DiffStyle.defaults(density)
     set(value) {
       field = value
+      measureContentWidth()
       rebuildOffsets()
-    }
-  var contentWidthPx: Int = (1200 * density).toInt()
-    set(value) {
-      field = max(value, suggestedMinimumWidth)
-      setHorizontalOffset(horizontalOffset)
-      clampHeaderPathOffsets()
-      invalidate()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
   var onVisibleRowsChanged: ((Int, Int) -> Unit)? = null
@@ -884,6 +878,17 @@ private class DiffCanvasView(context: Context) : View(context) {
     if (headerPathOffsetsByFileId.isNotEmpty()) {
       headerPathOffsetsByFileId.clear()
       invalidate()
+    }
+  }
+
+  private fun measureContentWidth() {
+    contentWidthPx = if (style.wordWrap) {
+      0
+    } else {
+      ceil(
+        style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f +
+          drawing.codeContentWidth(rows, style),
+      ).toInt()
     }
   }
 
