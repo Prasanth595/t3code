@@ -3337,6 +3337,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (
       records: ReadonlyArray<ComposerContextRecord>,
       sourceEnvironmentId: EnvironmentId | null,
+      threadDraftTarget = attachmentDraftTarget,
     ): ReadonlyMap<string, string> => {
       const rewritten = new Map<string, string>();
       const dependentAttachmentLocalIds = new Map<string, string>();
@@ -3372,7 +3373,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   : existing
                     ? (uploadedContextRecordFromDraft(existing) ?? undefined)
                     : undefined;
-        if (existingRecord && isSameComposerContextPayload(existingRecord, record)) {
+        if (
+          existingRecord &&
+          isSameComposerContextPayload(existingRecord, record) &&
+          (record.kind !== "thread" || threadDraftTarget === attachmentDraftTarget)
+        ) {
           if (record.kind === "preview-annotation" && record.screenshotContextId) {
             skippedDependentAttachmentIds.add(record.screenshotContextId);
           }
@@ -3419,7 +3424,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           case "thread": {
             // The agent can only read threads on its own server; a pasted foreign one is dropped.
             if (record.environmentId !== environmentId) break;
-            addComposerDraftThreadContexts(attachmentDraftTarget, [record], {
+            addComposerDraftThreadContexts(threadDraftTarget, [record], {
               appendReference: false,
             });
             rewritten.set(record.contextId, record.contextId);
@@ -4695,7 +4700,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
 
       const rewrittenContextIds = entry.records
-        ? importContextRecords(entry.records, null)
+        ? importContextRecords(entry.records, null, composerDraftTarget)
         : new Map<string, string>();
       const restoredPrompt = replaceComposerContextReferences(entry.prompt, (reference) => {
         const contextId = rewrittenContextIds.get(reference.contextId);
