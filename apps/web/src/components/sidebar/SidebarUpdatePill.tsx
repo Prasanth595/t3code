@@ -315,13 +315,13 @@ function SidebarUpdateControl() {
         ? everything.summary
         : idleInstallArmed
           ? "Installs when the running agents finish. Click to change."
-        : showUpdateDetails
-          ? state
-            ? getDesktopUpdateButtonTooltip(state)
-            : "Update available"
-          : showCheckIcon
-            ? "Checking for updates…"
-            : "Check for updates";
+          : showUpdateDetails
+            ? state
+              ? getDesktopUpdateButtonTooltip(state)
+              : "Update available"
+            : showCheckIcon
+              ? "Checking for updates…"
+              : "Check for updates";
   const disabled = showCheckIcon
     ? true
     : runsEverything

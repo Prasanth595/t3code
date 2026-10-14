@@ -538,7 +538,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
 it("scheduleTask from a client without a thread uses the project model from project settings", async () => {
   const selection = { instanceId: parentInstanceId, model: "gpt-5.4" };
   const saved: Array<ScheduledTaskUpsertInput> = [];
-  const layer = OrchestratorMcpService.layer.pipe(
+  const layer = layerOrchestratorService.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ThreadManagementService.ThreadManagementService)({}),
