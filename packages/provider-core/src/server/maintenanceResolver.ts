@@ -232,6 +232,18 @@ function isMiseCommandPath(commandPath: string): boolean {
   return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
+/**
+ * WinGet's Claude Code install: a link in `%LOCALAPPDATA%\Microsoft\WinGet\Links` or
+ * `C:\Program Files\WinGet\Links`, or the binary in its `Anthropic.ClaudeCode_…` package directory.
+ */
+function isWinGetClaudeCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.endsWith("/winget/links/claude.exe") ||
+    /\/winget\/packages\/anthropic\.claudecode_[^/]+\/claude\.exe$/.test(normalized)
+  );
+}
+
 function isPnpmGlobalCommandPath(commandPath: string): boolean {
   const normalized = normalizeCommandPath(commandPath);
   return (
@@ -385,6 +397,15 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
   const packageName = definition.npmPackageName;
+  // WinGet owns these files: `claude update` only reports "managed by winget"
+  // and exits 0, and T3 Code does not run `winget upgrade` itself.
+  if (
+    definition.provider === "claudeAgent" &&
+    context.platform === "win32" &&
+    commandPaths.some(isWinGetClaudeCommandPath)
+  ) {
+    return manual;
+  }
 
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
