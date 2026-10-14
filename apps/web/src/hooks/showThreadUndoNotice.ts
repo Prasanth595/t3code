@@ -29,23 +29,6 @@ export const useThreadUndoNotice = create<{ notice: UndoNotice | null }>(() => (
 // same kind share one notice and can be restored together.
 let liveUndos: UndoOptions[] = [];
 let expiry: ReturnType<typeof setTimeout> | undefined;
-let expiryPaused = false;
-const UNDO_NOTICE_TTL_MS = 5_000;
-
-function expireUndos() {
-  const expired = liveUndos;
-  liveUndos = [];
-  for (const { claim, commit } of expired) {
-    claim.finish();
-    commit?.();
-  }
-  refreshNotice();
-}
-
-function scheduleExpiry() {
-  clearTimeout(expiry);
-  if (!expiryPaused) expiry = setTimeout(expireUndos, UNDO_NOTICE_TTL_MS);
-}
 
 function refreshNotice() {
   const stale = liveUndos.filter(({ claim }) => !claim.isCurrent());
@@ -54,8 +37,6 @@ function refreshNotice() {
   const latest = liveUndos.at(-1);
   if (!latest) {
     clearTimeout(expiry);
-    // The notice unmounts without a pointer-leave, so drop a stale hover hold.
-    expiryPaused = false;
     useThreadUndoNotice.setState({ notice: null });
     return;
   }
@@ -119,11 +100,14 @@ export function showThreadUndoNotice(options: UndoOptions) {
   if (!options.claim.isCurrent()) return;
   liveUndos.push(options);
   refreshNotice();
-  scheduleExpiry();
-}
-
-/** Holds the notice while the pointer is over it; leaving restarts the full timer. */
-export function setThreadUndoNoticeHeld(held: boolean) {
-  expiryPaused = held;
-  if (liveUndos.length > 0) scheduleExpiry();
+  clearTimeout(expiry);
+  expiry = setTimeout(() => {
+    const expired = liveUndos;
+    liveUndos = [];
+    for (const { claim, commit } of expired) {
+      claim.finish();
+      commit?.();
+    }
+    refreshNotice();
+  }, 5_000);
 }
