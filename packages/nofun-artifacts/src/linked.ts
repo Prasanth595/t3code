@@ -63,16 +63,42 @@ const escapeHtml = (text: string) =>
 const jsonScript = (value: unknown) => JSON.stringify(value).replace(/</g, "\\u003c");
 const escapeScript = (text: string) => text.replace(/<\/(script)/gi, "<\\/$1");
 
-function runtimeModules(input: LinkedCompileInput): ReadonlySet<string> | undefined {
-  const file =
+/** The local copy of the runtime (manifest module list and runtime.css), when it is on disk. */
+function localRuntime(input: LinkedCompileInput) {
+  const manifest =
     input.runtimeManifest ??
     NodePath.join(PACKAGE_SRC_DIR, "..", "dist", "nofun-ui-runtime", input.runtimeSHA, "manifest.json");
-  try {
-    return new Set((JSON.parse(NodeFs.readFileSync(file, "utf8")) as { modules: string[] }).modules);
-  } catch {
-    return undefined;
-  }
+  const read = (file: string) => {
+    try {
+      return NodeFs.readFileSync(file, "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  const json = read(manifest);
+  return {
+    modules: json ? new Set((JSON.parse(json) as { modules: string[] }).modules) : undefined,
+    css: read(NodePath.join(NodePath.dirname(manifest), "runtime.css")),
+  };
 }
+
+/** CSS.escape, as Tailwind escapes class names in selectors. */
+function cssEscape(name: string) {
+  let out = "";
+  for (let i = 0; i < name.length; i++) {
+    const c = name[i]!;
+    const code = c.charCodeAt(0);
+    if ((code >= 1 && code <= 31) || code === 127 || (i === 0 && /\d/.test(c)) || (i === 1 && /\d/.test(c) && name[0] === "-")) {
+      out += `\\${code.toString(16)} `;
+    } else if (code >= 128 || /[\w-]/.test(c)) out += c;
+    else out += `\\${c}`;
+  }
+  return out;
+}
+
+/** Whether runtime.css already has a rule for this class. */
+const runtimeHasClass = (css: string, name: string) =>
+  new RegExp(`\\.${cssEscape(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w\\\\-])`).test(css);
 
 function importIssue(path: string, modules: ReadonlySet<string> | undefined): string | undefined {
   const known =
@@ -166,9 +192,16 @@ function topLevel(css: string): string[] {
   return out;
 }
 
-/** The theme variables, utilities and @property/@keyframes the user's own classes need; runtime.css has the rest. */
-async function userCss(dir: string, tsx: string): Promise<string> {
-  const css = await buildCss(dir, { brand: null, candidates: candidatesOf(tsx), cssImports: [] });
+/**
+ * The theme variables, utilities and @property/@keyframes of the user's classes that runtime.css lacks.
+ * Classes runtime.css has stay out: re-emitted later in the same layer they would beat its variants.
+ */
+async function userCss(dir: string, tsx: string, runtimeCss: string | undefined): Promise<string> {
+  const candidates = candidatesOf(tsx).filter(
+    (token) => !/[{}]/.test(token) && !(runtimeCss && runtimeHasClass(runtimeCss, token)),
+  );
+  if (candidates.length === 0) return "";
+  const css = await buildCss(dir, { brand: null, candidates, cssImports: [] });
   return topLevel(css)
     .filter((rule) => /^@(?:layer (?:theme|utilities|properties)\{|property |keyframes )/.test(rule))
     .join("");
@@ -203,9 +236,10 @@ export async function compileLinked(input: LinkedCompileInput): Promise<LinkedAr
     if (typeof input.source !== "string" || input.source.trim() === "") {
       throw new LinkedCompileError("The tsx lane needs TSX source text.");
     }
+    const runtime = localRuntime(input);
     [code, css] = await Promise.all([
-      userChunk(input.source, runtimeModules(input)),
-      userCss(dir, input.source),
+      userChunk(input.source, runtime.modules),
+      userCss(dir, input.source, runtime.css),
     ]);
     texts = [input.source];
   } else {

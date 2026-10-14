@@ -264,9 +264,11 @@ for (const item of index.files.keys()) {
     excluded.push({ name: `@nofun/ui/${item}`, reason: "not a block, component or lib" });
   }
 }
+// Over every source, minified JS yields bracketed tokens with braces that Tailwind emits as a rule
+// whose braces swallow the rest of the sheet; no real class contains one.
 const css = await buildCss(dir, {
   brand: null,
-  candidates: candidatesOfFiles(built.sourceFiles),
+  candidates: [...candidatesOfFiles(built.sourceFiles)].filter((token) => !/[{}]/.test(token)),
   cssImports: built.cssImports,
   extraCss: FRAME_CSS,
 });
