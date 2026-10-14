@@ -160,11 +160,6 @@ describe("htmlRenderFromToolItem", () => {
       ["mcp__t3-code__html_render", [{ type: "text", text: JSON.stringify(result) }]],
       ["t3-code.html_render", { structuredContent: result, content: [] }],
       ["t3-code-thread_1_html_render", JSON.stringify(result)],
-      // OpenCode 2's html server, which keeps html_render out of Code Mode.
-      [
-        "t3-code-c26f2f1fb6fbbcc2-html_html_render",
-        [{ type: "text", text: JSON.stringify(result) }],
-      ],
       ["html_render", result],
     ] as const) {
       expect(htmlRenderFromToolItem({ toolName, output })).toEqual(reference);

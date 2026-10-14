@@ -23,7 +23,6 @@ import {
   type OrchestrationV2ProviderTurn,
   type ProviderReplayEntry,
 } from "@t3tools/contracts";
-import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -46,7 +45,6 @@ import * as ProviderContinuationRequests from "@t3tools/provider-core/server/Pro
 import {
   OPENCODE_2_STILL_STOPPING,
   OPENCODE_PROVIDER,
-  t3McpHtmlServerName,
   t3McpServerName,
 } from "@t3tools/provider-opencode/testing";
 import { openCode2ReplayRuntime } from "./OpenCode2AdapterV2.testkit.ts";
@@ -85,40 +83,12 @@ const event = (
 });
 const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
 
-/**
- * The rules that allow a thread its own two T3 MCP servers: every tool through
- * the Code Mode one except `html_render`, which only the html one serves.
- */
-const t3ServerRules = (codeMode: string, html: string) => [
+/** The rules T3 gives every session it runs, with only this thread's own T3 MCP server allowed. */
+const mcpRules = [
   { action: "t3-code-*", resource: "*", effect: "deny" },
-  { action: `${codeMode}_*`, resource: "*", effect: "allow" },
-  { action: `${codeMode}_html_render`, resource: "*", effect: "deny" },
-  { action: `${html}_html_render`, resource: "*", effect: "allow" },
+  { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
-/** The rules T3 gives every session it runs, with only this thread's own T3 MCP servers allowed. */
-const mcpRules = t3ServerRules("t3-code-thread_opencode2-adapter", "t3-code-c26f2f1fb6fbbcc2-html");
 const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
-/** Adds a thread's T3 MCP servers: the Code Mode one, then the html one with Code Mode off. */
-const registerT3Servers = (server: string, htmlServer: string) =>
-  [server, htmlServer].flatMap((name) => [
-    out("mcp.add", {
-      server: name,
-      "location[directory]": WORK,
-      config: {
-        type: "remote",
-        url: "http://127.0.0.1:3773/mcp",
-        headers: { Authorization: "Bearer thread-credential" },
-        oauth: false,
-        ...(name === htmlServer ? { codemode: false } : {}),
-      },
-    }),
-    reply("mcp.add", null),
-  ]);
-const removeT3Servers = (server: string, htmlServer: string) =>
-  [server, htmlServer].flatMap((name) => [
-    out("mcp.remove", { server: name, "location[directory]": WORK }),
-    reply("mcp.remove", null),
-  ]);
 /** The thread's title, which the recorded session already carries. */
 const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
@@ -197,15 +167,15 @@ const withInstructions = (
         "skill.list",
       ].includes(String(entry.frame.type)),
   );
-  // T3's MCP servers are added (or, when that fails, removed) before the entry that describes them.
-  const after = entries.findLastIndex(
+  // T3's MCP server is added before the entry that describes it.
+  const after = entries.findIndex(
     (entry, index) =>
       index < first &&
       entry.type === "emit_inbound" &&
       typeof entry.frame === "object" &&
       entry.frame !== null &&
       "operation" in entry.frame &&
-      (entry.frame.operation === "mcp.add" || entry.frame.operation === "mcp.remove"),
+      entry.frame.operation === "mcp.add",
   );
   const at = after < 0 ? first : after + 1;
   return first < 0
@@ -3445,141 +3415,31 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         });
         yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
         const server = "t3-code-thread_opencode2-adapter";
-        const htmlServer = "t3-code-c26f2f1fb6fbbcc2-html";
         const { runtime, thread } = yield* resumed([
-          // Registered for the session's directory under the thread's own names;
-          // the session's rules allow only these names' tools (see `t3Rules`).
-          ...registerT3Servers(server, htmlServer),
+          // Registered for the session's directory under the thread's own name;
+          // the session's rules allow only this name's tools (see `t3Rules`).
+          out("mcp.add", {
+            server,
+            "location[directory]": WORK,
+            config: {
+              type: "remote",
+              url: "http://127.0.0.1:3773/mcp",
+              headers: { Authorization: "Bearer thread-credential" },
+              oauth: false,
+            },
+          }),
+          reply("mcp.add", null),
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
           event("session.execution.succeeded", { sessionID: SESSION }),
-          ...removeT3Servers(server, htmlServer),
+          out("mcp.remove", { server, "location[directory]": WORK }),
+          reply("mcp.remove", null),
         ]);
         const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
         yield* runtime.startTurn(turnInput(thread));
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         yield* runtime.unloadThread!({ providerThread: thread });
       }).pipe(Effect.scoped),
-  );
-
-  it.effect("shows a page html_render published through the thread's html server", () =>
-    Effect.gen(function* () {
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
-      const htmlServer = "t3-code-c26f2f1fb6fbbcc2-html";
-      const page = {
-        attachmentId: "thread_opencode2-adapter-00000000-0000-4000-8000-000000000001-html",
-        title: "Chart",
-        height: 420,
-      };
-      // With Code Mode off for the html server, the call is its own tool part
-      // carrying html_render's result, not a line inside an `execute` script.
-      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-render" };
-      const name = `${htmlServer}_html_render`;
-      const { runtime, thread } = yield* resumed([
-        ...registerT3Servers(server, htmlServer),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.tool.input.started", { ...tool, name }),
-        event("session.tool.called", {
-          ...tool,
-          name,
-          input: { html: "<p>Chart</p>", title: "Chart", height: 420 },
-          executed: false,
-        }),
-        // `session.tool.success` is at version 2.
-        {
-          type: "emit_inbound",
-          frame: {
-            type: "sdk.event",
-            event: {
-              id: "evt_toolsuccess_render",
-              created: 1,
-              type: "session.tool.success",
-              data: {
-                ...tool,
-                content: [
-                  { type: "text", text: JSON.stringify({ htmlRender: page, message: "Shown" }) },
-                ],
-                metadata: { truncated: false },
-                executed: false,
-              },
-              durable: { aggregateID: SESSION, seq: 1, version: 2 },
-            },
-          },
-        },
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        ...removeT3Servers(server, htmlServer),
-      ]);
-      const events = yield* runtime.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
-      yield* runtime.startTurn(turnInput(thread));
-      const collected = yield* Fiber.join(events);
-      assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
-      const rendered = collected.findLast(
-        (event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.type === "dynamic_tool" &&
-          event.turnItem.status === "completed",
-      );
-      assert.deepEqual(
-        rendered?.type === "turn_item.updated" && rendered.turnItem.type === "dynamic_tool"
-          ? htmlRenderFromToolItem(rendered.turnItem)
-          : undefined,
-        page,
-      );
-      yield* runtime.unloadThread!({ providerThread: thread });
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("removes the Code Mode server again when the html server cannot be added", () =>
-    Effect.gen(function* () {
-      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment:opencode2-adapter"),
-        threadId,
-        providerSessionId: "mcp:opencode2-adapter",
-        providerInstanceId: instanceId,
-        endpoint: "http://127.0.0.1:3773/mcp",
-        authorizationHeader: "Bearer thread-credential",
-        browserToolsAvailable: false,
-      });
-      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
-      const htmlServer = "t3-code-c26f2f1fb6fbbcc2-html";
-      const [codeModeAdd, codeModeAdded, htmlAdd] = registerT3Servers(server, htmlServer);
-      const { runtime, thread } = yield* resumed([
-        codeModeAdd!,
-        codeModeAdded!,
-        htmlAdd!,
-        reply("mcp.add", { status: 500, body: { message: "boom" } }),
-        // The rules deny html_render through Code Mode, so the Code Mode server
-        // alone would leave no way to call it: neither stays, and the turn runs
-        // without T3's tools.
-        ...removeT3Servers(server, htmlServer),
-        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
-        promptAccepted,
-        event("session.execution.succeeded", { sessionID: SESSION }),
-      ]);
-      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
-      yield* runtime.startTurn(turnInput(thread));
-      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
-      // Nothing is registered, so unloading removes nothing.
-      yield* runtime.unloadThread!({ providerThread: thread });
-    }).pipe(Effect.scoped),
   );
 
   it.effect("registers a long thread id's MCP server under a name OpenCode accepts", () =>
@@ -3609,16 +3469,28 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionInfo({
             permissions: [
               { action: "*", resource: "*", effect: "allow" },
-              ...t3ServerRules(server, `${server}-html`),
+              { action: "t3-code-*", resource: "*", effect: "deny" },
+              { action: `${server}_*`, resource: "*", effect: "allow" },
             ],
           }),
         ),
         ...noOpenRequests,
-        ...registerT3Servers(server, `${server}-html`),
+        out("mcp.add", {
+          server,
+          "location[directory]": WORK,
+          config: {
+            type: "remote",
+            url: "http://127.0.0.1:3773/mcp",
+            headers: { Authorization: "Bearer thread-credential" },
+            oauth: false,
+          },
+        }),
+        reply("mcp.add", null),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
-        ...removeT3Servers(server, `${server}-html`),
+        out("mcp.remove", { server, "location[directory]": WORK }),
+        reply("mcp.remove", null),
       ]);
       const thread = yield* runtime.resumeThread({
         providerThread: { ...providerThread(yield* DateTime.now), appThreadId: child },
@@ -3650,14 +3522,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       assert.equal(names[0], "t3-code-63abb5df2b188bdd");
       // A name that already fits stays readable.
       assert.equal(yield* t3McpServerName(threadId), "t3-code-thread_opencode2-adapter");
-      // The html server's tool keeps within model APIs' 64-character tool names.
-      const htmlNames = yield* Effect.forEach([threadId, ...ids], t3McpHtmlServerName);
-      for (const name of htmlNames) {
-        assert.match(name, /^t3-code-[0-9a-f]{16}-html$/);
-        assert.isAtMost(`${name}_html_render`.length, 64);
-      }
-      assert.equal(new Set(htmlNames).size, htmlNames.length);
-      assert.equal(htmlNames[0], "t3-code-c26f2f1fb6fbbcc2-html");
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -4554,10 +4418,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionID: FORK,
           permissions: [
             { action: "*", resource: "*", effect: "allow" },
-            ...t3ServerRules(
-              "t3-code-thread_opencode2-adapter_fork",
-              "t3-code-7c81f4ba96860743-html",
-            ),
+            { action: "t3-code-*", resource: "*", effect: "deny" },
+            { action: "t3-code-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
           ],
         }),
         reply("session.update", null),

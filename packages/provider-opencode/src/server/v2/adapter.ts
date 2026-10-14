@@ -79,7 +79,6 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
-import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -415,13 +414,9 @@ interface ThreadState {
    * inbox, where the next prompt would deliver them first, so it cancels them.
    */
   readonly strandedSteers: Set<string>;
-  /** T3's MCP servers as registered for this thread, and the instructions entry sent with it. */
+  /** T3's MCP server as registered for this thread, and the instructions entry sent with it. */
   mcp:
-    | {
-        readonly servers: T3McpServers;
-        readonly directory: string;
-        readonly credential: string;
-      }
+    | { readonly name: string; readonly directory: string; readonly credential: string }
     | undefined;
   instructions: string | undefined;
 }
@@ -480,59 +475,32 @@ const rule = (action: string, effect: Rule["effect"]): Rule => ({ action, resour
 export const t3McpServerName = Effect.fn("t3McpServerName")(function* (threadId: string) {
   const name = `t3-code-${threadId.replaceAll(/[^a-zA-Z0-9_-]/g, "_")}`;
   if (name.length <= 64) return name;
-  return `t3-code-${yield* threadDigest(threadId)}`;
-});
-
-/**
- * The thread's second T3 server, registered with Code Mode off so that
- * `html_render` stays a direct tool (see `mcpRules`). The model calls it as
- * `<server>_html_render`, and model APIs cap tool names at 64 characters, so
- * it always takes the digest form.
- */
-export const t3McpHtmlServerName = Effect.fn("t3McpHtmlServerName")(function* (threadId: string) {
-  return `t3-code-${yield* threadDigest(threadId)}-html`;
-});
-
-const threadDigest = Effect.fnUntraced(function* (threadId: string) {
   const crypto = yield* Crypto.Crypto;
   const digest = yield* crypto
     .digest("SHA-256", new TextEncoder().encode(threadId))
     .pipe(Effect.orDie);
-  return Hex.encode(digest).slice(0, 16);
+  return `t3-code-${Hex.encode(digest).slice(0, 16)}`;
 });
-
-/** A thread's T3 servers: every tool through Code Mode, and `html_render` alone directly. */
-interface T3McpServers {
-  readonly codeMode: string;
-  readonly html: string;
-}
 
 /**
  * The rules that keep T3's MCP servers to their own thread, after the mode's:
  * the last matching rule wins, so every thread's T3 server is denied and then
  * this thread's own is allowed again, in every mode. A subagent's session
  * inherits the thread's.
- *
- * Code Mode reports a nested call only as its `execute` script, without the
- * call's result, so a page `html_render` published from there never reached
- * the thread. `html_render` is therefore taken out of the Code Mode server and
- * allowed only on the html server, where each call is its own tool part.
  */
-const mcpRules = (servers: T3McpServers | null): ReadonlyArray<Rule> =>
-  servers === null
+const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
+  mcpServerName === null
     ? []
     : [
         { action: "t3-code-*", resource: "*", effect: "deny" },
-        { action: `${servers.codeMode}_*`, resource: "*", effect: "allow" },
-        { action: `${servers.codeMode}_${HTML_RENDER_TOOL_NAME}`, resource: "*", effect: "deny" },
-        { action: `${servers.html}_${HTML_RENDER_TOOL_NAME}`, resource: "*", effect: "allow" },
+        { action: `${mcpServerName}_*`, resource: "*", effect: "allow" },
       ];
 
 const sessionRules = (
   policy: RulesPolicy,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
-  mcpServers: T3McpServers | null,
+  mcpServerName: string | null,
 ): ReadonlyArray<Rule> => [
   ...(policy.runtimeMode === "full-access"
     ? [rule("*", "allow")]
@@ -546,7 +514,7 @@ const sessionRules = (
   // are never denied: the free tier refuses sessions whose rules deny them.
   ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
   ...paths,
-  ...mcpRules(mcpServers),
+  ...mcpRules(mcpServerName),
 ];
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
@@ -885,11 +853,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
   const crypto = yield* Crypto.Crypto;
   const driver = OPENCODE_PROVIDER;
-  const mcpServersFor = (threadId: string) =>
-    Effect.all({
-      codeMode: t3McpServerName(threadId),
-      html: t3McpHtmlServerName(threadId),
-    }).pipe(Effect.provideService(Crypto.Crypto, crypto));
+  const mcpServerNameFor = (threadId: string) =>
+    t3McpServerName(threadId).pipe(Effect.provideService(Crypto.Crypto, crypto));
 
   /**
    * Lends the instance's server to a session until its scope closes. A spawned
@@ -3136,7 +3101,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         policy,
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
-        appThreadId === null ? null : yield* mcpServersFor(appThreadId),
+        appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
       );
     });
 
@@ -3378,15 +3343,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         resolveAttachmentPath: host.resolveAttachmentPath,
       }).trim();
 
-    const removeMcp = (mcp: { readonly servers: T3McpServers; readonly directory: string }) =>
-      Effect.forEach(
-        [mcp.servers.codeMode, mcp.servers.html],
-        (server) =>
-          Effect.suspend(() =>
-            client.mcp.remove({ server, location: { directory: mcp.directory } }),
-          ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
-        { discard: true },
-      );
+    const removeMcp = (mcp: { readonly name: string; readonly directory: string }) =>
+      Effect.suspend(() =>
+        client.mcp.remove({ server: mcp.name, location: { directory: mcp.directory } }),
+      ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true }));
 
     // T3's MCP registrations outlive a session only on an external server; a
     // spawned one forgets them when it stops.
@@ -3413,12 +3373,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       const mcpSession = yield* mcpSessions.read(turnInput.threadId);
       const directory = turnInput.runtimePolicy.cwd ?? host.paths.cwd;
-      const servers = yield* mcpServersFor(turnInput.threadId);
+      const name = yield* mcpServerNameFor(turnInput.threadId);
       // An external server may not reach T3's MCP endpoint, as with 1.x.
       const wanted =
         mcpSession === undefined || connection.external
           ? undefined
-          : { servers, directory, credential: mcpSession.authorizationHeader };
+          : { name, directory, credential: mcpSession.authorizationHeader };
       if (
         state.mcp !== undefined &&
         (wanted === undefined ||
@@ -3429,33 +3389,27 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         state.mcp = undefined;
       }
       // T3's tools are an addition: a server that cannot add them still runs the turn.
-      // The two servers are added as one: the rules deny `html_render` through
-      // Code Mode, so the Code Mode server alone would leave no way to call it.
       if (wanted !== undefined && state.mcp === undefined) {
-        const add = (server: string, codemode: boolean) =>
-          client.mcp
-            .add({
-              server,
-              location: { directory },
-              config: new Mcp.RemoteConfig({
-                type: "remote",
-                url: mcpSession!.endpoint,
-                headers: { Authorization: wanted.credential },
-                oauth: false,
-                ...(codemode ? {} : { codemode: false }),
-              }),
-            })
-            .pipe(Effect.timeout(INVENTORY_TIMEOUT));
-        const added = yield* add(servers.codeMode, true).pipe(
-          Effect.andThen(add(servers.html, false)),
-          Effect.as(true),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
-              Effect.andThen(removeMcp(wanted)),
-              Effect.as(false),
+        const added = yield* client.mcp
+          .add({
+            server: name,
+            location: { directory },
+            config: new Mcp.RemoteConfig({
+              type: "remote",
+              url: mcpSession!.endpoint,
+              headers: { Authorization: wanted.credential },
+              oauth: false,
+            }),
+          })
+          .pipe(
+            Effect.timeout(INVENTORY_TIMEOUT),
+            Effect.as(true),
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Could not add T3 Code's MCP server to OpenCode.", cause).pipe(
+                Effect.as(false),
+              ),
             ),
-          ),
-        );
+          );
         if (added) state.mcp = wanted;
       }
       const instructions = [

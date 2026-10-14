@@ -1,10 +1,8 @@
-// @effect-diagnostics nodeBuiltinImport:off - expected rules name each thread's html server by a digest of its id.
 /**
  * OpenCode 2 through the whole orchestrator, against a replayed HTTP server:
  * the transcript fixes the order of every request the adapter sends, so a
  * request the orchestrator never lets it make fails the run.
  */
-import * as NodeCrypto from "node:crypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -75,18 +73,12 @@ const labelled = (entry: ProviderReplayEntry, label: string): ProviderReplayEntr
   entry.type === "runtime_exit" ? entry : { ...entry, label };
 /**
  * T3's own rules after a mode's: every thread's T3 MCP server is denied, and
- * then this thread's own are allowed again (last match wins), with
- * `html_render` served only by the html one.
+ * then this thread's own is allowed again (last match wins).
  */
-const mcpRules = (name: string) => {
-  const html = `t3-code-${NodeCrypto.createHash("sha256").update(`thread:${name}`).digest("hex").slice(0, 16)}-html`;
-  return [
-    { action: "t3-code-*", resource: "*", effect: "deny" },
-    { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
-    { action: `t3-code-thread_${name}_html_render`, resource: "*", effect: "deny" },
-    { action: `${html}_html_render`, resource: "*", effect: "allow" },
-  ];
-};
+const mcpRules = (name: string) => [
+  { action: "t3-code-*", resource: "*", effect: "deny" },
+  { action: `t3-code-thread_${name}_*`, resource: "*", effect: "allow" },
+];
 const FULL_ACCESS = [{ action: "*", resource: "*", effect: "allow" }];
 /** Full access for the thread named `name`. */
 const t3Rules = (name: string) => [...FULL_ACCESS, ...mcpRules(name)];
