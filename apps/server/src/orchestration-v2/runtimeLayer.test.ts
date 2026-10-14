@@ -2943,7 +2943,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect.each(["fingerprint deadline", "changed remarks", "without fingerprint"])(
+  it.effect.each(["with fingerprint", "without fingerprint"])(
     "refreshes edited cached review replies: %s",
     (mode) =>
       Effect.gen(function* () {
@@ -2998,8 +2998,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           ...reply,
           id: `reply-${index}`,
         }));
-        let remarksFingerprint = "original";
-        let fingerprintAvailable = mode !== "without fingerprint";
+        const fingerprintAvailable = mode !== "without fingerprint";
         let activityReads = 0;
         let pagesRead = 0;
         const reactor = yield* PullRequestWatchReactor.make.pipe(
@@ -3017,9 +3016,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
               Layer.mock(PullRequestService.PullRequestService)({
                 watchFingerprint: () =>
                   Effect.succeed(
-                    fingerprintAvailable
-                      ? { status: "OPEN pending", remarks: remarksFingerprint }
-                      : null,
+                    fingerprintAvailable ? { status: "OPEN pending", remarks: "unchanged" } : null,
                   ),
                 invalidate: () => Effect.void,
                 detail: () =>
@@ -3068,33 +3065,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           [],
         );
 
-        if (fingerprintAvailable) {
-          // Losing and recovering a fingerprint forces activity reads, but is not changed remarks.
-          fingerprintAvailable = false;
-          yield* reactor.sweep;
-          assert.equal(activityReads, 2);
-          assert.equal(pagesRead, 1);
-          fingerprintAvailable = true;
-          yield* reactor.sweep;
-          assert.equal(activityReads, 3);
-          assert.equal(pagesRead, 1);
-        }
         const readsBeforeEdit = activityReads;
         reply = { ...reply, body: "Edited feedback.", editedAt: "2026-10-02T12:00:01.000Z" };
-        if (mode === "changed remarks") {
-          remarksFingerprint = "edited";
-          yield* TestClock.adjust("1 second");
-        } else if (mode === "without fingerprint") {
+        // The edit keeps the reply count, so only the tail's reread deadline can surface it.
+        if (fingerprintAvailable) {
+          yield* TestClock.adjust("30 minutes");
+        } else {
           // Frequent activity reads must not postpone the tail's own refresh deadline.
           yield* TestClock.adjust("5 minutes");
           yield* reactor.sweep;
           assert.equal(pagesRead, 1);
           yield* TestClock.adjust("5 minutes");
-        } else {
-          yield* TestClock.adjust("30 minutes");
         }
         yield* reactor.sweep;
-        assert.equal(activityReads, readsBeforeEdit + (mode === "without fingerprint" ? 2 : 1));
+        assert.equal(activityReads, readsBeforeEdit + (fingerprintAvailable ? 1 : 2));
         const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
         assert.deepEqual(
           messages.map((message) => message.notification?.summary),

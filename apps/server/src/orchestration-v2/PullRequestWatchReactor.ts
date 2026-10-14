@@ -543,16 +543,6 @@ export const make = Effect.gen(function* () {
       );
     }
 
-    // Refresh tails when known remarks change: reply counts alone cannot rule out edits.
-    if (
-      Option.isSome(activity) &&
-      fingerprint !== null &&
-      last !== undefined &&
-      last.remarks !== null &&
-      last.remarks !== fingerprint.remarks
-    ) {
-      threadTails.delete(group.key);
-    }
     // Never advance the remark watermark past comments an incomplete read could have missed.
     // A pass that did not read the activity has no remarks to report.
     const remarks = Option.isSome(activity)
