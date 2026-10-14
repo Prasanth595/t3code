@@ -1,0 +1,46 @@
+{
+  "root": "page",
+  "elements": {
+    "page": {
+      "type": "Page",
+      "props": {},
+      "children": ["nav", "hero", "grid", "proof", "manifesto", "footer"]
+    },
+    "nav": {
+      "type": "SiteNav",
+      "props": { "variant": "minimal", "cartCount": 0 },
+      "children": []
+    },
+    "hero": {
+      "type": "HeroStackedProduct",
+      "props": {
+        "variant": "window",
+        "eyebrow": "sellmerch.ai",
+        "headline": "Design it. Price it. Sell it.",
+        "sub": "Custom apparel and accessories for creators, streamers and brands, with no upfront inventory.",
+        "cta": "Start designing"
+      },
+      "children": []
+    },
+    "grid": {
+      "type": "ProductGrid",
+      "props": { "variant": "uniform", "density": 4, "count": 8, "filters": false },
+      "children": []
+    },
+    "proof": { "type": "ProofStats", "props": {}, "children": [] },
+    "manifesto": {
+      "type": "Manifesto",
+      "props": {
+        "variant": "numbered",
+        "heading": "How it works",
+        "lines": ["Design the piece.", "Set your price.", "Sell it to your audience."]
+      },
+      "children": []
+    },
+    "footer": {
+      "type": "SiteFooter",
+      "props": { "variant": "compact" },
+      "children": []
+    }
+  }
+}

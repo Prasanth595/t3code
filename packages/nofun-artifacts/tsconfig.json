@@ -21,5 +21,5 @@
   },
   "include": ["src", "examples", "scripts"],
   // The browser runtime imports the live checkout ("@nofun/ui/*", "@nofun/kobra/*"); esbuild checks it.
-  "exclude": ["src/runtime", "examples/*.tsx"]
+  "exclude": ["src/runtime", "examples/*.tsx", "examples/canvas/*.tsx"]
 }

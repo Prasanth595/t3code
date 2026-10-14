@@ -1,10 +1,16 @@
-// Resync with the live nofun-components checkout: writes generated/index.json (the component index
-// agents search) and generated/compile-report.json (which indexed components compile in isolation;
-// search leaves failures out). `--render` also renders each component's demo headless and records
-// runtime errors. Never edits the checkout.
-//   vp run --filter @t3tools/nofun-artifacts sync [-- --render] [--only name,name]
+// Resync with the live nofun-components checkout: `--cache` (also run at the start of a full sync)
+// materializes `~/.nofun-t3/caches/nofun-components@<sha>` from `components.pin` via `git fetch` and a
+// shared clone (not a worktree) of that commit, then `pnpm install --offline` or a symlinked
+// `node_modules`. The rest writes generated/index.json (the component index agents search) and
+// generated/compile-report.json (which indexed components compile in isolation; search leaves failures
+// out). `--render` also renders each component's demo headless and records runtime errors. Never edits
+// the source checkout.
+//   vp run --filter @t3tools/nofun-artifacts sync [-- --cache] [-- --render] [--only name,name]
+import { execFile } from "node:child_process";
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
+import { homedir } from "node:os";
+import { promisify } from "node:util";
 
 import { compileArtifact } from "../src/compiler.ts";
 import { bundle } from "../src/live/bundle.ts";
@@ -16,9 +22,124 @@ import {
   INDEX_FILE,
   type CompileReport,
 } from "../src/live/report.ts";
-import { assertComponentsDir } from "../src/live/source.ts";
+import {
+  assertComponentsDir,
+  DEFAULT_COMPONENTS_DIR,
+  pinnedCacheDir,
+  readComponentsPin,
+} from "../src/live/source.ts";
+
+const run = promisify(execFile);
+
+function gitEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+}
+
+async function git(dir: string, args: readonly string[]): Promise<string> {
+  const result = await run("git", ["-C", dir, ...args], {
+    maxBuffer: 64 * 1024 * 1024,
+    env: gitEnv(),
+  });
+  return result.stdout.trim();
+}
+
+async function cacheReady(dest: string, full: string): Promise<boolean> {
+  if (!NodeFs.existsSync(NodePath.join(dest, "registry.json"))) return false;
+  if (!NodeFs.existsSync(NodePath.join(dest, "node_modules", "react"))) return false;
+  try {
+    const head = (await git(dest, ["rev-parse", "HEAD"])).toLowerCase();
+    if (head !== full) return false;
+    const status = await git(dest, ["status", "--porcelain", "--untracked-files=all"]);
+    return status.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+async function installCacheDeps(dest: string, sourceRepo: string): Promise<void> {
+  const react = NodePath.join(dest, "node_modules", "react");
+  if (NodeFs.existsSync(react)) return;
+  const env = { ...process.env };
+  delete env.ESBUILD_BINARY_PATH;
+  try {
+    await run("pnpm", ["install", "--offline", "--frozen-lockfile"], {
+      cwd: dest,
+      env,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    console.warn(
+      `pnpm install --offline failed (${message}); symlinking node_modules from ${sourceRepo}`,
+    );
+    const target = NodePath.join(sourceRepo, "node_modules");
+    if (!NodeFs.existsSync(NodePath.join(target, "react"))) {
+      throw new Error(
+        `${sourceRepo} has no node_modules/react to symlink, and pnpm install --offline failed.`,
+      );
+    }
+    const link = NodePath.join(dest, "node_modules");
+    NodeFs.rmSync(link, { recursive: true, force: true });
+    NodeFs.symlinkSync(target, link);
+  }
+  if (!NodeFs.existsSync(react)) {
+    throw new Error(`Pinned cache at ${dest} still has no node_modules/react.`);
+  }
+}
+
+/** Fetch origin/main, then create or refresh the pin cache. Does not touch a git worktree. */
+async function ensurePinnedCache(): Promise<string> {
+  const pin = readComponentsPin();
+  const dest = pinnedCacheDir(pin);
+  const root = NodePath.join(homedir(), ".nofun-t3", "caches");
+  if (!NodePath.resolve(dest).startsWith(`${NodePath.resolve(root)}${NodePath.sep}`)) {
+    throw new Error(`Refusing to write a components cache outside ${root}.`);
+  }
+  const sourceRepo = process.env.NOFUN_COMPONENTS_SOURCE?.trim() || DEFAULT_COMPONENTS_DIR;
+  try {
+    await run("git", ["-C", sourceRepo, "fetch", "origin", "main"], {
+      maxBuffer: 64 * 1024 * 1024,
+      env: gitEnv(),
+      timeout: 60_000,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+    console.warn(`git fetch origin/main failed (${message}); using the local pin.`);
+  }
+  const full = (await git(sourceRepo, ["rev-parse", "--verify", `${pin}^{commit}`])).toLowerCase();
+  if (!full.startsWith(pin))
+    throw new Error(`Pin ${pin} resolved to ${full}, which does not match.`);
+  if (await cacheReady(dest, full)) {
+    console.log(`cache: ${dest} @ ${full}`);
+    return dest;
+  }
+  try {
+    if (NodeFs.lstatSync(dest).isSymbolicLink()) NodeFs.unlinkSync(dest);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  NodeFs.rmSync(dest, { recursive: true, force: true });
+  NodeFs.mkdirSync(root, { recursive: true });
+  await run("git", ["clone", "--shared", "--no-checkout", sourceRepo, dest], {
+    maxBuffer: 64 * 1024 * 1024,
+    env: gitEnv(),
+  });
+  await git(dest, ["config", "core.filemode", "false"]);
+  await git(dest, ["config", "advice.detachedHead", "false"]);
+  await git(dest, ["checkout", "--detach", full]);
+  await installCacheDeps(dest, sourceRepo);
+  if (!(await cacheReady(dest, full))) {
+    throw new Error(`Pinned cache at ${dest} is not a clean checkout of ${full}.`);
+  }
+  console.log(`cache: ${dest} @ ${full}`);
+  return dest;
+}
 
 const args = process.argv.slice(2);
+const cacheOnly = args.includes("--cache");
+await ensurePinnedCache();
+if (cacheOnly) process.exit(0);
+
 const render = args.includes("--render");
 const onlyArg = args[args.indexOf("--only") + 1];
 const only = args.includes("--only") && onlyArg ? new Set(onlyArg.split(",")) : undefined;

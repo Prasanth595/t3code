@@ -28,8 +28,8 @@ const MIME: Record<string, string> = {
 
 const ASSET_EXT = "png|jpe?g|gif|webp|avif|svg|mp4|webm";
 
-/** Raw bytes of imagery a page may inline (fonts and CSS are on top of this). */
-export const ASSET_BUDGET_BYTES = 14 * 1024 * 1024;
+/** Encoded (data URI) bytes of imagery a page may inline when the caller has no tighter room. */
+export const ASSET_BUDGET_BYTES = 20 * 1024 * 1024;
 const MAX_ONE_ASSET_BYTES = 6 * 1024 * 1024;
 
 export function dataUri(file: string): string | undefined {
@@ -111,8 +111,13 @@ export function findAssetPaths(
   return [...found];
 }
 
-/** Inlines public files as data URIs: the page brand's first, then shared ones, then other brands', up to the budget. */
-export function inlineAssets(dir: string, paths: Iterable<string>, brand: string | null): AssetMap {
+/** Inlines public files as data URIs: the page brand's first, then shared ones, then other brands', up to `budget` encoded bytes. */
+export function inlineAssets(
+  dir: string,
+  paths: Iterable<string>,
+  brand: string | null,
+  budget = ASSET_BUDGET_BYTES,
+): AssetMap {
   const rank = (path: string) =>
     brand && path.startsWith(`/brands/${brand}/`) ? 0 : path.startsWith("/brands/") ? 2 : 1;
   const ordered = [...new Set(paths)].sort((a, b) => rank(a) - rank(b));
@@ -122,15 +127,18 @@ export function inlineAssets(dir: string, paths: Iterable<string>, brand: string
   for (const path of ordered) {
     const file = publicFile(dir, path);
     if (!file) continue;
-    const size = NodeFs.statSync(file).size;
-    if (size > MAX_ONE_ASSET_BYTES || bytes + size > ASSET_BUDGET_BYTES) {
+    if (NodeFs.statSync(file).size > MAX_ONE_ASSET_BYTES) {
       skipped.push(path);
       continue;
     }
     const uri = dataUri(file);
     if (!uri) continue;
+    if (bytes + uri.length > budget) {
+      skipped.push(path);
+      continue;
+    }
     map[path.slice(1)] = uri;
-    bytes += size;
+    bytes += uri.length;
   }
   return { map, bytes, skipped };
 }
@@ -171,7 +179,7 @@ export function escapeLocalPaths(text: string): string {
 export const ASSET_SCRIPT = `(function(){var e=document.getElementById("nf-assets");var A={};try{A=JSON.parse(e?e.textContent:"{}")}catch(x){}
 function r(u){if(typeof u!=="string"||u.slice(0,5)==="data:")return;var k=u.replace(/^https?:\\/\\/[^\\/]+/,"").split("?")[0].split("#")[0].replace(/^\\//,"");try{k=decodeURI(k)}catch(x){}return A[k]}
 function fs(s){return s.replace(/url\\((['"]?)([^'")]+)\\1\\)/g,function(m,q,u){var d=r(u);return d?'url("'+d+'")':m})}
-function fix(n){if(!n||n.nodeType!==1)return;["src","poster","href","xlink:href"].forEach(function(a){var v=n.getAttribute(a);var d=v&&r(v);if(d)n.setAttribute(a,d)});var ss=n.getAttribute("srcset");if(ss){var o=ss.split(",").map(function(p){var q=p.trim().split(/\\s+/);var d=r(q[0]);if(d)q[0]=d;return q.join(" ")}).join(", ");if(o!==ss)n.setAttribute("srcset",o)}var st=n.getAttribute("style");if(st&&st.indexOf("url(")>=0){var f=fs(st);if(f!==st)n.setAttribute("style",f)}}
+function fix(n){if(!n||n.nodeType!==1)return;["src","poster","href","xlink:href"].forEach(function(a){var v=n.getAttribute(a);var d=v&&r(v);if(d)n.setAttribute(a,d)});var ss=n.getAttribute("srcset");if(ss&&ss.indexOf("data:")<0){var o=ss.split(",").map(function(p){var q=p.trim().split(/\\s+/);var d=r(q[0]);if(d)q[0]=d;return q.join(" ")}).join(", ");if(o!==ss)n.setAttribute("srcset",o)}var st=n.getAttribute("style");if(st&&st.indexOf("url(")>=0){var f=fs(st);if(f!==st)n.setAttribute("style",f)}}
 function walk(n){if(!n||n.nodeType!==1)return;fix(n);n.querySelectorAll("img,source,video,image,use,[style*='url(']").forEach(fix)}
 new MutationObserver(function(ms){ms.forEach(function(m){if(m.type==="attributes")fix(m.target);else m.addedNodes.forEach(walk)})}).observe(document.documentElement,{subtree:true,childList:true,attributes:true,attributeFilter:["src","srcset","poster","style","href"]});
 [[window.HTMLImageElement,"src"],[window.HTMLMediaElement,"src"],[window.HTMLSourceElement,"src"]].forEach(function(p){if(!p[0])return;var d=Object.getOwnPropertyDescriptor(p[0].prototype,p[1]);if(!d||!d.set)return;Object.defineProperty(p[0].prototype,p[1],{configurable:true,enumerable:d.enumerable,get:d.get,set:function(v){d.set.call(this,r(v)||v)}})});

@@ -2,7 +2,7 @@
 // checkout's Tailwind v4, with the class candidates of exactly the sources the bundle pulled in. Only the
 // page brand's sheet is included (each brand sheet carries its own @font-face rules), every url() is
 // inlined, and the next/font families the root layout loads (Geist and the brand Google fonts) come
-// from the checkout's last Next build, inlined as data URIs.
+// from the checkout's last Next build, inlined as data URIs. Without a build, Geist comes from fonts/.
 import { createRequire } from "node:module";
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
@@ -157,8 +157,22 @@ const nextFonts = perStamp(async (dir): Promise<NextFonts> => {
   return { vars, faces };
 });
 
+const GEIST_DIR = NodePath.join(import.meta.dirname, "..", "..", "fonts");
+
+/** Geist sans and mono (vendored from geist@1.7.2, OFL) for a checkout with no next/font build. */
+function geistFallbackCss(): string {
+  const face = (family: string, file: string) =>
+    `@font-face{font-family:"${family}";src:url("${dataUri(NodePath.join(GEIST_DIR, file))}") format("woff2");font-weight:100 900;font-style:normal;font-display:block}`;
+  return (
+    `:root{--font-geist-sans:"Geist",ui-sans-serif,system-ui,sans-serif;--font-geist-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,monospace}` +
+    face("Geist", "Geist-Variable.woff2") +
+    face("Geist Mono", "GeistMono-Variable.woff2")
+  );
+}
+
 async function nextFontCss(dir: string, sheet: string) {
   const fonts = await nextFonts();
+  if (!fonts.vars.has("--font-geist-sans")) return geistFallbackCss();
   const decls: string[] = [];
   const families = new Set<string>();
   for (const [name, value] of fonts.vars) {
