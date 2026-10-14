@@ -84,9 +84,10 @@ your threads describes the schedule in plain words for the task list. Agents can
 create the same schedules when you ask in chat.
 
 A timed task never starts while the agent is still working in its thread: the
-task's own thread, or the one its last run created. A run that comes due in the
-meantime starts once, as soon as that work finishes, and the list shows how
-long it has been waiting.
+task's own thread, or the one its last scheduled run created. A run that comes
+due in the meantime starts once, as soon as that work finishes, and the list
+shows how long it has been waiting. **Run now** always starts right away and
+doesn't hold back the schedule.
 
 ## Webhook automations
 

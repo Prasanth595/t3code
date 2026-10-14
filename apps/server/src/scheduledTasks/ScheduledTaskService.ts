@@ -681,7 +681,7 @@ export const layer = Layer.effect(
       readonly status: "succeeded" | "failed";
       readonly error: string | null;
       readonly startedAtIso: string;
-      /** The thread the dispatch put the agent to work in; null keeps the previous one. */
+      /** The thread a timed dispatch put the agent to work in; null keeps the previous one. */
       readonly threadId: ThreadId | null;
     }) =>
       sql`
@@ -702,7 +702,7 @@ export const layer = Layer.effect(
       );
 
     // The task's previous run is the agent's work in the threads it runs in:
-    // its bound thread and the thread its last run used, which differ after
+    // its bound thread and the thread its last timed run used, which differ after
     // an edit changes the binding. Following the
     // thread rather than one run also covers restart continuations and
     // queued follow-ups. A deleted thread cannot hold the schedule back.
@@ -940,8 +940,10 @@ export const layer = Layer.effect(
             error: lastRunError,
             startedAtIso,
             // The agent keeps working after the dispatch returns; the poller
-            // holds the next slot while this thread has an active run.
-            threadId: result._tag === "Success" ? result.value : null,
+            // holds the next slot while this thread has an active run. Only a
+            // timed run moves it: Run now is the user's own call, and must not
+            // hide a timed run that is still working from the poller.
+            threadId: trigger === "scheduled" && result._tag === "Success" ? result.value : null,
           });
           yield* notifyChanged;
         }

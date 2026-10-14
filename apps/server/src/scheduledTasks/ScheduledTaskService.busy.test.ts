@@ -236,6 +236,31 @@ it.effect("waits for a launched run even after the task is rebound to another th
   ),
 );
 
+it.effect("keeps waiting for a timed run after Run now launches and finishes another", () =>
+  withService(({ service, launches, finishRun, awaitTask }) =>
+    Effect.gen(function* () {
+      const { task } = yield* service.upsert(yield* taskInput());
+      yield* pollAt(localTime(10, 0));
+      assert.equal((yield* Queue.take(launches)).runId, "run-1");
+      yield* awaitTask((current) => current.runCount === 1);
+
+      // Run now starts right away in its own thread and finishes quickly,
+      // while the timed run-1 keeps working.
+      yield* TestClock.adjust("5 minutes");
+      yield* service.runNow({ id: task.id });
+      assert.equal((yield* Queue.take(launches)).runId, "run-2");
+      yield* finishRun("run-2", localTime(10, 6));
+
+      yield* pollAt(localTime(10, 40));
+      assert.equal(yield* Queue.size(launches), 0);
+
+      yield* finishRun("run-1", localTime(10, 40));
+      yield* TestClock.adjust("6 seconds");
+      assert.equal((yield* Queue.take(launches)).runId, "run-3");
+    }),
+  ),
+);
+
 it.effect("describes a cron schedule after saving and only for the expression it describes", () =>
   Effect.gen(function* () {
     const releaseFirst = yield* Deferred.make<void>();
