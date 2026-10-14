@@ -276,11 +276,6 @@ const NO_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput
 const EMPTY_PREVIEW_SESSIONS = {};
 const EMPTY_PREVIEW_DESKTOP_STATE = {};
 const EMPTY_TERMINAL_LABELS = new Map<string, string>();
-const UNAVAILABLE_SIDE_PANELS = {
-  preview: { available: false, onOpen: () => undefined },
-  diff: { available: false, onOpen: () => undefined },
-  terminal: { available: false, onOpen: () => undefined },
-};
 const EMPTY_PENDING_SURFACES = new Set<string>();
 const MAX_SEARCH_LABEL_CANDIDATES = 100;
 
@@ -337,7 +332,9 @@ export const Route = createFileRoute("/_chat/pull-requests")({
     ...(typeof raw.selectedEnvironmentId === "string" && raw.selectedEnvironmentId
       ? { selectedEnvironmentId: raw.selectedEnvironmentId as EnvironmentId }
       : {}),
-    ...(typeof raw.q === "string" && raw.q ? { q: raw.q.slice(0, 200) } : {}),
+    // Always an own key: the router lays this result over the parent route's unvalidated
+    // search, so leaving out a `q` the URL parser made a number would let the number through.
+    q: typeof raw.q === "string" && raw.q ? raw.q.slice(0, 200) : undefined,
     ...(raw.draft === "only" || raw.draft === "hide" ? { draft: raw.draft } : {}),
     ...(raw.review === "approved" ||
     raw.review === "changes-requested" ||
@@ -2289,12 +2286,17 @@ function PullRequestsRouteView() {
                 useRightPanelStore.getState().moveSurface(rightPanelRef, surfaceId, toIndex);
             }}
             onCopyFilePath={() => undefined}
-            panels={UNAVAILABLE_SIDE_PANELS}
+            onAddBrowser={() => undefined}
             onAddBrowserInProfile={() => undefined}
+            onAddTerminal={() => undefined}
+            onAddDiff={() => undefined}
             onAddFiles={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
+            browserAvailable={false}
+            terminalAvailable={false}
+            diffAvailable={false}
             filesAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
