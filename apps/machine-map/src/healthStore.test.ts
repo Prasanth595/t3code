@@ -41,6 +41,9 @@ function memoryStore() {
 const sample = (cpuPercent: number): ResourceSample => ({
   at: "2026-10-13T08:00:00.000Z",
   cpuPercent,
+  cpuBusyPercent: null,
+  cpuStealPercent: null,
+  cpuPressurePercent: null,
   cpuCount: 4,
   load: null,
   memoryUsedBytes: 1,

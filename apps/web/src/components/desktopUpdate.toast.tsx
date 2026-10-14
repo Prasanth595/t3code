@@ -4,7 +4,6 @@ import { ArrowRightIcon } from "lucide-react";
 import {
   getDesktopUpdateDownloadedVersion,
   getDesktopUpdateReleaseUrl,
-  isLiveServerUpdate,
 } from "./desktopUpdate.logic";
 import { toastManager } from "./ui/toast";
 
@@ -52,15 +51,12 @@ export function showDesktopUpdateDownloadedToast(
   state: DesktopUpdateState,
 ): void {
   const releaseUrl = getDesktopUpdateReleaseUrl(getDesktopUpdateDownloadedVersion(state));
-  const serverOnly = isLiveServerUpdate(state);
   toastManager.add({
     type: "success",
-    title: serverOnly ? "Server update ready" : "Update downloaded",
+    title: "Update downloaded",
     description: (
       <>
-        {serverOnly
-          ? "Restart the server from the update button. The app keeps running."
-          : "Restart the app from the update button to install it."}
+        Restart the app from the update button to install it.
         {releaseUrl ? <ReleaseNotesLink releaseUrl={releaseUrl} shell={shell} /> : null}
       </>
     ),

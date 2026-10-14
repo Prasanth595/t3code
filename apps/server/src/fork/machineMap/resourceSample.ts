@@ -30,10 +30,22 @@ export interface UsedTotal {
   readonly totalBytes: number;
 }
 
+/** CPU time of all cores since boot, in any one unit. */
+export interface CpuTicks {
+  /** User, system and interrupt time, without nice time. */
+  readonly busy: number;
+  readonly total: number;
+  /** Null where the platform does not count steal. */
+  readonly steal: number | null;
+}
+
 /** What one sample reads. A null reading becomes null values in the sample. */
 export interface RawReadings {
   readonly atMs: number;
   readonly cpuPercent: number | null;
+  readonly cpuTicks: CpuTicks | null;
+  /** CPU pressure `some avg300` in percent, or null without pressure files. */
+  readonly cpuPressure: number | null;
   readonly cpuCount: number | null;
   readonly memory: UsedTotal | null;
   readonly load: readonly [number, number, number] | null;
@@ -51,6 +63,7 @@ export interface RawReadings {
 
 export interface SampleCounters {
   readonly atMs: number;
+  readonly cpuTicks: CpuTicks | null;
   readonly swapTrafficBytes: number | null;
   readonly net: ByteCounters | null;
   readonly t3CpuMicros: number;
@@ -115,6 +128,40 @@ const meminfoKib = (meminfo: string, key: string): number | null => {
   }
   return null;
 };
+
+/**
+ * Linux `/proc/stat`, the first `cpu` line: user, nice, system, idle, iowait, irq, softirq,
+ * steal. User already holds guest time, so the guest columns stay out of the total.
+ */
+export function parseLinuxCpuTicks(stat: string): CpuTicks | null {
+  const line = stat.split("\n").find((row) => row.startsWith("cpu "));
+  if (line === undefined) return null;
+  const values = words(line).slice(1, 9).map(Number);
+  if (values.length < 8 || values.some((value) => !Number.isFinite(value) || value < 0)) {
+    return null;
+  }
+  const [user = 0, , system = 0, , , irq = 0, softirq = 0, steal = 0] = values;
+  return {
+    busy: user + system + irq + softirq,
+    total: values.reduce((sum, value) => sum + value, 0),
+    steal,
+  };
+}
+
+/** Linux `/proc/self/cgroup` on cgroup v2: the path of the `0::` line, or null. */
+export function parseCgroupPath(cgroup: string): string | null {
+  const line = cgroup.split("\n").find((row) => row.startsWith("0::"));
+  const path = line?.slice(3).trim();
+  return path === undefined || !path.startsWith("/") ? null : path;
+}
+
+/** A Linux `cpu.pressure` file: `avg300` of the `some` line, in percent. */
+export function parseCpuPressure(pressure: string): number | null {
+  const line = pressure.split("\n").find((row) => row.startsWith("some "));
+  const field = line === undefined ? undefined : words(line).find((w) => w.startsWith("avg300="));
+  const value = Number(field?.slice("avg300=".length));
+  return field === undefined || !Number.isFinite(value) || value < 0 ? null : Math.min(100, value);
+}
 
 /** Linux `/proc/meminfo`. A machine without swap reports a total of 0. */
 export function parseLinuxSwap(meminfo: string): UsedTotal | null {
@@ -278,6 +325,15 @@ export function buildSample(
         );
   const topMemory = processes === null ? null : topProcesses(processes, cpuOf, (p) => p.rssBytes);
 
+  // CPU shares need two readings. A reset or a first sample gives null.
+  const ticks = raw.cpuTicks;
+  const before = previous?.cpuTicks ?? null;
+  const totalDelta = ticks === null || before === null ? 0 : ticks.total - before.total;
+  const share = (now: number | null | undefined, then: number | null | undefined) =>
+    now == null || then == null || totalDelta <= 0 || now < then
+      ? null
+      : round1(Math.min(100, ((now - then) / totalDelta) * 100));
+
   const t3Cpu =
     previous === null || elapsedMs <= 0 || raw.t3.cpuMicros < previous.t3CpuMicros
       ? null
@@ -286,6 +342,9 @@ export function buildSample(
   const sample: ResourceSample = {
     at: DateTime.formatIso(DateTime.makeUnsafe(raw.atMs)),
     cpuPercent: raw.cpuPercent === null ? null : round1(raw.cpuPercent),
+    cpuBusyPercent: share(ticks?.busy, before?.busy),
+    cpuStealPercent: share(ticks?.steal, before?.steal),
+    cpuPressurePercent: raw.cpuPressure === null ? null : round1(raw.cpuPressure),
     cpuCount: raw.cpuCount,
     load:
       raw.load === null ? null : [round1(raw.load[0]), round1(raw.load[1]), round1(raw.load[2])],
@@ -314,6 +373,7 @@ export function buildSample(
     sample,
     counters: {
       atMs: raw.atMs,
+      cpuTicks: raw.cpuTicks,
       swapTrafficBytes: raw.swapTrafficBytes,
       net: raw.net,
       t3CpuMicros: raw.t3.cpuMicros,

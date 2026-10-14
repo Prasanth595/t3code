@@ -11,6 +11,7 @@ import {
   canDeliver,
   earliest,
   localSettingChanges,
+  sharedSettingChanges,
   pendingRevisions,
   supportsCommand,
 } from "./queue.ts";
@@ -123,7 +124,6 @@ describe("pendingRevisions (MM-602)", () => {
 
 describe("localSettingChanges (MM-404)", () => {
   const map = applyChanges(threeMachines(), [
-    { _tag: "manageSetting", scope: "server", key: "theme", managed: true },
     {
       _tag: "setSetting",
       machineId: null,
@@ -142,8 +142,8 @@ describe("localSettingChanges (MM-404)", () => {
     },
   ]).map;
 
-  it("turns a local change of a managed setting into an override", () => {
-    expect(localSettingChanges(map, MAC, "server", { theme: "dark", unmanaged: 1 })).toEqual([
+  it("turns a local change of a shared setting into an override, and keeps others local", () => {
+    expect(localSettingChanges(map, MAC, "server", { theme: "dark", notShared: 1 })).toEqual([
       {
         _tag: "setSetting",
         machineId: MAC,
@@ -167,5 +167,26 @@ describe("localSettingChanges (MM-404)", () => {
       },
     ]);
     expect(localSettingChanges(map, MAC, "server", { theme: "light" })).toEqual([]);
+  });
+  it("makes a change for all environments the shared value, never a machine-local key (MM-411)", () => {
+    expect(sharedSettingChanges(map, "server", { theme: "dark", machineMap: {} })).toEqual([
+      {
+        _tag: "setSetting",
+        machineId: null,
+        scope: "server",
+        key: "theme",
+        present: true,
+        value: "dark",
+      },
+      // VPS already keeps "dark": its own value goes.
+      {
+        _tag: "setSetting",
+        machineId: VPS,
+        scope: "server",
+        key: "theme",
+        present: false,
+        value: null,
+      },
+    ]);
   });
 });

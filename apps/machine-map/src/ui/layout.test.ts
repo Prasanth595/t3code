@@ -139,6 +139,18 @@ describe("pair placement (MM-1108)", () => {
       false,
     );
   });
+
+  it("shows a fixed card beside a machine card that it covers", () => {
+    const size = { w: 200, h: 80 };
+    const machine = card(600, 400);
+    const [fixed] = placePairs(
+      [{ a: { x: 100, y: 400 }, b: { x: 1100, y: 400 }, ...size, fixed: { x: 600, y: 400 } }],
+      [machine],
+      1200,
+      800,
+    );
+    expect(overlaps({ ...(fixed ?? { x: 0, y: 0 }), ...size }, machine)).toBe(false);
+  });
 });
 
 describe("pairCurve (MM-1108)", () => {

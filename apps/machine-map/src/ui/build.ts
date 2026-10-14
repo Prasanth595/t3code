@@ -1,6 +1,6 @@
 /**
  * MM-1002: the build label of a machine and how it compares with the other online machines.
- * The status `build` is `<kind> <commit>`, for example `live 5abed5f`, or `release`.
+ * The status `build` is `<kind> <commit>`, for example `dev 5abed5f`, or `release`.
  */
 import type { MachinePresence, MachineStatus } from "@t3tools/contracts/machineMap";
 

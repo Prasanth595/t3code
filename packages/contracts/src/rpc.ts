@@ -77,6 +77,8 @@ import {
 import {
   MachineMapClientState,
   MachineMapDesktopReport,
+  MachineMapShareSettingsInput,
+  MachineMapShareSettingsResult,
   MachineMapJoinInput,
   MachineMapPanelState,
   MachineMapRequestError,
@@ -612,6 +614,7 @@ export const WS_METHODS = {
   machineMapJoin: "machineMap.join",
   machineMapLeave: "machineMap.leave",
   machineMapReportDesktop: "machineMap.reportDesktop",
+  machineMapShareSettings: "machineMap.shareSettings",
   machineMapRead: "machineMap.read",
 } as const;
 
@@ -664,6 +667,13 @@ const WsMachineMapLeaveRpc = Rpc.make(WS_METHODS.machineMapLeave, {
 const WsMachineMapReportDesktopRpc = Rpc.make(WS_METHODS.machineMapReportDesktop, {
   payload: MachineMapDesktopReport,
   success: Schema.Struct({}),
+  error: machineMapError,
+});
+
+/** Fork: MM-411. A change saved for all environments becomes the shared value of the map. */
+const WsMachineMapShareSettingsRpc = Rpc.make(WS_METHODS.machineMapShareSettings, {
+  payload: MachineMapShareSettingsInput,
+  success: MachineMapShareSettingsResult,
   error: machineMapError,
 });
 
@@ -2166,5 +2176,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsMachineMapJoinRpc,
   WsMachineMapLeaveRpc,
   WsMachineMapReportDesktopRpc,
+  WsMachineMapShareSettingsRpc,
   WsMachineMapReadRpc,
 ).middleware(RpcScopeAuthorization);

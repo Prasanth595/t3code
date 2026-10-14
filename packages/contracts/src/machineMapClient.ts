@@ -117,12 +117,27 @@ export const MachineMapDesktopReport = Schema.Struct({
   commandResult: Schema.optionalKey(MachineMapDesktopCommandResult),
   /** The version of the desktop update that waits to install, or null when none waits. */
   updateWaiting: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  /** The build the desktop app runs, for example `live <sha>` (MM-1002). Null for the release. */
+  /** The build the desktop app runs (MM-1002). Null for the release. */
   build: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The current client settings of the desktop app (MM-403, MM-404, MM-405). */
   clientSettings: Schema.optionalKey(SettingValues),
 });
 export type MachineMapDesktopReport = typeof MachineMapDesktopReport.Type;
+
+/**
+ * MM-411: a change that T3 Settings saved for all environments. The server sends the saved values
+ * of `server` and the given `client` values to the portal as shared values.
+ */
+export const MachineMapShareSettingsInput = Schema.Struct({
+  /** Server settings keys. The server reads their saved values. */
+  server: Schema.Array(Schema.String),
+  client: SettingValues,
+});
+export type MachineMapShareSettingsInput = typeof MachineMapShareSettingsInput.Type;
+
+/** False when this machine is not on the map or not connected: the change stays a bulk edit. */
+export const MachineMapShareSettingsResult = Schema.Struct({ shared: Schema.Boolean });
+export type MachineMapShareSettingsResult = typeof MachineMapShareSettingsResult.Type;
 
 /** MM-1701: the part of a `machines_read` result that the Machines panel shows. */
 export const MachinesReadResult = Schema.TaggedStruct("read", {

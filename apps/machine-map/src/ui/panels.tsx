@@ -8,6 +8,8 @@ import {
   type MachineLevel,
   type MachineMapRole,
   type MachineRecord,
+  isMachineLocalSetting,
+  type MapChange,
   type SettingScope,
 } from "@t3tools/contracts/machineMap";
 
@@ -29,6 +31,7 @@ import { usePortalContext, type CommandOptions } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import {
+  arrowEndRoute,
   arrowEndWait,
   arrowEnds,
   connectMachines,
@@ -58,6 +61,7 @@ import {
 } from "./format.ts";
 import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
 import { MachineStickers } from "./MachineStickers.tsx";
+import { MachineLink, RouteLink } from "./StickerLink.tsx";
 import { ResourcesSection } from "./resources.tsx";
 import { formatRoute, NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
@@ -109,6 +113,8 @@ export function Panel({ selection }: { selection: Selection }) {
     </aside>
   );
 }
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
 const Missing = ({ what }: { what: string }) => (
   <div className="empty compact-empty">
@@ -180,7 +186,21 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
     return end === "queued" && !snapshot.presence[machine.id]?.online ? `${wait} (offline)` : wait;
   };
   const applied = ends.from === "applied" && ends.to === "applied";
-  const appliedText = [endText(ends.to, target), endText(ends.from, source)].join(", ");
+  /** MM-602: each end opens its machine, or the Queue of its machine while the arrow waits. */
+  const endLink = (end: ArrowEnd, machine: MachineRecord, first: boolean) => {
+    const text = endText(end, machine);
+    return (
+      <RouteLink
+        route={
+          end === "applied"
+            ? { view: portal.route.view, selection: { _tag: "machine", id: machine.id } }
+            : arrowEndRoute(end, machine.id)
+        }
+      >
+        {first ? text.charAt(0).toUpperCase() + text.slice(1) : text}
+      </RouteLink>
+    );
+  };
   const lastTest = snapshot.commands.find(
     (c) => c.machineId === source.id && c.input._tag === "testArrow" && c.input.to === target.id,
   );
@@ -189,7 +209,8 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   return (
     <>
       <h2>
-        {f} <span className="verb">uses</span> {t}
+        <MachineLink id={source.id}>{f}</MachineLink> <span className="verb">uses</span>{" "}
+        <MachineLink id={target.id}>{t}</MachineLink>
       </h2>
       <p className="desc">
         What {f} can do on {t}.
@@ -314,7 +335,7 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
         ) : (
           <span className="sticker wait flat">pending</span>
         )}{" "}
-        {appliedText.charAt(0).toUpperCase() + appliedText.slice(1)}.
+        {endLink(ends.to, target, true)}, {endLink(ends.from, source, false)}.
       </p>
       <div className="actions spaced">
         <button
@@ -507,8 +528,25 @@ function MachinePanel({ id }: { id: string }) {
         {machine.name}
       </h2>
       <p className="desc">
-        {presenceText(presence, now)} · applied rev {presence?.appliedRevision ?? "none"} of{" "}
-        {map.revision}
+        {presenceText(presence, now)} · applied rev{" "}
+        {presence?.appliedRevision == null ? (
+          "none"
+        ) : (
+          <RouteLink
+            route={{
+              view: "history",
+              selection: { _tag: "revision", revision: presence.appliedRevision },
+            }}
+          >
+            {presence.appliedRevision}
+          </RouteLink>
+        )}{" "}
+        of{" "}
+        <RouteLink
+          route={{ view: "history", selection: { _tag: "revision", revision: map.revision } }}
+        >
+          {map.revision}
+        </RouteLink>
       </p>
       <div className="stickers-row">
         <span className={`sticker ${PRESENCE_STICKER[state]}`}>{state}</span>
@@ -769,14 +807,16 @@ function MachineAccess({ machine }: { machine: MachineRecord }) {
           const was = arrow.level === "none" ? cutLevel(portal.pause, from.id, to.id) : null;
           return (
             <div className="row" key={`${from.id}>${to.id}`}>
-              <button
-                type="button"
+              <RouteLink
                 className="link grow left"
-                onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
+                route={{
+                  view: portal.route.view,
+                  selection: { _tag: "arrow", from: from.id, to: to.id },
+                }}
               >
                 <span className="t">{usesText(from.name, to.name)}</span>
                 {arrow.expiresAt && <span className="v">Until {shortTime(arrow.expiresAt)}</span>}
-              </button>
+              </RouteLink>
               {arrow.agentTools && <span className="sticker accent flat">tools</span>}
               {was ? (
                 <>
@@ -818,7 +858,7 @@ function MachineAccess({ machine }: { machine: MachineRecord }) {
   );
 }
 
-/** MM-4xx: each managed setting follows the shared value or keeps its own value. */
+/** MM-1112: each synced setting follows the shared value or keeps its own value. */
 function MachineSettings({ machine }: { machine: MachineRecord }) {
   const portal = usePortalContext();
   const { map } = portal;
@@ -827,17 +867,22 @@ function MachineSettings({ machine }: { machine: MachineRecord }) {
   const own = map.settings.overrides[machine.id];
   const isOwn = (scope: SettingScope, key: string) =>
     own !== undefined && Object.hasOwn(own[scope], key);
-  const ownCount = map.settings.managed.filter(({ scope, key }) => isOwn(scope, key)).length;
+  // The settings that the map syncs to this machine: a shared value or an own value.
+  const synced = (["server", "client"] as const).flatMap((scope) =>
+    Object.keys(settings[scope]).map((key) => ({ scope, key })),
+  );
+  const ownCount = synced.filter(({ scope, key }) => isOwn(scope, key)).length;
   const needle = query.trim().toLowerCase();
   // Own values first: they are the ones that make this machine different.
-  const shown = map.settings.managed
+  const shown = synced
     .filter(({ key }) => key.toLowerCase().includes(needle))
     .toSorted((a, b) => Number(isOwn(b.scope, b.key)) - Number(isOwn(a.scope, a.key)));
 
-  if (map.settings.managed.length === 0) {
+  if (synced.length === 0) {
     return (
       <p className="hint">
-        The map manages no settings yet. Pick settings to share in the Settings view.
+        No setting has a shared value yet. Set one in the Settings view, or change a setting in T3
+        Settings for all environments.
       </p>
     );
   }
@@ -845,8 +890,8 @@ function MachineSettings({ machine }: { machine: MachineRecord }) {
     <>
       <p className="desc">
         {ownCount === 0
-          ? `${machine.name} follows all ${map.settings.managed.length} shared settings.`
-          : `${machine.name} keeps its own value for ${ownCount} of ${map.settings.managed.length} settings.`}
+          ? `${machine.name} follows all ${synced.length} shared settings.`
+          : `${machine.name} keeps its own value for ${ownCount} of ${synced.length} settings.`}
       </p>
       <input
         type="search"
@@ -879,14 +924,13 @@ function MachineSettings({ machine }: { machine: MachineRecord }) {
         };
         return (
           <div className="row" key={`${scope}.${key}`}>
-            <button
-              type="button"
+            <RouteLink
               className="link grow left"
-              onClick={() => portal.select({ _tag: "setting", scope, key }, "settings")}
+              route={{ view: "settings", selection: { _tag: "setting", scope, key } }}
             >
               <span className="t">{key}</span>
               <span className="v">{valueText(settings[scope][key])}</span>
-            </button>
+            </RouteLink>
             <div className="seg tiny" role="group" aria-label={`${key} value`}>
               <button type="button" aria-pressed={!mine} onClick={() => follow(false)}>
                 Shared
@@ -1142,8 +1186,7 @@ function ProposalPanel({ id }: { id: string }) {
 function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: string }) {
   const portal = usePortalContext();
   const { map, snapshot } = portal;
-  const managed = map.settings.managed.some((s) => s.scope === scope && s.key === settingKey);
-  if (!managed) return <Missing what="setting" />;
+  if (isMachineLocalSetting(scope, settingKey)) return <Missing what="setting" />;
   const shared = map.settings.shared[scope];
   const hasShared = Object.hasOwn(shared, settingKey);
   const set = (machineId: MachineId | null, value: unknown, summary: string) =>
@@ -1154,13 +1197,25 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
     portal.submit(summary, [
       { _tag: "setSetting", machineId, scope, key: settingKey, present: false, value: null },
     ]);
+  const clearOverrides: Array<MapChange> = map.machines
+    .filter((m) => Object.hasOwn(map.settings.overrides[m.id]?.[scope] ?? {}, settingKey))
+    .map((m) => ({
+      _tag: "setSetting",
+      machineId: m.id,
+      scope,
+      key: settingKey,
+      present: false,
+      value: null,
+    }));
 
   return (
     <>
       <h2 className="mono-title">{settingKey}</h2>
       <p className="desc">
-        {scope === "server" ? "Server setting" : "Client setting"}. Machines follow the shared value
-        unless they keep their own.
+        {scope === "server" ? "Server setting" : "Client setting"}.{" "}
+        {hasShared
+          ? "Machines follow the shared value unless they keep their own."
+          : "No shared value: each machine keeps its own. Set a shared value to sync it."}
       </p>
       <Section>Shared value</Section>
       <SettingEditor
@@ -1179,6 +1234,10 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
         const reportedValue =
           reported && Object.hasOwn(reported, settingKey) ? reported[settingKey] : undefined;
         const changedHere = changedOn(portal.history, machine.id, scope, settingKey);
+        // MM-404, MM-412: the own value, or else the reported value, can become the shared value.
+        const candidate = hasOwn ? own?.[settingKey] : reportedValue;
+        const canShare =
+          candidate !== undefined && !(hasShared && sameValue(candidate, shared[settingKey]));
         return (
           <div key={machine.id} className="machine-setting">
             <div className="row">
@@ -1187,52 +1246,49 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
                   {machine.name} {hasOwn && <span className="sticker warn flat">own</span>}
                 </div>
                 <div className="v">
-                  {hasOwn ? `Own value ${valueText(own?.[settingKey])}` : "Follows shared"} ·
-                  reports {valueText(reportedValue)}
+                  {hasOwn
+                    ? `Own value ${valueText(own?.[settingKey])}`
+                    : hasShared
+                      ? "Follows shared"
+                      : "Keeps its own"}{" "}
+                  · reports {valueText(reportedValue)}
                   {hasOwn && changedHere && ` · changed on ${machine.name}`}
                 </div>
               </div>
-              {hasOwn && (
+              {(canShare || hasOwn) && (
                 <div className="actions">
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() =>
-                      portal.submit(`Made ${machine.name}'s ${settingKey} shared`, [
-                        {
-                          _tag: "setSetting",
-                          machineId: null,
-                          scope,
-                          key: settingKey,
-                          present: true,
-                          value: own?.[settingKey],
-                        },
-                        ...map.machines
-                          .filter((m) =>
-                            Object.hasOwn(map.settings.overrides[m.id]?.[scope] ?? {}, settingKey),
-                          )
-                          .map((m) => ({
-                            _tag: "setSetting" as const,
-                            machineId: m.id,
+                  {canShare && (
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() =>
+                        portal.submit(`Made ${machine.name}'s ${settingKey} shared`, [
+                          {
+                            _tag: "setSetting",
+                            machineId: null,
                             scope,
                             key: settingKey,
-                            present: false,
-                            value: null,
-                          })),
-                      ])
-                    }
-                  >
-                    Make shared
-                  </button>
-                  <button
-                    type="button"
-                    className="btn small"
-                    onClick={() =>
-                      clear(machine.id, `${machine.name} follows shared ${settingKey}`)
-                    }
-                  >
-                    Follow shared
-                  </button>
+                            present: true,
+                            value: candidate,
+                          },
+                          ...clearOverrides,
+                        ])
+                      }
+                    >
+                      Make shared
+                    </button>
+                  )}
+                  {hasOwn && (
+                    <button
+                      type="button"
+                      className="btn small"
+                      onClick={() =>
+                        clear(machine.id, `${machine.name} follows shared ${settingKey}`)
+                      }
+                    >
+                      Follow shared
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1253,22 +1309,39 @@ function SettingPanel({ scope, settingKey }: { scope: SettingScope; settingKey: 
           </div>
         );
       })}
-      <Section>Stop managing</Section>
-      <p className="hint">Machines keep their current value. The map stops syncing it.</p>
-      <div className="actions spaced">
-        <button
-          type="button"
-          className="btn small danger"
-          onClick={() => {
-            portal.submit(`Stop managing ${scope}.${settingKey}`, [
-              { _tag: "manageSetting", scope, key: settingKey, managed: false },
-            ]);
-            portal.select(NO_SELECTION);
-          }}
-        >
-          Stop managing
-        </button>
-      </div>
+      {(hasShared || clearOverrides.length > 0) && (
+        <>
+          <Section>Stop syncing</Section>
+          <p className="hint">
+            Machines keep their current value. The shared value and the own values go.
+          </p>
+          <div className="actions spaced">
+            <button
+              type="button"
+              className="btn small danger"
+              onClick={() =>
+                portal.submit(`Stop syncing ${scope}.${settingKey}`, [
+                  ...(hasShared
+                    ? [
+                        {
+                          _tag: "setSetting" as const,
+                          machineId: null,
+                          scope,
+                          key: settingKey,
+                          present: false,
+                          value: null,
+                        },
+                      ]
+                    : []),
+                  ...clearOverrides,
+                ])
+              }
+            >
+              Stop syncing
+            </button>
+          </div>
+        </>
+      )}
     </>
   );
 }
@@ -1401,7 +1474,10 @@ function CommandPanel({ id }: { id: string }) {
   return (
     <>
       <h2>
-        {COMMAND_LABEL[command.input._tag]} on {machineName(portal.map, command.machineId)}
+        {COMMAND_LABEL[command.input._tag]} on{" "}
+        <MachineLink id={command.machineId}>
+          {machineName(portal.map, command.machineId)}
+        </MachineLink>
       </h2>
       <p className="desc">
         {actorText(command.actor, portal.map)} · {shortTime(command.createdAt)}

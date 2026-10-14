@@ -3,23 +3,24 @@
  * one machine (MM-603, MM-1202), and which machines a revision touches (MM-602).
  * The Durable Object and the page share this module.
  */
-import type {
-  ArrowRecord,
-  MachineDesiredState,
-  MachineId,
-  MachineLevel,
-  MachineMapDocument,
-  MachineMapRole,
-  MachinePresence,
-  MachineRecord,
-  MapChange,
-  MapNote,
-  MapPosition,
-  MapPreset,
-  PairOffset,
-  ScopedSettingValues,
-  SettingScope,
-  SettingValues,
+import {
+  isMachineLocalSetting,
+  type ArrowRecord,
+  type MachineDesiredState,
+  type MachineId,
+  type MachineLevel,
+  type MachineMapDocument,
+  type MachineMapRole,
+  type MachinePresence,
+  type MachineRecord,
+  type MapChange,
+  type MapNote,
+  type MapPosition,
+  type MapPreset,
+  type PairOffset,
+  type ScopedSettingValues,
+  type SettingScope,
+  type SettingValues,
 } from "@t3tools/contracts/machineMap";
 
 /** A change that breaks a map rule. The portal answers it with HTTP 409. */
@@ -42,7 +43,7 @@ export const emptyMap = (): MachineMapDocument => ({
   revision: 0,
   machines: [],
   arrows: [],
-  settings: { managed: [], shared: { server: {}, client: {} }, overrides: {} },
+  settings: { shared: { server: {}, client: {} }, overrides: {} },
   presets: [],
   pairPlacements: [],
   notes: [],
@@ -121,8 +122,14 @@ export const sameArrow = (a: ArrowRecord, b: ArrowRecord): boolean =>
 const isDefaultArrow = (arrow: ArrowRecord): boolean =>
   sameArrow(arrow, defaultArrow(arrow.from, arrow.to));
 
-export const isManaged = (map: MachineMapDocument, scope: SettingScope, key: string): boolean =>
-  map.settings.managed.some((setting) => setting.scope === scope && setting.key === key);
+/** MM-406: the keys of one scope that have a shared value or an override. */
+export function settingKeys(map: MachineMapDocument, scope: SettingScope): ReadonlySet<string> {
+  const keys = new Set(Object.keys(map.settings.shared[scope]));
+  for (const own of Object.values(map.settings.overrides)) {
+    for (const key of Object.keys(own[scope])) keys.add(key);
+  }
+  return keys;
+}
 
 const hasKey = (values: SettingValues, key: string): boolean => Object.hasOwn(values, key);
 
@@ -165,8 +172,6 @@ function applyChange(map: MachineMapDocument, change: MapChange): Step {
       return setArrow(map, change.arrow);
     case "setSetting":
       return setSetting(map, change);
-    case "manageSetting":
-      return manageSetting(map, change);
     case "putMachine":
       return putMachine(map, change.machine);
     case "removeMachine":
@@ -204,8 +209,11 @@ function setSetting(
   change: Extract<MapChange, { _tag: "setSetting" }>,
 ): Step {
   const { machineId, scope, key, present, value } = change;
-  if (!isManaged(map, scope, key)) {
-    throw new MapRuleError(`The setting ${scope}.${key} is not managed by the map.`);
+  // A clear still works, so an older map can drop a value that became machine-local.
+  if (present && isMachineLocalSetting(scope, key)) {
+    throw new MapRuleError(
+      `The setting ${scope}.${key} belongs to each machine. The map cannot set it.`,
+    );
   }
   if (present && value === undefined) throw new MapRuleError(`The setting ${key} needs a value.`);
   const settings = map.settings;
@@ -244,61 +252,6 @@ function setSetting(
     overrides[machineId] = nextOwn;
   }
   return { map: { ...map, settings: { ...settings, overrides } }, inverse: [inverse] };
-}
-
-function manageSetting(
-  map: MachineMapDocument,
-  change: Extract<MapChange, { _tag: "manageSetting" }>,
-): Step {
-  const { scope, key, managed } = change;
-  const settings = map.settings;
-  if (isManaged(map, scope, key) === managed) return { map, inverse: [] };
-  if (managed) {
-    return {
-      map: { ...map, settings: { ...settings, managed: [...settings.managed, { scope, key }] } },
-      inverse: [{ _tag: "manageSetting", scope, key, managed: false }],
-    };
-  }
-  // Unmanaging drops the shared value and every override, so the inverse restores them.
-  const restore: Array<MapChange> = [{ _tag: "manageSetting", scope, key, managed: true }];
-  if (hasKey(settings.shared[scope], key)) {
-    restore.push({
-      _tag: "setSetting",
-      machineId: null,
-      scope,
-      key,
-      present: true,
-      value: settings.shared[scope][key],
-    });
-  }
-  const overrides: Record<string, ScopedSettingValues> = {};
-  for (const [id, own] of Object.entries(settings.overrides)) {
-    if (hasKey(own[scope], key)) {
-      restore.push({
-        _tag: "setSetting",
-        machineId: id as MachineId,
-        scope,
-        key,
-        present: true,
-        value: own[scope][key],
-      });
-    }
-    const nextOwn = { ...own, [scope]: withoutKey(own[scope], key) };
-    if (Object.keys(nextOwn.server).length > 0 || Object.keys(nextOwn.client).length > 0) {
-      overrides[id] = nextOwn;
-    }
-  }
-  return {
-    map: {
-      ...map,
-      settings: {
-        managed: settings.managed.filter((s) => !(s.scope === scope && s.key === key)),
-        shared: { ...settings.shared, [scope]: withoutKey(settings.shared[scope], key) },
-        overrides,
-      },
-    },
-    inverse: restore,
-  };
 }
 
 function putMachine(map: MachineMapDocument, machine: MachineRecord): Step {
@@ -487,7 +440,6 @@ export function machinesTouched(revision: RevisionChanges): ReadonlySet<MachineI
         if (change.machineId === null) return "all";
         touched.add(change.machineId);
         break;
-      case "manageSetting":
       case "removeMachine":
         return "all";
       case "putMachine": {
@@ -524,11 +476,15 @@ export function effectiveSettings(
 ): ScopedSettingValues {
   const result: Record<SettingScope, Record<string, unknown>> = { server: {}, client: {} };
   const own = map.settings.overrides[machineId];
-  for (const { scope, key } of map.settings.managed) {
-    if (own && hasKey(own[scope], key)) {
-      result[scope][key] = own[scope][key];
-    } else if (hasKey(map.settings.shared[scope], key)) {
-      result[scope][key] = map.settings.shared[scope][key];
+  for (const scope of ["server", "client"] as const) {
+    // Older maps can hold a value for a key that became machine-local: no machine applies it.
+    for (const key of settingKeys(map, scope)) {
+      if (isMachineLocalSetting(scope, key)) continue;
+      if (own && hasKey(own[scope], key)) {
+        result[scope][key] = own[scope][key];
+      } else if (hasKey(map.settings.shared[scope], key)) {
+        result[scope][key] = map.settings.shared[scope][key];
+      }
     }
   }
   return result;

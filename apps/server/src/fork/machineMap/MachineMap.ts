@@ -22,6 +22,8 @@ import {
   type MachineMapDesktopReport,
   type MachineMapJoinInput,
   type MachineMapPanelState,
+  type MachineMapShareSettingsInput,
+  type MachineMapShareSettingsResult,
   MachinesReadResult,
   MachineMapRequestError,
   type MachineStatus,
@@ -33,7 +35,9 @@ import {
   ServerSettingsPatch,
   type SettingValues,
   TrimmedNonEmptyString,
+  isMachineLocalSetting,
   machineSessionSubject,
+  withoutMachineLocalSettings,
 } from "@t3tools/contracts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Cause from "effect/Cause";
@@ -91,8 +95,6 @@ const ENROLL_TIMEOUT = Duration.seconds(20);
 const MAX_BACKOFF_MS = 60_000;
 /** A connection that stayed open this long resets the backoff. */
 const HEALTHY_CONNECTION_MS = 30_000;
-/** The portal manages every setting but this one: it would cut its own connection. */
-const UNMANAGED_SERVER_SETTINGS: ReadonlySet<string> = new Set(["machineMap"]);
 
 /** Thread events that can change the running or waiting counts of the status. */
 const STATUS_EVENT_TYPES: ReadonlySet<OrchestrationV2DomainEvent["type"]> = new Set([
@@ -178,6 +180,10 @@ export class MachineMap extends Context.Service<
     }) => Effect.Effect<unknown, MachineMapToolError>;
     /** MM-1701: the map for the Machines panel, or why there is none. */
     readonly readPanel: Effect.Effect<MachineMapPanelState>;
+    /** MM-411: sends settings saved for all environments to the portal as shared values. */
+    readonly shareSettings: (
+      input: MachineMapShareSettingsInput,
+    ) => Effect.Effect<MachineMapShareSettingsResult>;
   }
 >()("t3/fork/machineMap/MachineMap") {}
 
@@ -250,16 +256,18 @@ const make = Effect.gen(function* () {
   const statusKey = (status: MachineStatus) => stableStringify({ ...status, uptimeSeconds: 0 });
 
   /**
-   * The settings as the portal sees them: encoded, secrets redacted, without `machineMap`, with
-   * the published themes (MM-408).
+   * The settings as the portal sees them: encoded, secrets redacted, without the machine-local
+   * keys (MM-406), with the published themes (MM-408).
    */
   const reportedServerSettings = (current: typeof ServerSettingsSchema.Type) =>
     Effect.gen(function* () {
       const encoded = yield* encodeServerSettings(
         ServerSettings.redactServerSettingsForClient(current),
       );
-      const { machineMap: _machineMap, ...rest } = encoded as Record<string, unknown>;
-      return withSharedThemes(rest, yield* environmentThemes.current);
+      return withSharedThemes(
+        withoutMachineLocalSettings("server", encoded as Record<string, unknown>),
+        yield* environmentThemes.current,
+      );
     });
 
   // --- MM-402: apply the server settings of a desired state ----------------------------------
@@ -277,7 +285,10 @@ const make = Effect.gen(function* () {
           }
           continue;
         }
-        if (UNMANAGED_SERVER_SETTINGS.has(key) || !Object.hasOwn(ServerSettingsPatch.fields, key)) {
+        if (
+          isMachineLocalSetting("server", key) ||
+          !Object.hasOwn(ServerSettingsPatch.fields, key)
+        ) {
           skipped.push(key);
           continue;
         }
@@ -465,7 +476,10 @@ const make = Effect.gen(function* () {
         appliedRevision: local.saved.desired?.revision ?? null,
         status,
         // Client settings reach the portal once the desktop app reported them (MM-405).
-        settings: { server, client: report.clientSettings ?? {} },
+        settings: {
+          server,
+          client: withoutMachineLocalSettings("client", report.clientSettings ?? {}),
+        },
       });
       yield* Ref.set(lastSentStatus, statusKey(status));
       yield* Ref.set(currentSend, send);
@@ -804,7 +818,8 @@ const make = Effect.gen(function* () {
       if (report.clientSettings !== undefined && previous.clientSettings !== null) {
         const desired = (yield* state.snapshot).saved.desired?.settings.client ?? {};
         const changed: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(report.clientSettings)) {
+        const current = withoutMachineLocalSettings("client", report.clientSettings);
+        for (const [key, value] of Object.entries(current)) {
           if (stableStringify(previous.clientSettings[key]) === stableStringify(value)) continue;
           if (
             Object.hasOwn(desired, key) &&
@@ -1010,6 +1025,38 @@ const make = Effect.gen(function* () {
   });
 
   /**
+   * MM-411: only while connected. A queued share could arrive after a newer shared value, so a
+   * change made offline stays the bulk edit of T3 Settings.
+   */
+  const shareSettings: MachineMap["Service"]["shareSettings"] = (input) =>
+    Effect.gen(function* () {
+      const local = yield* state.snapshot;
+      const send = yield* Ref.get(currentSend);
+      if (!local.enabled || local.saved.desired === null || send === null) return { shared: false };
+      const saved = yield* reportedServerSettings(yield* settings.getSettings);
+      const server = Object.fromEntries(
+        input.server.flatMap((key) => (Object.hasOwn(saved, key) ? [[key, saved[key]]] : [])),
+      );
+      const client = withoutMachineLocalSettings("client", input.client);
+      const messages: Array<MachineToPortal> = [];
+      if (Object.keys(server).length > 0) {
+        messages.push({ _tag: "localSettings", scope: "server", values: server, shared: true });
+      }
+      if (Object.keys(client).length > 0) {
+        messages.push({ _tag: "localSettings", scope: "client", values: client, shared: true });
+      }
+      if (messages.length === 0) return { shared: false };
+      for (const message of messages) yield* send(message);
+      return { shared: true };
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Machine map could not share settings.", {
+          cause: Cause.pretty(cause),
+        }).pipe(Effect.as({ shared: false })),
+      ),
+    );
+
+  /**
    * MM-211: joins with the code that the installer left. The file goes first, so a bad or used
    * code does not repeat at each start.
    */
@@ -1052,7 +1099,15 @@ const make = Effect.gen(function* () {
   yield* forkParked(statusLoop);
   yield* forkParked(joinPendingCode);
 
-  return MachineMap.of({ join, leave, clientStates, reportDesktop, callMapTool, readPanel });
+  return MachineMap.of({
+    join,
+    leave,
+    clientStates,
+    reportDesktop,
+    callMapTool,
+    readPanel,
+    shareSettings,
+  });
 });
 
 export const layer = Layer.effect(MachineMap, make);

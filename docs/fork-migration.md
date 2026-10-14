@@ -62,7 +62,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3773/
 
 The last command prints `200`. Then check in the portal that the machine is online with the new version, and open `https://t3-oracle.yarden-zamir.com` on the phone.
 
-6. Turn on automatic updates. In the portal Settings view, manage the setting `forkAutoUpdate` and set it to on for this machine (MM-406). Or ask an agent to call `machines_set_setting` with `key: "forkAutoUpdate"`, `value: true` and the machine id.
+6. Turn on automatic updates. In the portal Settings view, open the setting `forkAutoUpdate` and set it to on for this machine (MM-406). Or ask an agent to call `machines_set_setting` with `key: "forkAutoUpdate"`, `value: true` and the machine id.
 
 7. After the next fork release, check that the machine moved to it when no agent turn ran. The portal shows the version.
 
@@ -169,3 +169,26 @@ rm -f "${T3CODE_HOME:-/root/.t3}"/userdata/*.sqlite-wal "${T3CODE_HOME:-/root/.t
 cp -a /root/t3-migration/*.sqlite* /root/t3-migration/settings.json "${T3CODE_HOME:-/root/.t3}"/userdata/
 systemctl start t3-server.service
 ```
+
+## Remove the old setup
+
+Do these steps only after the owner confirms that the moved machine works.
+
+On the Oracle machine, as the normal user:
+
+```sh
+rm -f ~/.config/systemd/user/t3code-fork.service
+rm -rf ~/.config/systemd/user/t3code-fork.service.d ~/.local/share/t3code-fork-server
+systemctl --user daemon-reload
+```
+
+On the VPS, as root:
+
+```sh
+systemctl disable --now t3-deploy.timer t3-server.service
+rm -f /etc/systemd/system/t3-deploy.service /etc/systemd/system/t3-deploy.timer /etc/systemd/system/t3-server.service
+systemctl daemon-reload
+rm -rf /opt/t3code /opt/t3code-a /opt/t3code-b
+```
+
+Keep `/opt/node` if other apps on the VPS use it. Keep the backups in `~/t3-migration` until the next fork release installs without a problem.

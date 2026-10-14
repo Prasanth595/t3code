@@ -171,16 +171,10 @@ const make = Effect.fn("desktop.environment.make")(function* (
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
-  // With the live server setting, the server and the web client come from the
-  // `current` link in that folder, so a switched link takes effect on the next
-  // backend start and window reload. See DesktopLiveServer.ts.
-  const serverRoot = Option.match(config.liveServerDir, {
-    onSome: (liveServerDir) => path.join(liveServerDir, "current"),
-    onNone: () =>
-      input.isPackaged && input.platform === "win32"
-        ? path.join(input.resourcesPath, "server.asar")
-        : appRoot,
-  });
+  const serverRoot =
+    input.isPackaged && input.platform === "win32"
+      ? path.join(input.resourcesPath, "server.asar")
+      : appRoot;
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,

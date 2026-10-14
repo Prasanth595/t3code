@@ -132,32 +132,6 @@ scripts/fork-deploy-local.sh <ssh-host>
 - To build only, run `scripts/fork-deploy-local.sh --archive linux-x64` or `--archive linux-arm64`. The archive is in `release/`.
 - The script changes the version in the `package.json` files during the build and puts them back after it.
 
-## Live server updates
-
-Most fork changes are server and web code. They reach the Mac without a new app and without an app restart.
-
-- The setting `T3CODE_DESKTOP_LIVE_SERVER_DIR` names a live server folder. It is off when unset.
-- With the setting, the app runs its server and web client from `<folder>/current` instead of from the app bundle. `current` is a link to `<folder>/a`, `<folder>/b` or `<folder>/c`, three worktrees of this repository.
-- `scripts/fork-live/build.sh` runs every minute, from the copy `<folder>/build.sh`. Each successful build replaces that copy, so a builder fix applies at once. When fork main has a new commit, it builds it in the folder that neither runs nor is on offer. Then it writes `<folder>/ready.json` with the path, commit, subject and build time. Thus a build on offer stays complete until you install it or a newer build replaces it.
-- When the new commits change only paths that do not reach the server or web bundle, the script builds nothing. It writes the commit to `<folder>/no-build-sha`, so that it does not try the commit again. These paths are `docs`, `*.md`, `.github`, `apps/desktop`, `apps/mobile`, `apps/marketing`, `apps/machine-map` and test files.
-- The install covers only the packages that the `t3` build needs, not the mobile app. When the lockfile, the workspace file, the patches and the package manifests did not change since the last install of the build folder, the script skips the install.
-- When the new commits change only `apps/server` without its `package.json`, the script copies the web bundle of the newest build and builds only the server.
-- The build log has a timestamp and a duration for each phase.
-- The update button offers the ready build as `live <commit>`. A full app update always comes first. The upstream "update everything" pass comes after the live build, and other servers do not follow a live build.
-- Install moves the `current` link, restarts the server and reloads the windows. If the new server does not start, the link goes back and the previous server starts again.
-- A failed build shows a macOS notification. The app keeps its current server.
-- A full app update is still needed when the app shell changes: `apps/desktop`, Electron or the native dependencies.
-
-One-time setup on the Mac:
-
-```sh
-export T3CODE_DESKTOP_LIVE_SERVER_DIR="$HOME/Github/t3code/live"
-scripts/fork-live/build.sh
-"$T3CODE_DESKTOP_LIVE_SERVER_DIR/current/scripts/fork-live/install-agent.sh" "$T3CODE_DESKTOP_LIVE_SERVER_DIR"
-```
-
-The first build creates `current` and sets the setting for apps that start later. Then quit and start the app once. The build log is `~/Library/Logs/t3-live-build.log`.
-
 ## Changelog
 
 The client setting `forkChangelogEnabled` turns on a changelog of the fork. It is off by default. Turn it on in Settings > General > About > Fork changelog.
@@ -195,7 +169,7 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - On Linux without a display, `install.sh` runs `scripts/install.sh`, the upstream installer pointed at the fork releases. It unpacks the newest release into `~/.t3/runtime/versions/<version>` and links `~/.local/bin/t3` to it. Then it runs `t3 service install`, the upstream background service `t3code.service`. The drop-in file `~/.config/systemd/user/t3code.service.d/fork.conf` keeps the server on `127.0.0.1:3773` with the PATH of the installer shell. Then it runs `t3 machine-map join <code>`. The machine needs no Node.
 - If the earlier fork service `t3code-fork.service` is on, the installer turns it off. Its files stay. See [fork-migration.md](fork-migration.md).
 - The server updates itself, see "Server updates". `t3 update` also works. A restart stops the running agent turns of that server.
-- `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs the systemd user service `t3code-fork.service`, which does not update itself. On macOS it installs no service.
+- `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server. It installs the systemd user service `t3code-fork.service`, which does not update itself. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
 - On Linux without a display, `t3 service install` turns on lingering, so the server keeps running after logout. If that needs an administrator, it says so, see [background-service.md](user/background-service.md#troubleshooting).
 - The join gives the machine its tunnel when the portal can make one (MM-213). See "Set up a headless Linux machine".
@@ -247,29 +221,6 @@ Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>,<client id of the de
 EOF
 systemctl --user daemon-reload && systemctl --user restart t3code.service
 ```
-
-## Deploy to the VPS
-
-The VPS server follows fork main. The timer `t3-deploy.timer` runs `scripts/fork-vps/deploy.sh` one minute after each run ends.
-
-- When the new commits change only paths that do not reach the server build, the script moves the running checkout to the new commit without a build or a restart. These paths are `docs`, `*.md`, `.github`, `apps/desktop`, `apps/mobile`, `apps/marketing` and test files.
-- Otherwise it waits until main has not moved for 10 minutes, so a burst of merges gets one build. Then it builds main while the old server keeps running. It builds each commit once.
-- It switches only when no agent turn runs. A server restart cancels running turns. T3 resumes them only when "Recover interrupted agents" or "Continue threads after restarts" is on. While agents run, it checks again after 5 minutes, because each check starts one node process per project.
-- `t3-deploy.service` runs at a low CPU, IO and process priority. Above 6 GB of memory, the kernel slows the build instead of taking memory from the other apps on the VPS.
-- `/opt/t3code` is a link to `/opt/t3code-a` or `/opt/t3code-b`. The script builds in the other folder, moves the link and restarts `t3-server`.
-- If the new server does not answer, the script moves the link back.
-
-One-time setup, as root on the VPS:
-
-```sh
-systemctl stop t3-server && mv /opt/t3code /opt/t3code-a && ln -s /opt/t3code-a /opt/t3code && systemctl start t3-server
-git -C /opt/t3code-a worktree add --detach /opt/t3code-b HEAD
-cp /opt/t3code/scripts/fork-vps/t3-deploy.{service,timer} /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now t3-deploy.timer
-```
-
-A change to `t3-deploy.service` or `t3-deploy.timer` reaches the VPS only when you run the `cp` and `systemctl daemon-reload` again.
-
-To read the result, run `journalctl -u t3-deploy.service -n 50`.
 
 ## Recover interrupted agents
 
@@ -407,6 +358,17 @@ The server setting `worktreePathTemplate` decides where new worktrees go. It is 
 - A branch that you type, and a pull request branch, keep their names. If their folder already exists, the launch fails and names the folder. Use `{branch}` when different branches end in the same last part.
 - While a template is set, T3 marks each worktree that it creates with a `t3-created` file in the worktree's folder in the Git common dir. Storage cleanup and review diffs trust that mark, because the worktree can be outside the managed worktree folders. Cleanup never removes a worktree without the mark outside those folders.
 
+## Installed web app
+
+Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an app. Desktop Chrome and Edge show "Install" in the address bar. Android Chrome shows "Install app" in its menu. On iPhone, use Share > Add to Home Screen. The app has shortcuts for a new thread, pull requests and settings.
+
+The client setting `installedAppEnabled` adds a service worker. It is on by default. Turn it off in Settings > General > Installed app, in each browser and for each server.
+
+- An offline page shows when the device is offline, or when the tunnel answers but the server is down.
+- Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first. The page must still run, so a closed app shows nothing.
+- The app icon shows the same notification count as the browser tab icon.
+- The worker caches only the offline page. Pages and build files come from the server, so a new build shows at once and Cloudflare Access can ask for a new sign-in.
+
 ## Machine map
 
 The server setting `machineMap` connects this server to the machine map portal. It is off by default. The requirements are in `apps/machine-map/SPEC.md`, and the portal setup is in `apps/machine-map/README.md`.
@@ -423,6 +385,7 @@ The server setting `machineMap` connects this server to the machine map portal. 
   - It applies the desired client settings and reports its current client settings. The server leaves out values that equal the desired ones, so the map does not see its own writes as local changes.
   - It runs `reloadWindows` and `installUpdate` and reports each result before it acts. `installUpdate` with "when idle" uses the install-when-idle wait. It also reports the version of a waiting update.
 - Another machine signs in with its Cloudflare Access service token. The server gives it the scopes of the arrow from that machine, with the session subject `machine:<id>`. A level change ends that machine's sessions at once.
+- Settings sync (MM-406, MM-411): every setting that a machine reports shows in the portal Settings view, without a shared value. A setting syncs to every machine, also an offline or a new one, once it has a shared value. On a machine with the map role `edit`, a change in T3 Settings with "All environments" selected sets the shared value. A change for one environment of a synced setting becomes the own value of that machine. A synced row shows a sync marker. Paths, secrets, project-keyed maps and the map connection stay on each machine.
 - Deploy the portal: `.github/workflows/fork-machine-map-deploy.yml` tests and deploys it from main when `apps/machine-map` or its contracts change, with the GitHub secret `CLOUDFLARE_DEPLOY_TOKEN` (Workers Scripts and Workers Routes edit). Do not deploy by hand: a deploy from a branch rolls back main. The Worker needs the secrets `SECRET_KEY` and `CF_API_TOKEN`.
 
 ## Secrets and variables

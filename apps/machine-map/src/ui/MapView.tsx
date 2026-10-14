@@ -19,11 +19,12 @@ import type {
 
 import { usesText } from "../rules/access.ts";
 import { findArrow, findNote, pairOffset } from "../rules/map.ts";
-import { NO_SELECTION } from "./route.ts";
+import { NO_SELECTION, type Route } from "./route.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
 import {
+  arrowEndRoute,
   arrowEndWait,
   arrowEnds,
   connectMachines,
@@ -53,6 +54,7 @@ import { NoteCard } from "./NoteCard.tsx";
 import { settleHeld, type Held } from "./store.ts";
 import { MachineStickers } from "./MachineStickers.tsx";
 import { CardMeters } from "./resources.tsx";
+import { RouteLink } from "./StickerLink.tsx";
 
 /** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
 const MAX_WIDTH = 1500;
@@ -68,6 +70,12 @@ const ESTIMATE = {
   wide: { node: { w: 224, h: 120 }, pair: { w: 330, h: 96 }, note: { w: 190, h: 80 } },
   compact: { node: { w: 156, h: 100 }, pair: { w: 200, h: 84 }, note: { w: 140, h: 60 } },
 } as const;
+
+/**
+ * Cards cover at most this share of the map, so they fit apart. A narrow map with many cards grows
+ * taller than the screen, and the page scrolls through it.
+ */
+const CARD_SHARE = 0.3;
 
 interface Size {
   readonly w: number;
@@ -130,6 +138,12 @@ const onPressKey = (press: () => void) => (event: KeyboardEvent) => {
 /** The map itself or its line layer, not a card on it. */
 const isEmptySpot = (target: EventTarget, map: EventTarget) =>
   target === map || (target instanceof Element && target.tagName === "svg");
+
+/** MM-602: one arrow end that did not apply the arrow, in words, and where it opens. */
+interface Wait {
+  readonly text: string;
+  readonly route: Route;
+}
 
 /** A note that the page shows: a saved one, or a new one that is not saved yet. */
 interface EditingNote {
@@ -263,22 +277,33 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     ...(sizes[`node:${m.id}`] ?? estimate.node),
   });
 
+  const noteSize = (note: MapNote): Size => sizes[`note:${note.id}`] ?? estimate.note;
   /** A note stays inside the map, also on a narrower screen than the one that placed it. */
-  const noteAt = (note: MapNote): Point => {
+  const savedNoteAt = (note: MapNote): Point => {
     const p = toPixels(heldPlace(`note:${note.id}`) ?? note.position);
-    const { w, h } = sizes[`note:${note.id}`] ?? estimate.note;
+    const { w, h } = noteSize(note);
     return {
       x: clamp(p.x, w / 2, Math.max(w / 2, size.width - w / 2)),
       y: clamp(p.y, h / 2, Math.max(h / 2, size.height - h / 2)),
     };
   };
 
-  /** The machines where the page shows them: saved places, pushed apart (see `layout.ts`). */
-  const nodes = separate(
-    machines.map((m) => nodeBox(m, toPixels(position(m)))),
+  /**
+   * The machines and notes where the page shows them: saved places, pushed apart (see
+   * `layout.ts`), so a note never covers a machine card on a narrow map.
+   */
+  const spread = separate(
+    [
+      ...machines.map((m) => nodeBox(m, toPixels(position(m)))),
+      ...map.notes.map((note) => ({ ...savedNoteAt(note), ...noteSize(note) })),
+    ],
     size.width,
     size.height,
   );
+  const nodes = spread.slice(0, machines.length);
+  const noteBoxes = spread.slice(machines.length);
+  const noteAt = (note: MapNote): Point =>
+    noteBoxes[map.notes.findIndex((n) => n.id === note.id)] ?? savedNoteAt(note);
 
   /**
    * Where each card goes. During a drag the dragged machine follows the pointer and the other
@@ -307,10 +332,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       boxes,
       size.width,
       size.height,
-      map.notes.map((note) => ({
-        ...noteAt(note),
-        ...(sizes[`note:${note.id}`] ?? estimate.note),
-      })),
+      noteBoxes,
     );
     return { at, spots };
   };
@@ -508,10 +530,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const index = machines.findIndex((m) => m.id === id);
     const machine = machines[index];
     if (!machine) return toPosition(p);
-    const boxes = machines.map((m, i) =>
-      i === index ? nodeBox(m, p) : (nodes[i] ?? nodeBox(m, toPixels(m.position))),
-    );
-    const fixed = new Set(machines.map((_, i) => i).filter((i) => i !== index));
+    const boxes = [
+      ...machines.map((m, i) =>
+        i === index ? nodeBox(m, p) : (nodes[i] ?? nodeBox(m, toPixels(m.position))),
+      ),
+      ...noteBoxes,
+    ];
+    const fixed = new Set([...boxes.keys()].filter((i) => i !== index));
     const box = separate(boxes, size.width, size.height, fixed)[index];
     return toPosition(box ?? p);
   };
@@ -631,23 +656,25 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     void portal.submit(saved ? "Edited a note" : "Added a note", [{ _tag: "putNote", note }]);
   };
 
-  /** The wait of each arrow end in words, or null when both ends applied it (MM-602, MM-604). */
-  const waitOf = (from: MachineRecord, to: MachineRecord): Array<string> => {
+  /** The wait of each arrow end that did not apply the arrow (MM-602, MM-604). */
+  const waitOf = (from: MachineRecord, to: MachineRecord): Array<Wait> => {
     if (readOnly) return [];
     const ends = arrowEnds(snapshot, from.id, to.id);
     return [[ends.from, from] as const, [ends.to, to] as const].flatMap(([end, machine]) => {
       const text = arrowEndWait(end, machine);
-      return text === null ? [] : [text];
+      return text === null || end === "applied"
+        ? []
+        : [{ text, route: arrowEndRoute(end, machine.id) }];
     });
   };
 
   /** MM-1103: "Mac uses Windows ↓": the text gives the direction, the glyph shows the map. */
-  const dirRow = (from: MachineRecord, to: MachineRecord, waits: ReadonlyArray<string>) => {
+  const dirRow = (from: MachineRecord, to: MachineRecord, waits: ReadonlyArray<Wait>) => {
     const arrow = findArrow(map, from.id, to.id);
     const was = arrow.level === "none" ? cutLevel(portal.pause, from.id, to.id) : null;
     const toward = towardGlyph(centerOf(from), centerOf(to));
     const on = selection._tag === "arrow" && selection.from === from.id && selection.to === to.id;
-    const wait = waits.map(sentence).join(". ");
+    const wait = waits.map((w) => sentence(w.text)).join(". ");
     return (
       <button
         type="button"
@@ -680,6 +707,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     );
   };
 
+  const cardArea = [
+    ...machines.map((m) => sizes[`node:${m.id}`] ?? estimate.node),
+    ...pairs.map((pair) => sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
+    ...map.notes.map(noteSize),
+  ].reduce((sum, { w, h }) => sum + w * h, 0);
+  const fitHeight = size.width > 0 ? Math.ceil(cardArea / CARD_SHARE / size.width) : 0;
+
   const notes: ReadonlyArray<EditingNote> = [
     ...map.notes.map((note) => (editing?.note.id === note.id ? editing : { note, saved: true })),
     ...(editing && !editing.saved ? [editing] : []),
@@ -706,8 +740,9 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             </>
           ) : (
             <span className="muted">
-              Tap a machine to focus it. Drag a dot on its edge onto another machine to connect
-              them. {compact ? "Hold" : "Double-click"} empty space to add a machine or a note.
+              {compact
+                ? "Tap a machine to focus it. Drag a dot to connect. Hold empty space to add."
+                : "Tap a machine to focus it. Drag a dot on its edge onto another machine to connect them. Double-click empty space to add a machine or a note."}
             </span>
           )}
         </div>
@@ -715,6 +750,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       <div
         className={`card map${compact ? " compact" : ""}${focus ? " focused" : ""}`}
         ref={ref}
+        style={{ minHeight: fitHeight }}
         onClick={onMapClick}
         onClickCapture={(event) => {
           if (!swallowClick.current) return;
@@ -778,7 +814,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const waitsAB = waitOf(a, b);
             const waitsBA = waitOf(b, a);
             // Each machine that did not apply a direction, named once under the rows.
-            const waits = [...new Set([...waitsAB, ...waitsBA])];
+            const waits = [...new Map([...waitsAB, ...waitsBA].map((w) => [w.text, w])).values()];
             return (
               <div
                 key={`pair:${pairKey(a, b)}`}
@@ -791,7 +827,14 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 {dirRow(a, b, waitsAB)}
                 {dirRow(b, a, waitsBA)}
                 {waits.length > 0 && (
-                  <div className="pair-wait">{waits.map(sentence).join(" · ")}</div>
+                  <div className="pair-wait">
+                    {waits.map((w, i) => (
+                      <span key={w.text}>
+                        {i > 0 && " · "}
+                        <RouteLink route={w.route}>{sentence(w.text)}</RouteLink>
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
             );

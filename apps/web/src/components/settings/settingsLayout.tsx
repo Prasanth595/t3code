@@ -35,6 +35,7 @@ import {
   scopedSettingsSource,
 } from "./scopedSettings";
 import { useClearProjectOverrides, useClearScopedSettings } from "./useScopedSettings";
+import { MachineMapSyncedMarker } from "../../machineMap/shareSettings";
 import {
   SettingInheritance,
   type SettingInheritanceState,
@@ -470,6 +471,8 @@ export function SettingsRow({
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex min-h-5 items-center gap-1.5">
             <h3 className="text-sm font-medium text-foreground">{title}</h3>
+            {/* Fork: MM-412. */}
+            {serverScoped ? <MachineMapSyncedMarker keys={settingKeys} /> : null}
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}

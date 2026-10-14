@@ -15,14 +15,12 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 - **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS` for machines without a display. A release builds on each push to main. The upstream server updaters (`t3 update`, "Update everything", `scripts/install.sh`) install from the fork releases.
 - **Fork installers:** one command installs the fork on macOS, Windows or Linux and joins the machine map. On Linux it installs the AppImage, or the server archive with a systemd user service on a machine without a display.
-- **Live server updates:** the desktop app runs its server and web client from a live folder. The update button offers a new main commit in blue, before "update everything", and only the server restarts (`T3CODE_DESKTOP_LIVE_SERVER_DIR`).
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now", also at the end of "update everything".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`). The machine map Install update works on it too, now or when idle.
 - **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its background service to it, without a release.
 - **Changelog:** a timeline of fork releases with every fork and upstream commit, the pending upstream commits, a "Start Fork Sync" button, and an "Ask agent" menu (`forkChangelogEnabled`).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Repair agent:** a failed sync or release calls a webhook that starts a repair agent.
-- **VPS deploy:** the VPS follows fork main. It skips the build for docs-only commits, builds once per burst of merges at low priority, and switches only when no agent runs.
 
 **Agents**
 
@@ -63,7 +61,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 - Themes: border width and radius flow through Tailwind tokens. Composer backdrop, outline and banners follow the theme radius. One theme shadow for nested surfaces and for split buttons.
 - MCP: `schedule_task`, `t3_project_create` and `t3_project_update` read and write the project model, environment mode, auto-pull and actions through project settings.
-- Desktop updates: the updater never downgrades, so a local build stays installed. A live update never falls through to quit-and-install. The server recovers when quit-and-install does not quit.
+- Desktop updates: the updater never downgrades, so a local build stays installed. The server recovers when quit-and-install does not quit.
 
 ---
 

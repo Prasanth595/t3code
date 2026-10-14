@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
+import { showInstalledAppNotification } from "../installedApp";
 import { useEnvironmentIds } from "../state/environments";
 import { environmentShell } from "../state/shell";
 import {
@@ -229,6 +230,22 @@ function EnvironmentNotifications({
         });
       } catch {
         // Some browsers expose Notification but reject desktop presentation.
+        // Fork: the installed app shows it through its service worker.
+        const threadId = thread.id;
+        void showInstalledAppNotification(
+          title,
+          {
+            body: thread.title,
+            tag: `${environmentId}:${threadId}`,
+            url: `/${environmentId}/${threadId}`,
+          },
+          () =>
+            void navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } }),
+        )
+          .then((shown) => {
+            if (shown) onNotification(environmentId, shown);
+          })
+          .catch(() => undefined);
       }
     }
     previous.current = next;

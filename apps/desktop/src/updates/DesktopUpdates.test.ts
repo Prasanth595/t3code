@@ -792,44 +792,6 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
-  it.effect("refuses a live install whose build is gone, without stopping the server", () => {
-    // The builder removes ready.json while it rebuilds a folder. A click then must
-    // not fall through to quitAndInstall, which stops the server and never quits.
-    const files = new Map([
-      [
-        "/live/ready.json",
-        JSON.stringify({
-          path: "/live/b",
-          sha: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b",
-          subject: "feat: a change",
-          builtAt: "2026-10-12T06:00:00.000Z",
-        }),
-      ],
-    ]);
-    const harness = makeHarness({
-      env: { T3CODE_DESKTOP_LIVE_SERVER_DIR: "/live" },
-      files,
-      links: new Map([["/live/current", "/live/a"]]),
-    });
-
-    return Effect.scoped(
-      Effect.gen(function* () {
-        const desktopState = yield* DesktopState.DesktopState;
-        const updates = yield* DesktopUpdates.DesktopUpdates;
-        yield* updates.configure;
-        harness.emit("update-not-available");
-        yield* flushCallbacks;
-        assert.strictEqual((yield* updates.getState).status, "downloaded");
-
-        files.delete("/live/ready.json");
-        assert.isFalse((yield* updates.install).accepted);
-        assert.isFalse(yield* Ref.get(desktopState.quitting));
-        assert.deepEqual(harness.installSteps, []);
-        assert.strictEqual((yield* updates.getState).downloadedVersion, null);
-      }),
-    ).pipe(Effect.provide(harness.layer));
-  });
-
   it.effect("holds the install reservation until failed-install recovery finishes", () => {
     const recoveryStarted = Deferred.makeUnsafe<void>();
     const releaseRecovery = Deferred.makeUnsafe<void>();

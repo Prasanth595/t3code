@@ -414,6 +414,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
+    id: "installed-app",
+    title: "Installed app",
+    to: "/settings/general",
+    searchTerms: ["install pwa home screen offline service worker badge phone android iphone"],
+  },
+  {
     id: "time-format",
     title: "Time format",
     to: "/settings/general",
