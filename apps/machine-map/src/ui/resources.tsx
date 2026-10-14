@@ -101,7 +101,8 @@ export function CardMeters({ machineId }: { machineId: MachineId }) {
   const limits = thresholdsFor(health.thresholds, machineId);
   return (
     <span className="meters">
-      <Meter label="CPU" value={sample.cpuPercent} limit={limits.cpuPercent} />
+      {/* MM-1509: a full CPU is busy, not starved. The HOT sticker shows a starved machine. */}
+      <Meter label="CPU" value={sample.cpuPercent} limit={null} />
       <Meter
         label="Memory"
         value={percentOf(sample.memoryUsedBytes, sample.memoryTotalBytes)}
@@ -294,6 +295,23 @@ const usedOf = (used: number | null, total: number | null) =>
     ? "—"
     : `${formatBytes(used)} of ${formatBytes(total)} (${formatPercent(percentOf(used, total))})`;
 
+/**
+ * MM-1504: the CPU signals in plain words. Waits are the share of time that a task of T3 waited
+ * for a CPU in the last 5 minutes. Steal is time that the host gave to other machines.
+ */
+function cpuWords(sample: ResourceSample): string {
+  const parts = [
+    sample.cpuBusyPercent === null
+      ? null
+      : `${formatPercent(sample.cpuBusyPercent)} busy without low priority work`,
+    sample.cpuPressurePercent === null
+      ? "no pressure data on this machine"
+      : `tasks wait for a CPU ${formatPercent(sample.cpuPressurePercent)} of the time`,
+    sample.cpuStealPercent === null ? null : `${formatPercent(sample.cpuStealPercent)} steal`,
+  ];
+  return parts.filter((part) => part !== null).join(" · ");
+}
+
 const perSecond = (bytes: number | null) => (bytes === null ? "—" : `${formatBytes(bytes)}/s`);
 
 /** MM-1504: the thresholds of one machine. An empty field turns a check off. */
@@ -333,8 +351,9 @@ function ThresholdsForm({ machine }: { machine: MachineRecord }) {
       <summary>Thresholds{custom ? " (own values)" : " (defaults)"}</summary>
       <form className="stack" onSubmit={save}>
         <div className="threshold-grid">
-          {field("cpuPercent", "CPU above", "%", true)}
+          {field("cpuPressurePercent", "Waits for CPU above", "%", true)}
           {field("cpuMinutes", "for", "min", false)}
+          {field("cpuPercent", "Without pressure: CPU above", "%", true)}
           {field("memoryPercent", "Memory above", "%", true)}
           {field("diskPercent", "Disk above", "%", true)}
           {field("swapMegabytesPerSecond", "Swap above", "MB/s", true)}
@@ -372,6 +391,7 @@ function toFields(t: HealthThresholds): Fields {
   const text = (value: number | null) => (value === null ? "" : String(value));
   return {
     cpuPercent: text(t.cpuPercent),
+    cpuPressurePercent: text(t.cpuPressurePercent),
     cpuMinutes: text(t.cpuMinutes),
     memoryPercent: text(t.memoryPercent),
     diskPercent: text(t.diskPercent),
@@ -389,6 +409,7 @@ function fromFields(fields: Fields): HealthThresholds | null {
   const offline = optional(fields.offlineMinutes);
   return {
     cpuPercent: optional(fields.cpuPercent),
+    cpuPressurePercent: optional(fields.cpuPressurePercent),
     cpuMinutes: minutes(fields.cpuMinutes),
     memoryPercent: optional(fields.memoryPercent),
     diskPercent: optional(fields.diskPercent),
@@ -491,6 +512,18 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
             range={range}
             now={now}
           />
+          {history.pressure.some((value) => value !== null) && (
+            <Chart
+              title="Waits for CPU"
+              value={formatPercent(lastValue(history.pressure))}
+              history={history}
+              lines={[{ values: history.pressure, className: "line" }]}
+              max={100}
+              limit={limits.cpuPressurePercent}
+              range={range}
+              now={now}
+            />
+          )}
           <Chart
             title="Memory"
             value={formatPercent(lastValue(history.memory))}
@@ -536,6 +569,8 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
             {lastSample.load === null ? "—" : lastSample.load.join(" · ")}
             {lastSample.cpuCount !== null && ` on ${lastSample.cpuCount} cores`}
           </dd>
+          <dt>CPU</dt>
+          <dd>{cpuWords(lastSample)}</dd>
           <dt>Memory</dt>
           <dd>{usedOf(lastSample.memoryUsedBytes, lastSample.memoryTotalBytes)}</dd>
           <dt>Swap</dt>
@@ -683,7 +718,8 @@ function HealthCard({ machine }: { machine: MachineRecord }) {
       ) : (
         <>
           <span className="meters">
-            <Meter label="CPU" value={sample.cpuPercent} limit={limits.cpuPercent} />
+            {/* MM-1509: a full CPU is busy, not starved. The HOT sticker shows a starved machine. */}
+            <Meter label="CPU" value={sample.cpuPercent} limit={null} />
             <Meter
               label="Memory"
               value={percentOf(sample.memoryUsedBytes, sample.memoryTotalBytes)}
@@ -707,6 +743,12 @@ function HealthCard({ machine }: { machine: MachineRecord }) {
           </span>
           <span className="health-facts small">
             <span>Load {sample.load === null ? "—" : sample.load[0]}</span>
+            {sample.cpuPressurePercent !== null && (
+              <span>Waits for CPU {formatPercent(sample.cpuPressurePercent)}</span>
+            )}
+            {sample.cpuStealPercent !== null && (
+              <span>Steal {formatPercent(sample.cpuStealPercent)}</span>
+            )}
             <span>
               Agents {sample.agents === null ? "—" : sample.agents.count}
               {sample.agents !== null && ` · ${formatPercent(sample.agents.cpuPercent)}`}

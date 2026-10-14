@@ -7,6 +7,7 @@
  * stay out of those unions: an older portal and an older server fail to decode them and ignore
  * them, so old and new ends keep working together (MM-1502).
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
@@ -18,6 +19,10 @@ export const TOP_PROCESS_COUNT = 5;
 const Percent = Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 }));
 const Bytes = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
 const Rate = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
+/** A value that an older server does not send. It decodes as null, like a value the platform does not give. */
+const NewerPercent = Schema.NullOr(Percent).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
 
 /** One process in a top list. `name` is the executable name, at most 40 characters. */
 export const ResourceProcess = Schema.Struct({
@@ -48,6 +53,19 @@ export const ResourceSample = Schema.Struct({
   at: MapTime,
   /** The whole machine, 0 to 100. */
   cpuPercent: Schema.NullOr(Percent),
+  /**
+   * The whole machine since the previous sample, without nice time, idle, I/O wait and steal: the
+   * work at normal priority. Null in the first sample.
+   */
+  cpuBusyPercent: NewerPercent,
+  /** Time that the hypervisor gave to other guests since the previous sample. Linux only. */
+  cpuStealPercent: NewerPercent,
+  /**
+   * CPU pressure: the share of time in the last 5 minutes that a task of the T3 server waited for
+   * a CPU (`some avg300`). From the cgroup of the T3 server, or the whole machine when the cgroup
+   * has no pressure file. Null where the kernel gives no pressure, for example macOS and Windows.
+   */
+  cpuPressurePercent: NewerPercent,
   cpuCount: Schema.NullOr(NonNegativeInt),
   /** Load averages over 1, 5 and 15 minutes. Null on Windows. */
   load: Schema.NullOr(Schema.Tuple([Rate, Rate, Rate])),
@@ -86,10 +104,18 @@ export type HealthAlertKind = typeof HealthAlertKind.Type;
 
 const PositiveInt = NonNegativeInt.check(Schema.isGreaterThan(0));
 
-/** MM-1504: the thresholds of one machine. Null turns a check off. */
+/**
+ * MM-1504: the thresholds of one machine. Null turns a check off. The CPU check means "the
+ * machine is starved": CPU pressure above `cpuPressurePercent` where the machine reports it, else
+ * CPU work without nice time above `cpuPercent`.
+ */
 export const HealthThresholds = Schema.Struct({
+  /** Used only by a machine that reports no CPU pressure. */
   cpuPercent: Schema.NullOr(Percent),
-  /** CPU must stay above `cpuPercent` for this many minutes in a row. */
+  cpuPressurePercent: Schema.NullOr(Percent).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(20)),
+  ),
+  /** The CPU signal must stay above its threshold for this many minutes in a row. */
   cpuMinutes: PositiveInt,
   memoryPercent: Schema.NullOr(Percent),
   diskPercent: Schema.NullOr(Percent),
@@ -102,8 +128,9 @@ export type HealthThresholds = typeof HealthThresholds.Type;
 
 /** MM-1504. */
 export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
-  cpuPercent: 90,
-  cpuMinutes: 5,
+  cpuPercent: 95,
+  cpuPressurePercent: 20,
+  cpuMinutes: 30,
   memoryPercent: 90,
   diskPercent: 90,
   swapMegabytesPerSecond: 10,
@@ -148,6 +175,13 @@ export const ResourceHistory = Schema.Struct({
   swap: Schema.Array(Schema.NullOr(Schema.Number)),
   agents: Schema.Array(Schema.NullOr(Schema.Number)),
   agentCpu: Schema.Array(Schema.NullOr(Schema.Number)),
+  /** CPU pressure and steal in percent. Empty from an older portal. */
+  pressure: Schema.Array(Schema.NullOr(Schema.Number)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
+  steal: Schema.Array(Schema.NullOr(Schema.Number)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed([])),
+  ),
 });
 export type ResourceHistory = typeof ResourceHistory.Type;
 

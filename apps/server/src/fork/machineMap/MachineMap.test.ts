@@ -77,6 +77,9 @@ const STATUS: MachineStatus = {
 const SAMPLE: ResourceSample = {
   at: "2026-10-13T08:00:00.000Z",
   cpuPercent: 12.5,
+  cpuBusyPercent: null,
+  cpuStealPercent: null,
+  cpuPressurePercent: null,
   cpuCount: 8,
   load: [1, 1, 1],
   memoryUsedBytes: 4,

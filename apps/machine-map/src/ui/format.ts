@@ -171,7 +171,7 @@ export const ALERT_STICKER: Record<HealthAlertKind, string> = {
 };
 
 export const ALERT_TEXT: Record<HealthAlertKind, string> = {
-  cpu: "CPU stays high",
+  cpu: "CPU starved",
   memory: "Memory is almost full",
   disk: "Disk is almost full",
   swap: "Swap thrashing",

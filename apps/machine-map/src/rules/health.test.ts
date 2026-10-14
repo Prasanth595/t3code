@@ -25,6 +25,9 @@ const T0 = Date.parse("2026-10-13T08:00:00.000Z");
 const point = (overrides: Partial<ResourcePoint> = {}): ResourcePoint => ({
   cpu: 10,
   cpuMax: 10,
+  busy: 10,
+  pressure: null,
+  steal: null,
   memory: 50,
   disk: 40,
   swap: 0,
@@ -52,6 +55,9 @@ describe("points (MM-1503)", () => {
     const sample: ResourceSample = {
       at: "2026-10-13T08:00:00.000Z",
       cpuPercent: 33.3,
+      cpuBusyPercent: 30,
+      cpuStealPercent: 0.5,
+      cpuPressurePercent: 4,
       cpuCount: 8,
       load: null,
       memoryUsedBytes: 3,
@@ -71,6 +77,9 @@ describe("points (MM-1503)", () => {
     expect(pointOf(sample)).toEqual({
       cpu: 33.3,
       cpuMax: 33.3,
+      busy: 30,
+      pressure: 4,
+      steal: 0.5,
       memory: 75,
       disk: 33.3,
       swap: 2.5,
@@ -90,27 +99,45 @@ describe("points (MM-1503)", () => {
         point({ cpu: 30, cpuMax: 95, disk: null }),
         point({ cpu: 20, cpuMax: 20, disk: 60 }),
       ]),
-    ).toEqual({ cpu: 20, cpuMax: 95, memory: 50, disk: 60, swap: 0, agents: 2, agentCpu: 5 });
+    ).toEqual({
+      cpu: 20,
+      cpuMax: 95,
+      busy: 10,
+      pressure: null,
+      steal: null,
+      memory: 50,
+      disk: 60,
+      swap: 0,
+      agents: 2,
+      agentCpu: 5,
+    });
     expect(averagePoints([]).cpu).toBeNull();
   });
 });
 
 describe("thresholds (MM-1504)", () => {
-  const hot = point({ cpu: 95 });
-
-  it("CPU starts only after 5 minutes in a row above 90", () => {
-    expect(resourceConditions(minutes(hot, hot, hot, hot), DEFAULT_HEALTH_THRESHOLDS).cpu).toBe(
-      undefined,
-    );
-    expect(resourceConditions(minutes(hot, hot, hot, hot, hot), DEFAULT_HEALTH_THRESHOLDS)).toEqual(
-      { cpu: { value: 95, threshold: 90 } },
-    );
-    // One calm minute or a missing minute breaks the run.
-    expect(
-      resourceConditions(minutes(hot, point(), hot, hot, hot, hot), DEFAULT_HEALTH_THRESHOLDS).cpu,
-    ).toBe(undefined);
-    const withGap = minutes(hot, hot, hot, hot, hot).filter((_, i) => i !== 2);
-    expect(resourceConditions(withGap, DEFAULT_HEALTH_THRESHOLDS).cpu).toBe(undefined);
+  it("CPU starts when the machine is starved for the whole run, not when it is busy", () => {
+    const limits = { ...DEFAULT_HEALTH_THRESHOLDS, cpuMinutes: 3 };
+    const starved = point({ cpu: 100, busy: 60, pressure: 35 });
+    expect(resourceConditions(minutes(starved, starved), limits).cpu).toBe(undefined);
+    expect(resourceConditions(minutes(starved, starved, starved), limits).cpu).toEqual({
+      value: 35,
+      threshold: 20,
+    });
+    // Full CPU with little waiting, for example niced builds, is busy, not starved.
+    const busy = point({ cpu: 100, busy: 99, pressure: 5 });
+    expect(resourceConditions(minutes(busy, busy, busy), limits).cpu).toBe(undefined);
+    // Without pressure, CPU work without nice time counts. One calm or missing minute breaks it.
+    const hot = point({ cpu: 100, busy: 97 });
+    expect(resourceConditions(minutes(hot, hot, hot), limits).cpu).toEqual({
+      value: 97,
+      threshold: 95,
+    });
+    const niced = point({ cpu: 100, busy: 20 });
+    expect(resourceConditions(minutes(niced, niced, niced), limits).cpu).toBe(undefined);
+    expect(resourceConditions(minutes(hot, point(), hot, hot), limits).cpu).toBe(undefined);
+    const withGap = minutes(hot, hot, hot, hot).filter((_, i) => i !== 2);
+    expect(resourceConditions(withGap, limits).cpu).toBe(undefined);
   });
 
   it("memory and disk start at once; swap needs its own run; null turns a check off", () => {

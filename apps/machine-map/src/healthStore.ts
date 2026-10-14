@@ -2,6 +2,7 @@
  * MM-1503, MM-1505: the SQLite tables of resources and health in the Durable Object: minute and
  * hour points, the latest sample of each machine, and alerts. The rules live in `rules/health.ts`.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { MachineId } from "@t3tools/contracts/machineMap";
 import { HealthAlert, ResourceSample } from "@t3tools/contracts/machineMapResources";
@@ -30,9 +31,17 @@ export interface SqlRunner {
   transaction(work: () => void): void;
 }
 
+/** A point that an older portal stored has no value of a newer field. */
+const NewerValue = Schema.NullOr(Schema.Number).pipe(
+  Schema.withDecodingDefaultKey(Effect.succeed(null)),
+);
+
 const ResourcePoint = Schema.Struct({
   cpu: Schema.NullOr(Schema.Number),
   cpuMax: Schema.NullOr(Schema.Number),
+  busy: NewerValue,
+  pressure: NewerValue,
+  steal: NewerValue,
   memory: Schema.NullOr(Schema.Number),
   disk: Schema.NullOr(Schema.Number),
   swap: Schema.NullOr(Schema.Number),

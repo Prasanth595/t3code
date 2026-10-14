@@ -2,10 +2,13 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   buildSample,
+  parseCgroupPath,
+  parseCpuPressure,
   parseCpuTime,
   parseDarwinNet,
   parseDarwinSwap,
   parseDarwinSwapTraffic,
+  parseLinuxCpuTicks,
   parseLinuxNet,
   parseLinuxSwap,
   parseLinuxSwapTraffic,
@@ -16,6 +19,8 @@ import {
 const raw = (overrides: Partial<RawReadings> = {}): RawReadings => ({
   atMs: Date.parse("2026-10-13T08:00:00.000Z"),
   cpuPercent: 42.345,
+  cpuTicks: { busy: 100, total: 1_000, steal: 10 },
+  cpuPressure: 3.456,
   cpuCount: 8,
   memory: { usedBytes: 6, totalBytes: 8 },
   load: [1.234, 0.5, 0.25],
@@ -34,6 +39,23 @@ const raw = (overrides: Partial<RawReadings> = {}): RawReadings => ({
 });
 
 describe("parsers (MM-1501)", () => {
+  it("reads Linux CPU ticks without nice time, the cgroup and the CPU pressure (MM-1504)", () => {
+    // user nice system idle iowait irq softirq steal guest guest_nice
+    expect(
+      parseLinuxCpuTicks("cpu  100 400 50 1000 20 5 5 40 7 0\ncpu0 1 2 3 4 5 6 7 8 9 0"),
+    ).toEqual({ busy: 160, total: 1620, steal: 40 });
+    expect(parseCgroupPath("0::/system.slice/t3-server.service\n")).toBe(
+      "/system.slice/t3-server.service",
+    );
+    expect(parseCgroupPath("12:cpu:/docker/abc")).toBeNull();
+    expect(
+      parseCpuPressure(
+        "some avg10=1.50 avg60=2.00 avg300=12.34 total=123\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0",
+      ),
+    ).toBe(12.34);
+    expect(parseCpuPressure("garbage")).toBeNull();
+  });
+
   it("reads CPU times of Linux and macOS ps", () => {
     expect(parseCpuTime("01:02:03")).toBe(3_723_000);
     expect(parseCpuTime("2-00:00:01")).toBe(172_801_000);
@@ -131,6 +153,7 @@ describe("buildSample (MM-1501)", () => {
       swapTrafficBytes: 21_000,
       net: { inBytes: 20_000, outBytes: 2_000 },
       t3: { cpuMicros: 2_000_000, rssBytes: 300 },
+      cpuTicks: { busy: 600, total: 2_000, steal: 60 },
       processes: [
         { pid: 1, cpuMs: 1_000, rssBytes: 100, name: "launchd" },
         { pid: 2, cpuMs: 6_000, rssBytes: 900, name: "node" },
@@ -143,6 +166,11 @@ describe("buildSample (MM-1501)", () => {
     expect(sample.netInBytesPerSecond).toBe(1_000);
     expect(sample.netOutBytesPerSecond).toBe(0);
     expect(sample.t3?.cpuPercent).toBe(10);
+    expect(sample).toMatchObject({
+      cpuBusyPercent: 50,
+      cpuStealPercent: 5,
+      cpuPressurePercent: 3.5,
+    });
     // Idle and new processes have no CPU since the previous sample, so they are not on the list.
     expect(sample.topCpu).toEqual([
       { name: "codex", cpuPercent: 50, memoryBytes: 500 },
