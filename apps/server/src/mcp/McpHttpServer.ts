@@ -21,10 +21,9 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
-import * as MissionMcpToolkit from "./MissionMcpToolkit.ts";
+import * as MissionMcpRuntime from "./MissionMcpRuntime.ts";
 import * as MissionRetroSourceToolkit from "./MissionRetroSourceToolkit.ts";
 import * as MissionRetroReportToolkit from "./MissionRetroReportToolkit.ts";
-import * as MissionCompletionToolkit from "./MissionCompletionToolkit.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import * as PreviewControlsHandlers from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -772,10 +771,11 @@ const layerMcpTransport = McpServer.layerHttp({
 const isCatchesPersona = readNofunPersonaScope()?.info.id === "catches";
 
 export const layer = Layer.mergeAll(
-  MissionMcpToolkit.layerOptionalMissionToolkit,
+  // mission_get, mission_execute, and mission_completion_route_read register
+  // when the server composes MissionMcpRuntime.layer.
+  MissionMcpRuntime.layerOptionalToolkits,
   MissionRetroSourceToolkit.layerOptionalMissionRetroSourceToolkit,
   MissionRetroReportToolkit.layerOptionalMissionRetroReportToolkit,
-  MissionCompletionToolkit.layerOptionalMissionCompletionToolkit,
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,

@@ -58,6 +58,7 @@ import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceR
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
+import * as MissionMcpRuntime from "./mcp/MissionMcpRuntime.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as SideQuestShelf from "./nofun/SideQuestShelf.ts";
@@ -697,6 +698,10 @@ const layerMakeRoutes = Layer.mergeAll(
   // what dispatch can actually serve.
   McpHttpServer.layer.pipe(
     Layer.provide(ProviderAdapterRegistry.layerFromProviderInstanceRegistry),
+    // Mission tools read the same registry, environment, projections, and SQL
+    // as the rest of the server; their NoFun policy comes from the owner's
+    // local policy file (see MissionMcpRuntime), never from a default.
+    Layer.provide(MissionMcpRuntime.layer.pipe(Layer.provide(ProjectionStoreV2.layer))),
   ),
 ).pipe(
   // Both transports consume the same service instance, so caches single-flight across clients
