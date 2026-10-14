@@ -6,6 +6,9 @@ settings:
 
 catalogs:
   default:
+    '@effect/graphql-generator':
+      specifier: 4.0.4
+      version: 4.0.4
     '@effect/openapi-generator':
       specifier: 4.0.4
       version: 4.0.4
@@ -1731,6 +1734,9 @@ importers:
         specifier: 4.0.4
         version: 4.0.4
     devDependencies:
+      '@effect/graphql-generator':
+        specifier: 'catalog:'
+        version: 4.0.4(@effect/platform-node@4.0.4(bufferutil@4.1.0)(effect@4.0.4)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.0.4)
       '@effect/platform-node':
         specifier: 4.0.4
         version: 4.0.4(bufferutil@4.1.0)(effect@4.0.4)(redis@6.2.1)(utf-8-validate@6.0.6)
@@ -3086,6 +3092,13 @@ packages:
       effect: 4.0.4
       react: '>=19.0.0 <20.0.0'
       scheduler: '>=0.25.0 <0.29.0'
+
+  '@effect/graphql-generator@4.0.4':
+    resolution: {integrity: sha512-W11HRAhCUA2zmXiMijX/xbg9LaeWbFOsH4zkxCG8Ekah+FjurJl+MhH0yVHBltFbL5w1nMB4UZORy4CaOE7mjw==}
+    hasBin: true
+    peerDependencies:
+      '@effect/platform-node': 4.0.4
+      effect: 4.0.4
 
   '@effect/openapi-generator@4.0.4':
     resolution: {integrity: sha512-5TcA4HP2Eml1Y3DCP1JCojYVeioGrtr9MxDDWCKYrfUQx2U/JRcnCzH0rJ+sD5obUAn9QKw2QIvb+/A3mxP35w==}
@@ -13868,6 +13881,11 @@ snapshots:
       effect: 4.0.4
       react: 19.3.0
       scheduler: 0.28.0
+
+  '@effect/graphql-generator@4.0.4(@effect/platform-node@4.0.4(bufferutil@4.1.0)(effect@4.0.4)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.0.4)':
+    dependencies:
+      '@effect/platform-node': 4.0.4(bufferutil@4.1.0)(effect@4.0.4)(redis@6.2.1)(utf-8-validate@6.0.6)
+      effect: 4.0.4
 
   '@effect/openapi-generator@4.0.4(@effect/platform-node@4.0.4(bufferutil@4.1.0)(effect@4.0.4)(redis@6.2.1)(utf-8-validate@6.0.6))(effect@4.0.4)(encoding@0.1.13)':
     dependencies:

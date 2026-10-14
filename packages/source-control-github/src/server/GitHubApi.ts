@@ -139,6 +139,12 @@ export interface GitHubGraphQlInput {
   readonly variables?: Readonly<Record<string, unknown>>;
   readonly allowReserve?: boolean;
   readonly maxResponseBytes?: number;
+  /**
+   * Hands back an answer whose `errors` name only some fields, such as one pull request of an
+   * aliased batch that does not exist, for the caller to settle field by field. A rate limit, a
+   * refused credential and an HTTP failure still fail the read.
+   */
+  readonly partial?: boolean;
 }
 
 export class GitHubApi extends Context.Service<
@@ -295,6 +301,8 @@ function classify(input: {
   readonly headers: Readonly<Record<string, string | undefined>>;
   readonly body: string;
   readonly graphql: boolean;
+  /** A GraphQL `errors` list that is not a rate limit is the caller's to read, field by field. */
+  readonly partial?: boolean;
   readonly acceptNotModified: boolean;
 }): Answer {
   const { status, headers, body } = input;
@@ -320,6 +328,9 @@ function classify(input: {
     return Answer.RateLimited();
   }
   if (status === 401) return Answer.Unauthorized();
+  if (input.partial === true && errors !== undefined && status >= 200 && status < 300) {
+    return Answer.Ok();
+  }
   if (
     status === 404 ||
     (errors !== undefined && errors.every((error) => error.type === "NOT_FOUND"))
@@ -374,6 +385,7 @@ export const make = Effect.gen(function* () {
     readonly acceptNotModified: boolean;
     /** Reads the body for GraphQL `errors`, which GitHub sends with HTTP 200. */
     readonly graphql?: boolean;
+    readonly partial?: boolean;
   }) {
     const host = normalizeHost(input.host);
     // Only the path: a query string can carry a SHA or a branch, and never needs to be in a trace.
@@ -454,6 +466,7 @@ export const make = Effect.gen(function* () {
           headers,
           body: collected.text,
           graphql: input.graphql === true,
+          partial: input.partial === true,
           acceptNotModified: input.acceptNotModified,
         }),
         {
@@ -558,6 +571,7 @@ export const make = Effect.gen(function* () {
         allowReserve,
         acceptNotModified: false,
         graphql: true,
+        partial: input.partial === true,
       });
       // A body cut at the byte cap hides any `errors` past the cut and cannot be decoded.
       if (response.truncated) {

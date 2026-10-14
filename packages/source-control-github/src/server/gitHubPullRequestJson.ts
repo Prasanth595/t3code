@@ -36,6 +36,10 @@ import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 import { aliasedGraphQlDocument, type GraphQlDocument } from "./githubGraphQl.ts";
+import type {
+  PullRequestSummaryRepositoryPullRequestPullRequest as SummarizedPullRequest,
+  PullRequestWatchFingerprintRepositoryPullRequestPullRequest as WatchedPullRequest,
+} from "./pullRequestBatches.graphql.ts";
 import { dedupeChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
 /**
@@ -260,36 +264,6 @@ const RawRepositoryPullRequestsSchema = Schema.Struct({
   data: Schema.Struct({
     repository: Schema.NullOr(Schema.Struct({ pullRequests: RawRowConnectionSchema })),
   }),
-});
-
-/** One aliased lookup per row, so the response is keyed by the position it was asked in. */
-const RawStatsSchema = Schema.Struct({
-  data: Schema.optional(
-    Schema.NullOr(
-      Schema.Record(
-        Schema.String,
-        Schema.NullOr(
-          Schema.Struct({
-            pullRequest: Schema.optional(
-              Schema.NullOr(
-                Schema.Struct({
-                  additions: Schema.optional(Schema.NullOr(Schema.Int)),
-                  deletions: Schema.optional(Schema.NullOr(Schema.Int)),
-                }),
-              ),
-            ),
-          }),
-        ),
-      ),
-    ),
-  ),
-});
-
-const RawStackMembershipsSchema = Schema.Struct({
-  data: Schema.Record(
-    Schema.String,
-    Schema.NullOr(Schema.Struct({ pullRequest: Schema.NullOr(RawStackMembershipSchema) })),
-  ),
 });
 
 /** How many of a reaction's people the hover names before it counts the rest. */
@@ -1826,7 +1800,6 @@ function toDetail(raw: Schema.Schema.Type<typeof RawDetailSchema>): GitHubPullRe
 const decodeUnknownList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeSearch = decodeJsonResult(RawSearchSchema);
 const decodeSearchItem = Schema.decodeUnknownExit(RawSearchItemSchema);
-const decodeStats = decodeJsonResult(RawStatsSchema);
 const decodeDetail = decodeJsonResult(RawDetailSchema);
 const decodeWorkflowRuns = decodeJsonResult(RawWorkflowRunsSchema);
 const decodePullRequestHeads = decodeJsonResult(RawPullRequestHeadsSchema);
@@ -1958,7 +1931,7 @@ export function decodePullRequestSearchJson(
   });
 }
 
-function toStackMembership(
+export function toStackMembership(
   raw: Schema.Schema.Type<typeof RawStackMembershipSchema>,
 ): PullRequestStackMembership | undefined {
   return raw.stack && raw.stackEntry
@@ -1975,178 +1948,21 @@ function toStackMembership(
 const REPOSITORY_PART = /^[A-Za-z0-9._-]+$/;
 
 /**
- * The owner and name of an `owner/name` selector, or null for one GitHub cannot name. A batch is
- * one document, and a single unanswerable alias fails all of it, so these are refused up front.
+ * The variables of one pull request lookup, or null for a selector or number GitHub cannot
+ * name: a batch would send it, and GitHub would refuse the whole request rather than its part.
  */
-function repositoryParts(
-  repository: string,
-): { readonly owner: string; readonly name: string } | null {
-  const [owner, name, ...rest] = repository.trim().split("/");
+export function pullRequestLookup(changeRequest: {
+  readonly repository: string;
+  readonly number: number;
+}): { readonly owner: string; readonly name: string; readonly number: number } | null {
+  const [owner, name, ...rest] = changeRequest.repository.trim().split("/");
   if (rest.length > 0 || owner === undefined || name === undefined) return null;
-  return REPOSITORY_PART.test(owner) && REPOSITORY_PART.test(name) ? { owner, name } : null;
+  if (!REPOSITORY_PART.test(owner) || !REPOSITORY_PART.test(name)) return null;
+  const { number } = changeRequest;
+  return Number.isSafeInteger(number) && number > 0 && number <= 2_147_483_647
+    ? { owner, name, number }
+    : null;
 }
-
-const isPullRequestNumber = (number: number) => Number.isSafeInteger(number) && number > 0;
-
-/** One aliased `repository { pullRequest { selection } }` per change request, on one host. */
-function aliasedPullRequestsDocument(
-  name: string,
-  alias: string,
-  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-  selection: string,
-): GraphQlDocument | null {
-  const addressed = changeRequests.map((changeRequest) => ({
-    parts: repositoryParts(changeRequest.repository),
-    number: changeRequest.number,
-  }));
-  if (addressed.some(({ parts, number }) => parts === null || !isPullRequestNumber(number))) {
-    return null;
-  }
-  return aliasedGraphQlDocument({
-    operation: "query",
-    name,
-    alias,
-    items: addressed,
-    variables: ({ parts, number }) => ({
-      owner: ["String!", parts!.owner],
-      name: ["String!", parts!.name],
-      number: ["Int!", number],
-    }),
-    field: ({ owner, name, number }) =>
-      `repository(owner: ${owner}, name: ${name}) { pullRequest(number: ${number}) { ${selection} } }`,
-  });
-}
-
-/**
- * The line counts for rows a listing already handed over, as one aliased lookup each.
- *
- * Aliases rather than `nodes(ids:)` because the caller asks in the terms the page holds — a
- * repository and a number — and never sees a node id. Null for a selector GitHub cannot name,
- * which the caller reports rather than sends, and for an empty request.
- */
-export function buildPullRequestStatsGraphQlQuery(
-  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-): GraphQlDocument | null {
-  return aliasedPullRequestsDocument(
-    "PullRequestStats",
-    "s",
-    changeRequests,
-    "additions deletions",
-  );
-}
-
-/** Stack membership for the visible rows of a per-repository listing. */
-export function buildPullRequestStackMembershipsGraphQlQuery(
-  repository: string,
-  numbers: ReadonlyArray<number>,
-): GraphQlDocument | null {
-  return aliasedPullRequestsDocument(
-    "PullRequestStackMemberships",
-    "s",
-    numbers.map((number) => ({ repository, number })),
-    STACK_MEMBERSHIP_SELECTION,
-  );
-}
-
-const decodeStackMemberships = decodeJsonResult(RawStackMembershipsSchema);
-
-export function decodePullRequestStackMembershipsJson(
-  raw: string,
-): Result.Result<ReadonlyMap<number, PullRequestStackMembership>, DecodeFailure> {
-  const decoded = decodeStackMemberships(raw);
-  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
-  const memberships = new Map<number, PullRequestStackMembership>();
-  for (const [alias, value] of Object.entries(decoded.success.data)) {
-    const index = /^s(\d+)$/.exec(alias)?.[1];
-    if (index === undefined || value?.pullRequest == null) continue;
-    const stack = toStackMembership(value.pullRequest);
-    if (stack !== undefined) memberships.set(Number(index), stack);
-  }
-  return Result.succeed(memberships);
-}
-
-/**
- * The counts by the position they were asked in. A repository or a pull request GitHub answered
- * nothing for is simply absent, which leaves the row with whatever it already had.
- */
-export function decodePullRequestStatsJson(
-  raw: string,
-): Result.Result<
-  ReadonlyMap<number, { readonly additions: number; readonly deletions: number }>,
-  DecodeFailure
-> {
-  const decoded = decodeStats(raw);
-  if (!Result.isSuccess(decoded)) {
-    return Result.fail(decoded.failure);
-  }
-  const stats = new Map<number, { readonly additions: number; readonly deletions: number }>();
-  for (const [alias, value] of Object.entries(decoded.success.data ?? {})) {
-    const index = /^s(\d+)$/.exec(alias)?.[1];
-    const pullRequest = value?.pullRequest;
-    if (index === undefined || pullRequest == null) continue;
-    stats.set(Number(index), {
-      additions: pullRequest.additions ?? 0,
-      deletions: pullRequest.deletions ?? 0,
-    });
-  }
-  return Result.succeed(stats);
-}
-
-/**
- * The fields a linked thread keeps current, for many pull requests in one aliased read. Same
- * shape as the search row where the two overlap: the checks arrive as GitHub's one-word rollup
- * rather than the whole check list `gh pr view` hands back, which is what keeps a batch cheap.
- */
-const STACK_MEMBERSHIP_SELECTION = "stack { number size baseRefName } stackEntry { position }";
-
-const PULL_REQUEST_SUMMARY_SELECTION =
-  "number title url state isDraft mergeable reviewDecision additions deletions changedFiles " +
-  "updatedAt mergedAt closedAt headRefName baseRefName " +
-  "author { __typename login avatarUrl ... on User { name } } " +
-  "latestReviews(first: 20) { nodes { state author { login } } } " +
-  "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
-
-/** Summaries for pull requests anywhere on one host, one aliased lookup each; null when unsafe. */
-export function buildPullRequestSummariesGraphQlQuery(
-  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-  includeStacks = false,
-): GraphQlDocument | null {
-  return aliasedPullRequestsDocument(
-    "PullRequestSummaries",
-    "s",
-    changeRequests,
-    `${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""}`,
-  );
-}
-
-/** One pull request's summary, aliased the way the batch is so the same decoder reads it. */
-export function pullRequestSummaryGraphQlQuery(includeStacks = false): string {
-  return `query($owner: String!, $name: String!, $number: Int!) {
-  s0: repository(owner: $owner, name: $name) { pullRequest(number: $number) { ${PULL_REQUEST_SUMMARY_SELECTION}${includeStacks ? ` ${STACK_MEMBERSHIP_SELECTION}` : ""} } }
-}`;
-}
-
-const RawSummarySchema = Schema.Struct({
-  ...RawSearchItemSchema.fields,
-  changedFiles: Schema.optional(Schema.NullOr(Schema.Int)),
-  additions: Schema.optional(Schema.NullOr(Schema.Int)),
-  deletions: Schema.optional(Schema.NullOr(Schema.Int)),
-  closedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  createdAt: Schema.optional(Schema.String),
-});
-const decodeSummaries = decodeJsonResult(
-  Schema.Struct({
-    data: Schema.optional(
-      Schema.NullOr(
-        Schema.Record(
-          Schema.String,
-          Schema.NullOr(Schema.Struct({ pullRequest: Schema.optional(Schema.Unknown) })),
-        ),
-      ),
-    ),
-  }),
-);
-const decodeSummaryEntry = Schema.decodeUnknownExit(RawSummarySchema);
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -2170,86 +1986,37 @@ export interface GitHubPullRequestSummary {
   readonly stack?: PullRequestStackMembership | null;
 }
 
-/**
- * Summaries by the position they were asked in. A pull request GitHub answered nothing for, or
- * one whose fields no longer decode, is absent rather than failing the rest of the batch.
- */
-export function decodePullRequestSummariesJson(
-  raw: string,
-): Result.Result<ReadonlyMap<number, GitHubPullRequestSummary>, DecodeFailure> {
-  const decoded = decodeSummaries(raw);
-  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
-  const summaries = new Map<number, GitHubPullRequestSummary>();
-  for (const [alias, value] of Object.entries(decoded.success.data ?? {})) {
-    const index = /^s(\d+)$/.exec(alias)?.[1];
-    if (index === undefined || value?.pullRequest == null) continue;
-    const entry = decodeSummaryEntry(value.pullRequest);
-    if (!Exit.isSuccess(entry)) continue;
-    const pr = entry.value;
-    summaries.set(Number(index), {
-      number: pr.number,
-      title: pr.title,
-      url: pr.url,
-      headBranch: pr.headRefName,
-      baseBranch: pr.baseRefName,
-      state: toState(pr),
-      isDraft: pr.isDraft ?? false,
-      closedAt: trimmed(pr.closedAt),
-      mergedAt: trimmed(pr.mergedAt),
-      updatedAt: pr.updatedAt,
-      author: toActor(pr.author),
-      additions: pr.additions ?? 0,
-      deletions: pr.deletions ?? 0,
-      changedFiles: pr.changedFiles ?? 0,
-      reviewDecision: toReviewDecisionWithReviews(
-        pr.reviewDecision,
-        (pr.latestReviews?.nodes ?? []).flatMap((review) => (review === null ? [] : [review])),
-      ),
-      // One enum for the head commit, dressed as a single check like the search row's.
-      checksState: rollupChecksState(
-        (pr.commits?.nodes ?? []).flatMap((commitNode) => {
-          const state = trimmed(commitNode?.commit?.statusCheckRollup?.state);
-          return state === null ? [] : [{ state }];
-        }),
-      ),
-      mergeability: toMergeability(pr.mergeable),
-      ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
-    });
-  }
-  return Result.succeed(summaries);
-}
-
-const WATCH_FINGERPRINT_EDITS = "totalCount nodes { lastEditedAt }";
-const WATCH_FINGERPRINT_CHECK_COUNTS =
-  "checkRunCountsByState { state count } statusContextCountsByState { state count }";
-
-/**
- * What a pull request watch needs to notice, priced by GitHub at one point for twenty-five pull
- * requests, where the detail and activity reads it gates cost sixteen for one. Counts and the
- * newest edit cover new comments, reviews (a reply in a review thread is a review), threads, and
- * a bot rewriting its summary; check counts by state move whenever a check starts or finishes.
- * Comments come most recently updated first, since an edit moves `updatedAt`, so an edit to an
- * old comment on a long pull request is still in the page. Reviews have no such order: an edit
- * to a review older than the last hundred waits for the watch's periodic full read, as do edits
- * to comments inside review threads, which cost a point per pull request to ask for.
- */
-const PULL_REQUEST_WATCH_FINGERPRINT_SELECTION =
-  "state mergeable headRefOid " +
-  `comments(first: 100, orderBy: { field: UPDATED_AT, direction: DESC }) { ${WATCH_FINGERPRINT_EDITS} } ` +
-  `reviews(last: 100) { ${WATCH_FINGERPRINT_EDITS} } ` +
-  "reviewThreads { totalCount } " +
-  `commits(last: 1) { nodes { commit { statusCheckRollup { contexts { ${WATCH_FINGERPRINT_CHECK_COUNTS} } } } } }`;
-
-/** Watch fingerprints for pull requests on one host, one aliased lookup each; null when unsafe. */
-export function buildPullRequestWatchFingerprintsGraphQlQuery(
-  changeRequests: ReadonlyArray<{ readonly repository: string; readonly number: number }>,
-): GraphQlDocument | null {
-  return aliasedPullRequestsDocument(
-    "PullRequestWatchFingerprints",
-    "w",
-    changeRequests,
-    PULL_REQUEST_WATCH_FINGERPRINT_SELECTION,
-  );
+/** The summary a linked thread keeps current, from one slice of the batched read. */
+export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullRequestSummary {
+  return {
+    number: pr.number,
+    title: pr.title,
+    url: pr.url,
+    headBranch: pr.headRefName,
+    baseBranch: pr.baseRefName,
+    state: toState(pr),
+    isDraft: pr.isDraft,
+    closedAt: trimmed(pr.closedAt),
+    mergedAt: trimmed(pr.mergedAt),
+    updatedAt: pr.updatedAt,
+    author: toActor(pr.author),
+    additions: pr.additions,
+    deletions: pr.deletions,
+    changedFiles: pr.changedFiles,
+    reviewDecision: toReviewDecisionWithReviews(
+      pr.reviewDecision,
+      (pr.latestReviews?.nodes ?? []).flatMap((review) => (review === null ? [] : [review])),
+    ),
+    // One enum for the head commit, dressed as a single check like the search row's.
+    checksState: rollupChecksState(
+      (pr.commits.nodes ?? []).flatMap((commitNode) => {
+        const state = trimmed(commitNode?.commit.statusCheckRollup?.state);
+        return state === null ? [] : [{ state }];
+      }),
+    ),
+    mergeability: toMergeability(pr.mergeable),
+    ...(pr.stack === undefined ? {} : { stack: toStackMembership(pr) ?? null }),
+  };
 }
 
 /**
@@ -2261,89 +2028,44 @@ export interface GitHubPullRequestWatchFingerprint {
   readonly remarks: string;
 }
 
-const RawEditedSchema = Schema.Struct({
-  totalCount: Schema.Int,
-  nodes: Schema.Array(Schema.NullOr(Schema.Struct({ lastEditedAt: Schema.NullOr(Schema.String) }))),
-});
-const RawStateCountsSchema = Schema.NullOr(
-  Schema.Array(Schema.Struct({ state: Schema.String, count: Schema.Int })),
-);
-const decodeWatchFingerprintEntry = Schema.decodeUnknownExit(
-  Schema.Struct({
-    state: Schema.String,
-    mergeable: Schema.NullOr(Schema.String),
-    headRefOid: Schema.String,
-    comments: RawEditedSchema,
-    reviews: RawEditedSchema,
-    reviewThreads: Schema.Struct({ totalCount: Schema.Int }),
-    commits: Schema.Struct({
-      nodes: Schema.Array(
-        Schema.NullOr(
-          Schema.Struct({
-            commit: Schema.Struct({
-              statusCheckRollup: Schema.NullOr(
-                Schema.Struct({
-                  contexts: Schema.Struct({
-                    checkRunCountsByState: RawStateCountsSchema,
-                    statusContextCountsByState: RawStateCountsSchema,
-                  }),
-                }),
-              ),
-            }),
-          }),
-        ),
-      ),
-    }),
-  }),
-);
+type EditedConnection = WatchedPullRequest["comments"] | WatchedPullRequest["reviews"];
+type StateCounts = ReadonlyArray<{ readonly state: string; readonly count: number }> | null;
 
 // An edit only ever moves `lastEditedAt` forward, so the newest one stands for them all.
-const newestEdit = (connection: typeof RawEditedSchema.Type) =>
-  connection.nodes.reduce(
+const newestEdit = (connection: EditedConnection) =>
+  (connection?.nodes ?? []).reduce(
     (newest, node) =>
       node?.lastEditedAt != null && node.lastEditedAt > newest ? node.lastEditedAt : newest,
     "",
   );
 
-const stateCounts = (counts: typeof RawStateCountsSchema.Type) =>
+const stateCounts = (counts: StateCounts) =>
   (counts ?? [])
     .filter(({ count }) => count > 0)
     .map(({ state, count }) => `${state}:${count}`)
     .toSorted()
     .join(",");
 
-/** Fingerprints by alias index; a pull request GitHub returned nothing for is left out. */
-export function decodePullRequestWatchFingerprintsJson(
-  raw: string,
-): Result.Result<ReadonlyMap<number, GitHubPullRequestWatchFingerprint>, DecodeFailure> {
-  const decoded = decodeSummaries(raw);
-  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
-  const fingerprints = new Map<number, GitHubPullRequestWatchFingerprint>();
-  for (const [alias, value] of Object.entries(decoded.success.data ?? {})) {
-    const index = /^w(\d+)$/.exec(alias)?.[1];
-    if (index === undefined || value?.pullRequest == null) continue;
-    const entry = decodeWatchFingerprintEntry(value.pullRequest);
-    if (!Exit.isSuccess(entry)) continue;
-    const pr = entry.value;
-    const contexts = pr.commits.nodes[0]?.commit.statusCheckRollup?.contexts;
-    fingerprints.set(Number(index), {
-      status: [
-        pr.state,
-        pr.mergeable ?? "",
-        pr.headRefOid,
-        stateCounts(contexts?.checkRunCountsByState ?? null),
-        stateCounts(contexts?.statusContextCountsByState ?? null),
-      ].join(" "),
-      remarks: [
-        pr.comments.totalCount,
-        newestEdit(pr.comments),
-        pr.reviews.totalCount,
-        newestEdit(pr.reviews),
-        pr.reviewThreads.totalCount,
-      ].join(" "),
-    });
-  }
-  return Result.succeed(fingerprints);
+export function toPullRequestWatchFingerprint(
+  pr: WatchedPullRequest,
+): GitHubPullRequestWatchFingerprint {
+  const contexts = pr.commits.nodes?.[0]?.commit.statusCheckRollup?.contexts;
+  return {
+    status: [
+      pr.state,
+      pr.mergeable,
+      pr.headRefOid,
+      stateCounts(contexts?.checkRunCountsByState ?? null),
+      stateCounts(contexts?.statusContextCountsByState ?? null),
+    ].join(" "),
+    remarks: [
+      pr.comments.totalCount,
+      newestEdit(pr.comments),
+      pr.reviews?.totalCount ?? 0,
+      newestEdit(pr.reviews),
+      pr.reviewThreads.totalCount,
+    ].join(" "),
+  };
 }
 
 export interface GitHubPullRequestCore extends GitHubPullRequestDetail {

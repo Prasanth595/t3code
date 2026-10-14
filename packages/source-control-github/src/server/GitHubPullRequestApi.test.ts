@@ -6,6 +6,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import * as Redacted from "effect/Redacted";
@@ -85,7 +86,7 @@ const mockApi = Layer.effect(
             }),
           ),
           Effect.andThen(() =>
-            (input.query.includes("query PullRequestStackMemberships")
+            (input.query.startsWith("query PullRequestStackMembership(")
               ? mockedStackMemberships
               : mockedExecute)({ kind: "graphql", ...input }),
           ),
@@ -708,14 +709,21 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number,
         title: `Pull request ${number}`,
         url: `https://github.com/acme/web/pull/${number}`,
-        author: { __typename: "User", login: "octocat", name: "Octo Cat", avatarUrl: null },
+        author: {
+          __typename: "User",
+          login: "octocat",
+          name: "Octo Cat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+        },
         baseRefName: "main",
         headRefName: `feat/${number}`,
         state: "OPEN",
         isDraft: false,
         mergeable: "MERGEABLE",
         reviewDecision: null,
-        latestReviews: { nodes: [{ state: "APPROVED", author: { login: "reviewer" } }] },
+        latestReviews: {
+          nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
+        },
         additions: 12,
         deletions: 3,
         changedFiles: 2,
@@ -728,7 +736,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             encodeJson({
-              data: { s0: { pullRequest: node(7) }, s1: { pullRequest: node(8) } },
+              data: {
+                _0_repository: { pullRequest: node(7) },
+                _1_repository: { pullRequest: node(8) },
+              },
             }),
           ),
         ),
@@ -774,13 +785,14 @@ layer("GitHubPullRequestApi.layer", (it) => {
       assert.strictEqual(eight?.headBranch, "feat/8");
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
-        "s0: repository(owner: $s0_owner, name: $s0_name) { pullRequest(number: $s0_number)",
+        "_0_repository:repository(owner:$_0_owner name:$_0_name){pullRequest(number:$_0_number)",
       );
       expect(varsAt(0)).toMatchObject({
-        s0_owner: "acme",
-        s0_name: "web",
-        s0_number: 7,
-        s1_number: 8,
+        _0_owner: "acme",
+        _0_name: "web",
+        _0_number: 7,
+        _0_stacks: true,
+        _1_number: 8,
       });
     }),
   );
@@ -800,7 +812,10 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             JSON.stringify({
-              data: { w0: { pullRequest: node(1) }, w1: { pullRequest: null } },
+              data: {
+                _0_repository: { pullRequest: node(1) },
+                _1_repository: { pullRequest: null },
+              },
             }),
           ),
         ),
@@ -826,58 +841,82 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(eight).toBeNull();
       expect(mockedExecute).toHaveBeenCalledOnce();
       expect(queryAt(0)).toContain(
-        "w1: repository(owner: $w1_owner, name: $w1_name) { pullRequest(number: $w1_number)",
+        "_1_repository:repository(owner:$_1_owner name:$_1_name){pullRequest(number:$_1_number)",
       );
-      expect(varsAt(0)).toMatchObject({ w1_owner: "acme", w1_name: "web", w1_number: 8 });
+      expect(varsAt(0)).toMatchObject({ _1_owner: "acme", _1_name: "web", _1_number: 8 });
     }),
   );
 
-  it.effect("reads a pull request the batch said nothing about on its own", () =>
-    Effect.gen(function* () {
-      mockedExecute
-        .mockReturnValueOnce(Effect.succeed(output('{"data":{"s0":{"pullRequest":null}}}')))
-        .mockReturnValueOnce(
+  it.effect(
+    "fails only the pull request GitHub cannot find, and answers the rest of its batch",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
           Effect.succeed(
             output(
               encodeJson({
                 data: {
-                  s0: {
+                  _0_repository: { pullRequest: null },
+                  _1_repository: {
                     pullRequest: {
-                      number: 7,
-                      title: "Reuse the summary",
-                      url: "https://github.com/acme/web/pull/7",
-                      author: { login: "octocat", name: "Octo Cat" },
+                      number: 8,
+                      title: "Still here",
+                      url: "https://github.com/acme/web/pull/8",
+                      author: null,
                       baseRefName: "main",
-                      headRefName: "feat/summary",
+                      headRefName: "feat/eight",
                       state: "OPEN",
                       isDraft: false,
                       mergeable: "MERGEABLE",
-                      reviewDecision: "APPROVED",
-                      additions: 12,
-                      deletions: 3,
-                      changedFiles: 2,
+                      reviewDecision: null,
+                      latestReviews: { nodes: [] },
+                      additions: 1,
+                      deletions: 1,
+                      changedFiles: 1,
                       updatedAt: "2026-08-24T12:34:56.000Z",
-                      commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
+                      mergedAt: null,
+                      closedAt: null,
+                      commits: { nodes: [] },
+                      stack: null,
+                      stackEntry: null,
                     },
                   },
                 },
+                errors: [
+                  {
+                    type: "NOT_FOUND",
+                    path: ["_0_repository", "pullRequest"],
+                    message: "Could not resolve to a PullRequest with the number of 7.",
+                  },
+                ],
               }),
             ),
           ),
         );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
-      const read = yield* cli
-        .getPullRequestSummary({ cwd: "/w", repository: "acme/web", host: "github.com", number: 7 })
-        .pipe(Effect.forkChild);
-      yield* TestClock.adjust("10 millis");
-      const summary = yield* Fiber.join(read);
+        const reads = yield* Effect.forEach(
+          [7, 8],
+          (number) =>
+            cli
+              .getPullRequestSummary({
+                cwd: "/w",
+                repository: "acme/web",
+                host: "github.com",
+                number,
+              })
+              .pipe(Effect.result),
+          { concurrency: "unbounded" },
+        ).pipe(Effect.forkChild);
+        yield* TestClock.adjust("10 millis");
+        const [seven, eight] = yield* Fiber.join(reads);
 
-      assert.strictEqual(summary.headBranch, "feat/summary");
-      assert.strictEqual(summary.checksState, "passing");
-      assert.strictEqual(mockedExecute.mock.calls.length, 2);
-      expect(varsAt(1)).toEqual({ owner: "acme", name: "web", number: 7 });
-    }),
+        expect(Result.isFailure(seven!) ? seven.failure._tag : null).toBe("GitHubApiNotFoundError");
+        expect(Result.isSuccess(eight!) ? eight.success.headBranch : null).toBe("feat/eight");
+        // One request answered both; nothing was read again on its own.
+        expect(mockedExecute).toHaveBeenCalledOnce();
+        expect(callAt(0)).toMatchObject({ kind: "graphql", partial: true });
+      }),
   );
 
   it.effect("reads the stack a pull request is in through the stacks preview, on its host", () =>
@@ -1419,13 +1458,13 @@ layer("GitHubPullRequestApi.layer", (it) => {
           output(
             encodeJson({
               data: {
-                s0: {
+                _0_repository: {
                   pullRequest: {
                     stack: { number: 3, size: 2, baseRefName: "main" },
                     stackEntry: { position: 1 },
                   },
                 },
-                s1: { pullRequest: { stack: null, stackEntry: null } },
+                _1_repository: { pullRequest: { stack: null, stackEntry: null } },
               },
             }),
           ),
@@ -1473,14 +1512,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
           : Effect.succeed(
               output(
                 encodeJson({
-                  data: {
-                    s0: {
-                      pullRequest: {
-                        stack: { number: 3, size: 2, baseRefName: "main" },
-                        stackEntry: { position: 1 },
-                      },
-                    },
-                  },
+                  data: Object.fromEntries(
+                    Object.keys(input.kind === "graphql" ? (input.variables ?? {}) : {})
+                      .filter((name) => name.endsWith("_number"))
+                      .map((name, index) => [
+                        name.replace(/number$/, "repository"),
+                        {
+                          pullRequest:
+                            index === 0
+                              ? {
+                                  stack: { number: 3, size: 2, baseRefName: "main" },
+                                  stackEntry: { position: 1 },
+                                }
+                              : { stack: null, stackEntry: null },
+                        },
+                      ]),
+                  ),
                 }),
               ),
             ),
@@ -1534,11 +1581,22 @@ layer("GitHubPullRequestApi.layer", (it) => {
         repository: "acme/web",
         number: index + 1,
       }));
-      mockedExecute.mockImplementation(() =>
-        // Every chunk answers for its first alias only, so a row GitHub said nothing about is
+      mockedExecute.mockImplementation((call) =>
+        // Every chunk finds only its first pull request, so a row GitHub had nothing for is
         // dropped rather than shown as a change of no size.
         Effect.succeed(
-          output(encodeJson({ data: { s0: { pullRequest: { additions: 4, deletions: 1 } } } })),
+          output(
+            encodeJson({
+              data: Object.fromEntries(
+                Object.keys(call.kind === "graphql" ? (call.variables ?? {}) : {})
+                  .filter((name) => name.endsWith("_number"))
+                  .map((name, index) => [
+                    name.replace(/number$/, "repository"),
+                    { pullRequest: index === 0 ? { additions: 4, deletions: 1 } : null },
+                  ]),
+              ),
+            }),
+          ),
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
@@ -1555,8 +1613,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { repository: "acme/web", number: 1, additions: 4, deletions: 1 },
         { repository: "acme/web", number: 26, additions: 4, deletions: 1 },
       ]);
-      expect(queryAt(0)).toContain("s0: repository(owner: $s0_owner, name: $s0_name)");
-      expect(varsAt(0)).toMatchObject({ s0_owner: "acme", s0_name: "web", s24_number: 25 });
+      expect(queryAt(0)).toContain("_0_repository:repository(owner:$_0_owner name:$_0_name)");
+      expect(varsAt(0)).toMatchObject({ _0_owner: "acme", _0_name: "web", _24_number: 25 });
     }),
   );
 

@@ -35,6 +35,7 @@ catalog:
   "@clerk/react": 6.16.1
   "@clerk/shared": 4.33.0
   "@effect/atom-react": 4.0.4
+  "@effect/graphql-generator": 4.0.4
   "@effect/openapi-generator": 4.0.4
   "@effect/platform-node": 4.0.4
   "@effect/platform-node-shared": 4.0.4
@@ -100,6 +101,7 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/neon@1.0.0-rc.13"
   - "@distilled.cloud/planetscale@1.0.0-rc.13"
   - "@effect/atom-react@4.0.4"
+  - "@effect/graphql-generator@4.0.4"
   - "@effect/openapi-generator@4.0.4"
   - "@effect/platform-node-shared@4.0.4"
   - "@effect/platform-node@4.0.4"

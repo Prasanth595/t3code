@@ -1,16 +1,14 @@
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import { KnownWorkflowRuns, makeChecksRevalidator } from "./gitHubConditionalChecks.ts";
 import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import * as Request from "effect/Request";
+import { GraphQLClient, GraphQLClientError, GraphQLResolver } from "effect/graphql";
 import * as RequestResolver from "effect/RequestResolver";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -44,6 +42,8 @@ import {
 
 import * as GitHubApi from "./GitHubApi.ts";
 import { readGraphQlPages } from "./githubGraphQl.ts";
+import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
+import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import {
@@ -60,14 +60,16 @@ import {
   pullRequestCheckContextsGraphQlQuery,
   pullRequestChecksFromContexts,
   pullRequestListGraphQlQuery,
-  pullRequestSummaryGraphQlQuery,
   PULL_REQUEST_ACTIVITY_GRAPHQL_QUERY,
   PULL_REQUEST_HEADS_GRAPHQL_QUERY,
   decodeWorkflowRunsJson,
   pullRequestCoreGraphQlQuery,
   type GitHubPullRequestCore,
-  type GitHubPullRequestSummary,
   type GitHubPullRequestWatchFingerprint,
+  pullRequestLookup,
+  toPullRequestSummary,
+  toPullRequestWatchFingerprint,
+  toStackMembership,
   decodePullRequestPreviewJson,
   PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
   decodePullRequestFilesJson,
@@ -77,9 +79,6 @@ import {
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
   decodePullRequestStacksJson,
-  decodePullRequestStatsJson,
-  decodePullRequestSummariesJson,
-  decodePullRequestWatchFingerprintsJson,
   decodeReactionSubjectScopeJson,
   decodeReviewerCandidatesJson,
   decodeLabelCandidatesJson,
@@ -88,11 +87,6 @@ import {
   decodeReviewDismissalsJson,
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
-  buildPullRequestStatsGraphQlQuery,
-  buildPullRequestSummariesGraphQlQuery,
-  buildPullRequestWatchFingerprintsGraphQlQuery,
-  buildPullRequestStackMembershipsGraphQlQuery,
-  decodePullRequestStackMembershipsJson,
   pullRequestSearchGraphQlQuery,
   PULL_REQUEST_SEARCH_MAX_ROWS,
   PULL_REQUEST_FILES_VIEWED_GRAPHQL_QUERY,
@@ -358,6 +352,18 @@ export type GitHubPullRequestApiError =
   | GitHubViewerLoginUnavailableError
   | GitHubPullRequestUpdatedAtUnavailableError;
 
+const isGraphQlClientError = (error: unknown): error is GraphQLClientError.GraphQLClientError =>
+  GraphQLClientError.isGraphQLClientError(error);
+
+/**
+ * GitHub answered that a pull request (or its repository) does not exist, or that the credential
+ * cannot see it, which a batch reports for that one pull request alone.
+ */
+const isNotFoundOnly = (error: unknown): boolean =>
+  isGraphQlClientError(error) &&
+  error.reason._tag === "ResponseError" &&
+  error.reason.errors.every((graphQlError) => graphQlError["type"] === "NOT_FOUND");
+
 /** A large pull request can produce a multi-megabyte patch; past this it is truncated. */
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT = Duration.seconds(60);
@@ -424,39 +430,16 @@ export interface GitHubPullRequestStat {
 }
 
 /**
- * Aliased lookups per request, and requests at once. Measured over a hundred rows: one request
- * carrying all hundred takes ~5.2s, four of twenty-five in parallel ~2.1s.
+ * Aliased lookups per request. Measured over a hundred rows: one request carrying all hundred
+ * takes ~5.2s, four of twenty-five in parallel ~2.1s. `GitHubApi` bounds how many run at once.
  */
 const STAT_ALIASES_PER_REQUEST = 25;
-const STAT_REQUEST_CONCURRENCY = 4;
 /**
  * How long a summary read waits for company. The background sync asks for every linked pull
  * request at once, and each read reaches the resolver after its own cache check, so a batch
  * needs a moment longer than one scheduler tick to gather them.
  */
 const SUMMARY_BATCH_WINDOW = "10 millis";
-
-class PullRequestSummaryRead extends Request.Class<
-  {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly host: string;
-    readonly number: number;
-  },
-  ProviderChangeRequestSummary,
-  GitHubPullRequestApiError
-> {}
-
-class PullRequestWatchFingerprintRead extends Request.Class<
-  {
-    readonly cwd: string;
-    readonly repository: string;
-    readonly host: string;
-    readonly number: number;
-  },
-  GitHubPullRequestWatchFingerprint | null,
-  GitHubPullRequestApiError
-> {}
 
 export interface GitHubPullRequestSearchBatch {
   /** Rows across every repository asked for, newest update first, each naming its own. */
@@ -1801,166 +1784,108 @@ export const make = Effect.gen(function* () {
         { concurrency: 2 },
       ).pipe(Effect.map(([, runs]) => runs));
 
-  /** One pull request's summary, through the same aliased query the batch uses. */
-  const viewPullRequestSummary = (input: PullRequestSummaryRead) => {
-    const { owner, name } = parseRepositorySelector(input.repository);
-    return graphqlRead({
-      cwd: input.cwd,
-      host: input.host,
-      operation: "getPullRequestSummary",
-      variables: { owner, name, number: input.number },
-      query: pullRequestSummaryGraphQlQuery(input.host === "github.com"),
-      decode: decodePullRequestSummariesJson,
-    }).pipe(
-      Effect.flatMap((summaries) => {
-        const summary = summaries.get(0);
-        return summary === undefined
-          ? Effect.fail(
-              readError(
-                input.cwd,
-                "getPullRequestSummary",
-                new Error(`GitHub answered nothing for ${input.repository}#${input.number}.`),
-              ),
-            )
-          : Effect.succeed(summary);
+  const batches = yield* GraphQLClient.make(
+    PullRequestBatchesGraphQLGroup.middleware(GitHubGraphQlClient.GitHubGraphQlTransport),
+  ).pipe(Effect.provide(GitHubGraphQlClient.layer));
+
+  /**
+   * Runs batched lookups for one read on `host`. The resolver groups them by host and credential.
+   * GitHub saying one pull request does not exist fails that lookup as not found; any other client
+   * failure is a read error against `operation`, and a `GitHubApi` failure (a rate limit, a
+   * refused credential) passes through as itself.
+   */
+  const batchedRead = <A, E, R>(
+    input: { readonly cwd: string; readonly host: string; readonly operation: string },
+    effect: Effect.Effect<A, E, R>,
+  ): Effect.Effect<
+    A,
+    | Exclude<E, GraphQLClientError.GraphQLClientError>
+    | GitHubPullRequestReadError
+    | GitHubApi.GitHubApiNotFoundError,
+    Exclude<R, GitHubGraphQlClient.GitHubGraphQlTarget>
+  > =>
+    effect.pipe(
+      Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+        host: input.host,
+        operation: input.operation,
       }),
+      Effect.mapError((error) =>
+        !isGraphQlClientError(error)
+          ? (error as Exclude<E, GraphQLClientError.GraphQLClientError>)
+          : isNotFoundOnly(error)
+            ? new GitHubApi.GitHubApiNotFoundError({
+                host: input.host,
+                operation: input.operation,
+              })
+            : readError(input.cwd, input.operation, error),
+      ),
     );
-  };
 
   /**
    * Summaries asked for together, on one host under one credential, share aliased GraphQL reads
-   * of twenty-five: the background sync reads every linked pull request each minute, and one
-   * `gh pr view` apiece is most of what it spends. Whatever the batch cannot answer — a selector
-   * GraphQL cannot address, a pull request GitHub returned nothing for — is read on its own.
+   * of twenty-five: the background sync reads every linked pull request each minute, and one read
+   * apiece is most of what it spends. A pull request GitHub cannot find fails on its own; the
+   * rest of its batch still answers.
    */
-  const summaryResolver = RequestResolver.makeGrouped<PullRequestSummaryRead, string>({
-    key: ({ request, context }) =>
-      JSON.stringify([
-        request.host.toLowerCase(),
-        Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
-          ?.credentialFingerprint ?? null,
-        Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
-      ]),
-    resolver: (entries) => {
-      const [first] = entries;
-      const batchable = entries.filter(
-        (entry) => buildPullRequestSummariesGraphQlQuery([entry.request]) !== null,
-      );
-      // Stack membership rides along where GitHub serves stacks, so the background sync can skip
-      // the REST stack read for pull requests that are in none.
-      const document = buildPullRequestSummariesGraphQlQuery(
-        batchable.map((entry) => entry.request),
-        first.request.host === "github.com",
-      );
-      const batched =
-        document === null
-          ? Effect.succeed(new Map<number, GitHubPullRequestSummary>())
-          : graphqlRead({
-              cwd: first.request.cwd,
-              host: first.request.host,
-              operation: "getPullRequestSummary",
-              ...document,
-              decode: decodePullRequestSummariesJson,
-            });
-      return batched.pipe(
-        // A GraphQL error anywhere fails the whole document — one repository gone or out of
-        // reach — so a batch that could not be read leaves every entry to its own read. A paused
-        // budget is the exception: reading one at a time would only spend what is being saved.
-        Effect.catchCauseIf(
-          (cause) =>
-            !Cause.hasInterruptsOnly(cause) &&
-            !Cause.findErrorOption(cause).pipe(
-              Option.exists((error) => error._tag === "SourceControlRateLimitPausedError"),
-            ),
-          (cause) =>
-            Effect.logDebug("batched pull request summary read failed", { cause }).pipe(
-              Effect.as(new Map<number, GitHubPullRequestSummary>()),
-            ),
-        ),
-        Effect.flatMap((summaries) => {
-          const unanswered = entries.filter((entry) => {
-            const summary = summaries.get(batchable.indexOf(entry));
-            if (summary === undefined) return true;
-            entry.completeUnsafe(Exit.succeed(summary));
-            return false;
-          });
-          return Effect.forEach(
-            unanswered,
-            (entry) =>
-              viewPullRequestSummary(entry.request).pipe(
-                Effect.exit,
-                Effect.map((exit) => entry.completeUnsafe(exit)),
-              ),
-            { concurrency: STAT_REQUEST_CONCURRENCY, discard: true },
-          );
-        }),
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            for (const entry of entries) entry.completeUnsafe(Exit.failCause(cause));
-          }),
-        ),
-      );
-    },
+  const summaryResolver = GraphQLResolver.aliased(batches.PullRequestSummary, {
+    batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
   );
   const getPullRequestSummary: GitHubPullRequestApi["Service"]["getPullRequestSummary"] = (input) =>
-    Effect.request(new PullRequestSummaryRead(input), summaryResolver);
+    Effect.gen(function* () {
+      const lookup = pullRequestLookup(input);
+      if (lookup === null) {
+        return yield* new GitHubRepositorySelectorError({
+          cwd: input.cwd,
+          operation: "getPullRequestSummary",
+        });
+      }
+      const result = yield* GraphQLResolver.request(
+        { ...lookup, stacks: input.host.toLowerCase() === "github.com" },
+        summaryResolver,
+      );
+      const pullRequest = result.repository?.pullRequest;
+      if (pullRequest == null) {
+        return yield* new GitHubApi.GitHubApiNotFoundError({
+          host: input.host,
+          operation: "getPullRequestSummary",
+        });
+      }
+      return toPullRequestSummary(pullRequest);
+    }).pipe((effect) => batchedRead({ ...input, operation: "getPullRequestSummary" }, effect));
 
   // Every watched pull request on a host in one read per pass. A pull request the batch has no
-  // answer for gets null, and its watch reads it in full; a failed batch fails every entry.
-  const watchFingerprintResolver = RequestResolver.makeGrouped<
-    PullRequestWatchFingerprintRead,
-    string
-  >({
-    key: ({ request, context }) =>
-      JSON.stringify([
-        request.host.toLowerCase(),
-        Context.getOrElse(context, GitHubApi.PinnedGitHubCredential, () => null)
-          ?.credentialFingerprint ?? null,
-        Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
-      ]),
-    resolver: (entries) => {
-      const [first] = entries;
-      const batchable = entries.filter(
-        (entry) => buildPullRequestWatchFingerprintsGraphQlQuery([entry.request]) !== null,
-      );
-      const document = buildPullRequestWatchFingerprintsGraphQlQuery(
-        batchable.map((entry) => entry.request),
-      );
-      const read =
-        document === null
-          ? Effect.succeed(new Map<number, GitHubPullRequestWatchFingerprint>())
-          : graphqlRead({
-              cwd: first.request.cwd,
-              host: first.request.host,
-              operation: "getPullRequestWatchFingerprint",
-              ...document,
-              decode: decodePullRequestWatchFingerprintsJson,
-            });
-      return read.pipe(
-        Effect.map((fingerprints) => {
-          for (const entry of entries) {
-            const index = batchable.indexOf(entry);
-            entry.completeUnsafe(
-              Exit.succeed(index === -1 ? null : (fingerprints.get(index) ?? null)),
-            );
-          }
-        }),
-        Effect.catchCause((cause) =>
-          Effect.sync(() => {
-            for (const entry of entries) entry.completeUnsafe(Exit.failCause(cause));
-          }),
-        ),
-      );
-    },
+  // answer for gets null, and its watch reads it in full; a failed request fails every entry.
+  const watchFingerprintResolver = GraphQLResolver.aliased(batches.PullRequestWatchFingerprint, {
+    batchKey: GitHubGraphQlClient.batchKey,
   }).pipe(
     RequestResolver.setDelay(SUMMARY_BATCH_WINDOW),
     RequestResolver.batchN(STAT_ALIASES_PER_REQUEST),
   );
   const getPullRequestWatchFingerprint: GitHubPullRequestApi["Service"]["getPullRequestWatchFingerprint"] =
-    (input) => Effect.request(new PullRequestWatchFingerprintRead(input), watchFingerprintResolver);
+    (input) => {
+      const lookup = pullRequestLookup(input);
+      if (lookup === null) return Effect.succeed(null);
+      return GraphQLResolver.request(lookup, watchFingerprintResolver).pipe(
+        Effect.map((result) => {
+          const pullRequest = result.repository?.pullRequest;
+          return pullRequest == null ? null : toPullRequestWatchFingerprint(pullRequest);
+        }),
+        Effect.catchIf(isNotFoundOnly, () => Effect.succeed(null)),
+        (effect) => batchedRead({ ...input, operation: "getPullRequestWatchFingerprint" }, effect),
+      );
+    };
+
+  // Rows already on a page, enriched with what the listing query leaves out. They are many, so
+  // their lookups share aliased requests of twenty-five, four at a time.
+  const statsResolver = GraphQLResolver.aliased(batches.PullRequestStats, {
+    batchKey: GitHubGraphQlClient.batchKey,
+  }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
+  const stackMembershipResolver = GraphQLResolver.aliased(batches.PullRequestStackMembership, {
+    batchKey: GitHubGraphQlClient.batchKey,
+  }).pipe(RequestResolver.batchN(STAT_ALIASES_PER_REQUEST));
 
   return GitHubPullRequestApi.of({
     withVerifiedCredential,
@@ -2083,43 +2008,38 @@ export const make = Effect.gen(function* () {
         Effect.flatMap((batch) => {
           // Match the search query's host support, and enrich only rows that survived paging.
           if (input.host !== "github.com" || batch.items.length === 0) return Effect.succeed(batch);
-          const chunks: Array<ReadonlyArray<GitHubPullRequestListItem>> = [];
-          for (let start = 0; start < batch.items.length; start += STAT_ALIASES_PER_REQUEST) {
-            chunks.push(batch.items.slice(start, start + STAT_ALIASES_PER_REQUEST));
-          }
           return Effect.forEach(
-            chunks,
-            (chunk) => {
-              const document = buildPullRequestStackMembershipsGraphQlQuery(
-                input.repository,
-                chunk.map((item) => item.number),
-              );
-              if (document === null) return Effect.succeed(chunk);
-              return graphqlRead({
-                cwd: input.cwd,
-                host: input.host,
-                operation: "listPullRequestStackMemberships",
-                ...document,
-                decode: decodePullRequestStackMembershipsJson,
-              }).pipe(
-                Effect.map((memberships) =>
-                  chunk.map((item, index) => {
-                    const stack = memberships.get(index);
-                    return stack === undefined ? item : { ...item, stack };
-                  }),
-                ),
+            batch.items,
+            (item) => {
+              const lookup = pullRequestLookup({
+                repository: input.repository,
+                number: item.number,
+              });
+              if (lookup === null) return Effect.succeed(item);
+              return GraphQLResolver.request(lookup, stackMembershipResolver).pipe(
+                Effect.map((result) => {
+                  const pullRequest = result.repository?.pullRequest;
+                  const stack = pullRequest == null ? undefined : toStackMembership(pullRequest);
+                  return stack === undefined ? item : { ...item, stack };
+                }),
                 // Optional badges must not take down a listing that already read successfully.
-                Effect.catch(() =>
+                Effect.catch((error) =>
                   Effect.logWarning("Pull request stack membership enrichment failed", {
                     operation: "listPullRequestStackMemberships",
                     host: input.host,
-                    rows: chunk.length,
-                  }).pipe(Effect.as(chunk)),
+                    error: error._tag,
+                  }).pipe(Effect.as(item)),
                 ),
               );
             },
-            { concurrency: STAT_REQUEST_CONCURRENCY },
-          ).pipe(Effect.map((chunks) => ({ ...batch, items: chunks.flat() })));
+            { concurrency: "unbounded" },
+          ).pipe(
+            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
+              host: input.host,
+              operation: "listPullRequestStackMemberships",
+            }),
+            Effect.map((items) => ({ ...batch, items })),
+          );
         }),
       );
     },
@@ -2153,42 +2073,36 @@ export const make = Effect.gen(function* () {
       );
     },
 
-    listPullRequestStats: (input) => {
-      const chunks: Array<ReadonlyArray<{ readonly repository: string; readonly number: number }>> =
-        [];
-      for (let start = 0; start < input.changeRequests.length; start += STAT_ALIASES_PER_REQUEST) {
-        chunks.push(input.changeRequests.slice(start, start + STAT_ALIASES_PER_REQUEST));
-      }
-      return Effect.forEach(
-        chunks,
-        (chunk) => {
-          const document = buildPullRequestStatsGraphQlQuery(chunk);
-          if (document === null) {
-            return Effect.fail(
-              new GitHubRepositorySelectorError({
-                cwd: input.cwd,
-                operation: "listPullRequestStats",
-              }),
-            );
-          }
-          return graphqlRead({
+    listPullRequestStats: (input) =>
+      Effect.gen(function* () {
+        const lookups = input.changeRequests.map((changeRequest) => ({
+          changeRequest,
+          lookup: pullRequestLookup(changeRequest),
+        }));
+        if (lookups.some(({ lookup }) => lookup === null)) {
+          return yield* new GitHubRepositorySelectorError({
             cwd: input.cwd,
-            host: input.host,
             operation: "listPullRequestStats",
-            ...document,
-            decode: decodePullRequestStatsJson,
-          }).pipe(
-            Effect.map((stats) =>
-              chunk.flatMap((changeRequest, index) => {
-                const stat = stats.get(index);
-                return stat === undefined ? [] : [{ ...changeRequest, ...stat }];
+          });
+        }
+        // A repository or pull request GitHub answered nothing for is left out, which leaves the
+        // row with whatever it already had.
+        const stats = yield* Effect.forEach(
+          lookups,
+          ({ changeRequest, lookup }) =>
+            GraphQLResolver.request(lookup!, statsResolver).pipe(
+              Effect.map((result) => {
+                const pullRequest = result.repository?.pullRequest;
+                return pullRequest == null
+                  ? []
+                  : [{ ...changeRequest, ...pullRequest } satisfies GitHubPullRequestStat];
               }),
+              Effect.catchIf(isNotFoundOnly, () => Effect.succeed([])),
             ),
-          );
-        },
-        { concurrency: STAT_REQUEST_CONCURRENCY },
-      ).pipe(Effect.map((results) => results.flat()));
-    },
+          { concurrency: "unbounded" },
+        );
+        return stats.flat();
+      }).pipe((effect) => batchedRead({ ...input, operation: "listPullRequestStats" }, effect)),
 
     getPullRequestSummary,
     getPullRequestWatchFingerprint,

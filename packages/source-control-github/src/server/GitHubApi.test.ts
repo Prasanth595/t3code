@@ -259,6 +259,31 @@ describe("GitHubApi", () => {
     },
   );
 
+  it.effect("hands a partial read its field errors, and still fails it on a rate limit", () => {
+    const answers = [
+      json({
+        data: { _0_repository: null, _1_repository: { id: "R_1" } },
+        errors: [{ type: "NOT_FOUND", path: ["_0_repository"], message: "Could not resolve" }],
+      }),
+      json(
+        { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] },
+        { headers: { "x-ratelimit-remaining": "0" } },
+      ),
+    ];
+    const { layer } = harness(() => answers.shift()!);
+    return Effect.gen(function* () {
+      const api = yield* GitHubApi.GitHubApi;
+      const read = api.graphql({
+        host: "github.com",
+        operation: "batch",
+        query: "query { viewer { id } }",
+        partial: true,
+      });
+      expect(JSON.parse(yield* read)).toMatchObject({ errors: [{ type: "NOT_FOUND" }] });
+      expect((yield* Effect.flip(read))._tag).toBe("GitHubApiRateLimitError");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("pauses the host after a GraphQL RATE_LIMITED answer until the reset", () => {
     const reset = Math.floor(NOW / 1000) + 600;
     const { layer, requests } = harness(() =>

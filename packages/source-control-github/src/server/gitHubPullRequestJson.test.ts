@@ -1,15 +1,13 @@
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  buildPullRequestSummariesGraphQlQuery,
-  buildPullRequestWatchFingerprintsGraphQlQuery,
-  decodePullRequestSummariesJson,
-  decodePullRequestWatchFingerprintsJson,
   buildReviewSubmission,
-  buildPullRequestStackMembershipsGraphQlQuery,
-  decodePullRequestStackMembershipsJson,
   buildReviewerRequest,
+  pullRequestLookup,
+  toPullRequestSummary,
+  toPullRequestWatchFingerprint,
   buildSetFilesViewedGraphQlMutation,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
@@ -30,6 +28,7 @@ import {
   pullRequestCoreGraphQlQuery,
   pullRequestSearchGraphQlQuery,
 } from "./gitHubPullRequestJson.ts";
+import { PullRequestSummary, PullRequestWatchFingerprint } from "./pullRequestBatches.graphql.ts";
 
 /**
  * Rows as a repository's own GraphQL list answers them. Entries may use flat shapes for brevity:
@@ -1975,86 +1974,54 @@ describe("host-native stack decoding", () => {
   });
 });
 
-describe("pull request stack membership batches", () => {
-  it("maps aliases while skipping missing pull requests and incomplete memberships", () => {
-    const memberships = expectSuccess(
-      decodePullRequestStackMembershipsJson(
-        JSON.stringify({
-          data: {
-            s0: {
-              pullRequest: {
-                stack: { number: 3, size: 2, baseRefName: "main" },
-                stackEntry: { position: 1 },
-              },
-            },
-            s1: null,
-            s2: { pullRequest: null },
-            s3: { pullRequest: { stack: null, stackEntry: null } },
-            s4: { pullRequest: { stack: { number: 3, size: 2, baseRefName: "main" } } },
-          },
-        }),
-      ),
-    );
-    expect([...memberships]).toEqual([[0, { number: 3, size: 2, base: "main", position: 1 }]]);
-  });
+/** A pull request as the generated batch operations decode it from GitHub's answer. */
+const decodeSummaryResult = Schema.decodeUnknownSync(PullRequestSummary.result);
+const decodeSummary = (pullRequest: object) =>
+  decodeSummaryResult({ repository: { pullRequest } }).repository!.pullRequest!;
+const decodeWatchedResult = Schema.decodeUnknownSync(PullRequestWatchFingerprint.result);
+const decodeWatched = (pullRequest: object) =>
+  decodeWatchedResult({ repository: { pullRequest } }).repository!.pullRequest!;
 
-  it("refuses malformed responses and unsafe query selectors", () => {
-    expect(Result.isFailure(decodePullRequestStackMembershipsJson('{"errors":[]}'))).toBe(true);
-    expect(buildPullRequestStackMembershipsGraphQlQuery('acme/web") { x } #', [1])).toBeNull();
-    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [0])).toBeNull();
-    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [1.5])).toBeNull();
-    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [])).toBeNull();
-    expect(buildPullRequestStackMembershipsGraphQlQuery("acme/web", [7, 8])?.variables).toEqual({
-      s0_owner: "acme",
-      s0_name: "web",
-      s0_number: 7,
-      s1_owner: "acme",
-      s1_name: "web",
-      s1_number: 8,
+describe("pull request lookups", () => {
+  it("refuses what GitHub cannot name, so one bad row cannot fail a whole batch", () => {
+    expect(pullRequestLookup({ repository: "acme/web", number: 7 })).toEqual({
+      owner: "acme",
+      name: "web",
+      number: 7,
     });
+    expect(pullRequestLookup({ repository: 'acme/web") { x } #', number: 1 })).toBeNull();
+    expect(pullRequestLookup({ repository: "acme/web", number: 0 })).toBeNull();
+    expect(pullRequestLookup({ repository: "acme/web", number: 1.5 })).toBeNull();
+    expect(pullRequestLookup({ repository: "acme/web", number: 2 ** 31 })).toBeNull();
   });
 });
 
 describe("batched pull request summaries", () => {
-  it("refuses a repository GraphQL cannot address, rather than writing it into the document", () => {
-    expect(
-      buildPullRequestSummariesGraphQlQuery([{ repository: 'acme/web") { x } #', number: 1 }]),
-    ).toBeNull();
-    expect(
-      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 0 }]),
-    ).toBeNull();
-    expect(buildPullRequestSummariesGraphQlQuery([])).toBeNull();
+  const summary = (fields: Record<string, unknown>) => ({
+    number: 7,
+    title: "Merged",
+    url: "https://github.com/acme/web/pull/7",
+    state: "MERGED",
+    isDraft: false,
+    mergeable: "UNKNOWN",
+    reviewDecision: null,
+    additions: 0,
+    deletions: 0,
+    changedFiles: 0,
+    updatedAt: "2026-08-24T00:00:00Z",
+    mergedAt: "2026-08-24T00:00:00Z",
+    closedAt: "2026-08-24T00:00:00Z",
+    headRefName: "feat/seven",
+    baseRefName: "main",
+    author: { __typename: "Bot", login: "renovate", avatarUrl: "https://a/r.png" },
+    latestReviews: { nodes: [] },
+    commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
+    ...fields,
   });
 
-  it("files each answer by its alias and skips what GitHub or the decoder could not give", () => {
-    const decoded = decodePullRequestSummariesJson(
-      JSON.stringify({
-        data: {
-          s0: {
-            pullRequest: {
-              number: 7,
-              title: "Merged",
-              url: "https://github.com/acme/web/pull/7",
-              author: { __typename: "Bot", login: "renovate", avatarUrl: "https://a/r.png" },
-              headRefName: "feat/seven",
-              baseRefName: "main",
-              state: "MERGED",
-              mergedAt: "2026-08-24T00:00:00Z",
-              closedAt: "2026-08-24T00:00:00Z",
-              updatedAt: "2026-08-24T00:00:00Z",
-              commits: { nodes: [{ commit: { statusCheckRollup: { state: "FAILURE" } } }] },
-            },
-          },
-          s1: { pullRequest: null },
-          s2: { pullRequest: { number: 9 } },
-          rateLimit: { cost: 1 },
-        },
-      }),
-    );
-    expect(Result.isSuccess(decoded)).toBe(true);
-    if (!Result.isSuccess(decoded)) return;
-    expect([...decoded.success.keys()]).toEqual([0]);
-    expect(decoded.success.get(0)).toMatchObject({
+  it("maps GitHub's fields to the summary a linked thread keeps", () => {
+    const mapped = toPullRequestSummary(decodeSummary(summary({})));
+    expect(mapped).toMatchObject({
       number: 7,
       state: "merged",
       mergedAt: "2026-08-24T00:00:00Z",
@@ -2063,70 +2030,28 @@ describe("batched pull request summaries", () => {
       mergeability: "unknown",
       additions: 0,
     });
-    // The document did not ask about stacks, so the summary does not claim an answer.
-    expect(decoded.success.get(0)).not.toHaveProperty("stack");
+    // The read did not ask about stacks, so the summary does not claim an answer.
+    expect(mapped).not.toHaveProperty("stack");
   });
 
-  it("reads stack membership only where the document asked for it", () => {
+  it("reads stack membership only where the read asked for it", () => {
     expect(
-      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }], true)?.query,
-    ).toContain("stack { number size baseRefName } stackEntry { position }");
+      toPullRequestSummary(decodeSummary(summary({ stack: null, stackEntry: null }))).stack,
+    ).toBeNull();
     expect(
-      buildPullRequestSummariesGraphQlQuery([{ repository: "acme/web", number: 7 }])?.query,
-    ).not.toContain("stack {");
-    const pullRequest = (number: number, stack: Record<string, unknown>) => ({
-      pullRequest: {
-        number,
-        title: "Stacked",
-        url: `https://github.com/acme/web/pull/${number}`,
-        headRefName: `feat/${number}`,
-        baseRefName: "main",
-        state: "OPEN",
-        updatedAt: "2026-08-24T00:00:00Z",
-        ...stack,
-      },
-    });
-    const decoded = expectSuccess(
-      decodePullRequestSummariesJson(
-        JSON.stringify({
-          data: {
-            s0: pullRequest(7, { stack: null, stackEntry: null }),
-            s1: pullRequest(8, {
-              stack: { number: 3, size: 2, baseRefName: "main" },
-              stackEntry: { position: 2 },
-            }),
-          },
-        }),
-      ),
-    );
-    expect(decoded.get(0)?.stack).toBeNull();
-    expect(decoded.get(1)?.stack).toEqual({ number: 3, size: 2, base: "main", position: 2 });
+      toPullRequestSummary(
+        decodeSummary(
+          summary({
+            stack: { number: 3, size: 2, baseRefName: "main" },
+            stackEntry: { position: 2 },
+          }),
+        ),
+      ).stack,
+    ).toEqual({ number: 3, size: 2, base: "main", position: 2 });
   });
 });
 
 describe("pull request watch fingerprints", () => {
-  it("asks for every pull request in one aliased read, and refuses an unsafe selector", () => {
-    const document = buildPullRequestWatchFingerprintsGraphQlQuery([
-      { repository: "pingdotgg/t3code", number: 7 },
-      { repository: "pingdotgg/lakebed", number: 8 },
-    ]);
-    expect(document?.query).toContain(
-      "w0: repository(owner: $w0_owner, name: $w0_name) { pullRequest(number: $w0_number)",
-    );
-    expect(document?.query).toContain("w1: repository(owner: $w1_owner, name: $w1_name)");
-    expect(document?.variables).toEqual({
-      w0_owner: "pingdotgg",
-      w0_name: "t3code",
-      w0_number: 7,
-      w1_owner: "pingdotgg",
-      w1_name: "lakebed",
-      w1_number: 8,
-    });
-    expect(
-      buildPullRequestWatchFingerprintsGraphQlQuery([{ repository: 'evil") { x', number: 1 }]),
-    ).toBeNull();
-  });
-
   it("moves status with checks and remarks with comments, each without the other", () => {
     const pullRequest = (input: {
       readonly running: number;
@@ -2159,20 +2084,9 @@ describe("pull request watch fingerprints", () => {
         ],
       },
     });
-    const decode = (...pullRequests: ReadonlyArray<object | null>) => {
-      const decoded = decodePullRequestWatchFingerprintsJson(
-        JSON.stringify({
-          data: Object.fromEntries(
-            pullRequests.map((value, index) => [`w${index}`, { pullRequest: value }]),
-          ),
-        }),
-      );
-      if (!Result.isSuccess(decoded)) throw new Error("fingerprints did not decode");
-      return decoded.success;
-    };
-    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
     const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
-      decode(pullRequest(input)).get(0)!;
+      toPullRequestWatchFingerprint(decodeWatched(pullRequest(input)));
+    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
@@ -2183,7 +2097,5 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
-    // A pull request GitHub had no answer for is left for a full read.
-    expect(decode(null, pullRequest(base)).has(0)).toBe(false);
   });
 });
