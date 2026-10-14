@@ -603,6 +603,43 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
   });
 
+  it.effect(
+    "interrupting the caller that starts a refresh leaves it running for queued callers",
+    () => {
+      const firstFetchStarted = Deferred.makeUnsafe<void>();
+      const releaseFirstFetch = Deferred.makeUnsafe<void>();
+      const state: VcsStatusTestState = {
+        currentLocalStatus: baseLocalStatus,
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+      };
+      state.beforeRemoteStatus = Effect.suspend(() =>
+        state.remoteStatusCalls === 0
+          ? Deferred.succeed(firstFetchStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFirstFetch)),
+            )
+          : Effect.void,
+      );
+
+      return Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        const starter = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+        yield* Deferred.await(firstFetchStarted);
+        const waiting = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+        yield* TestClock.adjust(Duration.zero);
+
+        yield* Fiber.interrupt(starter);
+        yield* Deferred.succeed(releaseFirstFetch, undefined);
+
+        assert.deepStrictEqual(yield* Fiber.join(waiting), baseStatus);
+        assert.equal(state.remoteStatusCalls, 2);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    },
+  );
+
   it.effect("a failed shared refresh fails every request in it and the next one runs", () => {
     const firstFetchStarted = Deferred.makeUnsafe<void>();
     const releaseFirstFetch = Deferred.makeUnsafe<void>();

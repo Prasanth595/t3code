@@ -531,25 +531,35 @@ export const make = Effect.gen(function* () {
       result: yield* Deferred.make<VcsStatusResult, GitManagerServiceError>(),
       policyCwds: new Set([rawCwd]),
     };
-    const [joined, start] = yield* Ref.modify(
-      refreshesRef,
-      (refreshes): readonly [readonly [QueuedRefresh, boolean], ActiveRefreshes] => {
-        const active = refreshes.get(cwd);
-        if (active === undefined) {
-          return [[request, true], new Map(refreshes).set(cwd, { queued: null })];
+    const joined = yield* Effect.uninterruptibleMask(() =>
+      Effect.gen(function* () {
+        const [joined, start] = yield* Ref.modify(
+          refreshesRef,
+          (refreshes): readonly [readonly [QueuedRefresh, boolean], ActiveRefreshes] => {
+            const active = refreshes.get(cwd);
+            if (active === undefined) {
+              return [[request, true], new Map(refreshes).set(cwd, { queued: null })];
+            }
+            if (active.queued !== null) {
+              const queued = {
+                ...active.queued,
+                policyCwds: new Set(active.queued.policyCwds).add(rawCwd),
+              };
+              return [[queued, false], new Map(refreshes).set(cwd, { queued })];
+            }
+            return [[request, false], new Map(refreshes).set(cwd, { queued: request })];
+          },
+        );
+        // Do not leave an active entry behind without its broadcaster-owned worker.
+        if (start) {
+          yield* runQueuedRefreshes(cwd, request).pipe(
+            Effect.forkIn(broadcasterScope, { uninterruptible: false }),
+          );
         }
-        if (active.queued !== null) {
-          const queued = {
-            ...active.queued,
-            policyCwds: new Set(active.queued.policyCwds).add(rawCwd),
-          };
-          return [[queued, false], new Map(refreshes).set(cwd, { queued })];
-        }
-        return [[request, false], new Map(refreshes).set(cwd, { queued: request })];
-      },
+        return joined;
+      }),
     );
     // The refresh outlives a caller that stops waiting, so the others still get its result.
-    if (start) yield* runQueuedRefreshes(cwd, request).pipe(Effect.forkIn(broadcasterScope));
     return yield* Deferred.await(joined.result);
   });
 
