@@ -7,15 +7,18 @@ export type PlainTextLinkSegment =
   | { readonly kind: "text"; readonly text: string }
   | { readonly kind: "url"; readonly url: string };
 
-const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/giu;
-// Sentence punctuation and markdown emphasis that commonly trail a URL.
+// Quotes, straight or curly, cannot appear unescaped in a URL, so they end one.
+const URL_PATTERN = /https?:\/\/[^\s<>"'`“”‘’]+/giu;
+// GitHub's autolink rule: sentence punctuation and markdown emphasis that
+// trail a URL are not part of it.
 const TRAILING_PUNCTUATION = /[.,;:!?*_~]$/u;
 const CLOSING_BRACKETS: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
 
 const count = (text: string, character: string) => text.split(character).length - 1;
 
 function trimUrl(candidate: string): string {
-  let url = candidate;
+  // `[https://a](https://a)` is a markdown link whose label is the URL.
+  let url = candidate.split("](")[0] ?? candidate;
   for (;;) {
     const last = url.at(-1);
     if (last === undefined) return url;
