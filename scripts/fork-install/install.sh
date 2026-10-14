@@ -20,7 +20,8 @@ readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 readonly SERVER_DIR="$DATA_DIR/t3code-fork-server"
 readonly LINUX_APP="$HOME/Applications/T3-Code.AppImage"
 # Minimal server images can lack these packages.
-readonly APT_HINT="sudo apt-get update && sudo apt-get install -y curl tar ca-certificates"
+# libatomic1: the server binary needs it, and minimal arm64 images lack it.
+readonly APT_HINT="sudo apt-get update && sudo apt-get install -y curl tar ca-certificates libatomic1"
 
 dir="$DATA_DIR/t3code-fork"
 # The program and first arguments that run the server CLI. Each install path sets it.
@@ -198,7 +199,12 @@ install_linux_server() {
       die "the download of $archive is damaged. Run the installer again."
     tar -xzf "$staging/$archive" -C "$staging" --strip-components=1
     rm -f "$staging/$archive" "$staging/$archive.sha256"
-    "$staging/t3" --version >/dev/null || die "the downloaded t3 does not run on this machine."
+    if ! "$staging/t3" --version >/dev/null; then
+      local missing
+      missing="$(ldd "$staging/t3" 2>/dev/null | awk '/not found/ {print $1}' | paste -sd ' ' -)"
+      [[ -z "$missing" ]] || die "t3 needs these system libraries: $missing. For example: $APT_HINT"
+      die "the downloaded t3 does not run on this machine."
+    fi
     # The marker shows a complete extraction, like the pinned runtime of `t3 service install`.
     printf '%s\n' "$version" >"$staging/.install-complete"
     rm -rf "${SERVER_DIR:?}/$version"
