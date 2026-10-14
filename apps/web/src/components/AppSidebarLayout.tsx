@@ -319,7 +319,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       <SidebarProvider
         // On phones the shell follows the visible area so the keyboard never pushes the header
         // away or hides the composer. See useVisualViewportSync and its rules in index.css.
-        className="h-[var(--app-viewport-height,100dvh)]! min-h-0!"
+        className="h-[var(--app-shell-height,100dvh)]! min-h-0!"
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         defaultOpen
         style={sidebarProviderStyle}

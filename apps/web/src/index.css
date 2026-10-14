@@ -2376,26 +2376,24 @@ code {
   }
 }
 
-/* Route pages size their inset with h-dvh/h-svh, which iOS Safari does not shrink for the
-   keyboard. On phones they follow the visible area instead (useVisualViewportSync). Unlayered so
-   it outranks those utilities without !important. */
+/* While useVisualViewportSync is active, the shell is pinned to the visible area below the top
+   safe area, so the keyboard never pans the header away or covers the composer. Route pages size
+   their inset with h-dvh/h-svh, which iOS Safari does not shrink for the keyboard. Unlayered so
+   these rules outrank those utilities without !important. */
+html[data-viewport-sync] {
+  --app-shell-height: calc(var(--app-viewport-height) - env(safe-area-inset-top));
+}
+
 html[data-viewport-sync] [data-slot="sidebar-wrapper"] {
   position: fixed;
   inset-inline: 0;
-  top: var(--app-viewport-offset-top);
+  top: calc(var(--app-viewport-offset-top) + env(safe-area-inset-top));
+  /* Makes the shell the containing block of the header's fixed sidebar and panel toggles. */
   contain: layout;
 }
 
 html[data-viewport-sync] [data-slot="sidebar-inset"] {
-  height: var(--app-viewport-height);
-}
-
-/* body and #root normally clip the app. Standalone phone routes such as pairing
-   need a scrollport when their form is taller than the screen. */
-@media (width < 40rem), (pointer: coarse) and (width < 64rem) and (height < 40rem) {
-  html:not([data-viewport-sync]) #root {
-    overflow-y: auto;
-  }
+  height: var(--app-shell-height);
 }
 
 /* The thread drawer is portaled outside the shell's containing block. */
@@ -2407,28 +2405,12 @@ html[data-viewport-sync]
   contain: layout;
 }
 
-/* Apply even when Chromium resizes the layout, or a route mounts with its keyboard
-   already open. A tiny landscape viewport must also override the editor's minimum. */
+/* Long prompts scroll inside the editor instead of pushing the header off a short screen. */
 html[data-viewport-sync] .composer-tiptap {
-  /* Reserve the header, composer controls and bottom gap in short landscape viewports. */
-  --phone-editor-max-height: min(
-    13rem,
-    calc(var(--app-viewport-height) * 0.4),
-    max(1rem, calc(var(--app-viewport-height) - 8rem))
-  );
-  max-height: var(--phone-editor-max-height);
-  min-height: min(4.875rem, var(--phone-editor-max-height));
+  max-height: min(13rem, calc(var(--app-shell-height) * 0.4));
 }
 
-/* Focus also covers Chromium's resized layout, where viewport geometry cannot
-   distinguish an open keyboard from a small window, including after rotation. */
-html[data-viewport-sync][data-keyboard-open] [data-composer-bottom-spacer],
-html[data-viewport-sync]:has(.composer-tiptap:focus) [data-composer-bottom-spacer] {
+/* The keyboard covers the home indicator, so the safe-area gap below the composer is not needed. */
+html[data-viewport-sync][data-keyboard-open] [data-composer-bottom-spacer] {
   height: 0.5rem;
-}
-
-@media (pointer: coarse) {
-  html[data-viewport-sync] .composer-tiptap {
-    font-size: var(--font-size-prompt-touch);
-  }
 }

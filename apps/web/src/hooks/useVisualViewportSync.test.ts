@@ -130,6 +130,15 @@ describe("useVisualViewportSync lifecycle", () => {
     expect(root.dataset.keyboardOpen).toBeUndefined();
   });
 
+  it("follows a Safari pan that only fires a visual viewport scroll", async () => {
+    await render();
+    resize(508);
+    viewport.offsetTop = 336;
+    viewport.dispatchEvent(new Event("scroll"));
+    expect(root.style.getPropertyValue("--app-viewport-offset-top")).toBe("336px");
+    expect(root.style.getPropertyValue("--keyboard-inset")).toBe("0px");
+  });
+
   it("updates keyboard state even when the published geometry does not change", async () => {
     browser.innerHeight = 600;
     Object.assign(viewport, { height: 500, offsetTop: 200 });
