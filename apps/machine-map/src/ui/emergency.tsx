@@ -106,6 +106,10 @@ const plural = (count: number, word: string): string =>
  */
 function pauseEffects(reach: PauseReach | null) {
   const offline = reach && reach.offline > 0 ? ` (${reach.offline} offline)` : "";
+  const notJoined =
+    reach && reach.notJoined > 0
+      ? ` Skips ${plural(reach.notJoined, "machine")} that never connected.`
+      : "";
   const cut = [
     reach && reach.arrows > 0 ? plural(reach.arrows, "arrow") : null,
     reach && reach.mapRoles > 0 ? plural(reach.mapRoles, "map role") : null,
@@ -115,8 +119,8 @@ function pauseEffects(reach: PauseReach | null) {
       label: "stop",
       tone: "paused-sticker",
       text: reach
-        ? `Agents on ${plural(reach.machines, "machine")}${offline}. Offline ones stop when they connect, for up to 7 days.`
-        : "Agents on every machine. Offline ones stop when they connect, for up to 7 days.",
+        ? `Agents on ${plural(reach.machines, "machine")}${offline}. Offline ones stop when they connect, for up to 7 days.${notJoined}`
+        : "Agents on every machine that joined. Offline ones stop when they connect, for up to 7 days.",
     },
     {
       label: "cut",
