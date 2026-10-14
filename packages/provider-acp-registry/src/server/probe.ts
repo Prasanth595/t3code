@@ -72,24 +72,43 @@ interface AdvertisedModel {
   readonly description: string | null;
 }
 
+function normalizedModel(id: string, candidate: AdvertisedModel): AcpRegistryProbeModel {
+  return {
+    id,
+    name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
+    description:
+      candidate.description === null
+        ? null
+        : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
+  };
+}
+
+/**
+ * Bounds an advertised catalog to MAX_MODELS. A valid current model listed past
+ * the cap takes the last slot, so the catalog still shows what the session runs on.
+ */
 function normalizeModels(
   candidates: ReadonlyArray<AdvertisedModel>,
+  currentModelId: string | null,
 ): ReadonlyArray<AcpRegistryProbeModel> {
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
+  let scanned = 0;
   for (const candidate of candidates) {
+    if (models.length === MAX_MODELS) break;
+    scanned += 1;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
-    models.push({
-      id,
-      name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
-      description:
-        candidate.description === null
-          ? null
-          : boundedText(candidate.description, MAX_DESCRIPTION_LENGTH) || null,
-    });
-    if (models.length === MAX_MODELS) break;
+    models.push(normalizedModel(id, candidate));
+  }
+  if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
+    const current = candidates.find(
+      (candidate, index) => index >= scanned && candidate.id === currentModelId,
+    );
+    if (current !== undefined) {
+      models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
+    }
   }
   return models;
 }
@@ -207,7 +226,7 @@ export function normalizeAcpRegistryLiveConfiguration(
     advertised.currentModelId === null
       ? null
       : (boundedOpaqueValue(advertised.currentModelId, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(advertised.candidates);
+  const models = normalizeModels(advertised.candidates, boundedCurrentModelId);
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)

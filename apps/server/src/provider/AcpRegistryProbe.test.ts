@@ -348,7 +348,7 @@ describe("ACP Registry probe", () => {
     ]);
   });
 
-  it("omits a current model that falls outside the bounded model catalog", () => {
+  it("keeps a current model configuration option inside the bounded model catalog", () => {
     const result = acpRegistryProbeResult(instanceId, {
       sessionId: "probe-session",
       initializeResult: { protocolVersion: 1 },
@@ -372,8 +372,42 @@ describe("ACP Registry probe", () => {
     } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
     expect(result.models).toHaveLength(256);
-    expect(result.currentModelId).toBeNull();
+    expect(result.models.at(-1)).toEqual({ id: "model-256", name: "Model 256", description: null });
+    expect(result.currentModelId).toBe("model-256");
   });
+
+  it.each([
+    { current: "model-300", currentModelId: "model-300", last: "model-300" },
+    { current: "model-3", currentModelId: "model-3", last: "model-255" },
+    { current: "model-999", currentModelId: null, last: "model-255" },
+    { current: " model-300", currentModelId: null, last: "model-255" },
+  ])(
+    "bounds session model state to 256 models around current model $current",
+    ({ current, currentModelId, last }) => {
+      const result = acpRegistryProbeResult(instanceId, {
+        sessionId: "probe-session",
+        initializeResult: { protocolVersion: 1 },
+        sessionSetupResult: {
+          sessionId: "probe-session",
+          models: {
+            currentModelId: current,
+            availableModels: Array.from({ length: 400 }, (_, index) => ({
+              modelId: `model-${index}`,
+              name: `Model ${index}`,
+            })),
+          },
+        },
+        modelConfigId: undefined,
+      } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
+
+      expect(result.models).toHaveLength(256);
+      expect(result.models.slice(0, 255).map((model) => model.id)).toEqual(
+        Array.from({ length: 255 }, (_, index) => `model-${index}`),
+      );
+      expect(result.models.at(-1)?.id).toBe(last);
+      expect(result.currentModelId).toBe(currentModelId);
+    },
+  );
 
   it("bounds and de-duplicates advertised commands", () => {
     const commands = normalizeAcpRegistryCommands([

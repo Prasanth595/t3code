@@ -648,15 +648,18 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  const hasModelConfig =
-    setup.configOptions?.some((option) => option.category === "model") === true;
+  // Mirrors configureSession: a model config option, or ACP v1 session model
+  // state switched with session/set_model.
+  const canSwitchModel =
+    setup.configOptions?.some((option) => option.category === "model") === true ||
+    setup.models != null;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
     ...base,
     sessions: {
       ...base.sessions,
-      supportsModelSwitchInSession: hasModelConfig,
+      supportsModelSwitchInSession: canSwitchModel,
     },
     threads: {
       ...base.threads,
@@ -6301,19 +6304,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startResult,
               modelSelection,
             });
-          } else if (
-            requestedModel.length > 0 &&
-            requestedModel !== "auto" &&
-            requestedModel !== "default"
-          ) {
+          } else if (requestedModel.length > 0) {
+            // "auto" and "default" stand for the agent's own choice unless the
+            // agent advertises a model under that exact id.
+            const isPlaceholder = requestedModel === "auto" || requestedModel === "default";
             const hasModelConfig =
               startResult.sessionSetupResult.configOptions?.some(
                 (option) => option.category === "model",
               ) === true;
             const modelState = startResult.sessionSetupResult.models;
             if (hasModelConfig) {
-              yield* runtime.setModel(requestedModel);
-            } else if (modelState != null) {
+              if (!isPlaceholder) {
+                yield* runtime.setModel(requestedModel);
+              }
+            } else if (
+              modelState != null &&
+              (!isPlaceholder ||
+                modelState.availableModels.some((model) => model.modelId === requestedModel))
+            ) {
               // ACP v1 agents without a model config option (Hermes) advertise
               // their models as session model state and switch with
               // session/set_model.
