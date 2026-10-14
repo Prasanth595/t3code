@@ -286,7 +286,7 @@ import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
 } from "./pullRequest/pullRequestDetail.logic";
-import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
+import { PullRequestDetailGhost, PullRequestListGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
@@ -11240,7 +11240,7 @@ export default function ChatView(props: ChatViewProps) {
         />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "pull-requests" && activeThreadRef ? (
-      <Suspense fallback={null}>
+      <Suspense fallback={<PullRequestListGhost />}>
         <ThreadPullRequestsPanel threadRef={activeThreadRef} />
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "device" ? (
