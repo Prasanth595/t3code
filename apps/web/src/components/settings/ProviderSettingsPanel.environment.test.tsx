@@ -538,6 +538,30 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(afterReset.instance).not.toHaveProperty("badgeLabel");
   });
 
+  it("keeps a failed clear that a later successful save carried", async () => {
+    atoms.providers = [provider()];
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("accentColor", "#ff0000"));
+    await flushPromises();
+    let failClear!: () => void;
+    settingsState.mutateProviderInstance.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          failClear = () =>
+            resolve(AsyncResult.failure(Cause.fail(new Error("settings write failed"))));
+        }),
+    );
+    onUpdate(clearField("accentColor"));
+    onUpdate(setField("icon", "openai"));
+    failClear();
+    await flushPromises();
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(3)).toMatchObject({ icon: "openai", displayName: "Work" });
+    expect(savedInstance(3)).not.toHaveProperty("accentColor");
+  });
+
   it("starts the next edit from the server's state after a save fails", async () => {
     atoms.providers = [provider()];
     settingsState.mutateProviderInstance.mockResolvedValueOnce(

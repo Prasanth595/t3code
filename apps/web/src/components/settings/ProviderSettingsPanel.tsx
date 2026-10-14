@@ -617,12 +617,18 @@ export function EnvironmentProviderSettings({
   // The edits made here to each instance, in order. Every save replays them onto
   // the server's latest instance, so quick edits compose whatever the server
   // has sent back so far, and a change from elsewhere to a field not edited
-  // here survives. Deleting or resetting the instance discards them; leaving
-  // the page does too.
+  // here survives. Saves run in order and each carries every edit before it,
+  // so a successful one confirms them all; edits after the last confirmed one
+  // are dropped once every save has failed past it. Deleting or resetting the
+  // instance discards them; leaving the page does too.
   const instanceEditsRef = useRef(
     new Map<
       ProviderInstanceId,
-      ReadonlyArray<(current: ProviderInstanceConfig) => ProviderInstanceConfig>
+      {
+        updates: Array<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
+        confirmed: number;
+        saving: number;
+      }
     >(),
   );
 
@@ -848,10 +854,15 @@ export function EnvironmentProviderSettings({
       >[0]["textGenerationModelSelection"];
     },
   ) => {
-    const edits = instanceEditsRef.current;
-    const updates = [...(edits.get(row.instanceId) ?? []), update];
-    const instance = updates.reduce((current, apply) => apply(current), row.instance);
-    edits.set(row.instanceId, updates);
+    let edits = instanceEditsRef.current.get(row.instanceId);
+    if (edits === undefined) {
+      edits = { updates: [], confirmed: 0, saving: 0 };
+      instanceEditsRef.current.set(row.instanceId, edits);
+    }
+    edits.updates.push(update);
+    edits.saving += 1;
+    const carried = edits.updates.length;
+    const instance = edits.updates.reduce((current, apply) => apply(current), row.instance);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
@@ -862,13 +873,12 @@ export function EnvironmentProviderSettings({
       { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
-    const latest = edits.get(row.instanceId);
-    if (result._tag === "Failure" && latest !== undefined) {
-      // A failed edit is not replayed again; the card shows what the server kept.
-      edits.set(
-        row.instanceId,
-        latest.filter((apply) => apply !== update),
-      );
+    // Reset or deleted meanwhile: these edits were discarded.
+    if (instanceEditsRef.current.get(row.instanceId) === edits) {
+      edits.saving -= 1;
+      if (result._tag === "Success") edits.confirmed = Math.max(edits.confirmed, carried);
+      // Nothing left in flight could still carry them: the server kept its own state.
+      else if (edits.saving === 0) edits.updates.length = edits.confirmed;
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
