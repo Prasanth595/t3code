@@ -193,6 +193,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
 
       return yield* TextGenerationOperations.decodeJsonReply(input, "Cursor SDK", rawResult);
     }).pipe(
+      // Scope this call inside `withAccess`, so sign-out closes the agent before its store.
+      Effect.scoped,
       (effect) => (withAccess ? withAccess(effect) : effect),
       Effect.scoped,
       Effect.mapError((cause) =>
