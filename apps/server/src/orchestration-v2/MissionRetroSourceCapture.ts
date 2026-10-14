@@ -246,12 +246,26 @@ const make = (configuration: MissionRetroSourceCaptureConfig) =>
       });
       // Separate private mapping avoids a cryptographic fixed point. This is a
       // prepared candidate ID; only a committed canonical checkpoint proves capture.
+      // Version 2 binds the immutable actual origin plus the exact trusted
+      // scope and the original authorized delivery controller/epoch, all from
+      // the actual capture-authorized server scope, never reporter input.
+      // Version 1 lacked origin proof and is held/denied downstream, never upgraded.
       const bindingBytes = stableStringify({
-        version: 1,
+        version: 2,
         captureBoundaryId,
         checkpointId,
         snapshotFingerprint: bundle.snapshotFingerprint,
         manifestRef: bundle.artifactRef,
+        actualOrigin: "product" as const,
+        teamId: mission.teamId,
+        environmentId: mission.authorityEnvironmentId,
+        missionId: mission.id,
+        sourceThreadId: command.sourceThreadId,
+        sourceRoot,
+        fromInclusive: command.fromInclusive,
+        toExclusive: command.toExclusive,
+        deliveryThreadId: callerThreadId,
+        deliveryEpoch: command.deliveryEpoch,
       });
       const bindingHash = digest(bindingBytes);
       yield* persist("retro-source", bindingBytes, bindingHash).pipe(

@@ -100,6 +100,27 @@ const decodeBinding = Schema.decodeEffect(
     }),
   ),
 );
+const decodeBindingV2 = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      version: Schema.Literal(2),
+      captureBoundaryId: Schema.String,
+      checkpointId: Schema.String,
+      snapshotFingerprint: Schema.String,
+      manifestRef: Schema.String,
+      actualOrigin: Schema.Literal("product"),
+      teamId: Schema.String,
+      environmentId: Schema.String,
+      missionId: Schema.String,
+      sourceThreadId: Schema.String,
+      sourceRoot: Schema.String,
+      fromInclusive: Schema.Number,
+      toExclusive: Schema.Number,
+      deliveryThreadId: Schema.String,
+      deliveryEpoch: Schema.Number,
+    }),
+  ),
+);
 const fixture = () =>
   decodeMission({
     schemaVersion: 1,
@@ -726,6 +747,94 @@ it.effect(
         const result = Result.getOrThrow(yield* store.capture(command({ toExclusive: 20 })));
         assert.isTrue(result.committed);
         assert.strictEqual(result.checkpoint.coverage, "unknown");
+      }),
+    ),
+);
+
+it.effect(
+  "version2 binding carries the immutable actual origin plus the exact trusted scope",
+  () =>
+    scoped(
+      Effect.gen(function* () {
+        const h = yield* setup;
+        const port = yield* h.port();
+        const snapshot = yield* port.readSnapshot(command());
+        const bindingRef = snapshot.omissions
+          .find((note) => note.startsWith("source-binding:"))!
+          .slice("source-binding:".length);
+        const manifestRef = snapshot.omissions
+          .find((note) => note.startsWith("source-manifest:"))!
+          .slice("source-manifest:".length);
+        const stored = yield* Artifacts.readArtifactBytes({
+          artifactDirectory: h.dir,
+          namespace: "retro-source",
+          ref: bindingRef,
+          maxBytes: 2097152,
+        });
+        assert.strictEqual(stored.sha, bindingRef.slice("retro-source:".length));
+        const binding = yield* decodeBindingV2(stored.text);
+        assert.strictEqual(binding.version, 2);
+        assert.strictEqual(binding.actualOrigin, "product");
+        assert.strictEqual(binding.teamId, team);
+        assert.strictEqual(binding.environmentId, env);
+        assert.strictEqual(binding.missionId, mid);
+        assert.strictEqual(binding.sourceThreadId, root);
+        assert.strictEqual(binding.sourceRoot, `thread://${root}`);
+        assert.strictEqual(binding.fromInclusive, 0);
+        assert.strictEqual(binding.toExclusive, 1);
+        assert.strictEqual(binding.deliveryThreadId, root);
+        assert.strictEqual(binding.deliveryEpoch, 3);
+        assert.strictEqual(binding.manifestRef, manifestRef);
+        assert.strictEqual(binding.snapshotFingerprint, snapshot.snapshotFingerprint);
+        assert.isTrue(binding.captureBoundaryId.startsWith("retro-preparation:"));
+        // No reporter label or path ever enters the binding: origin proof is
+        // the server-authorized delivery scope, not a caller assertion.
+        assert.notInclude(stored.text, "reporter");
+        const store = yield* h.store(port);
+        const saved = Result.getOrThrow(yield* store.capture(command()));
+        assert.strictEqual(binding.checkpointId, saved.checkpoint.checkpointId);
+      }),
+    ),
+);
+
+it.effect(
+  "binding fields and hashes stay staged prepared with no committed checkpoint claim",
+  () =>
+    scoped(
+      Effect.gen(function* () {
+        const h = yield* setup;
+        const port = yield* h.port();
+        const snapshot = yield* port.readSnapshot(command());
+        // Preparation stages immutable bytes only: the canonical mission is
+        // untouched and no checkpoint is claimed as committed.
+        assert.strictEqual((yield* h.canonical).revision, 0);
+        assert.deepStrictEqual(
+          (yield* h.canonical).execution?.retroCheckpoints ?? [],
+          [],
+        );
+        const files = yield* runNode(() => NodeFSP.readdir(NodePath.join(h.dir, "retro-source")));
+        assert.strictEqual(files.length, 2);
+        const bindingRef = snapshot.omissions
+          .find((note) => note.startsWith("source-binding:"))!
+          .slice("source-binding:".length);
+        const stored = yield* Artifacts.readArtifactBytes({
+          artifactDirectory: h.dir,
+          namespace: "retro-source",
+          ref: bindingRef,
+          maxBytes: 2097152,
+        });
+        const staged = yield* decodeBindingV2(stored.text);
+        assert.strictEqual(stored.sha, bindingRef.slice("retro-source:".length));
+        const store = yield* h.store(port);
+        const saved = Result.getOrThrow(yield* store.capture(command()));
+        assert.isTrue(saved.committed);
+        assert.strictEqual(saved.checkpoint.checkpointId, staged.checkpointId);
+        assert.strictEqual(saved.checkpoint.snapshotFingerprint, staged.snapshotFingerprint);
+        // The canonical commit reuses the staged bytes deterministically.
+        assert.deepStrictEqual(
+          yield* runNode(() => NodeFSP.readdir(NodePath.join(h.dir, "retro-source"))),
+          files,
+        );
       }),
     ),
 );
