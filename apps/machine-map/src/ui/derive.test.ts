@@ -162,16 +162,23 @@ describe("pauseReach (MM-708 to MM-710)", () => {
   ];
   const snapshot = (map: MachineMapDocument): PortalSnapshot => ({
     map,
-    presence: { [MAC]: online },
+    // Windows never connected.
+    presence: { [MAC]: online, [VPS]: { ...online, online: false } },
     reportedSettings: {},
     commands: [],
     history: [],
     proposals: [],
   });
 
-  it("counts every machine, the offline ones, and each arrow and map role the pause sets to none", () => {
+  it("counts the joined machines, the offline ones, and each arrow and map role the pause sets to none", () => {
     const map = applyChanges(start, changes).map;
-    expect(pauseReach(snapshot(map))).toEqual({ machines: 3, offline: 2, arrows: 2, mapRoles: 1 });
+    expect(pauseReach(snapshot(map))).toEqual({
+      machines: 2,
+      offline: 1,
+      notJoined: 1,
+      arrows: 2,
+      mapRoles: 1,
+    });
   });
 
   it("drops nothing on a map that is already locked down", () => {

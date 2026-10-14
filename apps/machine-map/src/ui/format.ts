@@ -10,6 +10,8 @@ import type {
 } from "@t3tools/contracts/machineMap";
 import type { HealthAlertKind } from "@t3tools/contracts/machineMapResources";
 
+import { hasJoined } from "../rules/map.ts";
+
 export const LEVEL_LABEL: Record<MachineLevel, string> = {
   none: "None",
   read: "Read only",
@@ -91,11 +93,6 @@ export function actorText(actor: MapActor, map: MachineMapDocument): string {
     case "portal":
       return `Portal · ${actor.reason}`;
   }
-}
-
-/** MM-602: false for a machine that never connected. Its changes wait for it to join, not in a queue. */
-export function hasJoined(presence: MachinePresence | undefined): boolean {
-  return presence !== undefined && (presence.online || presence.lastSeenAt !== null);
 }
 
 /** MM-205, MM-601: the one word of the presence sticker. */

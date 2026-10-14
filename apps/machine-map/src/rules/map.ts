@@ -10,6 +10,7 @@ import type {
   MachineLevel,
   MachineMapDocument,
   MachineMapRole,
+  MachinePresence,
   MachineRecord,
   MapChange,
   MapNote,
@@ -24,6 +25,11 @@ import type {
 /** A change that breaks a map rule. The portal answers it with HTTP 409. */
 export class MapRuleError extends Error {
   override readonly name = "MapRuleError";
+}
+
+/** MM-602, MM-709: false for a machine that never connected. Its changes and stops wait for it to join, not in a queue. */
+export function hasJoined(presence: MachinePresence | undefined): boolean {
+  return presence !== undefined && (presence.online || presence.lastSeenAt !== null);
 }
 
 export const LEVELS: ReadonlyArray<MachineLevel> = ["none", "read", "standard", "admin"];

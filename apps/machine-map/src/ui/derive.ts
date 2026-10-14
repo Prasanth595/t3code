@@ -14,11 +14,11 @@ import type {
 
 import type { PendingRotation } from "../api.ts";
 import { arrowChange, usesText } from "../rules/access.ts";
-import { changesPublicFacts, findArrow, findMachine, findNote } from "../rules/map.ts";
+import { changesPublicFacts, findArrow, findMachine, findNote, hasJoined } from "../rules/map.ts";
 import { lockdownChanges } from "../rules/presets.ts";
 import { pendingRevisions } from "../rules/queue.ts";
 import type { Portal } from "./context.ts";
-import { hasJoined, LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
+import { LEVEL_LABEL, machineName, shortTime, valueText } from "./format.ts";
 
 export interface MachineQueue {
   readonly revisions: ReadonlyArray<MapRevision>;
@@ -191,10 +191,12 @@ export function noteQuote(text: string): string {
 
 /** MM-708: what one press of the big red button reaches now. */
 export interface PauseReach {
-  /** MM-709: every machine gets "stop all agents". */
+  /** MM-709: every machine that joined gets "stop all agents". */
   readonly machines: number;
   /** Offline machines stop their agents when they connect again. */
   readonly offline: number;
+  /** Machines that never connected get no stop. */
+  readonly notJoined: number;
   /** MM-710: the arrows and map roles that become `none`. */
   readonly arrows: number;
   readonly mapRoles: number;
@@ -202,11 +204,14 @@ export interface PauseReach {
 
 /** Uses the lockdown rule of the pause on the live map without the draft, like the server. */
 export function pauseReach(snapshot: PortalSnapshot): PauseReach {
-  const machines = snapshot.map.machines;
+  const joined = snapshot.map.machines.filter((machine) =>
+    hasJoined(snapshot.presence[machine.id]),
+  );
   const changes = lockdownChanges(snapshot.map);
   return {
-    machines: machines.length,
-    offline: machines.filter((machine) => snapshot.presence[machine.id]?.online !== true).length,
+    machines: joined.length,
+    offline: joined.filter((machine) => snapshot.presence[machine.id]?.online !== true).length,
+    notJoined: snapshot.map.machines.length - joined.length,
     arrows: changes.filter((change) => change._tag === "setArrow").length,
     mapRoles: changes.filter((change) => change._tag === "putMachine").length,
   };

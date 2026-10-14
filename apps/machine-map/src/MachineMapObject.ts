@@ -96,6 +96,7 @@ import {
   emptyMap,
   findMachine,
   freePosition,
+  hasJoined,
   machinesTouched,
   MapRuleError,
 } from "./rules/map.ts";
@@ -1627,8 +1628,10 @@ export class MachineMapObject extends DurableObject<Env> {
         changes.length > 0 ? this.#commit(actor, PAUSE_SUMMARY, changes).revision : null;
       const record: PauseRecord = { state: { pausedAt: nowIso(), by: actor, revision }, before };
       this.#savePause(record);
-      // MM-709: every machine, also one that did not report the command yet (no MM-502 check).
-      for (const machine of this.#map.machines) {
+      // MM-709: every machine that joined, also one that did not report the command yet (no MM-502
+      // check). A machine that never connected has no agents to stop.
+      const joined = this.#map.machines.filter((machine) => hasJoined(this.#presence(machine.id)));
+      for (const machine of joined) {
         this.#queueCommand(
           actor,
           machine.id,
@@ -1637,7 +1640,7 @@ export class MachineMapObject extends DurableObject<Env> {
           PAUSE_STOP_MINUTES,
         );
       }
-      return { pause: record.state, stopCommands: this.#map.machines.length };
+      return { pause: record.state, stopCommands: joined.length };
     });
   }
 
