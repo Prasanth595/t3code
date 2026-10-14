@@ -309,8 +309,6 @@ jobs:
             --resource-monitor-dir "$monitor_dir" \
             --output-dir release-cli
           node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.prepare.outputs.version }}"
-          # scripts/fork-install/install.sh checks the download against this file.
-          (cd release-cli && for archive in t3-*.tar.gz; do sha256sum "$archive" > "$archive.sha256"; done)
 
       - name: Collect release assets
         shell: bash

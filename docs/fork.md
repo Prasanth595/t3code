@@ -13,7 +13,7 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - `.github/workflows/fork-release.yml` builds the desktop apps and the server archives. It runs on each push to main and on manual dispatch. If the commit already has a release, it stops early.
 - Only one release run works at a time, and no run is cancelled, so a release is never half published. GitHub keeps one waiting run, and a newer push replaces it. Thus a burst of pushes builds only the running commit and the newest commit.
 - The release builds macOS arm64 (signed), Windows x64 (unsigned), and Linux x64 and arm64 AppImages (unsigned) at the same time, on GitHub-hosted runners. Each platform publishes to the release when its build is done, so the Mac does not wait for Windows.
-- Each Linux build also publishes the server archive `t3-<version>-linux-<arch>.tar.gz` and its `.sha256` file. The archive holds the `t3` single-executable, the web client and the native packages, so a machine without a display runs the server without Node: `t3 serve`.
+- Each Linux build also publishes the server archive `t3-<version>-linux-<arch>.tar.gz`. The archive holds the `t3` single-executable, the web client and the native packages, so a machine without a display runs the server without Node: `t3 serve`.
 - When both Linux archives are on the release, the job "Server checksums" uploads `SHA256SUMS` last. The upstream server updaters (`t3 update`, `t3 service install`, "Update everything") verify the archives against it. A release without `SHA256SUMS` is not ready for servers, and "Update everything" skips it. If `t3 update` picks a release that has no `SHA256SUMS` yet, it fails. Run it again when the release is done.
 - `CLI_RELEASE_REPOSITORY` in `packages/shared/src/cliRelease.ts` points the server updaters at the fork releases. `scripts/install.sh` installs from the fork releases, on the nightly channel by default.
 - A manual run from a branch other than main does not publish a release. It uploads the files of each platform as workflow artifacts, for a test of release changes.
@@ -192,11 +192,12 @@ curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fo
 - With a join code, the app installs write it to `~/.t3/userdata/machine-map-join-code` (or below `T3CODE_HOME`). The app server joins with it at its next start and deletes it. If the app was open already, quit it and open it again. The code expires after 10 minutes.
 - Both read the release list of the GitHub API, because the nightlies are pre-releases and `releases/latest` skips them.
 - On Linux with a display (`DISPLAY` or `WAYLAND_DISPLAY`), `install.sh` downloads the newest nightly AppImage to `~/Applications/T3-Code.AppImage`, adds a menu entry and starts it. Like on macOS, it keeps an installed app and `--force` replaces it. The app updates itself from `nightly-linux.yml` or `nightly-linux-arm64.yml`. AppImages need FUSE 2, for example `sudo apt install libfuse2t64`.
-- On Linux without a display, `install.sh` downloads the newest server archive `t3-<version>-linux-<arch>.tar.gz` and checks its `.sha256` file. It unpacks it to `~/.local/share/t3code-fork-server/<version>` and points `current` at it. It keeps the previous version and removes older ones. It installs `~/.local/bin/t3` and the systemd user service `t3code-fork.service` on `127.0.0.1:3773`. Then it runs `t3 machine-map join <code>`. The machine needs no Node.
-- To update the server, run `install.sh` again. Do not run `t3 update`, because it installs the newest upstream release. A restart stops the running agent turns of that server.
-- `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS, with the same command and service. On macOS it installs no service.
+- On Linux without a display, `install.sh` runs `scripts/install.sh`, the upstream installer pointed at the fork releases. It unpacks the newest release into `~/.t3/runtime/versions/<version>` and links `~/.local/bin/t3` to it. Then it runs `t3 service install`, the upstream background service `t3code.service`. The drop-in file `~/.config/systemd/user/t3code.service.d/fork.conf` keeps the server on `127.0.0.1:3773` with the PATH of the installer shell. Then it runs `t3 machine-map join <code>`. The machine needs no Node.
+- If the earlier fork service `t3code-fork.service` is on, the installer turns it off. Its files stay. See [fork-migration.md](fork-migration.md).
+- The server updates itself, see "Server updates". `t3 update` also works. A restart stops the running agent turns of that server.
+- `--from-source` clones fork main to `~/.local/share/t3code-fork` and builds the server like the VPS. It installs the systemd user service `t3code-fork.service`, which does not update itself. On macOS it installs no service.
 - The source build needs git, curl, Node and pnpm at the versions of the root `package.json`. The script prints install hints and installs no system packages.
-- On Linux without a display, `install.sh` turns on lingering, so the server keeps running after logout. If that needs an administrator, it prints `sudo loginctl enable-linger <user>`. Upstream `t3 service install` does the same, see [background-service.md](user/background-service.md#troubleshooting).
+- On Linux without a display, `t3 service install` turns on lingering, so the server keeps running after logout. If that needs an administrator, it says so, see [background-service.md](user/background-service.md#troubleshooting).
 - The join gives the machine its tunnel when the portal can make one (MM-213). See "Set up a headless Linux machine".
 - Run `install.sh --help` for the options.
 
@@ -216,8 +217,8 @@ The installer starts the server and joins the map. The portal made a tunnel `t3-
 
 - The join code expires after 10 minutes. If it expired, make a new code in the machine panel of the portal.
 - The tunnel connects outbound, and the server listens only on `127.0.0.1`. Thus the cloud firewall needs no change. On Oracle Cloud, keep the default security list and the `iptables` rules of the image.
-- To check the server, run `systemctl --user status t3code-fork.service`. Read the log with `journalctl --user -u t3code-fork.service -n 50`. The `cloudflared` log is `~/.t3/userdata/logs/cloudflared.log`.
-- To update the server, run the `install.sh` command again without `--join`.
+- To check the server, run `t3 service status` and `systemctl --user status t3code.service`. The `cloudflared` log is `~/.t3/userdata/logs/cloudflared.log`.
+- The server updates itself when `forkAutoUpdate` is on, see "Server updates". To update it by hand, run `t3 update`.
 
 ### Set up the tunnel by hand
 
@@ -233,18 +234,18 @@ sudo dpkg -i /tmp/cloudflared.deb
 sudo cloudflared service install <tunnel-token>
 ```
 
-4. Give the server its tunnel hostname and the Cloudflare Access login. Copy the Access values from the server environment of the VPS. The subjects list holds the owner email and the client id of the service token that the desktop app uses for remote machines. Without that client id, the desktop app cannot open this machine. The installer replaces only the unit file, so this drop-in file stays after an update.
+4. Give the server its tunnel hostname and the Cloudflare Access login. Copy the Access values from the server environment of the VPS. The subjects list holds the owner email and the client id of the service token that the desktop app uses for remote machines. Without that client id, the desktop app cannot open this machine. `t3 service install` and `t3 update` replace only the unit file, so this drop-in file stays after an update.
 
 ```sh
-mkdir -p ~/.config/systemd/user/t3code-fork.service.d
-cat > ~/.config/systemd/user/t3code-fork.service.d/tunnel.conf <<'EOF'
+mkdir -p ~/.config/systemd/user/t3code.service.d
+cat > ~/.config/systemd/user/t3code.service.d/tunnel.conf <<'EOF'
 [Service]
 Environment=T3CODE_TUNNEL_PAIRING_URL=https://t3-oracle.yarden-zamir.com
 Environment=T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
 Environment=T3CODE_CLOUDFLARE_ACCESS_AUD=<audience tag of the Access app>
 Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>,<client id of the desktop service token>
 EOF
-systemctl --user daemon-reload && systemctl --user restart t3code-fork.service
+systemctl --user daemon-reload && systemctl --user restart t3code.service
 ```
 
 ## Deploy to the VPS
