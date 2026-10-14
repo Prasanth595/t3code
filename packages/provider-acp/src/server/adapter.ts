@@ -131,10 +131,11 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
 /**
- * Latest streamed text reaches the event stream at most this long after its
- * chunk. A text segment's first chunk and its close emit at once; the chunks
- * between collapse into one full-text snapshot per window instead of one per
- * chunk, which grew with the square of the reply length.
+ * Coalescing window for streamed text. A text segment's first chunk and its
+ * close emit at once; a later chunk schedules one full-text snapshot this long
+ * after it, and the chunks inside the window share it instead of each emitting
+ * the whole reply, which grew with the square of the reply length. The flush
+ * is scheduled, not a hard deadline, so it can land later under host load.
  */
 const ACP_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
 
@@ -2444,6 +2445,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const emitsNode = completed || !segment.emitted;
           segment.emitted = true;
           segment.dirty = false;
+          // Read the text in the same step that clears `dirty`. Chunks keep
+          // appending while this emission yields; each one marks the segment
+          // dirty again and reaches the next flush or the close.
+          const text = segment.text;
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = providerNodeId(segment.nativeItemId);
@@ -2487,7 +2492,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               runId: context.input.runId,
               nodeId: messageNodeId,
               role: kind,
-              text: segment.text,
+              text,
               attachments: [],
               streaming: !completed,
               createdAt: segment.startedAt,
@@ -2519,7 +2524,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       type: "user_message",
                       messageId,
                       inputIntent: "turn_start",
-                      text: segment.text,
+                      text,
                       attachments: [],
                     },
                   }
@@ -2543,7 +2548,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       updatedAt: now,
                       type: "assistant_message",
                       messageId,
-                      text: segment.text,
+                      text,
                       streaming: !completed,
                     },
                   },
@@ -2570,7 +2575,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               completedAt: completed ? now : null,
               updatedAt: now,
               type: "reasoning",
-              text: segment.text,
+              text,
               streaming: !completed,
             },
           });
