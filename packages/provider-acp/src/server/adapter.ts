@@ -6802,6 +6802,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             attachments: turnInput.message.attachments,
             resolveAttachmentPath: host.resolveAttachmentPath,
           });
+          const nativeCommand = isAcpNativeCommandPrompt(messageText);
           const text = t3AcpPromptWithInstructions({
             prompt: messageText,
             state: instructionState,
@@ -6851,7 +6852,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               detail: "ACP turn requires non-empty text or attachments",
             });
           }
-          if (!isAcpNativeCommandPrompt(messageText)) {
+          if (!nativeCommand) {
             prompt.push({
               type: "text",
               text: buildRuntimeInstructions({
@@ -6860,7 +6861,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }),
             });
           }
-          return { prompt, instructionState: text === messageText ? undefined : instructionState };
+          // Native commands are sent without T3 instructions even when trimmed.
+          const instructionsSent = !nativeCommand && text !== messageText;
+          return { prompt, instructionState: instructionsSent ? instructionState : undefined };
         });
 
         const restartRuntimeAfterTeardownIfRequired = Effect.fnUntraced(function* (

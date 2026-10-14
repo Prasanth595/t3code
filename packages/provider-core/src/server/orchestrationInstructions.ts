@@ -82,7 +82,7 @@ export function t3AcpPromptWithInstructions(input: {
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
 }): string {
-  if (isAcpNativeCommandPrompt(input.prompt)) return input.prompt;
+  if (isAcpNativeCommandPrompt(input.prompt)) return input.prompt.trimStart();
   if (
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp
