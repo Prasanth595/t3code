@@ -1141,9 +1141,11 @@ export interface DesktopBridge {
   // One bootstrap per pool instance currently registered with bootstrap
   // info (omits instances whose backend hasn't produced a config yet).
   // The primary backend is identified by id === PRIMARY_LOCAL_ENVIRONMENT_ID.
+  // Served from a preload cache the desktop keeps current by pushing every
+  // change, so repeated reads cost no IPC.
   getLocalEnvironmentBootstraps: () => readonly DesktopEnvironmentBootstrap[];
-  /** Refresh the preload snapshot without blocking the renderer on synchronous IPC. */
-  readLocalEnvironmentBootstraps?: () => Promise<readonly DesktopEnvironmentBootstrap[]>;
+  /** Called after the bootstraps change; read them with `getLocalEnvironmentBootstraps`. */
+  onLocalEnvironmentBootstrapsChange?: (listener: () => void) => () => void;
   getLocalEnvironmentEnabled?: () => boolean;
   setLocalEnvironmentEnabled?: (enabled: boolean) => Promise<void>;
   getLocalEnvironmentBearerToken: () => Promise<string>;

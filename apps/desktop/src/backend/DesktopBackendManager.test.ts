@@ -1585,6 +1585,7 @@ describe("DesktopBackendManager", () => {
           list: Effect.succeed([instance1, instance2]),
           get: () => Effect.succeedNone,
           primary: Effect.die(new Error("primary not implemented")),
+          changes: Stream.empty,
           register: () => Effect.die(new Error("register not implemented")),
           unregister: () => Effect.die(new Error("unregister not implemented")),
         });

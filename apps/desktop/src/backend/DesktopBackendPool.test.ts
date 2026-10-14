@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/http";
@@ -39,6 +40,7 @@ function makeStubInstance(
     stop: () => Effect.void,
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(snapshot),
+    changes: Stream.empty,
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
   };
 }
@@ -155,6 +157,47 @@ describe("DesktopBackendPool", () => {
         yield* Ref.set(labelRef, "WSL (Ubuntu)");
 
         assert.equal(yield* primary.label, "WSL (Ubuntu)");
+      }),
+    ),
+  );
+
+  it.effect("reports registry changes so the renderer topology can be re-read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const pool = yield* DesktopBackendPool.DesktopBackendPool.pipe(
+          Effect.provide(layerPool(yield* Ref.make("Windows"))),
+        );
+        const wslId = DesktopBackendPool.BackendInstanceId("wsl:ubuntu");
+        // Each emission records the registry as observed right after it, so
+        // only an emission caused by the change can satisfy the next wait.
+        const observed = yield* Queue.unbounded<ReadonlyArray<string>>();
+        yield* pool.changes.pipe(
+          Stream.runForEach(() =>
+            pool.list.pipe(
+              Effect.flatMap((instances) =>
+                Queue.offer(
+                  observed,
+                  instances.map((instance) => instance.id),
+                ),
+              ),
+            ),
+          ),
+          Effect.forkScoped,
+        );
+        const awaitRegistry = (matches: (ids: ReadonlyArray<string>) => boolean) =>
+          Effect.gen(function* () {
+            while (!matches(yield* Queue.take(observed))) {}
+          });
+
+        yield* awaitRegistry((ids) => ids.length === 1);
+        yield* pool.register({
+          id: wslId,
+          label: Effect.succeed("WSL (Ubuntu)"),
+          configResolve: Effect.die("unexpected WSL config resolve"),
+        });
+        yield* awaitRegistry((ids) => ids.includes(wslId));
+        yield* pool.unregister(wslId);
+        yield* awaitRegistry((ids) => !ids.includes(wslId));
       }),
     ),
   );

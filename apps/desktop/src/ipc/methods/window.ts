@@ -15,12 +15,16 @@ import {
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
+import { DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS } from "@t3tools/shared/desktopBootstrapToken";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as DesktopBackendConfiguration from "../../backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
@@ -163,11 +167,54 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
   handler: readLocalEnvironmentBootstrapSnapshot,
 });
 
-export const readLocalEnvironmentBootstraps = DesktopIpc.makeIpcMethod({
-  channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
-  payload: Schema.Void,
-  result: Schema.Array(DesktopEnvironmentBootstrapSchema),
-  handler: readLocalEnvironmentBootstrapSnapshot,
+// The bootstrap token rolls over on a fixed time window without any backend
+// state change. Wake at each boundary, and at least hourly so a boundary
+// passed during system sleep is caught soon after resume.
+const bootstrapTokenRollovers = Stream.fromEffectRepeat(
+  Clock.currentTimeMillis.pipe(
+    Effect.flatMap((now) =>
+      Effect.sleep(
+        Math.min(
+          DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS - (now % DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS),
+          Duration.toMillis(Duration.hours(1)),
+        ),
+      ),
+    ),
+  ),
+);
+
+/**
+ * Push the local environment bootstraps to every renderer whenever they change,
+ * so the preload's cached snapshot stays current and the renderer never polls
+ * the main process for topology.
+ */
+export const installLocalEnvironmentBootstrapsForwarding = Effect.fn(
+  "desktop.ipc.window.installLocalEnvironmentBootstrapsForwarding",
+)(function* () {
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const electronWindow = yield* ElectronWindow.ElectronWindow;
+  let lastSent: string | undefined;
+  yield* pool.changes.pipe(
+    Stream.merge(bootstrapTokenRollovers),
+    Stream.runForEach(() =>
+      readLocalEnvironmentBootstrapSnapshot().pipe(
+        Effect.flatMap((bootstraps) => {
+          const serialized = JSON.stringify(bootstraps);
+          if (serialized === lastSent) return Effect.void;
+          lastSent = serialized;
+          return electronWindow.sendAll(
+            IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL,
+            bootstraps,
+          );
+        }),
+        // Keep forwarding after a failed read; the next change retries it.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not publish local environment bootstraps", { cause }),
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
 });
 
 // Pull the distro selection out of a backend instance id like

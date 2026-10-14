@@ -420,9 +420,10 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   };
 });
 
-// Poll cadence for the desktop bootstrap topology. There is no change event on
-// the bridge, so the renderer polls; successful registrations are cached by a
-// signature of their endpoint until bearer credentials approach expiry.
+// Rebuild cadence for platform registrations. Desktop topology reads come from
+// the preload cache the desktop pushes into, so this costs no IPC; the tick
+// retries failed discovery and refreshes bearers as they approach expiry.
+// Successful registrations are cached by a signature of their endpoint.
 const PLATFORM_POLL_INTERVAL = "3 seconds";
 const SECONDARY_BEARER_REFRESH_SKEW_MS = 5_000;
 
@@ -624,7 +625,7 @@ const layerPlatformConnectionSource = Layer.effect(
         }
       }
 
-      const topologyRead = yield* Effect.promise(readDesktopSecondaryBootstrapsResult);
+      const topologyRead = readDesktopSecondaryBootstrapsResult();
       for (const [id, cached] of secondaryRegistrationsToRetainAfterTopologyRead(
         previous,
         topologyRead,

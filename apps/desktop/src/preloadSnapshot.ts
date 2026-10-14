@@ -1,24 +1,18 @@
-/** Keep synchronous startup consumers while refreshing through nonblocking IPC. */
-export function createPreloadSnapshot<T>(readInitial: () => T, readLatest: () => Promise<T>) {
+/**
+ * Cache a value the main process pushes whenever it changes. Only the first
+ * read before any push costs a synchronous IPC; a failed read leaves the cache
+ * empty so the next read retries.
+ */
+export function createPreloadSnapshot<T>(readInitial: () => T) {
   let snapshot: { readonly value: T } | undefined;
-  let pending: Promise<T> | undefined;
 
   return {
     read: (): T => {
       snapshot ??= { value: readInitial() };
       return snapshot.value;
     },
-    refresh: (): Promise<T> => {
-      if (pending !== undefined) return pending;
-      pending = readLatest()
-        .then((value) => {
-          snapshot = { value };
-          return value;
-        })
-        .finally(() => {
-          pending = undefined;
-        });
-      return pending;
+    set: (value: T): void => {
+      snapshot = { value };
     },
   };
 }

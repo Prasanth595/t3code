@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
@@ -145,6 +146,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
       restartAttempt: 0,
       restartScheduled: false,
     }),
+    changes: Stream.empty,
     waitForReady: () => Effect.succeed(true),
   };
   const layerBackend = DesktopBackendPool.layerTest([stubBackendInstance]);

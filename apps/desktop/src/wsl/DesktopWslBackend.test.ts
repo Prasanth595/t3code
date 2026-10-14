@@ -3,6 +3,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import * as NetService from "@t3tools/shared/Net";
 
@@ -30,6 +31,7 @@ function makeStubInstance(input: {
     stop: () => Effect.void,
     currentConfig: Effect.succeed(Option.none<DesktopBackendStartConfig>()),
     snapshot: Effect.succeed(input.snapshot),
+    changes: Stream.empty,
     waitForReady: (_timeout: Duration.Duration) => Effect.succeed(false),
   };
 }
@@ -125,6 +127,7 @@ describe("DesktopWslBackend", () => {
         ),
       list: Effect.sync(() => (registeredWsl === undefined ? [primary] : [primary, registeredWsl])),
       primary: Effect.succeed(primary),
+      changes: Stream.empty,
       register: (spec) =>
         Effect.sync(() => {
           registeredSpec = spec;

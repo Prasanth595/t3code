@@ -81,11 +81,13 @@ const readBootstraps = (
   result: unknown,
 ): ReturnType<DesktopBridge["getLocalEnvironmentBootstraps"]> =>
   Array.isArray(result) ? result : [];
-const localEnvironmentBootstraps = createPreloadSnapshot(
-  () => readBootstraps(ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL)),
-  async () =>
-    readBootstraps(await ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL)),
+const localEnvironmentBootstraps = createPreloadSnapshot(() =>
+  readBootstraps(ipcRenderer.sendSync(IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL)),
 );
+// Registered before any app listener so they all observe the updated cache.
+ipcRenderer.on(IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL, (_event, bootstraps: unknown) => {
+  if (Array.isArray(bootstraps)) localEnvironmentBootstraps.set(readBootstraps(bootstraps));
+});
 // This setting changes only through a relaunch; repeated renderer reads do
 // not need to block on the main process.
 let localEnvironmentEnabled: boolean | undefined;
@@ -117,7 +119,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     return typeof result === "string" ? result : null;
   },
   getLocalEnvironmentBootstraps: localEnvironmentBootstraps.read,
-  readLocalEnvironmentBootstraps: localEnvironmentBootstraps.refresh,
+  onLocalEnvironmentBootstrapsChange: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL, handler);
+    return () =>
+      ipcRenderer.removeListener(IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL, handler);
+  },
   getLocalEnvironmentBearerToken: () =>
     ipcRenderer.invoke(IpcChannels.GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL),
   getLocalEnvironmentEnabled: () =>

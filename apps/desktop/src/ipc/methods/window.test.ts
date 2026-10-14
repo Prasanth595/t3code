@@ -1,11 +1,19 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS } from "@t3tools/shared/desktopBootstrapToken";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
 import type * as Electron from "electron";
@@ -25,9 +33,11 @@ import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as IpcChannels from "../channels.ts";
 import {
   getLocalEnvironmentBootstraps,
   getWindowFullscreenState,
+  installLocalEnvironmentBootstrapsForwarding,
   pasteAsText,
   pickProjectFavicon,
   probeRemoteEditors,
@@ -69,6 +79,7 @@ const defaultWslInstance: DesktopBackendManager.DesktopBackendInstance = {
     restartAttempt: 0,
     restartScheduled: false,
   }),
+  changes: Stream.empty,
   waitForReady: () => Effect.succeed(true),
 };
 
@@ -195,6 +206,78 @@ describe("getLocalEnvironmentBootstraps", () => {
       assert.deepEqual(result, []);
     }).pipe(Effect.provide(bootstrapsLayer([stoppedInstance])));
   });
+});
+
+describe("installLocalEnvironmentBootstrapsForwarding", () => {
+  it.effect("pushes only changed bootstraps and survives a failed read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const config = yield* Ref.make<DesktopBackendManager.DesktopBackendStartConfig>({
+          ...readyWslConfig,
+          bootstrap: { ...readyWslConfig.bootstrap, desktopBootstrapSecret: "desktop-secret" },
+        });
+        const tokenReadFails = yield* Ref.make(false);
+        const lifecycle = yield* SubscriptionRef.make(0);
+        const sent = yield* Queue.unbounded<readonly [string, unknown]>();
+        const changeLifecycle = SubscriptionRef.update(lifecycle, (count) => count + 1);
+        const takePort = Queue.take(sent).pipe(
+          Effect.map(([channel, bootstraps]) => {
+            assert.equal(channel, IpcChannels.LOCAL_ENVIRONMENT_BOOTSTRAPS_CHANNEL);
+            return bootstraps as ReadonlyArray<{ httpBaseUrl: string; bootstrapToken: string }>;
+          }),
+        );
+
+        yield* installLocalEnvironmentBootstrapsForwarding().pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              DesktopBackendPool.layerTest([
+                {
+                  ...defaultWslInstance,
+                  currentConfig: Ref.get(config).pipe(Effect.asSome),
+                  changes: SubscriptionRef.changes(lifecycle).pipe(Stream.map(() => undefined)),
+                },
+              ]),
+              Layer.succeed(DesktopBackendConfiguration.DesktopBackendConfiguration, {
+                resolvePrimary: Effect.die("unexpected resolvePrimary"),
+                resolvePrimaryLabel: Effect.succeed("Windows"),
+                resolveWsl: () => Effect.die("unexpected resolveWsl"),
+                currentBootstrapToken: Effect.gen(function* () {
+                  if (yield* Ref.get(tokenReadFails)) return yield* Effect.die("token unavailable");
+                  const now = yield* Clock.currentTimeMillis;
+                  return `token-${Math.floor(now / DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS)}`;
+                }),
+              } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"]),
+              Layer.mock(ElectronWindow.ElectronWindow)({
+                sendAll: (channel, bootstraps) => Queue.offer(sent, [channel, bootstraps]),
+              }),
+            ),
+          ),
+        );
+
+        const initial = yield* takePort;
+        assert.equal(initial[0]?.httpBaseUrl, "http://127.0.0.1:3774/");
+        assert.equal(initial[0]?.bootstrapToken, "token-0");
+
+        // A lifecycle write that leaves the bootstraps unchanged and a failed
+        // read both send nothing, so the next message is the real change.
+        yield* changeLifecycle;
+        yield* Ref.set(tokenReadFails, true);
+        yield* changeLifecycle;
+        yield* Ref.set(tokenReadFails, false);
+        yield* Ref.update(config, (current) => ({
+          ...current,
+          httpBaseUrl: new URL("http://127.0.0.1:3775"),
+        }));
+        yield* changeLifecycle;
+        assert.equal((yield* takePort)[0]?.httpBaseUrl, "http://127.0.0.1:3775/");
+
+        // The token rolls over with no lifecycle change.
+        yield* TestClock.adjust(Duration.millis(DESKTOP_BOOTSTRAP_TOKEN_WINDOW_MS));
+        assert.equal((yield* takePort)[0]?.bootstrapToken, "token-1");
+        assert.equal(yield* Queue.size(sent), 0);
+      }),
+    ),
+  );
 });
 
 describe("getWindowFullscreenState", () => {

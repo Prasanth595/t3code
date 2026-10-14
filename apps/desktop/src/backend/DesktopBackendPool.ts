@@ -87,7 +87,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import * as SynchronizedRef from "effect/SynchronizedRef";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as FileSystem from "effect/FileSystem";
 import { HttpClient } from "effect/http";
@@ -153,6 +154,10 @@ export class DesktopBackendPool extends Context.Service<
     // exposed as a typed effect so consumers don't have to handle the
     // Option for the case that's guaranteed to be present.
     readonly primary: Effect.Effect<DesktopBackendInstance>;
+    // Emits on subscribe and whenever an instance registers, unregisters or
+    // changes lifecycle state: the triggers for re-reading the renderer's
+    // local environment bootstraps. Emissions can repeat; consumers dedupe.
+    readonly changes: Stream.Stream<void>;
     // Build a fresh DesktopBackendInstance from `spec` and add it to the
     // registry. The pool owns the instance's scope: unregister(id) or pool
     // teardown closes it and runs the instance's auto-stop finalizer. The
@@ -314,7 +319,7 @@ export const layer = Layer.effect(
           .pipe(Effect.andThen(electronApp.quit)),
     });
 
-    const instancesRef = yield* SynchronizedRef.make<
+    const instancesRef = yield* SubscriptionRef.make<
       ReadonlyMap<BackendInstanceId, RegisteredInstance>
     >(
       new Map([
@@ -327,7 +332,7 @@ export const layer = Layer.effect(
 
     const register: DesktopBackendPool["Service"]["register"] = (spec) =>
       Effect.suspend(() =>
-        SynchronizedRef.modifyEffect(
+        SubscriptionRef.modifyEffect(
           instancesRef,
           (
             current,
@@ -382,7 +387,7 @@ export const layer = Layer.effect(
           return yield* new DesktopBackendPoolCannotUnregisterPrimaryError();
         }
         const done = yield* Deferred.make<void>();
-        const action = yield* SynchronizedRef.modifyEffect(
+        const action = yield* SubscriptionRef.modifyEffect(
           instancesRef,
           (
             current,
@@ -414,7 +419,7 @@ export const layer = Layer.effect(
           return;
         }
 
-        const finish = SynchronizedRef.modifyEffect(instancesRef, (current) => {
+        const finish = SubscriptionRef.modifyEffect(instancesRef, (current) => {
           const closing = current.get(id);
           if (closing?._tag !== "Closing" || closing.done !== done) {
             return Effect.succeed([undefined, current] as const);
@@ -434,13 +439,13 @@ export const layer = Layer.effect(
 
     return DesktopBackendPool.of({
       get: (id) =>
-        SynchronizedRef.get(instancesRef).pipe(
+        SubscriptionRef.get(instancesRef).pipe(
           Effect.map((instances) => {
             const entry = instances.get(id);
             return entry?._tag === "Active" ? Option.some(entry.instance) : Option.none();
           }),
         ),
-      list: SynchronizedRef.get(instancesRef).pipe(
+      list: SubscriptionRef.get(instancesRef).pipe(
         Effect.map((instances) =>
           Array.from(instances.values()).flatMap((entry) =>
             entry._tag === "Active" ? [entry.instance] : [],
@@ -448,6 +453,16 @@ export const layer = Layer.effect(
         ),
       ),
       primary: Effect.succeed(primary),
+      changes: SubscriptionRef.changes(instancesRef).pipe(
+        Stream.switchMap((instances) =>
+          Stream.mergeAll(
+            Array.from(instances.values()).flatMap((entry) =>
+              entry._tag === "Active" ? [entry.instance.changes] : [],
+            ),
+            { concurrency: "unbounded" },
+          ),
+        ),
+      ),
       register,
       unregister,
     });
@@ -478,6 +493,10 @@ export const layerTest = (
         get: (id) => Effect.succeed(Option.fromNullishOr(byId.get(id))),
         list: Effect.succeed(Array.from(byId.values())),
         primary: Effect.succeed(primary),
+        changes: Stream.mergeAll(
+          instances.map((instance) => instance.changes),
+          { concurrency: "unbounded" },
+        ),
         register: () => Effect.die("DesktopBackendPool.layerTest does not support register"),
         unregister: () => Effect.die("DesktopBackendPool.layerTest does not support unregister"),
       });

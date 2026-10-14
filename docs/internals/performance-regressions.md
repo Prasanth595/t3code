@@ -88,10 +88,10 @@ viewport, including a small overscan region. Cached badges remain available whil
 released. Local Git status reads skip divergence calculations; callers that need ahead/behind
 counts keep the full status path. Cached fetch failures share the existing backoff and log only
 the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
-identity so polling does not invalidate subscribers. The desktop preload keeps the synchronous
-startup snapshot, while topology polling refreshes it through asynchronous IPC. Recurring
-`sendSync` calls block the renderer behind unrelated main-process work, even when the returned
-snapshot is unchanged.
+identity so polling does not invalidate subscribers. The desktop main process pushes bootstrap
+changes into a preload cache, and renderer reads are served from that cache. Do not read topology
+from the main process on a timer: recurring `sendSync` calls block the renderer behind unrelated
+main-process work, and every IPC read writes desktop trace spans even when nothing changed.
 
 Local trace records and provider event logs use asynchronous, serialized file writes and rotation.
 Batching synchronous appends still stalls the server event loop on slow storage, especially on
