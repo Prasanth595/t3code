@@ -217,6 +217,7 @@ import {
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
+  timelineEntryTurnFoldRunId,
   timelineTurnFoldRunIdsByEntryId,
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -1105,6 +1106,29 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation,
   });
   const [findListReady, setFindListReady] = useState(false);
+  // Imported turns fold under a synthetic key, so the message's own run id cannot open them.
+  const revealLinkedEntry = useCallback(
+    (entryId: string) => {
+      const runId = timelineEntryTurnFoldRunId(
+        { timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive },
+        entryId,
+      );
+      const attempt = timelineEntries.find((entry) => entry.id === entryId)?.attempt;
+      const attemptId = attempt?.status === "superseded" ? attempt.id : null;
+      if (runId !== null) {
+        setExpandedRunIds((previous) =>
+          previous.has(runId) ? previous : new Set(previous).add(runId),
+        );
+      }
+      if (attemptId !== null) {
+        setExpandedAttemptIds((previous) =>
+          previous.has(attemptId) ? previous : new Set(previous).add(attemptId),
+        );
+      }
+      return runId !== null || attemptId !== null;
+    },
+    [timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive],
+  );
   const {
     positioning: linkedMessagePositioning,
     pinnedRowId: linkedMessageRowId,
@@ -1118,7 +1142,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
     historyControls,
-    onExpandTurn: expandCitedRun,
+    onRevealEntry: revealLinkedEntry,
     onManualNavigation,
   });
   const handleListLoad = useCallback(() => {
@@ -2635,7 +2659,12 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
-          <MessageTimestamp messageId={row.message.id} time={row.message.createdAt} />
+          <MessageTimestamp
+            messageId={row.message.id}
+            time={row.message.createdAt}
+            // Only a message the server holds can be linked to.
+            linkable={row.projectedItem !== undefined}
+          />
           <div className="flex items-center gap-0.5">
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
@@ -3006,15 +3035,25 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
-      {!message.streaming && <MessageTimestamp messageId={message.id} time={message.updatedAt} />}
+      {!message.streaming && (
+        <MessageTimestamp messageId={message.id} time={message.updatedAt} linkable />
+      )}
     </div>
   );
 }
 
 /** A message's time. Clicking it copies a link that opens the thread at this message. */
-function MessageTimestamp({ messageId, time }: { messageId: MessageId; time: string }) {
+function MessageTimestamp({
+  messageId,
+  time,
+  linkable,
+}: {
+  messageId: MessageId;
+  time: string;
+  linkable: boolean;
+}) {
   const ctx = use(TimelineRowCtx);
-  const threadRef = ctx.threadRef;
+  const threadRef = linkable ? ctx.threadRef : null;
   return (
     <Tooltip>
       <TooltipTrigger

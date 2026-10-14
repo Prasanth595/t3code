@@ -172,6 +172,7 @@ import {
 import {
   failedFeedRunIds,
   deriveThreadFeedPresentation,
+  threadFeedFoldRunIdHiding,
   threadFeedRunIsUnsettled,
   isContextCompactionActivityGroup,
   isContextHandoffActivityGroup,
@@ -2311,13 +2312,24 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const index = presentedFeed.findIndex(
       (entry) => entry.type === "message" && entry.id === linkedMessageId,
     );
-    const feedEntry = props.feed.find(
+    const inFeed = props.feed.some(
       (entry) => entry.type === "message" && entry.id === linkedMessageId,
     );
-    const runId = feedEntry?.type === "message" ? feedEntry.message.runId : null;
+    const foldRunId =
+      index < 0 && inFeed
+        ? threadFeedFoldRunIdHiding(
+            props.feed,
+            props.latestRun,
+            props.activeWorkStartedAt,
+            props.runlessWorkActive ?? false,
+            linkedMessageId,
+          )
+        : null;
+    const runId = foldRunId !== null && !expandedTurnIds.has(foldRunId) ? foldRunId : null;
     const step = resolveLinkedMessageStep({
       presented: index >= 0,
-      foldedRunId: runId !== null && !expandedTurnIds.has(runId) ? runId : null,
+      inFeed,
+      foldedRunId: runId,
       synced: props.threadSynced ?? true,
       historyLoading:
         props.historyControls?.loading === true || linkedMessageLoad?.inFlight === true,
@@ -2362,9 +2374,12 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     linkedMessageLoad,
     onLinkedMessageHandled,
     presentedFeed,
+    props.activeWorkStartedAt,
     props.feed,
     props.historyControls,
+    props.latestRun,
     props.listRef,
+    props.runlessWorkActive,
     props.threadSynced,
     setEndFollow,
   ]);

@@ -4,6 +4,7 @@ import { resolveLinkedMessageStep } from "./thread-feed-message-link";
 
 const absent = {
   presented: false,
+  inFeed: false,
   foldedRunId: null,
   synced: true,
   historyLoading: false,
@@ -16,7 +17,13 @@ describe("resolveLinkedMessageStep", () => {
   });
 
   it("expands the turn that hides the message", () => {
-    expect(resolveLinkedMessageStep({ ...absent, foldedRunId: "run-1" })).toBe("expand");
+    expect(resolveLinkedMessageStep({ ...absent, inFeed: true, foldedRunId: "run-1" })).toBe(
+      "expand",
+    );
+  });
+
+  it("does not page history for a loaded message that no fold hides", () => {
+    expect(resolveLinkedMessageStep({ ...absent, inFeed: true })).toBe("missing");
   });
 
   it("waits for the sync and any history load before deciding the message is older", () => {
