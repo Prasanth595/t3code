@@ -3938,6 +3938,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                   driver: OPENCODE_PROVIDER,
                   detail: `OpenCode session ${sessionId} already has an active turn`,
+                  reason: "previous_turn_active",
                 });
               }
               // OpenCode already ran this turn on its own; it prompts nothing.
