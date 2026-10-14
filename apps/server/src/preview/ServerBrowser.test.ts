@@ -492,7 +492,7 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
-it.live("lets six screencast frames wait for their ack, twice Chromium's default", () =>
+it.live("configures the viewer screencast to allow six frames in flight", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const { browser, tabId } = yield* ready;
