@@ -13,6 +13,7 @@ import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -127,6 +128,40 @@ function parseSkillFrontmatter(contents: string): CursorSkillFrontmatter | undef
   };
 }
 
+const readSkill = Effect.fn("readCursorSkill")(function* (input: {
+  readonly directory: string;
+  readonly scope: "user" | "project";
+  readonly budget: CursorSkillScanBudget;
+}): Effect.fn.Return<ServerProviderSkill | undefined, never, FileSystem.FileSystem | Path.Path> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const skillPath = path.join(input.directory, "SKILL.md");
+  const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
+  if (skillInfo?.type !== "File") return undefined;
+  let frontmatter: CursorSkillFrontmatter | undefined = { cliVisible: true };
+  if (skillInfo.size <= MAX_SKILL_BYTES && skillInfo.size <= input.budget.remainingBytes) {
+    const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
+    if (contents !== undefined) {
+      input.budget.remainingBytes -= skillInfo.size;
+      frontmatter = parseSkillFrontmatter(contents);
+    }
+  }
+  const name = path.basename(input.directory).trim();
+  if (!frontmatter?.cliVisible || !name) return undefined;
+  return {
+    name,
+    path: skillPath,
+    scope: input.scope,
+    enabled: true,
+    ...(frontmatter.displayName && frontmatter.displayName !== name
+      ? { displayName: frontmatter.displayName }
+      : {}),
+    ...(frontmatter.description ? { description: frontmatter.description } : {}),
+    ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
+    ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
+  };
+});
+
 const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (input: {
   readonly directory: string;
   readonly scope: "user" | "project";
@@ -143,7 +178,7 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   const visit = Effect.fn("visitCursorSkillDirectory")(function* (
     directory: string,
     depth: number,
-  ): Effect.fn.Return<void, never> {
+  ): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
     if (input.budget.exhausted) return;
     const resolvedDirectory = yield* orUndefined(fileSystem.realPath(directory), input.budget);
     if (!resolvedDirectory) {
@@ -160,33 +195,8 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
       resolvedDirectory === rootDirectory ||
       resolvedDirectory.startsWith(`${rootDirectory}${path.sep}`);
 
-    const skillPath = path.join(directory, "SKILL.md");
-    const skillInfo = yield* orUndefined(fileSystem.stat(skillPath), input.budget);
-    if (skillInfo?.type === "File") {
-      let frontmatter: CursorSkillFrontmatter | undefined = { cliVisible: true };
-      if (skillInfo.size <= MAX_SKILL_BYTES && skillInfo.size <= input.budget.remainingBytes) {
-        const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
-        if (contents !== undefined) {
-          input.budget.remainingBytes -= skillInfo.size;
-          frontmatter = parseSkillFrontmatter(contents);
-        }
-      }
-      const name = path.basename(directory).trim();
-      if (frontmatter?.cliVisible && name) {
-        skills.push({
-          name,
-          path: skillPath,
-          scope: input.scope,
-          enabled: true,
-          ...(frontmatter.displayName && frontmatter.displayName !== name
-            ? { displayName: frontmatter.displayName }
-            : {}),
-          ...(frontmatter.description ? { description: frontmatter.description } : {}),
-          ...(frontmatter.userInvocationOnly ? { userInvocationOnly: true } : {}),
-          ...(frontmatter.userInvocable === false ? { userInvocable: false } : {}),
-        });
-      }
-    }
+    const skill = yield* readSkill({ directory, scope: input.scope, budget: input.budget });
+    if (skill) skills.push(skill);
 
     if (!insideRoot) {
       return;
@@ -215,6 +225,102 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   return skills;
 });
 
+const CURSOR_PLUGIN_MANIFESTS = [
+  ".cursor-plugin/plugin.json",
+  ".claude-plugin/plugin.json",
+  "plugin.json",
+];
+const decodeCursorPluginManifest = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      name: Schema.String.check(Schema.isPattern(/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/)),
+      skills: Schema.optional(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
+    }),
+  ),
+);
+
+/**
+ * Cursor reads a manifest `skills` string (default `skills`) as a directory of
+ * skill folders, and each `skills` array entry as one skill folder, its
+ * SKILL.md, or such a directory. It reads no deeper and never through a symlink
+ * that leaves the plugin. It asks its account API which cached plugins are
+ * enabled, so this also lists plugins the user disabled.
+ */
+const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkillDirectories")(
+  function* (userHome: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const fileType = (file: string) =>
+      orUndefined(fileSystem.stat(file)).pipe(Effect.map((info) => info?.type));
+    const subdirectories = Effect.fn("listCursorPluginSubdirectories")(function* (
+      directory: string,
+    ) {
+      const entries = (yield* orUndefined(fileSystem.readDirectory(directory))) ?? [];
+      const children: string[] = [];
+      for (const entry of [...entries].sort()) {
+        const child = path.join(directory, entry);
+        if ((yield* fileType(child)) === "Directory") children.push(child);
+      }
+      return children;
+    });
+    const readManifest = Effect.fn("readCursorPluginManifest")(function* (root: string) {
+      for (const candidate of CURSOR_PLUGIN_MANIFESTS) {
+        const manifestPath = path.join(root, candidate);
+        if ((yield* fileType(manifestPath)) !== "File") continue;
+        const manifest = decodeCursorPluginManifest(
+          yield* orUndefined(fileSystem.readFileString(manifestPath)),
+        );
+        if (Option.isSome(manifest)) return manifest.value;
+      }
+      return undefined;
+    });
+
+    const pluginsDirectory = path.join(userHome, ".cursor", "plugins");
+    const pluginRoots: string[] = [];
+    const marketplace = path.join(pluginsDirectory, "cache", "cursor-public");
+    for (const plugin of yield* subdirectories(marketplace)) {
+      for (const version of yield* subdirectories(plugin)) {
+        if ((yield* fileType(path.join(version, ".cache-complete"))) === "File") {
+          pluginRoots.push(version);
+        }
+      }
+    }
+    const localDirectory = path.join(pluginsDirectory, "local");
+    const realLocalDirectory = yield* orUndefined(fileSystem.realPath(localDirectory));
+    for (const plugin of yield* subdirectories(localDirectory)) {
+      if (path.basename(plugin).startsWith(".")) continue;
+      const realPlugin = yield* orUndefined(fileSystem.realPath(plugin));
+      if (realLocalDirectory && realPlugin?.startsWith(`${realLocalDirectory}${path.sep}`)) {
+        pluginRoots.push(plugin);
+      }
+    }
+
+    const directories: string[] = [];
+    for (const root of pluginRoots) {
+      const realRoot = yield* orUndefined(fileSystem.realPath(root));
+      if (!realRoot) continue;
+      const skills = (yield* readManifest(root))?.skills ?? "skills";
+      const folders: string[] = [];
+      for (const entry of typeof skills === "string" ? [skills] : skills) {
+        if (entry.includes("..") || entry.includes("://") || path.isAbsolute(entry)) continue;
+        const target = path.join(root, entry);
+        const skillFile =
+          path.basename(target) === "SKILL.md" ? target : path.join(target, "SKILL.md");
+        if (typeof skills !== "string" && (yield* fileType(skillFile)) === "File") {
+          folders.push(path.dirname(skillFile));
+        } else {
+          folders.push(...(yield* subdirectories(target)));
+        }
+      }
+      for (const folder of folders) {
+        const realFolder = yield* orUndefined(fileSystem.realPath(folder));
+        if (realFolder?.startsWith(`${realRoot}${path.sep}`)) directories.push(folder);
+      }
+    }
+    return directories;
+  },
+);
+
 const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -233,18 +339,24 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
 
   const skillsByName = new Map<string, ServerProviderSkill>();
-  const budget: CursorSkillScanBudget = {
+  const newBudget = (): CursorSkillScanBudget => ({
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
     exhausted: false,
     incomplete: false,
-  };
+  });
+  const budget = newBudget();
+  const pluginBudget = newBudget();
   for (const root of roots) {
     if (budget.exhausted) break;
     const skills = yield* discoverSkillsInRoot({ ...root, budget });
     for (const skill of skills) {
       if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
     }
+  }
+  for (const directory of yield* discoverCursorPluginSkillDirectories(userHome)) {
+    const skill = yield* readSkill({ directory, scope: "user", budget: pluginBudget });
+    if (skill && !skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
   return {
     skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
