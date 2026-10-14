@@ -88,7 +88,10 @@ viewport, including a small overscan region. Cached badges remain available whil
 released. Local Git status reads skip divergence calculations; callers that need ahead/behind
 counts keep the full status path. Cached fetch failures share the existing backoff and log only
 the actual failed attempt. Unchanged desktop environment bootstrap reads retain their array
-identity so polling does not invalidate subscribers.
+identity so polling does not invalidate subscribers. The desktop preload keeps the synchronous
+startup snapshot, while topology polling refreshes it through asynchronous IPC. Recurring
+`sendSync` calls block the renderer behind unrelated main-process work, even when the returned
+snapshot is unchanged.
 
 Relay awareness queues one pending publication per thread and retains a follow-up when the thread
 changes during a send. Transcript deltas and tool output do not enqueue awareness work. Run,
