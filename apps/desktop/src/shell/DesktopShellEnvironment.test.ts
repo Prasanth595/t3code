@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Clock from "effect/Clock";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -491,6 +492,13 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
       const profileShells: string[] = [];
+      const baseClock = yield* Clock.Clock;
+      let wallTime = 0;
+      const clockWithBackwardWallJump: Clock.Clock = {
+        ...baseClock,
+        currentTimeMillisUnsafe: () => wallTime,
+        currentTimeMillis: Effect.sync(() => wallTime),
+      };
 
       const install = yield* Effect.forkChild(
         runShellEnvironment({
@@ -502,12 +510,18 @@ describe("DesktopShellEnvironment", () => {
               return envOutput({ PATH: "C:\\Windows\\System32" });
             }
             profileShells.push(command.command);
+            // Simulate Windows correcting the wall clock backward while the
+            // first profile probe is still running.
+            wallTime = -60_000;
             return "hang";
           },
-        }).pipe(Effect.provide(Logger.layer([]))),
+        }).pipe(
+          Effect.provide(Logger.layer([])),
+          Effect.provideService(Clock.Clock, clockWithBackwardWallJump),
+        ),
       );
       yield* TestClock.adjust("5 seconds");
-      assert.isDefined(install.pollUnsafe(), "still waiting on PowerShell after 5 seconds");
+      assert.isDefined(install.pollUnsafe(), "finishes after the shared 5-second budget");
       yield* Fiber.join(install);
 
       // The timeout is spent, so Windows PowerShell is not started for another 5 seconds.

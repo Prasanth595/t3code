@@ -346,15 +346,16 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
     // Startup waits for this read, so the candidates share one timeout instead
     // of each starting its own. One that fails quickly, such as pwsh.exe not
     // being installed, leaves the rest of the time to the next.
-    const deadline = (yield* Clock.currentTimeMillis) + Duration.toMillis(LOGIN_SHELL_TIMEOUT);
+    const deadline =
+      (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(LOGIN_SHELL_TIMEOUT);
     for (const command of WINDOWS_SHELL_CANDIDATES) {
-      const remaining = deadline - (yield* Clock.currentTimeMillis);
-      if (remaining <= 0) break;
+      const remainingNanos = deadline - (yield* Clock.monotonicTimeNanos);
+      if (remainingNanos <= 0n) break;
       const output = yield* runCommandOutput({
         probe: options.loadProfile ? "powershell-profile" : "powershell-no-profile",
         command,
         args,
-        timeout: Duration.millis(remaining),
+        timeout: Duration.nanos(remainingNanos),
       });
       const environment = extractEnvironment(output, names);
       if (Object.keys(environment).length > 0) {
