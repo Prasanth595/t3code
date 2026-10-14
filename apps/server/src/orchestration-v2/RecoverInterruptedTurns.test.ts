@@ -68,9 +68,19 @@ function makeProjection(input: {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
+type DispatchedMessage = {
+  readonly text: string;
+  readonly dispatchMode: string;
+  readonly restartContinuationOfRunId: RunId | undefined;
+};
+
 const dispatchedTexts = (
   projection: OrchestrationV2ThreadProjection,
-  options: { readonly instanceDisabled?: boolean; readonly recovered?: Array<RunId> } = {},
+  options: {
+    readonly instanceDisabled?: boolean;
+    readonly recovered?: Array<RunId>;
+    readonly messages?: Array<DispatchedMessage>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const texts: Array<string> = [];
@@ -100,7 +110,14 @@ const dispatchedTexts = (
                     }),
                   )
                 : Effect.sync(() => {
-                    if (command.type === "message.dispatch") texts.push(command.text);
+                    if (command.type === "message.dispatch") {
+                      texts.push(command.text);
+                      options.messages?.push({
+                        text: command.text,
+                        dispatchMode: command.dispatchMode.type,
+                        restartContinuationOfRunId: command.restartContinuationOfRunId,
+                      });
+                    }
                     return {} as never;
                   }),
           }),
@@ -207,5 +224,44 @@ it.effect("does not wake a snoozed thread for its killed background work", () =>
     assert.equal(settledRunWithOpenBackgroundWork(finished, now)?.id, runId);
     const snoozed = { ...finished.thread, snoozedUntil: DateTime.add(now, { days: 1 }) };
     assert.isUndefined(settledRunWithOpenBackgroundWork({ ...finished, thread: snoozed }, now));
+  }),
+);
+
+it.effect("links a finished turn that lost awaited work to its recovery run", () =>
+  Effect.gen(function* () {
+    const cut = makeProjection({
+      userMessageId: "message:user",
+      answered: false,
+      relationshipToParent: "subagent",
+    });
+    const finishedWith = (kind: "subagent" | "shell") =>
+      ({
+        ...cut,
+        runs: cut.runs.map((run) => ({
+          ...run,
+          status: "completed",
+          restartCancelledBackgroundWork: [{ kind, label: "work", id: "item:work" }],
+        })),
+      }) as unknown as OrchestrationV2ThreadProjection;
+
+    // Upstream continues this turn too. The link keeps a delegated task on the new run.
+    const awaited: Array<DispatchedMessage> = [];
+    yield* dispatchedTexts(finishedWith("subagent"), { messages: awaited });
+    assert.equal(awaited.length, 1);
+    assert.equal(awaited[0]?.restartContinuationOfRunId, runId);
+    assert.equal(awaited[0]?.dispatchMode, "start_immediately");
+    assert.include(awaited[0]?.text ?? "", "subagent: work");
+    assert.include(awaited[0]?.text ?? "", "Child message");
+
+    // Upstream leaves a turn that lost only shells asleep. The fork wakes it with a new turn.
+    const shells: Array<DispatchedMessage> = [];
+    yield* dispatchedTexts(finishedWith("shell"), { messages: shells });
+    assert.deepEqual(shells, [
+      {
+        text: "Child message",
+        dispatchMode: "queue_after_active",
+        restartContinuationOfRunId: undefined,
+      },
+    ]);
   }),
 );
