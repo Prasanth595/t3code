@@ -794,6 +794,7 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     const followup = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs.find(
       (run) => run.userMessageId === "message:question-followup",
     )!;
+    assert.isDefined(followup.delegatedTaskId);
     assert.notEqual(followup.delegatedTaskId, task.id);
     const followupQuestion = {
       ...requestEvent("event:followup-question", "request:followup-question"),
@@ -803,10 +804,9 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     yield* reactor.handle(followupQuestion);
     const followupWake = (yield* projections.getThreadRecords(parentThreadId, [
       "messages",
-    ])).messages
-      .filter((message) => message.notification !== undefined)
-      .at(-1)!;
-    assert.include(followupWake.text, `requestId ${followupQuestion.payload.id}`);
+    ])).messages.find((message) =>
+      message.text.includes(`requestId ${followupQuestion.payload.id}`),
+    )!;
     assert.deepEqual(followupWake.notification?.source, {
       kind: "delegated_task",
       taskIds: [followup.delegatedTaskId],
