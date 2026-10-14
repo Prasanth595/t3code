@@ -19,6 +19,8 @@ export function ProviderPackageIcon({
       {...props}
       viewBox={icon.viewBox}
       fill="none"
+      // Lets monochrome renderings dim the whole glyph once instead of each path.
+      data-provider-package-icon
       className={cn("fill-(--icon-light) dark:fill-(--icon-dark)", className)}
       style={
         {
