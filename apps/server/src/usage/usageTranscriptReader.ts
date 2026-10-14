@@ -79,7 +79,9 @@ export const GUARD_LENGTH = 64;
 // Native parsing is faster for common 1–4 MiB context/tool records. Above
 // 8 MiB, project usage without allocating the whole record. This switches
 // readers; it never discards a record because of its size.
-const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
+export const STREAMING_THRESHOLD_BYTES = 8 * 1024 * 1024;
+/** Reused per file; each scan reads at most four transcripts concurrently. */
+export const READ_BUFFER_BYTES = 4 * 1024 * 1024;
 const NEWLINE = 0x0a;
 /** `stat` calls one transcript walk keeps in flight. The libuv pool has 4 threads. */
 const STAT_CONCURRENCY = 32;
@@ -308,7 +310,8 @@ export async function readTranscriptRecords<State>(
 
     const append = (segment: Buffer) => {
       if (!streaming && pendingBytes + segment.length <= streamingThresholdBytes) {
-        if (segment.length > 0) pendingChunks.push(segment);
+        // Pending fragments must survive the next read into the reusable buffer.
+        if (segment.length > 0) pendingChunks.push(Buffer.from(segment));
         pendingBytes += segment.length;
         return;
       }
@@ -340,12 +343,12 @@ export async function readTranscriptRecords<State>(
       streaming = undefined;
       decoder = undefined;
     };
-    const stream = handle.createReadStream({
-      start,
-      autoClose: false,
-      highWaterMark: 256 * 1024,
-    }) as AsyncIterable<Buffer>;
-    for await (const chunk of stream) {
+    // Reusing storage avoids a fresh stream buffer and iterator turn per read.
+    const readBuffer = Buffer.allocUnsafe(READ_BUFFER_BYTES);
+    while (true) {
+      const { bytesRead } = await handle.read(readBuffer, 0, readBuffer.length, scanOffset);
+      if (bytesRead === 0) break;
+      const chunk = readBuffer.subarray(0, bytesRead);
       let lineStart = 0;
       while (lineStart < chunk.length) {
         const newlineIndex = chunk.indexOf(NEWLINE, lineStart);

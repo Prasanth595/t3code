@@ -61,11 +61,8 @@ import type {
 } from "@t3tools/provider-core/server/usage";
 import { resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
-import {
-  listTranscriptFiles,
-  readDirectoryVolumeId,
-  readTranscriptRecords,
-} from "./usageTranscriptReader.ts";
+import { listTranscriptFiles, readDirectoryVolumeId } from "./usageTranscriptReader.ts";
+import * as UsageTranscriptPool from "./usageTranscriptPool.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -232,6 +229,7 @@ export const make = Effect.gen(function* () {
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
   const fileCache: ScanCache = new Map();
+  const readTranscriptRecords = yield* UsageTranscriptPool.make;
   const sourceCache = new Map<string, typeof CachedSource.Type>();
   let cacheDirty = false;
   const isWithinDirectory = (filePath: string, dir: string) => {
@@ -547,9 +545,7 @@ export const make = Effect.gen(function* () {
           ? cached.position
           : undefined;
 
-      const parsed = yield* Effect.promise(() =>
-        readTranscriptRecords(filePath, format, resumeFrom),
-      );
+      const parsed = yield* readTranscriptRecords(filePath, format, resumeFrom);
       // A read failure is not an empty transcript: caching it under this
       // (size, mtime) would silently drop the file's usage until it changes.
       if (parsed === null)
