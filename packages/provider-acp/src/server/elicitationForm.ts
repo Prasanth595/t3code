@@ -10,7 +10,13 @@ type Field =
   | { readonly kind: "text" }
   | { readonly kind: "number"; readonly integer: boolean }
   | { readonly kind: "boolean" }
-  | { readonly kind: "choice"; readonly values: ReadonlySet<string>; readonly multiple: boolean };
+  | { readonly kind: "choice"; readonly values: ReadonlySet<string> }
+  | {
+      readonly kind: "multiChoice";
+      readonly values: ReadonlySet<string>;
+      readonly minItems: number;
+      readonly maxItems: number;
+    };
 
 type Option = OrchestrationV2UserInputQuestion["options"][number];
 
@@ -30,26 +36,31 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
-/** `enum` values label themselves. `oneOf` entries carry a title for their `const`. */
-function enumOptions(property: Readonly<Record<string, unknown>>): Option[] | undefined {
-  const entries = Array.isArray(property.oneOf)
-    ? property.oneOf.map((entry) => {
-        const option = unknownRecord(entry);
-        const label = text(option?.title) ?? text(option?.const);
-        return typeof option?.const === "string" && label !== undefined
-          ? { label, description: text(option.description) ?? label, value: option.const }
-          : undefined;
-      })
-    : Array.isArray(property.enum)
-      ? property.enum.map((value) => {
-          const label = text(value);
-          return typeof value === "string" && label !== undefined
-            ? { label, description: label, value }
-            : undefined;
-        })
-      : undefined;
-  if (entries === undefined || entries.length === 0) return undefined;
-  return entries.every((entry) => entry !== undefined) ? entries : undefined;
+/** All of `entries` as options, or undefined when any entry cannot be one. */
+function choiceOptions(
+  entries: unknown,
+  toOption: (entry: unknown) => Option | undefined,
+): Option[] | undefined {
+  if (!Array.isArray(entries) || entries.length === 0) return undefined;
+  const options = entries.map(toOption);
+  return options.every((option) => option !== undefined) ? options : undefined;
+}
+
+/** `enum` values label themselves. */
+function enumOption(value: unknown): Option | undefined {
+  const label = text(value);
+  return typeof value === "string" && label !== undefined
+    ? { label, description: label, value }
+    : undefined;
+}
+
+/** Titled entries (`oneOf` on strings, `anyOf` on array items) carry a title for their `const`. */
+function titledOption(entry: unknown): Option | undefined {
+  const option = unknownRecord(entry);
+  const label = text(option?.title) ?? text(option?.const);
+  return typeof option?.const === "string" && label !== undefined
+    ? { label, description: text(option.description) ?? label, value: option.const }
+    : undefined;
 }
 
 function parseField(
@@ -61,21 +72,34 @@ function parseField(
       if ((property.enum ?? property.oneOf ?? undefined) === undefined) {
         return { field: { kind: "text" }, options: [] };
       }
-      const options = enumOptions(property);
+      const options = Array.isArray(property.oneOf)
+        ? choiceOptions(property.oneOf, titledOption)
+        : choiceOptions(property.enum, enumOption);
       return options === undefined
         ? undefined
         : {
-            field: { kind: "choice", values: new Set(options.map(optionValue)), multiple: false },
+            field: { kind: "choice", values: new Set(options.map(optionValue)) },
             options,
           };
     }
     case "array": {
+      // String items list plain values in `enum`; titled items list `{ const, title }` in `anyOf`.
       const items = unknownRecord(property.items);
-      const options = items?.type === "string" ? enumOptions(items) : undefined;
+      const options =
+        items?.type === "string"
+          ? choiceOptions(items.enum, enumOption)
+          : items !== undefined && items.type === undefined
+            ? choiceOptions(items.anyOf, titledOption)
+            : undefined;
       return options === undefined
         ? undefined
         : {
-            field: { kind: "choice", values: new Set(options.map(optionValue)), multiple: true },
+            field: {
+              kind: "multiChoice",
+              values: new Set(options.map(optionValue)),
+              minItems: typeof property.minItems === "number" ? property.minItems : 0,
+              maxItems: typeof property.maxItems === "number" ? property.maxItems : Infinity,
+            },
             options,
           };
     }
@@ -119,23 +143,34 @@ function typedAnswer(
       if (!Number.isFinite(parsed)) return undefined;
       return field.integer && !Number.isInteger(parsed) ? undefined : parsed;
     }
-    case "choice": {
-      if (!field.multiple) {
-        return typeof answer === "string" && field.values.has(answer) ? answer : undefined;
-      }
-      const selected = (Array.isArray(answer) ? answer : [answer]).filter(
-        (entry): entry is string => typeof entry === "string" && field.values.has(entry),
-      );
-      return selected.length > 0 ? [...new Set(selected)] : undefined;
+    case "choice":
+      return typeof answer === "string" && field.values.has(answer) ? answer : undefined;
+    case "multiChoice": {
+      if (!Array.isArray(answer)) return undefined;
+      const selected = [
+        ...new Set(
+          answer.filter(
+            (entry): entry is string => typeof entry === "string" && field.values.has(entry),
+          ),
+        ),
+      ];
+      // `[]` is an explicit empty selection, but a selection of only unknown
+      // options is not one.
+      if (selected.length === 0 && answer.length > 0) return undefined;
+      return selected.length >= field.minItems && selected.length <= field.maxItems
+        ? selected
+        : undefined;
     }
   }
 }
 
 /**
  * Reads an ACP form elicitation's `requestedSchema` as one question per
- * property. Fixed choices (string enums, titled `oneOf`, string-enum arrays,
- * booleans) allow no custom answer. Returns undefined when a property has a
- * shape T3 cannot ask for, so the caller declines without asking.
+ * property. Fixed choices (string enums, titled `oneOf`, multi-selects of
+ * string enums or titled `anyOf` items, booleans) allow no custom answer.
+ * Multi-select answers are arrays of option values within `minItems` and
+ * `maxItems`; other constraints are not checked. Returns undefined when a
+ * property has a shape T3 cannot ask for, so the caller declines without asking.
  */
 export function parseElicitationForm(
   requestedSchema: unknown,
@@ -160,10 +195,10 @@ export function parseElicitationForm(
       header: text(property.title) ?? `Question ${questions.length + 1}`,
       question: text(property.description) ?? message,
       options: parsed.options,
-      ...(parsed.field.kind === "choice" || parsed.field.kind === "boolean"
-        ? { allowCustomAnswer: false }
-        : {}),
-      ...(parsed.field.kind === "choice" && parsed.field.multiple ? { multiSelect: true } : {}),
+      ...(parsed.field.kind === "text" || parsed.field.kind === "number"
+        ? {}
+        : { allowCustomAnswer: false }),
+      ...(parsed.field.kind === "multiChoice" ? { multiSelect: true } : {}),
     });
   }
   return {

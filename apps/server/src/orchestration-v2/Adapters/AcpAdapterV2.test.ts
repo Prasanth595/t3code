@@ -4382,6 +4382,15 @@ describe("AcpAdapterV2", () => {
               ],
             },
             tags: { type: "array", items: { type: "string", enum: ["a", "b", "c"] } },
+            areas: {
+              type: "array",
+              items: {
+                anyOf: [
+                  { const: "api", title: "API", description: "Server routes" },
+                  { const: "ui", title: "Interface" },
+                ],
+              },
+            },
             confirm: { type: "boolean" },
             count: { type: "integer" },
             ratio: { type: "number" },
@@ -4396,6 +4405,7 @@ describe("AcpAdapterV2", () => {
             color: optionValues(byId.get("color"))?.[1],
             size: optionValues(byId.get("size"))?.[1],
             tags: ["c", "a", "unknown", "a"],
+            areas: optionValues(byId.get("areas"))?.toReversed(),
             confirm: optionValues(byId.get("confirm"))?.[1],
             count: "3",
             ratio: " 0.5 ",
@@ -4437,6 +4447,13 @@ describe("AcpAdapterV2", () => {
             allowCustomAnswer: false,
           },
           {
+            id: "areas",
+            labels: ["API", "Interface"],
+            values: ["api", "ui"],
+            multiSelect: true,
+            allowCustomAnswer: false,
+          },
+          {
             id: "confirm",
             labels: ["true", "false"],
             values: ["true", "false"],
@@ -4458,12 +4475,63 @@ describe("AcpAdapterV2", () => {
           color: "green",
           size: "l",
           tags: ["c", "a"],
+          areas: ["ui", "api"],
           confirm: false,
           count: 3,
           ratio: 0.5,
           note: "hi",
         },
       });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("keeps explicit empty selections and checks selection counts", () =>
+    Effect.gen(function* () {
+      const items = { type: "string", enum: ["a", "b", "c"] };
+      const requestedSchema = {
+        type: "object",
+        properties: {
+          none: { type: "array", items, default: [] },
+          all: { type: "array", items, maxItems: 3 },
+          optionalNone: { type: "array", items },
+          some: { type: "array", items, minItems: 1 },
+          tooMany: { type: "array", items, maxItems: 1 },
+          single: { type: "array", items },
+          unknownOnly: { type: "array", items },
+          omitted: { type: "array", items },
+        },
+        required: ["none", "all", "some"],
+      };
+      const accepted = yield* runFormElicitation({
+        name: "selection-counts",
+        requestedSchema,
+        answer: () => ({
+          none: [],
+          all: ["a", "b", "c"],
+          optionalNone: [],
+          some: ["b"],
+          // Optional and not valid selections, so they are left out.
+          tooMany: ["a", "b"],
+          single: "a",
+          unknownOnly: ["z"],
+        }),
+      });
+      assert.deepStrictEqual(accepted.response, {
+        action: "accept",
+        content: { none: [], all: ["a", "b", "c"], optionalNone: [], some: ["b"] },
+      });
+      const belowMinimum = yield* runFormElicitation({
+        name: "selection-below-minimum",
+        requestedSchema,
+        answer: () => ({ none: [], all: ["a"], some: [] }),
+      });
+      assert.deepStrictEqual(belowMinimum.response, { action: "cancel" });
+      const requiredOmitted = yield* runFormElicitation({
+        name: "selection-required-omitted",
+        requestedSchema,
+        answer: () => ({ all: ["a"], some: ["a"] }),
+      });
+      assert.deepStrictEqual(requiredOmitted.response, { action: "cancel" });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
