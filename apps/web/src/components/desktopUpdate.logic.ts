@@ -1,8 +1,4 @@
-import {
-  type DesktopUpdateActionResult,
-  type DesktopUpdateState,
-  isLiveServerUpdateVersion,
-} from "@t3tools/contracts";
+import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
@@ -18,27 +14,10 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
   return state.downloadedVersion ?? state.availableVersion;
 }
 
-/** A fork live server update: installing it restarts only the server, not the app. */
-export function isLiveServerUpdate(state: DesktopUpdateState | null): boolean {
-  return state !== null && isLiveServerUpdateVersion(state.downloadedVersion);
-}
-
-/**
- * The version this app installs in an "update everything" pass, which other
- * servers then follow. Null when this app has no update, and for a fork live
- * server update: that is a commit, not a version, and it keeps its own offer.
- */
-export function getUpdateEverythingLocalVersion(state: DesktopUpdateState | null): string | null {
-  if (state === null || resolveDesktopUpdateButtonAction(state) === "none") return null;
-  const version = getDesktopUpdateDownloadedVersion(state);
-  return isLiveServerUpdateVersion(version) ? null : version;
-}
-
 /** Release notes for an exact downloaded build; nightly suffixes are part of the tag. */
 export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
   const normalizedVersion = version?.trim();
-  // A live server update is a commit, not a release, so it has no release page.
-  if (!normalizedVersion || isLiveServerUpdateVersion(normalizedVersion)) return null;
+  if (!normalizedVersion) return null;
   return `${DESKTOP_RELEASE_TAG_URL}/v${encodeURIComponent(normalizedVersion)}`;
 }
 
@@ -108,9 +87,6 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return `Downloading update${progress}`;
   }
   if (state.status === "downloaded") {
-    if (isLiveServerUpdate(state)) {
-      return `Server update ${state.downloadedVersion} ready. Click to restart the server.`;
-    }
     return `Update ${state.downloadedVersion ?? state.availableVersion ?? "ready"} downloaded. Click to restart and install.`;
   }
   if (state.status === "error") {
@@ -132,9 +108,6 @@ export function getDesktopUpdateInstallConfirmationMessage(
   state: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">,
 ): string {
   const version = state.downloadedVersion ?? state.availableVersion;
-  if (isLiveServerUpdateVersion(state.downloadedVersion)) {
-    return `Install server update ${state.downloadedVersion}?\n\nThe server restarts and the window reloads. T3 Code keeps running, but running tasks are interrupted.`;
-  }
   return `Install update${version ? ` ${version}` : ""} and restart T3 Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.`;
 }
 

@@ -169,3 +169,26 @@ rm -f "${T3CODE_HOME:-/root/.t3}"/userdata/*.sqlite-wal "${T3CODE_HOME:-/root/.t
 cp -a /root/t3-migration/*.sqlite* /root/t3-migration/settings.json "${T3CODE_HOME:-/root/.t3}"/userdata/
 systemctl start t3-server.service
 ```
+
+## Remove the old setup
+
+Do these steps only after the owner confirms that the moved machine works.
+
+On the Oracle machine, as the normal user:
+
+```sh
+rm -f ~/.config/systemd/user/t3code-fork.service
+rm -rf ~/.config/systemd/user/t3code-fork.service.d ~/.local/share/t3code-fork-server
+systemctl --user daemon-reload
+```
+
+On the VPS, as root:
+
+```sh
+systemctl disable --now t3-deploy.timer t3-server.service
+rm -f /etc/systemd/system/t3-deploy.service /etc/systemd/system/t3-deploy.timer /etc/systemd/system/t3-server.service
+systemctl daemon-reload
+rm -rf /opt/t3code /opt/t3code-a /opt/t3code-b
+```
+
+Keep `/opt/node` if other apps on the VPS use it. Keep the backups in `~/t3-migration` until the next fork release installs without a problem.

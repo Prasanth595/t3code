@@ -117,7 +117,7 @@ export const MachineMapDesktopReport = Schema.Struct({
   commandResult: Schema.optionalKey(MachineMapDesktopCommandResult),
   /** The version of the desktop update that waits to install, or null when none waits. */
   updateWaiting: Schema.optionalKey(Schema.NullOr(Schema.String)),
-  /** The build the desktop app runs, for example `live <sha>` (MM-1002). Null for the release. */
+  /** The build the desktop app runs (MM-1002). Null for the release. */
   build: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The current client settings of the desktop app (MM-403, MM-404, MM-405). */
   clientSettings: Schema.optionalKey(SettingValues),

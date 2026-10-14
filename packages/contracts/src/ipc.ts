@@ -292,15 +292,6 @@ export interface DesktopUpdateState {
   notAppliedVersion?: string;
 }
 
-/**
- * Fork live server updates (apps/desktop/src/updates/DesktopLiveServer.ts) use the
- * version `live <short commit>`. Installing one restarts only the server.
- */
-export const LIVE_SERVER_UPDATE_VERSION_PREFIX = "live ";
-
-export const isLiveServerUpdateVersion = (version: string | null): boolean =>
-  version !== null && version.startsWith(LIVE_SERVER_UPDATE_VERSION_PREFIX);
-
 export interface DesktopUpdateReleaseNote {
   version: string;
   items: ReadonlyArray<string>;
