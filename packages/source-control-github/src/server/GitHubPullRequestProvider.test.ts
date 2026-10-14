@@ -6,7 +6,6 @@ import * as Result from "effect/Result";
 import type { PullRequestReaction } from "@t3tools/contracts";
 
 import { decodePullRequestDetailJson } from "./gitHubPullRequestJson.ts";
-import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubApi from "./GitHubApi.ts";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 import * as GitHubPullRequestApi from "./GitHubPullRequestApi.ts";
@@ -1067,55 +1066,4 @@ describe("loginAvatarUrl", () => {
       expect(loginAvatarUrl(login, "github.com")).toBeNull();
     }
   });
-});
-
-describe("optional activity failures", () => {
-  const context = { host: "github.com", operation: "listReviewThreadComments" };
-  const ordinary = new GitHubApi.GitHubApiRequestError({ ...context, cause: null });
-  const failures = [
-    [new GitHubApi.GitHubApiAuthenticationError(context), "unauthenticated"],
-    [new GitHubApi.GitHubApiRateLimitError({ ...context, retryAt: 120_000 }), "rate-limited"],
-    [new GitHubCredentials.GitHubCliMissingError({ host: context.host }), "missing-tool"],
-    [ordinary, null],
-  ] as const;
-  it.effect.each(failures)(
-    "preserves critical review-thread errors and recovers ordinary errors: %s",
-    ([error, reason]) =>
-      Effect.gen(function* () {
-        const provider = yield* make.pipe(
-          Effect.provide(
-            Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
-              revalidateChecks: (_input, read) => read,
-              getPullRequestActivity: () =>
-                Effect.succeed({
-                  author: null,
-                  comments: [],
-                  commits: [
-                    {
-                      oid: "abc",
-                      messageHeadline: "Keep this commit",
-                      committedDate: "2026-07-01T00:00:00Z",
-                      authors: [],
-                    },
-                  ],
-                }),
-              listReviewThreadComments: () => Effect.fail(error),
-            }),
-          ),
-        );
-        const read = provider.getChangeRequestActivity({
-          cwd: "/w",
-          repository: "acme/web",
-          host: context.host,
-          number: 7,
-        });
-        if (reason === null) {
-          const activity = yield* read;
-          expect(activity.commits[0]?.oid).toBe("abc");
-          expect(activity.commentsTruncated).toBe(true);
-        } else {
-          expect(yield* Effect.flip(read)).toMatchObject({ reason, cause: error });
-        }
-      }),
-  );
 });

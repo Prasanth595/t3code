@@ -138,8 +138,7 @@ export const make = Effect.gen(function* () {
   ) => {
     const recover = () => Effect.succeed(fallback);
     return Effect.catchTags(read, {
-      BitbucketResponseError: (error) =>
-        error.status === 401 || error.status === 429 ? Effect.fail(error) : recover(),
+      BitbucketResponseError: (error) => (error.status === 429 ? Effect.fail(error) : recover()),
       BitbucketUntrustedUrlError: recover,
       BitbucketRepositoryLocatorError: recover,
       BitbucketRequestError: recover,

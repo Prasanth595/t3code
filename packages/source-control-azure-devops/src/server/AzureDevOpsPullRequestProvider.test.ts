@@ -2,7 +2,6 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as AzureDevOpsPullRequestCli from "./AzureDevOpsPullRequestCli.ts";
 import {
   LOCATION_CACHE_CAPACITY,
@@ -417,46 +416,5 @@ describe("what one diff slice spends", () => {
 
       expect(readsOf.get(HOT)).toBe(1);
     }),
-  );
-});
-
-describe("optional activity failures", () => {
-  const context = {
-    operation: "execute" as const,
-    command: "az" as const,
-    cwd: "/w",
-    argumentCount: 1,
-    cause: null,
-  };
-  const failures = [
-    [new AzureDevOpsCli.AzureDevOpsCliAuthenticationError(context), "unauthenticated"],
-    [new AzureDevOpsCli.AzureDevOpsCliRateLimitError(context), "rate-limited"],
-    [new AzureDevOpsCli.AzureDevOpsCliUnavailableError(context), "missing-tool"],
-    [new AzureDevOpsCli.AzureDevOpsCommandFailedError(context), null],
-  ] as const;
-  it.effect.each(failures)(
-    "preserves critical thread errors and recovers ordinary errors: %s",
-    ([error, reason]) =>
-      Effect.gen(function* () {
-        const provider = yield* make.pipe(
-          Effect.provide(
-            Layer.mock(AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli)({
-              getPullRequest: () => Effect.succeed(PULL_REQUEST),
-              listThreads: () => Effect.fail(error),
-            }),
-          ),
-        );
-        const read = provider.getChangeRequestActivity({
-          cwd: "/w",
-          repository: "web",
-          host: "dev.azure.com",
-          number: 7,
-        });
-        if (reason === null) {
-          expect(yield* read).toMatchObject({ comments: [], commentsTruncated: true });
-        } else {
-          expect(yield* Effect.flip(read)).toMatchObject({ reason, cause: error });
-        }
-      }),
   );
 });

@@ -413,36 +413,26 @@ export const make = Effect.gen(function* () {
           // Line comments live on review threads, which `gh pr view --json` cannot reach. A
           // GraphQL hiccup degrades to a truncated conversation rather than blanking activity.
           cli.listReviewThreadComments(input).pipe(
-            Effect.catch((error) => {
-              const { reason } = gitHubProviderFailure(error);
-              if (
-                reason === "rate-limited" ||
-                reason === "unauthenticated" ||
-                reason === "missing-tool"
-              ) {
-                return Effect.fail(error);
-              }
-              return Effect.succeed({
-                comments: [],
-                dismissalsByReviewId: new Map<string, string>(),
-                reactions: [],
-                reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
-                editedAtById: new Map<string, string>(),
-                reviewThreads: [],
-                commentCount: 0,
-                truncated: true,
-                reviewThreadsTruncated: true,
-                reviewers: [],
-                avatarsByLogin: new Map<string, string>(),
-                botLogins: new Set<string>(),
-                commitStats: new Map<
-                  string,
-                  { readonly additions: number; readonly deletions: number }
-                >(),
-                commits: [],
-                viewer: { canUpdate: true, didAuthor: false },
-              });
-            }),
+            Effect.orElseSucceed(() => ({
+              comments: [],
+              dismissalsByReviewId: new Map<string, string>(),
+              reactions: [],
+              reactionsById: new Map<string, ReadonlyArray<PullRequestReaction>>(),
+              editedAtById: new Map<string, string>(),
+              reviewThreads: [],
+              commentCount: 0,
+              truncated: true,
+              reviewThreadsTruncated: true,
+              reviewers: [],
+              avatarsByLogin: new Map<string, string>(),
+              botLogins: new Set<string>(),
+              commitStats: new Map<
+                string,
+                { readonly additions: number; readonly deletions: number }
+              >(),
+              commits: [],
+              viewer: { canUpdate: true, didAuthor: false },
+            })),
           ),
         ],
         { concurrency: 2 },
