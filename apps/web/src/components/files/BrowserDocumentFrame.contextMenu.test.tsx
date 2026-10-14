@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 import { BrowserDocumentFrame, HtmlRenderDocument } from "./BrowserDocumentFrame";
 import { useExternalBrowserMenu } from "~/browser/useExternalBrowserMenu";
 
@@ -25,6 +25,12 @@ vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => brow
 vi.mock("~/state/session", () => ({
   readPreparedConnection: () => ({ httpBaseUrl: "https://source.test" }),
   readEnvironmentScope: () => browser.canRead,
+}));
+vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
+vi.mock("~/lib/openPullRequestLink", () => ({ useOpenChangeRequestLink: () => vi.fn() }));
+vi.mock("~/state/server", () => ({
+  primaryServerKeybindingsAtom: Atom.make([]),
+  serverEnvironment: { configValueAtom: () => Atom.make(null) },
 }));
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: (input: unknown) => input,
