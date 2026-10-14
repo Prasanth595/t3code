@@ -140,6 +140,7 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
         doc: "Recent values, oldest first.",
       },
       footer: str("Footer line: comparison period or source.", 120),
+      loading: bool("Show a static skeleton instead of the reading."),
       status: {
         type: {
           kind: "object",
@@ -197,7 +198,8 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       sortable: bool("Default true."),
       filterable: bool("Show a filter box. Default false."),
       maxRows: num("Rows before a Show all button.", 1, 500),
-      emptyText: str("Shown when no rows match.", 120),
+      emptyText: str("Shown when there are no rows.", 120),
+      loading: bool("Show a static skeleton instead of the rows."),
     },
   },
   Chart: {
@@ -211,9 +213,9 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       description: str("Muted line under the title.", 160),
       value: str("Headline number, already formatted.", 32),
       data: {
-        type: { kind: "array", items: cellRow, min: 1, max: 400 },
+        type: { kind: "array", items: cellRow, max: 400 },
         required: true,
-        doc: "One object per x value.",
+        doc: "One object per x value. An empty list renders the empty state.",
       },
       xKey: str("Field holding the x label.", 60, true),
       series: {
@@ -226,7 +228,10 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
             fields: {
               key: str("Numeric field.", 60, true),
               label: str("Legend label.", 60, true),
-              color: oneOf(CHART_TONES, "Tone. The focus series defaults to ink."),
+              color: oneOf(
+                CHART_TONES,
+                "Tone. Omitted series run ink, muted, then chart-2 to chart-5. chart-1 and status hues are drawn as that slot instead.",
+              ),
               dashed: bool("Dashed line (comparison series)."),
             },
           },
@@ -243,6 +248,8 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       currency: str("ISO code.", 3),
       legend: bool("Default on with more than one series."),
       variant: oneOf(["card", "plain"], "plain drops the card."),
+      emptyText: str("Shown when data is empty.", 120),
+      loading: bool("Show a static skeleton instead of the plot."),
     },
   },
   Gallery: {
@@ -253,7 +260,6 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       items: {
         type: {
           kind: "array",
-          min: 1,
           max: 24,
           items: {
             kind: "object",
@@ -270,6 +276,8 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       },
       columns: num("1-4, default 3.", 1, 4),
       aspect: oneOf(["square", "portrait", "landscape"], "Default portrait."),
+      emptyText: str("Shown when there are no images.", 120),
+      loading: bool("Show static skeleton tiles."),
     },
   },
   Comparison: {
@@ -299,7 +307,6 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       rows: {
         type: {
           kind: "array",
-          min: 1,
           max: 60,
           items: {
             kind: "object",
@@ -318,6 +325,8 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       },
       caption: str("Label above.", 160),
       diffToggle: bool("Offer Differences only. Default on above three rows."),
+      emptyText: str("Shown when there are no rows.", 120),
+      loading: bool("Show a static skeleton instead of the options."),
     },
   },
   Timeline: {
@@ -328,7 +337,6 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       items: {
         type: {
           kind: "array",
-          min: 1,
           max: 60,
           items: {
             kind: "object",
@@ -349,6 +357,8 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
       orientation: oneOf(["vertical", "horizontal"], "Default vertical."),
       opposite: bool("Times on the other side of the line."),
       size: oneOf(["sm", "default", "lg"], "Default default."),
+      emptyText: str("Shown when there are no events.", 120),
+      loading: bool("Show a static skeleton instead of the events."),
     },
   },
 };

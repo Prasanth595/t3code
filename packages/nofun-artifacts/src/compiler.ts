@@ -106,8 +106,8 @@ const PAGE_FRAME_CSS = `html{font-size:16px}body{margin:0}`;
 // Artifacts (spec/tsx) sit inside a reply: a pinned brand paints its own rounded canvas, and `t3`
 // points the No Fun tokens at the variables T3 injects so the page follows the reader's app theme.
 const ARTIFACT_FRAME_CSS = `${PAGE_FRAME_CSS}
-body[data-brand]{padding:16px;border-radius:14px;background:var(--nf-canvas,var(--background));color:var(--nf-ink,var(--foreground))}
-body[data-nf-theme="t3"]{--nf-canvas:var(--background);--nf-ink:var(--foreground);--nf-ink-muted:var(--muted-foreground);--nf-rule:var(--border);--nf-surface:var(--muted);--nf-surface-product:var(--card);--nf-primary:var(--primary);--nf-primary-foreground:var(--primary-foreground);--nf-display:var(--font-sans);--nf-body:var(--font-sans);--nf-mono:var(--font-mono);--error:var(--destructive)}`;
+body[data-brand],body[data-nf-theme="t3"]{padding:16px;border-radius:14px;background:var(--nf-canvas,var(--background));color:var(--nf-ink,var(--foreground));--font-weight-medium:400;--font-weight-semibold:700}
+body[data-nf-theme="t3"]{--nf-canvas:var(--background);--nf-ink:var(--foreground);--nf-ink-muted:var(--muted-foreground);--nf-rule:var(--border);--nf-surface:var(--muted);--nf-surface-product:var(--card);--nf-accent:var(--accent);--nf-accent-foreground:var(--accent-foreground);--nf-accent-soft:var(--muted);--nf-accent-soft-foreground:var(--foreground);--nf-primary:var(--primary);--nf-primary-foreground:var(--primary-foreground);--nf-success:var(--success);--nf-warning:var(--warning);--nf-danger:var(--destructive);--nf-display:var(--font-sans);--nf-body:var(--font-sans);--nf-mono:var(--font-mono);--error:var(--destructive)}`;
 
 function documentFor(input: {
   readonly title: string;

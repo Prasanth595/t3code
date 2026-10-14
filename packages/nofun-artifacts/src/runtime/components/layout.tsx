@@ -41,13 +41,16 @@ export function Stack({
   className,
   children,
 }: StackProps) {
+  // A horizontal row wraps unless the spec opts out. Nowrap flex items keep their min-content
+  // width, which is how a long heading beside a badge grew the page past 390.
+  const wraps = wrap ?? direction === "horizontal";
   return (
     <div
       data-slot="stack"
       className={cn(
-        "flex min-w-0",
+        "flex min-w-0 [&>*]:min-w-0 [&>*]:max-w-full",
         direction === "vertical" ? "flex-col" : "flex-row",
-        wrap && "flex-wrap",
+        wraps && "flex-wrap",
         className,
       )}
       style={{
@@ -110,7 +113,7 @@ export function Grid({
     <div
       ref={ref}
       data-slot="grid"
-      className={cn("grid min-w-0", className)}
+      className={cn("grid min-w-0 [&>*]:min-w-0", className)}
       style={
         {
           gap: GAP[gap],
@@ -159,7 +162,7 @@ export function Text({ variant = "body", text, align, className, children }: Tex
     <Tag
       data-slot="text"
       data-variant={variant}
-      className={cn("m-0", TEXT[variant], className)}
+      className={cn("m-0 min-w-0 wrap-break-word", TEXT[variant], className)}
       style={align ? { textAlign: align } : undefined}
     >
       {children ?? text}
