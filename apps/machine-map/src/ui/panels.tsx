@@ -59,7 +59,7 @@ import {
 import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
 import { MachineStickers } from "./MachineStickers.tsx";
 import { ResourcesSection } from "./resources.tsx";
-import { NO_SELECTION, type Selection } from "./route.ts";
+import { formatRoute, NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
 
 const PANEL_LABEL: Record<Exclude<Selection["_tag"], "none">, string> = {
@@ -592,7 +592,13 @@ function MachineOverview({ machine }: { machine: MachineRecord }) {
               : `memory ${Math.round(status.memoryPercent)}%`}
           </dd>
           <dt>Tasks</dt>
-          <dd>{status.scheduledTasks} scheduled</dd>
+          <dd>
+            <a
+              href={formatRoute({ view: "tasks", selection: { _tag: "machine", id: machine.id } })}
+            >
+              {status.scheduledTasks} scheduled
+            </a>
+          </dd>
           <dt>Host</dt>
           <dd className="mono">{machine.hostname ?? "not reported yet"}</dd>
         </dl>

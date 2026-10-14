@@ -551,6 +551,107 @@ export function QueueView() {
   );
 }
 
+/** MM-1601: the sticker look of a last run result. An unknown result shows without a colour. */
+const RUN_STICKER: Record<string, string> = { succeeded: "ok", running: "info", failed: "warn" };
+
+/** MM-1602: the scheduled tasks of every machine, grouped by machine. */
+export function TasksView() {
+  const portal = usePortalContext();
+  const { map, snapshot, now } = portal;
+  const selected = portal.route.selection;
+  // The machine panel links to the tasks of one machine.
+  const only =
+    selected._tag === "machine" ? map.machines.find((m) => m.id === selected.id) : undefined;
+  return (
+    <div className="card view stack">
+      <div className="view-head">
+        <h2>{only ? `Tasks of ${only.name}` : "Tasks"}</h2>
+        {only && (
+          <button type="button" className="btn small" onClick={() => portal.select(NO_SELECTION)}>
+            Show all machines
+          </button>
+        )}
+      </div>
+      {map.machines.length === 0 && (
+        <Empty title="No machines yet">Add a machine to see its scheduled tasks.</Empty>
+      )}
+      {(only ? [only] : map.machines).map((machine) => {
+        const presence = snapshot.presence[machine.id];
+        const status = presence?.status ?? null;
+        // MM-502: offer only the commands that the machine reports.
+        const canToggle = status?.commands.includes("setScheduledTaskEnabled") ?? false;
+        const canRun = status?.commands.includes("runScheduledTask") ?? false;
+        return (
+          <div key={machine.id} className="stack tight">
+            <div className="section">
+              {machine.name} · {presenceText(presence, now)}
+            </div>
+            {status === null ? (
+              <p className="small muted">No status yet. Tasks show after the first connection.</p>
+            ) : status.tasks === undefined ? (
+              <p className="small muted">
+                This machine does not report its tasks yet. Update T3 on it.
+              </p>
+            ) : status.tasks.length === 0 ? (
+              <p className="small muted">No scheduled tasks.</p>
+            ) : (
+              <ul className="list">
+                {status.tasks.map((task) => (
+                  <li key={task.id} className="item static">
+                    <span className="grow">
+                      <b>{task.title}</b>
+                      <span className="sub">
+                        {task.schedule} · next{" "}
+                        {task.enabled && task.nextRunAt ? timeUntil(task.nextRunAt, now) : "—"} ·
+                        last {timeAgo(task.lastRunAt, now)}
+                        {task.lastRunError && ` · ${task.lastRunError}`}
+                      </span>
+                    </span>
+                    {task.lastRunStatus && (
+                      <span className={`sticker ${RUN_STICKER[task.lastRunStatus] ?? "none"}`}>
+                        {task.lastRunStatus}
+                      </span>
+                    )}
+                    <span className={`sticker ${task.enabled ? "ok" : "wait"}`}>
+                      {task.enabled ? "on" : "paused"}
+                    </span>
+                    {canToggle && (
+                      <button
+                        type="button"
+                        className="btn small"
+                        onClick={() =>
+                          portal.command(machine.id, {
+                            _tag: "setScheduledTaskEnabled",
+                            taskId: task.id,
+                            enabled: !task.enabled,
+                          })
+                        }
+                      >
+                        {task.enabled ? "Pause" : "Resume"}
+                      </button>
+                    )}
+                    {canRun && (
+                      <button
+                        type="button"
+                        className="btn small"
+                        onClick={() =>
+                          portal.command(machine.id, { _tag: "runScheduledTask", taskId: task.id })
+                        }
+                      >
+                        Run now
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** MM-701 to MM-704, MM-714 to MM-716: revisions and commands newest first, with a time slider. */
 export function HistoryView() {
   const portal = usePortalContext();

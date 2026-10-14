@@ -11,6 +11,7 @@ describe("routes (MM-1106)", () => {
     { view: "inbox", selection: { _tag: "proposal", id: "p/1" } },
     { view: "settings", selection: { _tag: "setting", scope: "client", key: "theme name" } },
     { view: "queue", selection: { _tag: "command", id: "c1" } },
+    { view: "tasks", selection: { _tag: "machine", id: "vps-7c9d" } },
   ];
 
   it("round-trips every view and selection", () => {

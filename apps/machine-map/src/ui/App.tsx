@@ -42,6 +42,7 @@ import {
   HistoryView,
   InboxView,
   QueueView,
+  TasksView,
   SettingsView,
   TableView,
 } from "./views.tsx";
@@ -346,6 +347,8 @@ export function App() {
         return <SettingsView />;
       case "queue":
         return <QueueView />;
+      case "tasks":
+        return <TasksView />;
       case "history":
         return <HistoryView />;
       case "inbox":
