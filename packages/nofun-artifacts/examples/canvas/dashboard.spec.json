@@ -1,0 +1,78 @@
+{
+  "title": "nofun-components at 8922135e",
+  "root": {
+    "component": "Stack",
+    "props": { "gap": "lg" },
+    "children": [
+      {
+        "component": "Stack",
+        "props": { "gap": "sm" },
+        "children": [
+          {
+            "component": "Text",
+            "props": { "variant": "micro", "text": "nofun-components · 8922135e · Oct 13" }
+          },
+          {
+            "component": "Text",
+            "props": {
+              "variant": "title",
+              "text": "375 blocks and 58 brands, built in twelve days"
+            }
+          }
+        ]
+      },
+      {
+        "component": "Grid",
+        "props": { "columns": 4, "minColumnWidth": 180, "gap": "md" },
+        "children": [
+          {
+            "component": "Metric",
+            "props": {
+              "label": "Blocks and components",
+              "value": 375,
+              "footer": "355 blocks, 20 components"
+            }
+          },
+          {
+            "component": "Metric",
+            "props": { "label": "Brands", "value": 58, "footer": "One design system each" }
+          },
+          {
+            "component": "Metric",
+            "props": { "label": "Page specs", "value": 101, "footer": "json-render landing pages" }
+          },
+          {
+            "component": "Metric",
+            "props": { "label": "Commits", "value": 620, "footer": "Oct 2 to Oct 13" }
+          }
+        ]
+      },
+      {
+        "component": "Chart",
+        "props": {
+          "type": "bar",
+          "title": "561 of 620 commits landed Oct 3 to 6",
+          "description": "Commits per day on main, Oct 2 to 13 (git log)",
+          "xKey": "day",
+          "height": 220,
+          "legend": false,
+          "series": [{ "key": "commits", "label": "Commits" }],
+          "data": [
+            { "day": "Oct 2", "commits": 1 },
+            { "day": "Oct 3", "commits": 123 },
+            { "day": "Oct 4", "commits": 3 },
+            { "day": "Oct 5", "commits": 260 },
+            { "day": "Oct 6", "commits": 175 },
+            { "day": "Oct 7", "commits": 0 },
+            { "day": "Oct 8", "commits": 3 },
+            { "day": "Oct 9", "commits": 6 },
+            { "day": "Oct 10", "commits": 36 },
+            { "day": "Oct 11", "commits": 2 },
+            { "day": "Oct 12", "commits": 8 },
+            { "day": "Oct 13", "commits": 3 }
+          ]
+        }
+      }
+    ]
+  }
+}
