@@ -40,6 +40,20 @@ export function* enabledEnvironmentIds(
   }
 }
 
+/**
+ * Saved environments switched off on this device. Older builds also
+ * switched environments off when their host ran an incompatible version, and
+ * nothing records which ones, so clients ask about these once instead of
+ * switching anything back on themselves.
+ */
+export function switchedOffSavedEnvironments(
+  catalog: EnvironmentCatalogState,
+): ReadonlyArray<{ readonly environmentId: EnvironmentIdType; readonly label: string }> {
+  return [...catalog.entries]
+    .filter(([, entry]) => !entry.enabled && entry.target._tag !== "PrimaryConnectionTarget")
+    .map(([environmentId, entry]) => ({ environmentId, label: entry.target.label }));
+}
+
 const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({
   isReady: false,
   entries: new Map(),

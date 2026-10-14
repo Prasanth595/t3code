@@ -1026,9 +1026,17 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // An incompatible environment retries by dropping its block: the socket
+  // handshake checks the protocol again and blocks it anew if still mismatched.
   const retryNow = (environmentId: EnvironmentId) =>
-    acquireSupervisor(environmentId).pipe(
-      Effect.flatMap((supervisor) => supervisor.retryNow),
+    getEntry(environmentId).pipe(
+      Effect.flatMap((entry) =>
+        entry.unsupportedReason !== undefined
+          ? setCompatibility(environmentId, null)
+          : acquireSupervisor(environmentId).pipe(
+              Effect.flatMap((supervisor) => supervisor.retryNow),
+            ),
+      ),
       Effect.catchTags({ EnvironmentNotRegisteredError: () => Effect.void }),
       Effect.withSpan("EnvironmentRegistry.retryNow"),
     );
@@ -1040,12 +1048,6 @@ export const make = Effect.gen(function* () {
       environmentId,
       Effect.gen(function* () {
         const entry = yield* getEntry(environmentId);
-        if (enabled && entry.unsupportedReason !== undefined) {
-          return yield* new ConnectionBlockedError({
-            reason: "unsupported",
-            detail: entry.unsupportedReason,
-          });
-        }
         if (entry.enabled === enabled) {
           return;
         }
@@ -1070,8 +1072,10 @@ export const make = Effect.gen(function* () {
           nextEntries.set(environmentId, next);
           return nextEntries;
         });
+        // Switching on an incompatible environment saves the choice and stays
+        // paused until its host is compatible again.
         if (lease !== undefined) {
-          yield* enabled ? lease.supervisor.connect : lease.supervisor.disconnect;
+          yield* shouldConnect(next) ? lease.supervisor.connect : lease.supervisor.disconnect;
         } else if (enabled) {
           yield* createServiceScope(next);
         }
@@ -1162,6 +1166,27 @@ export const make = Effect.gen(function* () {
       }),
     );
   });
+
+  // Nothing else re-checks an incompatible host, so coming back to the app or
+  // changing networks retries the ones the user left on, in case the host
+  // has updated meanwhile.
+  yield* wakeups.changes.pipe(
+    Stream.filter(ConnectionWakeups.resetsRetryBackoff),
+    Stream.runForEach(() =>
+      SubscriptionRef.get(entries).pipe(
+        Effect.flatMap((current) =>
+          Effect.forEach(
+            [...current].filter(
+              ([, entry]) => entry.enabled && entry.unsupportedReason !== undefined,
+            ),
+            ([environmentId]) => retryNow(environmentId),
+            { concurrency: "unbounded", discard: true },
+          ),
+        ),
+      ),
+    ),
+    Effect.forkScoped,
+  );
 
   return EnvironmentRegistry.of({
     entries,
