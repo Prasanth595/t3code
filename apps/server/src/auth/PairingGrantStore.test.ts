@@ -1,4 +1,7 @@
-import { AuthAdministrativeScopes, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAdministrativeScopes,
+  AuthServerCompatibleClientScopes,
+} from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
@@ -84,7 +87,14 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       const second = yield* Effect.flip(bootstrapCredentials.consume(issued.credential));
 
       expect(first.method).toBe("one-time-token");
-      expect(first.scopes).toEqual(AuthStandardClientScopes);
+      expect(first.scopes).toEqual(AuthServerCompatibleClientScopes);
+      expect(first.scopes).toEqual([
+        "orchestration:read",
+        "orchestration:operate",
+        "terminal:operate",
+        "relay:read",
+      ]);
+      expect(first.scopes[2]).not.toBe("settings:write");
       expect(first.subject).toBe("one-time-token");
       expect(first.label).toBe("Julius iPhone");
       expect(issued.label).toBe("Julius iPhone");

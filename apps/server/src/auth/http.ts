@@ -2,7 +2,7 @@ import {
   authScopeRequiredResponse,
   AuthAccessReadScope,
   AuthAccessWriteScope,
-  AuthStandardClientScopes,
+  AuthServerCompatibleClientScopes,
   AuthGrantScope,
   EnvironmentAuthInvalidError,
   type EnvironmentAuthInvalidReason,
@@ -432,7 +432,7 @@ export const layer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthAccessWriteScope);
-            const delegatedScopes = args.payload.scopes ?? AuthStandardClientScopes;
+            const delegatedScopes = args.payload.scopes ?? AuthServerCompatibleClientScopes;
             if (
               delegatedScopes.length === 0 ||
               new Set<AuthEnvironmentScope>(delegatedScopes).size !== delegatedScopes.length

@@ -1,6 +1,6 @@
 import {
   AuthAdministrativeScopes,
-  AuthStandardClientScopes,
+  AuthServerCompatibleClientScopes,
   type AuthEnvironmentScope,
   type AuthPairingLink,
   type ServerAuthBootstrapMethod,
@@ -398,14 +398,11 @@ export const make = Effect.gen(function* () {
   const issueOneTimeToken: PairingGrantStore["Service"]["issueOneTimeToken"] = Effect.fn(
     "PairingGrantStore.issueOneTimeToken",
   )(function* (input) {
-    const id = yield* crypto
-      .randomUUIDv4()
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
-        ),
-      );
+    const id = yield* crypto.randomUUIDv4.pipe(
+      Effect.mapError(
+        (cause) => new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
+      ),
+    );
     const credential = yield* generatePairingToken;
     const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
     const ttl =
@@ -426,7 +423,7 @@ export const make = Effect.gen(function* () {
         id,
         credential,
         method: "one-time-token",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes: input?.scopes ?? AuthServerCompatibleClientScopes,
         subject,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
@@ -446,7 +443,7 @@ export const make = Effect.gen(function* () {
       );
     yield* emitUpsert({
       id,
-      scopes: input?.scopes ?? AuthStandardClientScopes,
+      scopes: input?.scopes ?? AuthServerCompatibleClientScopes,
       subject: input?.subject ?? "one-time-token",
       ...(input?.label ? { label: input.label } : {}),
       createdAt: now,

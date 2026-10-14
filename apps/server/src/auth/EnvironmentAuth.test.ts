@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
   AuthAdministrativeScopes,
-  AuthStandardClientScopes,
+  AuthServerCompatibleClientScopes,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -343,7 +343,7 @@ it.layer(NodeServices.layer)("EnvironmentAuth.layer", (it) => {
       );
 
       expect(verified.sessionId.length).toBeGreaterThan(0);
-      expect(verified.scopes).toEqual(AuthStandardClientScopes);
+      expect(verified.scopes).toEqual(AuthServerCompatibleClientScopes);
       expect(verified.subject).toBe("one-time-token");
     }).pipe(Effect.provide(layerEnvironmentAuth())),
   );

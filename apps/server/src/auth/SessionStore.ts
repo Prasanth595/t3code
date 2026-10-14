@@ -1,7 +1,7 @@
 import {
   AuthSessionId,
   AuthAdministrativeScopes,
-  AuthStandardClientScopes,
+  AuthServerCompatibleClientScopes,
   AuthEnvironmentScopes,
   type AuthClientMetadata,
   type AuthClientSession,
@@ -660,9 +660,9 @@ export const make = Effect.gen(function* () {
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
       const sessionId = AuthSessionId.make(
-        yield* crypto
-          .randomUUIDv4()
-          .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause }))),
+        yield* crypto.randomUUIDv4.pipe(
+          Effect.mapError((cause) => new SessionCredentialIssueError({ cause })),
+        ),
       );
       const issuedAt = yield* DateTime.now;
       const expiresAt = DateTime.add(issuedAt, {
@@ -673,7 +673,7 @@ export const make = Effect.gen(function* () {
         kind: "session",
         sid: sessionId,
         sub: input?.subject ?? "browser",
-        scopes: input?.scopes ?? AuthStandardClientScopes,
+        scopes: input?.scopes ?? AuthServerCompatibleClientScopes,
         method: input?.method ?? "browser-session-cookie",
         ...(input?.proofKeyThumbprint ? { jkt: input.proofKeyThumbprint } : {}),
         ...(input?.runtimeModeCeiling ? { rtc: input.runtimeModeCeiling } : {}),

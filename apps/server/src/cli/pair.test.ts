@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthServerCompatibleClientScopes } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { assert, describe, expect, it } from "@effect/vitest";
@@ -180,7 +180,7 @@ describe("t3 pair", () => {
         }>;
         assert.equal(credentials.length, 1);
         assert.equal(credentials[0]?.label, "t3 pair");
-        assert.deepEqual(credentials[0]?.scopes, AuthStandardClientScopes);
+        assert.deepEqual(credentials[0]?.scopes, AuthServerCompatibleClientScopes);
       }),
     ).pipe(
       Effect.provide(NodeServices.layer),

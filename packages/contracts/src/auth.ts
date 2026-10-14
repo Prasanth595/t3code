@@ -217,6 +217,18 @@ export const AuthStandardClientScopes = [
   AuthFilesystemWriteScope,
   AuthRelayReadScope,
 ] as const;
+
+/**
+ * Default pairing grant for servers that still persist the legacy scope
+ * vocabulary. Keep this separate from the full granular permission set so a
+ * new producer cannot write scopes an older decoder rejects.
+ */
+export const AuthServerCompatibleClientScopes = [
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+  AuthTerminalOperateScope,
+  AuthRelayReadScope,
+] as const;
 export const AuthAdministrativeScopes = [
   ...AuthStandardClientScopes,
   AuthAccessReadScope,

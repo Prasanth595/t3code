@@ -11,7 +11,7 @@
  */
 import {
   type AuthEnvironmentScope,
-  AuthStandardClientScopes,
+  AuthServerCompatibleClientScopes,
   ExecutionEnvironmentDescriptor,
   PortSchema,
 } from "@t3tools/contracts";
@@ -478,7 +478,7 @@ const tailscaleServePortFlag = Flag.Int("tailscale-serve-port").pipe(
 
 export const pairCommand = Command.make("pair", {
   baseDir: baseDirFlag,
-  scopes: authScopesFlag(AuthStandardClientScopes),
+  scopes: authScopesFlag(AuthServerCompatibleClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
   tailscale: tailscaleFlag,
