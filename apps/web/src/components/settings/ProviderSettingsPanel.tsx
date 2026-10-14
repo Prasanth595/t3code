@@ -27,6 +27,7 @@ import {
   resolveProviderInstanceEnabled,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import {
   getBackgroundActivityPresetSettings,
   resolveServerBackgroundActivitySettings,
@@ -614,20 +615,14 @@ export function EnvironmentProviderSettings({
   >(() => new Set());
   const refreshingRef = useRef(false);
   const updatingInstanceIdsRef = useRef<Set<ProviderInstanceId>>(new Set());
-  // Edits per instance that the server may not have sent back yet. Each save
+  // Edits per instance that the server's instance does not show yet. Each save
   // replays them onto the server's latest instance, so quick edits compose and
-  // a change from elsewhere to another field survives. They are dropped once
-  // their saves finish and the server's instance changes.
+  // a change from elsewhere to another field survives. An edit is dropped once
+  // the server's instance already shows it.
   const pendingInstanceEditsRef = useRef(
     new Map<
       ProviderInstanceId,
-      {
-        updates: ReadonlyArray<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
-        saving: number;
-        // The server's instance when the last edit was made, as JSON: a default slot
-        // with no saved instance gets a fresh object on every render.
-        server: string;
-      }
+      ReadonlyArray<(current: ProviderInstanceConfig) => ProviderInstanceConfig>
     >(),
   );
 
@@ -854,17 +849,14 @@ export function EnvironmentProviderSettings({
     },
   ) => {
     const pendingEdits = pendingInstanceEditsRef.current;
-    const server = JSON.stringify(row.instance);
-    const pending = pendingEdits.get(row.instanceId);
-    // Once their saves are done and the server's instance has changed, it holds those edits.
-    const carried = pending !== undefined && (pending.saving > 0 || pending.server === server);
-    const updates = [...(carried ? pending.updates : []), update];
+    // Compared by content: a default slot with no saved instance is a fresh object every render.
+    const server = stableStringify(row.instance);
+    const unreflected = (pendingEdits.get(row.instanceId) ?? []).filter(
+      (apply) => stableStringify(apply(row.instance)) !== server,
+    );
+    const updates = [...unreflected, update];
     const instance = updates.reduce((current, apply) => apply(current), row.instance);
-    pendingEdits.set(row.instanceId, {
-      updates,
-      saving: (carried ? pending.saving : 0) + 1,
-      server,
-    });
+    pendingEdits.set(row.instanceId, updates);
     const { providerInstances: _providerInstances, ...patch } = buildProviderInstanceUpdatePatch({
       settings,
       instanceId: row.instanceId,
@@ -875,14 +867,12 @@ export function EnvironmentProviderSettings({
       { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
-    const latest = pendingEdits.get(row.instanceId);
-    if (latest !== undefined) {
+    if (result._tag === "Failure") {
       // A failed edit is not replayed again; the card shows what the server kept.
-      const updates =
-        result._tag === "Failure"
-          ? latest.updates.filter((apply) => apply !== update)
-          : latest.updates;
-      pendingEdits.set(row.instanceId, { ...latest, updates, saving: latest.saving - 1 });
+      pendingEdits.set(
+        row.instanceId,
+        (pendingEdits.get(row.instanceId) ?? []).filter((apply) => apply !== update),
+      );
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);

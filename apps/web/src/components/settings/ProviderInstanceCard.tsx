@@ -840,10 +840,22 @@ export function ProviderInstanceCard({
     }));
   };
 
-  const updateEnvironment = (environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>) => {
-    const cleaned = environment.filter((variable) => variable.name.trim().length > 0);
-    updateField("environment", cleaned.length > 0 ? cleaned : undefined);
-  };
+  // Builds the next variables from the newest instance's, so an edit to one
+  // variable keeps another that is still being saved.
+  const updateEnvironment = (
+    nextEnvironment: (
+      current: ReadonlyArray<ProviderInstanceEnvironmentVariable> | undefined,
+    ) => ReadonlyArray<ProviderInstanceEnvironmentVariable>,
+  ) =>
+    onUpdate((current) => {
+      const { environment: _omit, ...rest } = current;
+      const cleaned = nextEnvironment(current.environment).filter(
+        (variable) => variable.name.trim().length > 0,
+      );
+      return (
+        cleaned.length > 0 ? { ...rest, environment: cleaned } : rest
+      ) as ProviderInstanceConfig;
+    });
   // Drivers that need a named secret (Cursor's API key) get a dedicated field;
   // the generic editor only shows the remaining variables.
   const environmentFields = driverOption?.environmentFields ?? [];
@@ -855,16 +867,16 @@ export function ProviderInstanceCard({
   const updateGenericEnvironment = (
     environment: ReadonlyArray<ProviderInstanceEnvironmentVariable>,
   ) => {
-    const dedicatedEnvironment = (instance.environment ?? []).filter((variable) =>
-      environmentFieldNames.has(variable.name),
-    );
-    updateEnvironment([...dedicatedEnvironment, ...environment]);
+    updateEnvironment((current) => [
+      ...(current ?? []).filter((variable) => environmentFieldNames.has(variable.name)),
+      ...environment,
+    ]);
   };
   const updateEnvironmentField = (field: ProviderEnvironmentField, value: string) => {
-    updateEnvironment(nextProviderEnvironmentWithFieldValue(instance.environment, field, value));
+    updateEnvironment((current) => nextProviderEnvironmentWithFieldValue(current, field, value));
   };
   const removeEnvironmentField = (field: ProviderEnvironmentField) => {
-    updateEnvironment(providerEnvironmentWithoutNames(instance.environment, new Set([field.name])));
+    updateEnvironment((current) => providerEnvironmentWithoutNames(current, new Set([field.name])));
   };
 
   const titleIconNode = (

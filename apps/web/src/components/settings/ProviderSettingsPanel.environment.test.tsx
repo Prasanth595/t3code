@@ -423,6 +423,29 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(savedInstance(1)).toMatchObject({ badgeLabel: "PX", icon: "openai" });
   });
 
+  it("keeps a saved edit the server has not sent back when an earlier one arrives", async () => {
+    atoms.providers = [provider()];
+    const onUpdate = codexCardUpdate(renderPanel());
+    onUpdate(setField("badgeLabel", "PX"));
+    onUpdate(setField("icon", "openai"));
+    await flushPromises();
+    // Only the first save has come back so far.
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), badgeLabel: "PX" },
+      },
+    };
+    codexCardUpdate(renderPanel())(setField("displayName", "Work"));
+    await flushPromises();
+
+    expect(savedInstance(2)).toMatchObject({
+      badgeLabel: "PX",
+      icon: "openai",
+      displayName: "Work",
+    });
+  });
+
   it("starts the next edit from the server's state after a save fails", async () => {
     atoms.providers = [provider()];
     settingsState.mutateProviderInstance.mockResolvedValueOnce(
