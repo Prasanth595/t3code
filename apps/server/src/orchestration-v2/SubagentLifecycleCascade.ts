@@ -37,6 +37,12 @@ export class SubagentLifecycleCascade extends Context.Service<
  * looks done: a pending cascade from an earlier command has not reached the
  * projection yet, and a child already in the state can still have subagents
  * that are not.
+ *
+ * Archive and delete queue this before the thread's native cleanup so descendant
+ * lifecycle commands and their cleanup can be queued without waiting for its
+ * provider teardown. Child cleanup and deeper cascades run in their own outbox
+ * lanes; this walk must not await those effects. Descendant command locks can
+ * still delay the walk and this thread's cleanup.
  */
 export function subagentLifecycleCascadeEffect(input: {
   readonly commandId: CommandId;

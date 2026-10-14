@@ -30,6 +30,7 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocator.IdAllocatorV2Error> {
   const { command, projection, now, idAllocator } = input;
   const events: Array<OrchestrationV2DomainEvent> = [];
+  // Propagate before native cleanup; see subagentLifecycleCascadeEffect.
   const effects: Array<PendingOrchestrationEffectV2> =
     input.cascadeToSubagents === true
       ? [

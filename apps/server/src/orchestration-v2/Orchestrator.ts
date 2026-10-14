@@ -3340,6 +3340,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: updatedThread,
     });
 
+    // Archive propagation precedes native cleanup; see subagentLifecycleCascadeEffect.
     if (command.type === "thread.archive" || command.type === "thread.unarchive") {
       const operation = command.type === "thread.archive" ? "archive" : "unarchive";
       const children = yield* projectionStore
