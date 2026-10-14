@@ -28,7 +28,6 @@ import {
   arrowEnds,
   connectMachines,
   cutLevel,
-  machineQueue,
   pairCut,
   pairShows,
 } from "./derive.ts";
@@ -52,7 +51,8 @@ import {
 } from "./layout.ts";
 import { NoteCard } from "./NoteCard.tsx";
 import { settleHeld, type Held } from "./store.ts";
-import { AlertStickers, CardMeters } from "./resources.tsx";
+import { MachineStickers } from "./MachineStickers.tsx";
+import { CardMeters } from "./resources.tsx";
 
 /** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
 const MAX_WIDTH = 1500;
@@ -802,7 +802,6 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             const presence = snapshot.presence[machine.id];
             const state = presenceState(presence);
             const status = presence?.status ?? null;
-            const queue = machineQueue(snapshot, portal.rotations, machine);
             const on = focus === machine.id;
             const dropTarget = target === machine.id;
             // MM-1002: the build gets its own line under the name, so it never cuts off.
@@ -867,24 +866,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
                 {!readOnly && <CardMeters machineId={machine.id} />}
                 <div className="tags">
                   <BuildSticker standing={standings.get(machine.id)} />
-                  {!readOnly && (
-                    <>
-                      <AlertStickers machineId={machine.id} />
-                      {status && status.runningTurns > 0 && (
-                        <span className="sticker ok">{status.runningTurns} running</span>
-                      )}
-                      {status && status.waitingThreads > 0 && (
-                        <span className="sticker wait">
-                          {status.waitingThreads} {status.waitingThreads === 1 ? "needs" : "need"}{" "}
-                          you
-                        </span>
-                      )}
-                      {status?.updateWaiting && <span className="sticker info">update</span>}
-                      {!queue.waitingToJoin && queue.count > 0 && (
-                        <span className="sticker wait">{queue.count} queued</span>
-                      )}
-                    </>
-                  )}
+                  {!readOnly && <MachineStickers machine={machine} />}
                 </div>
               </div>
             );

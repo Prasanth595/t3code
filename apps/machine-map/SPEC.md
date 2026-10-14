@@ -165,6 +165,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-1110** A double click on empty map space, or a long press on a phone, opens a small menu at that point: "Add machine here" opens Add machine (MM-201) and places the new machine at that point. "Add note here" opens a new note in place.
 - **MM-1111** A drag of a machine, a pair card or a note moves at the frame rate of the screen. The dropped card stays where the owner let go until the map holds the new place, and it never jumps back.
 - **MM-1112** The machine panel has a head and four tabs. The head shows the name, the presence, the stickers and "Open T3". Overview has the status, the commands and the resources. Access lists every arrow to and from the machine, with "Connect to" and the map role. Settings lists the managed settings with a filter, own values first. Manage has rename, kind, token and removal.
+- **MM-1113** The work stickers of a machine card and the machine panel are links. "Running" and "need you" open T3 on the machine. A health alert opens the Health view. "Update" opens the machine. "Queued" opens the Queue view with only the work of that machine, and "Show all machines" ends the filter.
 
 ## 12. Security
 
