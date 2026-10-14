@@ -232,10 +232,12 @@ export const rpcAuthorizationError = (requiredScope: AuthEnvironmentScope) =>
     ...authScopeRequiredResponse(requiredScope),
   });
 
-const SettingsUpdate = Schema.Struct({
-  patch: ServerSettingsPatch,
-  providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
-});
+const SettingsUpdate = Schema.toType(
+  Schema.Struct({
+    patch: ServerSettingsPatch,
+    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+  }),
+);
 
 const requiredScopesForSettingsUpdate = (payload: unknown) => {
   const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
