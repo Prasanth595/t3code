@@ -24,6 +24,7 @@ import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as MissionService from "./MissionService.ts";
 import * as TransferStore from "./MissionManagerTransferStore.ts";
+import { decodeMissionCompletionSelector } from "../../../../packages/contracts/src/missionCompletion.ts";
 import * as Resolver from "./MissionCompletionRouteResolver.ts";
 
 const AT = "2026-10-14T00:00:00.000Z";
@@ -571,5 +572,292 @@ it.effect("replacing an issuer callback cannot bypass its original revocation", 
     (world.capturedAuthority as unknown as { isCurrent: () => boolean }).isCurrent = () => true;
     const denied = yield* resolver.resolve({ ...TASK_SELECTOR }).pipe(Effect.flip);
     assert.strictEqual(denied.category, "scope_denied");
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY })));
+});
+
+// Genuine opaque MCP authority path: the resolver accepts a minted
+// MissionTransactionGuard through MissionService.MissionAuthority and never
+// consults the private callback while a handle is supplied. Guards below
+// are self-minted with a strict binding check (exact selector bytes, owning
+// SQL, key identity, live flag) rather than a blind true; end-to-end
+// minting through the real MissionMcpAuthority is covered by
+// MissionCompletionMcpService.test.ts.
+const mintOpaqueGuard = (
+  sql: SqlClient.SqlClient,
+  world: World,
+  requestKey: object,
+  rawSelector: unknown,
+  controllerThread: string,
+) =>
+  Effect.gen(function* () {
+    const selector = yield* decodeMissionCompletionSelector(rawSelector);
+    return MissionService.MissionTransactionGuard.make({
+      sql,
+      requestKey,
+      request: {
+        operation: "completion-route-read",
+        missionId: MissionId.make(selector.missionId),
+        command: selector,
+      },
+      authority: {
+        teamId: TeamId.make("team-1"),
+        environmentId: EnvironmentId.make("env-1"),
+        controllerThreadId: ThreadId.make(controllerThread),
+      },
+      check: (expected) =>
+        expected === undefined && world.authorityOk
+          ? Effect.void
+          : Effect.fail(
+              new MissionService.MissionServiceError({
+                operation: "completion-route-read",
+                category: "scope_denied",
+              }),
+            ),
+    });
+  });
+
+interface OpaqueRecord {
+  readonly teamId: TeamId;
+  readonly environmentId: EnvironmentId;
+  readonly controllerThreadId: ThreadId;
+  readonly transactionGuard: MissionService.MissionTransactionGuard;
+  readonly requestKey: object;
+}
+
+const opaqueRecord = (
+  guard: MissionService.MissionTransactionGuard,
+  requestKey: object,
+  controllerThread = OPAQUE_DELIVERY,
+): OpaqueRecord => ({
+  teamId: TeamId.make("team-1"),
+  environmentId: EnvironmentId.make("env-1"),
+  controllerThreadId: ThreadId.make(controllerThread),
+  transactionGuard: guard,
+  requestKey,
+});
+
+const opaqueLayer = (
+  sql: SqlClient.SqlClient,
+  record: OpaqueRecord,
+  privateIssuer?: {
+    readonly teamId: string;
+    readonly environmentId: string;
+    readonly controllerThreadId: string;
+    readonly role: "delivery" | "retro";
+    readonly isCurrent: () => boolean;
+  },
+) =>
+  Layer.fresh(Resolver.layer).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.succeed(SqlClient.SqlClient, sql),
+        Layer.succeed(MissionService.MissionAuthority, record),
+        ...(privateIssuer === undefined
+          ? []
+          : [Layer.succeed(TransferStore.MissionManagerReservationAuthority, privateIssuer)]),
+      ),
+    ),
+  );
+
+const opaqueResolve = (
+  sql: SqlClient.SqlClient,
+  record: OpaqueRecord,
+  selector: unknown,
+  privateIssuer?: Parameters<typeof opaqueLayer>[2],
+) =>
+  Effect.gen(function* () {
+    const resolver = yield* Resolver.MissionCompletionRouteResolver;
+    return yield* resolver.resolve(selector);
+  }).pipe(Effect.provide(opaqueLayer(sql, record, privateIssuer)));
+
+it.effect("opaque handle resolves a delivery candidate with no private port", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const before = yield* projectionRow();
+    const eventsBefore = yield* eventCount();
+    const requestKey = {};
+    const guard = yield* mintOpaqueGuard(sql, world, requestKey, { ...TASK_SELECTOR }, OPAQUE_DELIVERY);
+    const decision = yield* opaqueResolve(sql, opaqueRecord(guard, requestKey), { ...TASK_SELECTOR });
+    assert.strictEqual(decision.kind, "candidate");
+    if (decision.kind !== "candidate") return;
+    assert.strictEqual(decision.candidate.role, "delivery");
+    assert.strictEqual(decision.candidate.targetThreadId, OPAQUE_DELIVERY);
+    assert.strictEqual(decision.candidate.targetEpoch, 3);
+    assert.deepStrictEqual(decision.candidate.source, {
+      kind: "task-result", taskId: "task-alpha", attemptNumber: 2, resultRevision: 5,
+      childTaskId: CHILD_TASK, childThreadId: CHILD_THREAD, childRunId: CHILD_RUN,
+    });
+    assert.strictEqual(yield* eventCount(), eventsBefore);
+    const after = yield* projectionRow();
+    assert.strictEqual(after.revision, before.revision);
+    assert.strictEqual(after.snapshot_json, before.snapshot_json);
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY, withAuthority: false })));
+});
+
+it.effect("opaque handle denies a drifted selector the private path would hold", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const eventsBefore = yield* eventCount();
+    const requestKey = {};
+    const guard = yield* mintOpaqueGuard(sql, world, requestKey, { ...TASK_SELECTOR }, OPAQUE_DELIVERY);
+    // resultRevision 6 is a valid key the private path would answer with a
+    // source_mismatch hold; the guard binds the exact minted bytes instead.
+    const denied = yield* opaqueResolve(
+      sql,
+      opaqueRecord(guard, requestKey),
+      { ...TASK_SELECTOR, resultRevision: 6 },
+    ).pipe(Effect.flip);
+    assert.strictEqual(categoryOf(denied), "scope_denied");
+    assert.strictEqual(yield* eventCount(), eventsBefore);
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY, withAuthority: false })));
+});
+
+it.effect("a forged handle never falls back to a current private callback", () => {
+  const world = makeWorld();
+  let consulted = 0;
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const eventsBefore = yield* eventCount();
+    const forged = opaqueRecord(
+      {} as unknown as MissionService.MissionTransactionGuard,
+      {},
+    );
+    const denied = yield* opaqueResolve(sql, forged, { ...TASK_SELECTOR }, {
+      teamId: "team-1",
+      environmentId: "env-1",
+      controllerThreadId: OPAQUE_DELIVERY,
+      role: "delivery",
+      isCurrent: () => {
+        consulted += 1;
+        return true;
+      },
+    }).pipe(Effect.flip);
+    assert.strictEqual(categoryOf(denied), "scope_denied");
+    assert.strictEqual(consulted, 0);
+    assert.strictEqual(yield* eventCount(), eventsBefore);
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY })));
+});
+
+it.effect("opaque handle denies foreign SQL and copied keys", () => {
+  const world = makeWorld();
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const foreignSql = yield* SqlClient.SqlClient.pipe(Effect.provide(Sqlite.layerMemory));
+    const eventsBefore = yield* eventCount();
+    const requestKey = {};
+    const foreignGuard = yield* mintOpaqueGuard(foreignSql, world, requestKey, { ...TASK_SELECTOR }, OPAQUE_DELIVERY);
+    const deniedForeign = yield* opaqueResolve(
+      sql,
+      opaqueRecord(foreignGuard, requestKey),
+      { ...TASK_SELECTOR },
+    ).pipe(Effect.flip);
+    assert.strictEqual(categoryOf(deniedForeign), "scope_denied");
+    const homeGuard = yield* mintOpaqueGuard(sql, world, requestKey, { ...TASK_SELECTOR }, OPAQUE_DELIVERY);
+    // Same empty-object content, different identity: the key is bound by
+    // reference, never by shape.
+    const deniedKey = yield* opaqueResolve(sql, opaqueRecord(homeGuard, {}), { ...TASK_SELECTOR }).pipe(
+      Effect.flip,
+    );
+    assert.strictEqual(categoryOf(deniedKey), "scope_denied");
+    assert.strictEqual(yield* eventCount(), eventsBefore);
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY, withAuthority: false })));
+});
+
+it.effect("a retargeted opaque record still enforces the original binding", () => {
+  const world = makeWorld();
+  let consulted = 0;
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const eventsBefore = yield* eventCount();
+    const requestKey = {};
+    const guard = yield* mintOpaqueGuard(sql, world, requestKey, { ...TASK_SELECTOR }, OPAQUE_DELIVERY);
+    // The presented record claims an evil scope, but the handle was minted
+    // for the original tuple: the guard binding wins and the current
+    // private callback is never consulted.
+    const retargeted: OpaqueRecord = {
+      ...opaqueRecord(guard, requestKey),
+      teamId: TeamId.make("team-evil"),
+      controllerThreadId: ThreadId.make("thread-evil"),
+    };
+    const denied = yield* opaqueResolve(sql, retargeted, { ...TASK_SELECTOR }, {
+      teamId: "team-1",
+      environmentId: "env-1",
+      controllerThreadId: OPAQUE_DELIVERY,
+      role: "delivery",
+      isCurrent: () => {
+        consulted += 1;
+        return true;
+      },
+    }).pipe(Effect.flip);
+    assert.strictEqual(categoryOf(denied), "scope_denied");
+    assert.strictEqual(consulted, 0);
+    assert.strictEqual(yield* eventCount(), eventsBefore);
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY })));
+});
+
+it.effect("opaque revocation denies candidate and hold without consulting the private port", () => {
+  const world = makeWorld();
+  let consulted = 0;
+  const issuer = {
+    teamId: "team-1",
+    environmentId: "env-1",
+    controllerThreadId: OPAQUE_DELIVERY,
+    role: "delivery" as const,
+    isCurrent: () => {
+      consulted += 1;
+      return true;
+    },
+  };
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const eventsBefore = yield* eventCount();
+    const requestKey = {};
+    const guard = yield* mintOpaqueGuard(sql, world, requestKey, { ...TASK_SELECTOR }, OPAQUE_DELIVERY);
+    world.authorityOk = false;
+    const deniedCandidate = yield* opaqueResolve(sql, opaqueRecord(guard, requestKey), { ...TASK_SELECTOR }, issuer).pipe(
+      Effect.flip,
+    );
+    assert.strictEqual(categoryOf(deniedCandidate), "scope_denied");
+    // A hold answer is denied the same way once the handle is revoked.
+    yield* stageExecution(fullExecution({ results: [], retroReportReceipts: [] }));
+    const deniedHold = yield* opaqueResolve(sql, opaqueRecord(guard, requestKey), { ...TASK_SELECTOR }, issuer).pipe(
+      Effect.flip,
+    );
+    assert.strictEqual(categoryOf(deniedHold), "scope_denied");
+    assert.strictEqual(consulted, 0);
+    assert.strictEqual(yield* eventCount(), eventsBefore);
+  }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY })));
+});
+
+it.effect("an authority context without a handle never falls back to a private callback", () => {
+  const world = makeWorld();
+  let consulted = 0;
+  return Effect.gen(function* () {
+    yield* seedBase(OPAQUE_DELIVERY, RETRO_THREAD);
+    yield* stageExecution(fullExecution());
+    const sql = yield* SqlClient.SqlClient;
+    const denied = yield* opaqueResolve(sql, {
+      ...opaqueRecord({} as MissionService.MissionTransactionGuard, {}),
+      transactionGuard: undefined,
+    } as unknown as OpaqueRecord, { ...TASK_SELECTOR }, {
+      teamId: "team-1", environmentId: "env-1", controllerThreadId: OPAQUE_DELIVERY,
+      role: "delivery", isCurrent: () => { consulted += 1; return true; },
+    }).pipe(Effect.flip);
+    assert.strictEqual(categoryOf(denied), "scope_denied");
+    assert.strictEqual(consulted, 0);
   }).pipe(Effect.provide(harness(world, { role: "delivery", controllerThread: OPAQUE_DELIVERY, serviceThread: OPAQUE_DELIVERY })));
 });

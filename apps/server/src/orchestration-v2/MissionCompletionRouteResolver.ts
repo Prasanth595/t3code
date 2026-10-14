@@ -5,8 +5,11 @@
 // the accepted pure `resolveCompletionRoute`. Returns ONLY a candidate or a
 // finite hold. This port is ROOT-INTERNAL current-role proof, not public
 // caller claims: no wake, admission activation, event/CAS/receipt/outbox
-// writes, or schema changes. A future MCP/runtime policy producer remains
-// unimplemented; this module documents source-only reads and grants nothing.
+// writes, or schema changes. Two authority modes share every read fence: the
+// original required private role callback, and a genuine opaque
+// MissionAuthority transaction guard supplied per invocation by the
+// completion MCP consumer. The opaque mode never falls back to the private
+// callback and never manufactures currency.
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -14,7 +17,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { stableStringify } from "@t3tools/shared/relaySigning";
-import { Mission } from "../../../../packages/contracts/src/mission.ts";
+import { Mission, MissionId } from "../../../../packages/contracts/src/mission.ts";
 import {
   decodeMissionCompletionSelector,
   type MissionCompletionSelector,
@@ -29,6 +32,7 @@ import {
   type CompletionScope,
 } from "./MissionCompletionRouting.ts";
 import { MissionManagerReservationAuthority } from "./MissionManagerTransferStore.ts";
+import * as MissionService from "./MissionService.ts";
 
 export class MissionCompletionRouteResolverError extends Schema.TaggedError<MissionCompletionRouteResolverError>()(
   "MissionCompletionRouteResolverError",
@@ -112,6 +116,23 @@ const make = Effect.gen(function* () {
     }
   };
 
+  // Genuine opaque MCP authority context: selected whenever a
+  // MissionAuthority context is supplied, including a missing handle. The tuple, handle,
+  // and request key are captured ONCE here so later mutation of the provided
+  // record cannot retarget the check. While active, the private callback
+  // above is never consulted, even if one is also supplied: a missing,
+  // forged, or foreign handle denies instead of falling back.
+  const opaqueOption = yield* Effect.serviceOption(MissionService.MissionAuthority);
+  const opaque = Option.isSome(opaqueOption)
+    ? {
+        teamId: opaqueOption.value.teamId,
+        environmentId: opaqueOption.value.environmentId,
+        controllerThreadId: opaqueOption.value.controllerThreadId,
+        transactionGuard: opaqueOption.value.transactionGuard,
+        requestKey: opaqueOption.value.requestKey,
+      }
+    : null;
+
   const scopeDenied = (): MissionCompletionRouteResolverError =>
     new MissionCompletionRouteResolverError({ operation: "resolve", category: "scope_denied" });
   const requestConflict = (): MissionCompletionRouteResolverError =>
@@ -120,6 +141,40 @@ const make = Effect.gen(function* () {
     isResolverError(cause)
       ? cause
       : new MissionCompletionRouteResolverError({ operation: "resolve", category: "persistence" });
+
+  // Read-only handle request over the exact decoded selector: the guard binds
+  // every actual selector byte, the owning SQL client, and the captured
+  // handle/key. No expectedMission is ever supplied, so a spoof cannot bless
+  // changed state.
+  const guardRequestFor = (
+    selector: CompletionSelector,
+  ): MissionService.MissionTransactionRequest => ({
+    operation: "completion-route-read",
+    missionId: MissionId.make(selector.missionId),
+    command: selector,
+  });
+
+  // Effect-based currency fence at every existing check site. The genuine
+  // opaque guard runs when an MCP handle was supplied; otherwise the
+  // original private callback decides. No manufactured default issuer.
+  const assertCurrent = (
+    selector: CompletionSelector,
+  ): Effect.Effect<void, MissionCompletionRouteResolverError> => {
+    if (opaque === null) {
+      return authorityIsCurrent() ? Effect.void : Effect.fail(scopeDenied());
+    }
+    return MissionService.MissionTransactionGuard.check({
+      sql,
+      authority: {
+        teamId: opaque.teamId,
+        environmentId: opaque.environmentId,
+        controllerThreadId: opaque.controllerThreadId,
+        transactionGuard: opaque.transactionGuard,
+        requestKey: opaque.requestKey,
+      },
+      request: guardRequestFor(selector),
+    }).pipe(Effect.mapError(() => scopeDenied()));
+  };
 
   const resolve = Effect.fn("MissionCompletionRouteResolver.resolve")(function* (
     rawSelector: unknown,
@@ -139,11 +194,19 @@ const make = Effect.gen(function* () {
       Effect.mapError(() => requestConflict()),
     );
 
-    if (captured === null || !authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
-    // Role is derived from the selector kind and must match the private port
-    // role, even when one controller thread holds both canonical roles.
+    // Role is derived from the selector kind, never from a caller claim.
     const role = selector.kind === "task-result" ? "delivery" : "retro";
-    if (role !== captured.role) return yield* Effect.fail(scopeDenied());
+    if (opaque !== null) {
+      // Genuine opaque path: the guard binds this exact selector before any
+      // private SQL. The private callback is never consulted here, even if
+      // one is also supplied.
+      yield* assertCurrent(selector);
+    } else {
+      if (captured === null || !authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+      // The derived role must match the private port role, even when one
+      // controller thread holds both canonical roles.
+      if (role !== captured.role) return yield* Effect.fail(scopeDenied());
+    }
     // Never join a foreign ambient transaction; only the owning read below.
     if (Option.isSome(yield* Effect.serviceOption(sql.transactionService))) {
       return yield* Effect.fail(new MissionCompletionRouteResolverError({
@@ -151,12 +214,13 @@ const make = Effect.gen(function* () {
         category: "persistence",
       }));
     }
-    const authority = captured;
+    const authority = opaque ?? captured;
+    if (authority === null) return yield* Effect.fail(scopeDenied());
 
     const decision = yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+          yield* assertCurrent(selector);
           const rows = yield* sql<{
             mission_id: string;
             team_id: string;
@@ -164,13 +228,13 @@ const make = Effect.gen(function* () {
             revision: number;
             snapshot_json: string;
           }>`SELECT mission_id, team_id, authority_environment_id, revision, snapshot_json FROM projection_missions WHERE mission_id = ${selector.missionId} AND team_id = ${authority.teamId} AND authority_environment_id = ${authority.environmentId}`;
-          if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+          yield* assertCurrent(selector);
           if (rows[0] === undefined) return yield* Effect.fail(scopeDenied());
           const row = rows[0];
           const mission = yield* decodeMission(row.snapshot_json).pipe(
             Effect.mapError(() => new MissionCompletionRouteResolverError({ operation: "resolve", category: "persistence" })),
           );
-          if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+          yield* assertCurrent(selector);
           // Projection revision and canonical identity must agree exactly;
           // drift or foreign private bindings fail closed.
           if (
@@ -205,13 +269,13 @@ const make = Effect.gen(function* () {
             );
             if (keyed.length === 0) {
               const hold = localHold(selector.missionId, "unknown_completion", "No persisted task-result record matches the selector.");
-              if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+              yield* assertCurrent(selector);
               return hold;
             }
             const firstResult = keyed[0];
             if (keyed.length > 1 || firstResult === undefined || !isResultRecord(firstResult)) {
               const hold = localHold(selector.missionId, "ambiguous_completion", "Duplicate persisted task-result records match; refusing to choose.");
-              if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+              yield* assertCurrent(selector);
               return hold;
             }
             const record = firstResult;
@@ -224,7 +288,7 @@ const make = Effect.gen(function* () {
               typeof prov.childRunId !== "string"
             ) {
               const hold = localHold(selector.missionId, "source_mismatch", "Task-result revision or producing run drifted from the persisted record.");
-              if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+              yield* assertCurrent(selector);
               return hold;
             }
             completion = {
@@ -243,13 +307,13 @@ const make = Effect.gen(function* () {
             );
             if (keyed.length === 0) {
               const hold = localHold(selector.missionId, "unknown_completion", "No persisted retro-report receipt matches the selector.");
-              if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+              yield* assertCurrent(selector);
               return hold;
             }
             const firstReceipt = keyed[0];
             if (keyed.length > 1 || firstReceipt === undefined || !isReceipt(firstReceipt)) {
               const hold = localHold(selector.missionId, "ambiguous_completion", "Duplicate persisted retro-report receipts match; refusing to choose.");
-              if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+              yield* assertCurrent(selector);
               return hold;
             }
             const receipt = firstReceipt;
@@ -280,9 +344,9 @@ const make = Effect.gen(function* () {
             missionId: selector.missionId,
           });
           const frozenCompletion = Object.freeze(completion) as CompletionReference;
-          if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+          yield* assertCurrent(selector);
           const first = resolveCompletionRoute({ mission, scope, completion: frozenCompletion });
-          if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+          yield* assertCurrent(selector);
           if (first.kind === "hold") return first;
           // Stable rederivation plus currentness at the owning transaction
           // boundary: policy revocation, scope drift, or binding loss denies.
@@ -294,7 +358,7 @@ const make = Effect.gen(function* () {
           ) {
             return yield* Effect.fail(scopeDenied());
           }
-          if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+          yield* assertCurrent(selector);
           return first;
         }),
       )
@@ -302,7 +366,7 @@ const make = Effect.gen(function* () {
     // After-return guard: revocation across the transaction boundary denies,
     // even for an already-derived hold. A returned candidate is still not
     // live authority: no wake, routing-ready flag, or pointer availability.
-    if (!authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
+    yield* assertCurrent(selector);
     return decision;
   });
 
