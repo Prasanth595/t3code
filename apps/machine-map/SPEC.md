@@ -64,12 +64,15 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 4. Settings
 
 - **MM-401** The map holds shared values for T3 server settings and client settings. Each machine can override a shared value with its own value.
-- **MM-402** A machine applies its settings through the T3 settings service, so they apply live like a change in T3 Settings.
+- **MM-402** A machine applies its settings through the T3 settings service, so they apply live like a change in T3 Settings. The theme settings of MM-408 to MM-410 are the exception.
 - **MM-403** A desktop machine applies client settings in its desktop app. A closed app applies them at its next start.
 - **MM-404** A change made on a machine in T3 Settings becomes an override of that machine in the map. The portal shows it as "changed on <machine>". "Make shared" copies it to all machines.
 - **MM-405** The Settings view shows each managed setting as a row and each machine as a column. Values that differ from the shared value show as drift.
 - **MM-406** The portal only manages settings that the owner added to the map. "Manage" adds a setting and takes the current value of a chosen machine as the shared value.
 - **MM-407** The portal edits each setting with a control for its type: a switch, a choice, a number, text, or a JSON editor for objects. The schema comes from `@t3tools/contracts`.
+- **MM-408** A machine reports the themes that it publishes as the server setting `sharedThemes`. The value maps a theme id to `{ json, css }`: the content of `themes/<id>.json`, and the content of `themes/<id>.css` or null. A change in the themes folder is a local change (MM-404). The machine does not report `defaultThemeSetAt`.
+- **MM-409** When a desired state changes `sharedThemes`, the machine writes each changed theme into its themes folder with atomic writes. It refuses a theme with an invalid id, a file over the size limit of the theme watcher, a symlinked theme file, or content that fails the theme file schema. Themes that are not in the value stay. A refused or extra theme shows as drift.
+- **MM-410** When a desired state changes `defaultTheme`, the machine sets it like `t3 theme set`, so connected web and desktop clients switch. The value names a built-in theme or a theme that the machine publishes. An empty value clears it.
 
 ## 5. Commands
 
