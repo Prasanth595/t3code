@@ -6,6 +6,7 @@ import {
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2TurnItem,
@@ -329,6 +330,8 @@ export const layer: Layer.Layer<
               >;
           /** Emitted after the run events when the provider thread should go idle. */
           readonly providerThreadUpdate?: OrchestrationV2ProviderThread;
+          /** Provider turns of this run that end with it. */
+          readonly interruptedProviderTurns?: ReadonlyArray<OrchestrationV2ProviderTurn>;
         }) {
           const { now, status } = input;
           const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
@@ -373,6 +376,10 @@ export const layer: Layer.Layer<
                     payload: input.providerThreadUpdate,
                   },
                 ]),
+            ...(input.interruptedProviderTurns ?? []).map((providerTurn) => ({
+              type: "provider-turn.updated" as const,
+              payload: { ...providerTurn, status: "interrupted" as const, completedAt: now },
+            })),
           ] as const;
           const events = yield* Effect.forEach(eventPayloads, (event) =>
             Effect.gen(function* () {
@@ -399,6 +406,13 @@ export const layer: Layer.Layer<
       // Failing the run needs only the state above, so a start that gave up
       // over missing provider state can still be settled.
       if (input.failRun === true) {
+        // A steering restart that gave up may not have stopped the turn it
+        // interrupted. Recovery skips failed runs, so end that turn here.
+        const runAttemptIds = new Set(
+          projection.attempts
+            .filter((candidate) => candidate.runId === runId)
+            .map((candidate) => candidate.id),
+        );
         yield* settleRunBeforeStart({
           signal: "provider-turn-start-failure",
           status: "failed",
@@ -412,6 +426,12 @@ export const layer: Layer.Layer<
             title: "Turn failed to start",
             failure: makeProviderFailure({ message: START_GAVE_UP_MESSAGE }),
           },
+          interruptedProviderTurns: projection.providerTurns.filter(
+            (providerTurn) =>
+              providerTurn.runAttemptId !== null &&
+              runAttemptIds.has(providerTurn.runAttemptId) &&
+              (providerTurn.status === "pending" || providerTurn.status === "running"),
+          ),
         });
         return;
       }
