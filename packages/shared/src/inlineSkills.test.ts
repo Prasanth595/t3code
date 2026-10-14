@@ -25,6 +25,12 @@ describe("replaceSpokenSkills", () => {
       "run $postplan-read on it",
     );
     expect(replaceSpokenSkills("dollar review please", skills)).toBe("$review please");
+    const overlapping = [
+      { name: "bug", displayName: undefined },
+      { name: "fix-bug", displayName: undefined },
+    ];
+    expect(replaceSpokenSkills("use the fix bug skill", overlapping)).toBe("use $fix-bug");
+    expect(replaceSpokenSkills("use the bug skill", overlapping)).toBe("use $bug");
   });
 
   it("leaves unanchored words and unknown skills alone", () => {

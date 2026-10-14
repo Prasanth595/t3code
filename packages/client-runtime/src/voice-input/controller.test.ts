@@ -159,6 +159,10 @@ describe("resolveTranscriptCommit", () => {
     expect(resolveTranscriptCommit(empty, empty, "ok then", "<|en|>")).toMatchObject({
       text: "Ok then",
     });
+    const beforeLowercase = at("before release", 0);
+    expect(
+      resolveTranscriptCommit(beforeLowercase, beforeLowercase, "Fix the bug.", "en-US"),
+    ).toMatchObject({ text: "Fix the bug before release" });
     const continuing = at("Fix the bug before release.", 11);
     expect(
       resolveTranscriptCommit(continuing, continuing, "And check the tests.", "en-US"),

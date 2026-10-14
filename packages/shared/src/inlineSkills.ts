@@ -105,7 +105,8 @@ export function replaceSpokenSkills(text: string, skills: readonly InlineSkill[]
       if (!word || word.start < consumedUntil || word.letters.length === 0) break;
       spoken = step === 1 ? spoken + word.letters : word.letters + spoken;
       const match = closestSpokenSkill(spoken, skills);
-      if (match && (best === null || match.distance < best.distance)) {
+      // Spans grow word by word, so on a tie the longer name wins ("fix bug" over "bug").
+      if (match && (best === null || match.distance <= best.distance)) {
         best = {
           ...match,
           first: step === 1 ? from : index,

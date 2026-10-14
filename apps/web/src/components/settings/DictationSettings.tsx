@@ -288,7 +288,12 @@ function InactiveDictationModels(props: {
   const [removing, setRemoving] = useState<DictationModel["id"] | null>(null);
   if (!state?.supported) return null;
   const inactive = state.models.filter(
-    (model) => model.install._tag === "installed" && model.id !== props.selectedModel,
+    // The environment keeps its own active model even when another environment's
+    // selection is shown; removing it would be a no-op on the server.
+    (model) =>
+      model.install._tag === "installed" &&
+      model.id !== props.selectedModel &&
+      model.id !== state.settings.localModel,
   );
   if (inactive.length === 0) return null;
 
