@@ -101,7 +101,25 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
-it("names the adapter's reason for each wrapper category", () => {
+const driver = ProviderDriverKind.make("claudeAgent");
+const protocolError = (detail: string, reason?: ProviderAdapter.ProviderAdapterFailureReason) =>
+  new ProviderAdapter.ProviderAdapterProtocolError({
+    driver,
+    detail,
+    ...(reason === undefined ? {} : { reason }),
+  });
+const turnStart = (cause: unknown) =>
+  new ProviderAdapter.ProviderAdapterTurnStartError({
+    driver,
+    threadId: ThreadId.make("thread:busy"),
+    providerThreadId: ProviderThreadId.make("provider-thread:busy"),
+    runId: RunId.make("run:busy"),
+    cause,
+  });
+const GENERIC_TURN_START =
+  "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
+
+it("names a typed reason beneath each wrapper category", () => {
   const categories = [
     ["ProviderAdapterTurnStartError", "The provider could not start this turn"],
     ["ProviderAdapterEventStreamError", "The provider event stream closed unexpectedly"],
@@ -111,82 +129,72 @@ it("names the adapter's reason for each wrapper category", () => {
   for (const [tag, summary] of categories) {
     const message = makeProviderFailure({
       // An Effect Cause between the category and its reason is transparent.
-      cause: Cause.fail({ _tag: tag, cause: Cause.fail("adapter said no.") }),
+      cause: Cause.fail({
+        _tag: tag,
+        cause: Cause.fail(protocolError("Turn is still active.", "previous_turn_active")),
+      }),
     }).message;
-    assert.isTrue(message.startsWith(`${summary}: adapter said no. `), message);
+    assert.isTrue(message.startsWith(`${summary}: the previous turn is still running. `), message);
   }
   // A newer category replaces the reason that sat beneath an outer one.
   assert.isTrue(
     makeProviderFailure({
       cause: {
         _tag: "ProviderAdapterTurnStartError",
-        cause: { _tag: "ProviderAdapterOpenSessionError", cause: "inner reason" },
+        cause: {
+          _tag: "ProviderAdapterOpenSessionError",
+          cause: protocolError("Failed to read attachment 'a'.", "attachment_unreadable"),
+        },
       },
-    }).message.startsWith("The provider session could not be opened: inner reason. "),
+    }).message.startsWith(
+      "The provider session could not be opened: an attachment could not be read. ",
+    ),
   );
 });
 
-it("bounds a long adapter reason so the category guidance stays visible", () => {
-  const message = makeProviderFailure({
-    cause: { _tag: "ProviderAdapterTurnStartError", cause: "x".repeat(10_000) },
-  }).message;
-  assert.isBelow(message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  assert.isTrue(message.endsWith("check the provider setup and server logs."), message);
-});
-
-it("names the adapter's reason when a turn cannot start", () => {
-  const turnStart = (cause: unknown) =>
-    new ProviderAdapter.ProviderAdapterTurnStartError({
-      driver: ProviderDriverKind.make("claudeAgent"),
-      threadId: ThreadId.make("thread:busy"),
-      providerThreadId: ProviderThreadId.make("provider-thread:busy"),
-      runId: RunId.make("run:busy"),
-      cause,
-    });
-
+it("says why a turn could not start without showing the adapter's detail", () => {
   assert.equal(
     makeProviderFailure({
       cause: Cause.fail(
         turnStart(
-          new ProviderAdapter.ProviderAdapterProtocolError({
-            driver: ProviderDriverKind.make("claudeAgent"),
-            detail: "Claude provider turn provider-turn:previous is still active.",
-          }),
+          protocolError(
+            "Claude provider turn provider-turn:previous is still active.",
+            "previous_turn_active",
+          ),
         ),
       ),
     }).message,
-    "The provider could not start this turn: Claude provider turn provider-turn:previous is still active. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+    "The provider could not start this turn: the previous turn is still running. Retry the turn; if it keeps failing, check the provider setup and server logs.",
   );
   assert.equal(
     makeProviderFailure({
-      cause: turnStart("This provider does not support context compaction."),
+      cause: turnStart(
+        protocolError("Failed to read attachment 'attachment:private'.", "attachment_unreadable"),
+      ),
     }).message,
-    "The provider could not start this turn: This provider does not support context compaction. Retry the turn; if it keeps failing, check the provider setup and server logs.",
+    "The provider could not start this turn: an attachment could not be read. Retry the turn; if it keeps failing, check the provider setup and server logs.",
   );
+});
+
+it("keeps untyped adapter text out of the message", () => {
   for (const hidden of [
+    // Adapter details can carry configuration, such as a malformed model name.
+    protocolError("Pi model 'OPENAI_API_KEY=placeholder' must use provider/model format."),
+    "This provider does not support context compaction.",
     new Error("socket hang up at 10.0.0.5"),
-    // Pi copies the provider's raw RPC error onto its own error's cause.
-    { _tag: "PiRpcError", detail: "set_model failed", cause: "GOOGLE_API_KEY=AIzaPrivate" },
+    // A reason the adapter boundary does not define, or an Object.prototype key.
+    { _tag: "ProviderAdapterProtocolError", detail: "x", reason: "OPENAI_API_KEY=placeholder" },
+    { _tag: "ProviderAdapterProtocolError", detail: "x", reason: "constructor" },
     // A provider-controlled tag naming an Object.prototype key is not a category.
     { _tag: "constructor", cause: "GOOGLE_API_KEY=AIzaPrivate" },
   ]) {
-    assert.equal(
-      makeProviderFailure({ cause: turnStart(hidden) }).message,
-      "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.",
-    );
+    const message = makeProviderFailure({ cause: turnStart(hidden) }).message;
+    assert.equal(message, GENERIC_TURN_START);
   }
-  // A known tag inside provider data below a foreign error still classifies
-  // the failure, but its string is provider text, not an adapter reason.
-  const disguised = makeProviderFailure({
-    cause: turnStart({
-      _tag: "PiRpcError",
-      detail: "set_model failed",
-      cause: { _tag: "ProviderAdapterOpenSessionError", cause: "GOOGLE_API_KEY=AIzaPrivate" },
-    }),
-  }).message;
+  // A typed reason with no category above it names nothing.
   assert.equal(
-    disguised,
-    "The provider session could not be opened. Check that the provider is installed and signed in, then retry the turn.",
+    makeProviderFailure({ cause: protocolError("busy", "previous_turn_active") }).message,
+    "Provider turn failed.",
   );
 });
 

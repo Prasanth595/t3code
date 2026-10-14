@@ -14,6 +14,7 @@ import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 
 import * as IdAllocator from "./IdAllocator.ts";
+import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
 import * as Schema from "effect/Schema";
 
 /** Raised when portable history does not fit the target provider's context window. */
@@ -28,8 +29,6 @@ export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoff
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
-/** Keeps a long adapter reason from pushing a category's guidance past the message bound. */
-const MAX_PROVIDER_FAILURE_REASON_LENGTH = 512;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
@@ -54,21 +53,20 @@ const PROVIDER_FAILURE_CATEGORIES: Partial<
   },
 };
 
+const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
+  previous_turn_active: "the previous turn is still running",
+  attachment_unreadable: "an attachment could not be read",
+};
+
 /**
  * Translate known categories without exposing arbitrary provider defect text.
- * A category names its reason only when the adapter wrote it directly beneath
- * the category: a protocol error's `detail` or a plain string cause. Anything
- * deeper, including nested `Error` messages, stays in the logs.
+ * A category names its reason only from the typed `reason` of a protocol error
+ * beneath it; adapter `detail` and every other provider text stay in the logs.
  */
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
   let reason: string | undefined;
-  // True only for the node directly beneath the most recent category.
-  let adapterAuthored = false;
-  // Cleared for good once the walk crosses an error T3 does not own: a known
-  // tag below that point is provider data, not an adapter-written category.
-  let ownedChain = true;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -76,16 +74,8 @@ function causeMessage(cause: unknown): string | undefined {
         cause = Cause.squash(cause);
         continue;
       }
-      if (typeof cause === "string") {
-        if (adapterAuthored) reason = cause;
-        break;
-      }
       if (typeof cause !== "object") break;
       const tag = (cause as Record<string, unknown>)._tag;
-      const nextCategory =
-        typeof tag === "string" && Object.hasOwn(PROVIDER_FAILURE_CATEGORIES, tag)
-          ? PROVIDER_FAILURE_CATEGORIES[tag]
-          : undefined;
       switch (tag) {
         case "ContextHandoffBudgetError":
           return new ContextHandoffBudgetError().message;
@@ -93,30 +83,34 @@ function causeMessage(cause: unknown): string | undefined {
           return stringField(cause, "message");
         case "ContextHandoffDeliveryUncertainError":
           return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
-        case "ProviderAdapterProtocolError":
-          if (adapterAuthored) reason = stringField(cause, "detail");
+        case "ProviderAdapterProtocolError": {
+          const typedReason = (cause as Record<string, unknown>).reason;
+          if (
+            category !== undefined &&
+            typeof typedReason === "string" &&
+            Object.hasOwn(PROVIDER_FAILURE_REASONS, typedReason)
+          ) {
+            reason ??= PROVIDER_FAILURE_REASONS[typedReason as ProviderAdapterFailureReason];
+          }
           break;
+        }
       }
-      if (nextCategory !== undefined) {
-        category = nextCategory;
+      if (typeof tag === "string" && Object.hasOwn(PROVIDER_FAILURE_CATEGORIES, tag)) {
+        category = PROVIDER_FAILURE_CATEGORIES[tag];
         reason = undefined;
       }
-      adapterAuthored = ownedChain && nextCategory !== undefined;
-      if (nextCategory === undefined) ownedChain = false;
       cause = (cause as Record<string, unknown>).cause;
     } catch {
       break;
     }
   }
   if (category === undefined) return undefined;
-  const trimmedReason =
-    reason && boundedText(reason, MAX_PROVIDER_FAILURE_REASON_LENGTH).replace(/[.!?]+$/u, "");
-  return trimmedReason
-    ? `${category.summary}: ${trimmedReason}. ${category.guidance}`
+  return reason
+    ? `${category.summary}: ${reason}. ${category.guidance}`
     : `${category.summary}. ${category.guidance}`;
 }
 
-function stringField(value: unknown, key: "message" | "code" | "detail"): string | undefined {
+function stringField(value: unknown, key: "message" | "code"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];
