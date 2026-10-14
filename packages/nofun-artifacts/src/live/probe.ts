@@ -1,17 +1,25 @@
 // Which imagery a page actually loads. Blocks build image paths at runtime (`/brands/${brand}/…`,
 // fixtures for many brands, srcsets), so a static scan over-collects. When a local Chrome is available
-// the compiled page is rendered headless at desktop and phone width, scrolled through, and every
-// request for a checkout-served file is recorded; exactly those are inlined. Without Chrome (or
-// playwright-core) the caller falls back to the static scan. The probe also reports console errors.
+// the compiled page is rendered headless at desktop and phone width in both colour schemes (product
+// colourways follow the ground), scrolled through, and every request for a checkout-served file is
+// recorded, plus every srcset candidate (the viewer's pixel density picks one); exactly those are
+// inlined. Without Chrome (or playwright-core) the caller falls back to the static scan. The probe
+// also reports console errors.
 import * as NodeFs from "node:fs";
 import * as NodePath from "node:path";
 
 const ORIGIN = "http://nofun-artifact.localhost";
 const WIDTHS = [1440, 390];
+const SCHEMES = ["dark", "light"] as const;
+// Every srcset candidate and src in the rendered DOM, as same-origin paths.
+const DOM_PATHS = `[...document.querySelectorAll("img,source,video")].flatMap((n) => [n.getAttribute("src"), n.getAttribute("poster"), ...(n.getAttribute("srcset") || "").split(",").map((p) => p.trim().split(/\\s+/)[0])]).filter((u) => u && u.startsWith("/") && !u.startsWith("//"))`;
 const IDLE_CLOSE_MS = 60_000;
 
 type Browser = {
-  newPage(options: { viewport: { width: number; height: number } }): Promise<Page>;
+  newPage(options: {
+    viewport: { width: number; height: number };
+    colorScheme: "dark" | "light";
+  }): Promise<Page>;
   close(): Promise<void>;
 };
 type Route = {
@@ -109,8 +117,17 @@ export async function probeAssets(dir: string, html: string): Promise<ProbeResul
   const requested = new Set<string>();
   const errors = new Set<string>();
   const publicDir = NodePath.join(dir, "public");
-  for (const width of WIDTHS) {
-    const page = await instance.newPage({ viewport: { width, height: 900 } });
+  const isPublicImage = (path: string) => {
+    const file = NodePath.join(publicDir, path);
+    return (
+      file.startsWith(publicDir + NodePath.sep) &&
+      Boolean(CONTENT_TYPES[NodePath.extname(file).toLowerCase()]) &&
+      NodeFs.existsSync(file)
+    );
+  };
+  const renders = WIDTHS.flatMap((width) => SCHEMES.map((colorScheme) => ({ width, colorScheme })));
+  for (const { width, colorScheme } of renders) {
+    const page = await instance.newPage({ viewport: { width, height: 900 }, colorScheme });
     try {
       page.on("console", (message) => {
         if (message.type() === "error") errors.add(message.text().slice(0, 300));
@@ -128,17 +145,12 @@ export async function probeAssets(dir: string, html: string): Promise<ProbeResul
         } catch {
           // keep encoded
         }
-        const file = NodePath.join(publicDir, path);
-        const ext = NodePath.extname(file).toLowerCase();
-        if (
-          file.startsWith(publicDir + NodePath.sep) &&
-          CONTENT_TYPES[ext] &&
-          NodeFs.existsSync(file)
-        ) {
+        if (isPublicImage(path)) {
+          const file = NodePath.join(publicDir, path);
           requested.add(path);
           await route.fulfill({
             status: 200,
-            contentType: CONTENT_TYPES[ext]!,
+            contentType: CONTENT_TYPES[NodePath.extname(file).toLowerCase()]!,
             body: NodeFs.readFileSync(file),
           });
           return;
@@ -154,6 +166,15 @@ export async function probeAssets(dir: string, html: string): Promise<ProbeResul
         await page.waitForTimeout(60);
       }
       await page.waitForLoadState("networkidle", { timeout: 4_000 }).catch(() => {});
+      for (let path of await page.evaluate<string[]>(DOM_PATHS)) {
+        path = path.split(/[?#]/)[0]!;
+        try {
+          path = decodeURI(path);
+        } catch {
+          // keep encoded
+        }
+        if (isPublicImage(path)) requested.add(path);
+      }
     } catch (error) {
       errors.add(`probe: ${(error as Error).message.slice(0, 200)}`);
     } finally {

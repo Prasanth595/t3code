@@ -227,7 +227,7 @@ const pageCss = laneCss(pageBundle);
 
 /**
  * The imagery a page uses: what a headless render of it requests (precise), else a static scan of
- * `texts` (over-collects), inlined brand-first within the budget.
+ * `texts` (over-collects), inlined brand-first into the room the page cap leaves after the draft.
  */
 async function resolveAssets(
   dir: string,
@@ -237,7 +237,8 @@ async function resolveAssets(
 ): Promise<{ assets: AssetMap; warnings: string[] }> {
   const probe = await probeAssets(dir, draft);
   const paths = probe ? probe.paths : findAssetPaths(dir, texts, brand);
-  return { assets: inlineAssets(dir, paths, brand), warnings: [...(probe?.errors ?? [])] };
+  const room = ARTIFACT_MAX_PAGE_BYTES - Buffer.byteLength(draft) - 256 * 1024;
+  return { assets: inlineAssets(dir, paths, brand, room), warnings: [...(probe?.errors ?? [])] };
 }
 
 /** Page-lane imagery per brand and spec (the spec decides which blocks, and so which images, render). */

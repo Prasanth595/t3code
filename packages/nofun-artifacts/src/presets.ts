@@ -27,8 +27,8 @@ const SIZES = {
 const TYPE_SCALE = "clamp(14px, 11.2px + 0.5vw, 16px)";
 
 // Defaults only: every rule but the root size has zero specificity, so a component's own focus ring,
-// selection or font always wins. The font fallback covers checkouts with no next/font build, where
-// `--font-geist-sans` is otherwise undefined and the whole font stack falls back to the UA serif.
+// selection or font always wins. The font fallback covers linked artifacts on a runtime.css built
+// without Geist, where `--font-geist-sans` is otherwise undefined and the stack falls back to the UA serif.
 const frameCss = (selection: string, extra = "") =>
   [
     `html{font-size:${TYPE_SCALE};-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}`,

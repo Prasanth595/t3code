@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { parseCanvasBackground, parseCanvasSize, writeCanvasBundle } from "./canvas-bundle.ts";
 import { compileArtifact, compilePage } from "./compiler.ts";
 import { compileLinked } from "./linked.ts";
+import { closeProbe } from "./live/probe.ts";
 import { componentsCommit } from "./live/source.ts";
 import { canvasPreset, withPresetCss, withPresetDefaults } from "./presets.ts";
 import { compilerVersion, readStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
@@ -163,6 +164,10 @@ async function compile(argv: readonly string[]): Promise<void> {
   console.log(
     `${manifest.name} ${compiled.lane} ${(compiled.bytes / 1024).toFixed(0)} KiB → ${NodePath.resolve(flags.out)}`,
   );
+  if ("skippedAssets" in compiled && compiled.skippedAssets.length > 0) {
+    console.warn(`left out ${compiled.skippedAssets.length} images over the page cap`);
+  }
+  await closeProbe();
 }
 
 async function main(): Promise<void> {

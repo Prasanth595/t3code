@@ -43,8 +43,9 @@ All of it is a default with zero specificity, so a component's own styles win.
 - Hides scrollbars; content still scrolls.
 - Gives text selection and `:focus-visible` a ring in the theme's foreground (native-feel: its accent).
 - Turns off overscroll bounce and enables antialiased text.
-- Falls back to the system font when the compiler's checkout has no next/font build. Without it the
-  page renders in Times.
+- Falls back to the system font when a linked artifact's runtime.css was built without Geist. Without
+  it the page renders in Times. Standalone artifacts always carry Geist (from `fonts/` when the
+  checkout has no next/font build).
 
 ## Looks wrong on the board
 
@@ -58,8 +59,8 @@ All of it is a default with zero specificity, so a component's own styles win.
 - **Autoplay media and loops.** Marquees, tickers, count-ups and videos repaint every frame. Canvas runs
   six cards at once and pauses hidden ones, so a loop costs GPU on every board. Leave them out, or stop
   them on the `pause` message.
-- **Images that never arrive.** The compiler inlines imagery up to a budget and leaves the rest out, so a
-  product grid can render empty tiles. Prefer type-led sections on a card.
-- **`index.html` over 2 MiB.** Canvas rejects it. Today every standalone page-lane artifact is about
-  2.6 MiB, because the page bundle carries the whole page catalog. Spec and tsx artifacts are
-  400 to 900 KiB standalone and 4 to 15 KiB linked (`--linked --runtime-sha <sha>`).
+- **Images that never arrive.** The compiler inlines every image a headless render of the page asks
+  for, in both schemes and every srcset size, until the page reaches Canvas's 24 MiB `index.html` cap;
+  the CLI says how many it left out. A brand page with a product hero and an eight-product grid is
+  about 3 MiB. Spec and tsx artifacts are 0.6 to 1 MiB standalone and 4 to 15 KiB linked
+  (`--linked --runtime-sha <sha>`).

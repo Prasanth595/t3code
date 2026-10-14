@@ -39,7 +39,7 @@ const STEPS = [
     description: "validate_bundle",
     code: 'validate_bundle("dashboard/")',
     detail:
-      "The Canvas MCP checks the manifest keys and sha256, regular files only, index.html under 2 MiB and no network URLs.",
+      "The Canvas MCP checks the manifest keys and sha256, regular files only, index.html under 24 MiB and no network URLs.",
   },
   {
     title: "Place",

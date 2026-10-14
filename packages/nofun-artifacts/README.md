@@ -43,8 +43,8 @@ The output directory is a Canvas bundle:
 | `source/<file>`    | The input file. `source/meta.json` `file` is this name, relative to `source/`.                                                                                                  |
 | `source/meta.json` | `{kind: spec\|tsx\|page, file, theme?}`. `file` stays inside `source/` (no absolute path, no `..`).                                                                             |
 
-Compile failures exit 2 and print the message. The compiler allows a 24 MiB page; Canvas still
-rejects an entry over 2 MiB and a bundle over 20 MiB.
+Compile failures exit 2 and print the message. The compiler allows a 24 MiB page, the same entry cap
+Canvas has (its bundle cap is 48 MiB).
 
 `examples/dashboard.spec.json` is the spec-lane fixture. `examples/canvas-out/` is a place to write
 bundles; it is not filled in by the package.

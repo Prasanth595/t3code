@@ -4,7 +4,7 @@
     "page": {
       "type": "Page",
       "props": {},
-      "children": ["nav", "hero", "proof", "manifesto", "footer"]
+      "children": ["nav", "hero", "grid", "proof", "manifesto", "footer"]
     },
     "nav": {
       "type": "SiteNav",
@@ -12,14 +12,19 @@
       "children": []
     },
     "hero": {
-      "type": "HeroTypeStack",
+      "type": "HeroStackedProduct",
       "props": {
-        "variant": "centered",
+        "variant": "window",
         "eyebrow": "sellmerch.ai",
         "headline": "Design it. Price it. Sell it.",
         "sub": "Custom apparel and accessories for creators, streamers and brands, with no upfront inventory.",
         "cta": "Start designing"
       },
+      "children": []
+    },
+    "grid": {
+      "type": "ProductGrid",
+      "props": { "variant": "uniform", "density": 4, "count": 8, "filters": false },
       "children": []
     },
     "proof": { "type": "ProofStats", "props": {}, "children": [] },

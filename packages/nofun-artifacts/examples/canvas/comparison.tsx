@@ -11,8 +11,8 @@ const COLUMNS = [
 const ROWS = [
   { label: "You write", values: ["Catalog JSON", "React with real blocks", "A json-render page"] },
   { label: "Card size", values: ["960 × 600", "640 × 440", "1200 × 800"] },
-  { label: "Standalone", values: ["856 KiB", "403 KiB", "2.6 MiB, over the 2 MiB cap"] },
-  { label: "Linked", values: ["3.7 KiB", "14.9 KiB", false] },
+  { label: "Standalone", values: ["1.0 MiB", "587 KiB", "3.0 MiB with its product images"] },
+  { label: "Linked", values: ["3.7 KiB", "14.8 KiB", false] },
   {
     label: "Best for",
     values: ["Numbers, charts, tables", "Flows and small tools", "Brand landing pages"],
