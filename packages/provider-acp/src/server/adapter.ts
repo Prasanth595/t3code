@@ -130,6 +130,14 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
  */
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
 
+/**
+ * Latest streamed text reaches the event stream at most this long after its
+ * chunk. A text segment's first chunk and its close emit at once; the chunks
+ * between collapse into one full-text snapshot per window instead of one per
+ * chunk, which grew with the square of the reply length.
+ */
+const ACP_TEXT_FLUSH_INTERVAL: Duration.Input = "50 millis";
+
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
   /**
@@ -1119,6 +1127,10 @@ interface ActiveTextSegment {
   readonly startedAt: DateTime.Utc;
   sourceMessageId: string | null;
   text: string;
+  // The running node and first text have been emitted.
+  emitted: boolean;
+  // Text changed since the last emission; a delayed flush is scheduled.
+  dirty: boolean;
 }
 
 interface ActiveTextStream {
@@ -2410,14 +2422,28 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ? context.assistant
               : context.reasoning;
 
+        const textEmissionPermit = yield* Semaphore.make(1);
+        /**
+         * Emits the stream's current segment. A `flushOf` call is a delayed
+         * flush: it emits only while that segment is still current and has
+         * unsent text. The permit keeps a flush from landing after the
+         * segment's completed snapshot.
+         */
         const emitTextSegment = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           kind: "user" | "assistant" | "reasoning",
           completed: boolean,
+          flushOf?: ActiveTextSegment,
         ) {
           const stream = textStreamFor(context, kind);
           const segment = stream.current;
           if (segment === null) return;
+          if (flushOf !== undefined && (segment !== flushOf || !segment.dirty)) return;
+          // The node carries no text, so it changes only when the segment
+          // opens and when it completes.
+          const emitsNode = completed || !segment.emitted;
+          segment.emitted = true;
+          segment.dirty = false;
           const now = yield* DateTime.now;
           const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
           const nodeId = providerNodeId(segment.nativeItemId);
@@ -2427,7 +2453,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeId: segment.nativeItemId,
             strength: "weak" as const,
           };
-          if (kind !== "user") {
+          if (kind !== "user" && emitsNode) {
             yield* emitProviderEvent({
               type: "node.updated",
               driver,
@@ -2548,6 +2574,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               streaming: !completed,
             },
           });
+        }, textEmissionPermit.withPermit);
+
+        /**
+         * Publishes a text change. A segment's first text emits at once so
+         * live output starts immediately; later changes coalesce into one
+         * snapshot per ACP_TEXT_FLUSH_INTERVAL. Closing the segment emits its
+         * final text and makes a pending flush a no-op.
+         */
+        const publishTextSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+        ) {
+          const segment = textStreamFor(context, kind).current;
+          if (segment === null) return;
+          if (!segment.emitted) return yield* emitTextSegment(context, kind, false);
+          if (segment.dirty) return;
+          segment.dirty = true;
+          yield* emitTextSegment(context, kind, false, segment).pipe(
+            Effect.delay(ACP_TEXT_FLUSH_INTERVAL),
+            Effect.forkIn(sessionScope),
+          );
         });
 
         const closeTextStream = Effect.fnUntraced(function* (
@@ -2596,6 +2643,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt: now,
               sourceMessageId,
               text: "",
+              emitted: false,
+              dirty: false,
             };
             stream.nextSegment += 1;
           } else if (stream.current.sourceMessageId === null && sourceMessageId !== null) {
@@ -2604,7 +2653,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             stream.current.sourceMessageId = sourceMessageId;
           }
           stream.current.text += text;
-          yield* emitTextSegment(context, kind, false);
+          yield* publishTextSegment(context, kind);
         });
 
         const replaceText = Effect.fnUntraced(function* (
@@ -2625,12 +2674,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               startedAt: now,
               sourceMessageId: messageId,
               text,
+              emitted: false,
+              dirty: false,
             };
             stream.nextSegment += 1;
           } else {
             stream.current.text = text;
           }
-          yield* emitTextSegment(context, kind, false);
+          yield* publishTextSegment(context, kind);
         });
 
         const emitSubagentAssistant = Effect.fnUntraced(function* (
