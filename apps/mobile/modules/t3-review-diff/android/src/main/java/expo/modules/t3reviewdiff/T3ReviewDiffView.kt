@@ -717,6 +717,7 @@ private class DiffCanvasView(context: Context) : View(context) {
 
   // Unwrapped rows scroll until the end of the widest one clears the right edge.
   private var contentWidthPx = 0
+
   private val headerPathOffsetsByFileId = mutableMapOf<String, Int>()
   private var lastVisibleRange: Pair<Int, Int>? = null
   var rows: List<DiffRow> = emptyList()
@@ -725,7 +726,7 @@ private class DiffCanvasView(context: Context) : View(context) {
       headerPathOffsetsByFileId.keys.retainAll(
         value.asSequence().filter { it.kind == "file" }.map { it.resolvedFileId }.toSet(),
       )
-      measureContentWidth()
+      contentWidthPx = drawing.contentWidth(value, style)
       rebuildOffsets()
     }
   var tokensByRowId: Map<String, List<DiffToken>> = emptyMap()
@@ -764,7 +765,7 @@ private class DiffCanvasView(context: Context) : View(context) {
   var style: DiffStyle = DiffStyle.defaults(density)
     set(value) {
       field = value
-      measureContentWidth()
+      contentWidthPx = drawing.contentWidth(rows, value)
       rebuildOffsets()
     }
   var onRowTap: ((DiffRow, String, RowTapTarget) -> Unit)? = null
@@ -878,17 +879,6 @@ private class DiffCanvasView(context: Context) : View(context) {
     if (headerPathOffsetsByFileId.isNotEmpty()) {
       headerPathOffsetsByFileId.clear()
       invalidate()
-    }
-  }
-
-  private fun measureContentWidth() {
-    contentWidthPx = if (style.wordWrap) {
-      0
-    } else {
-      ceil(
-        style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f +
-          drawing.codeContentWidth(rows, style),
-      ).toInt()
     }
   }
 

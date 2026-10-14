@@ -10,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.text.TextPaint
+import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 
@@ -211,8 +212,9 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
     return codeLayouts.layout(rows, tokens, textPaint, style, theme, availableWidth.toInt())
   }
 
-  /** Widest unwrapped code or hunk text, measured with the paints that draw it. */
-  fun codeContentWidth(rows: List<DiffRow>, style: DiffStyle): Float {
+  /** Unwrapped scroll width: change bar, gutter, padding and the widest code or hunk text. */
+  fun contentWidth(rows: List<DiffRow>, style: DiffStyle): Int {
+    if (style.wordWrap) return 0
     configureCodePaint(theme.text, 0, style)
     val characterWidth = textPaint.measureText("M")
     var widest = 0f
@@ -231,7 +233,9 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
       if (row.kind != "hunk") continue
       widest = max(widest, textPaint.measureText(row.text.ifEmpty { row.content }))
     }
-    return widest
+    return ceil(
+      style.changeBarWidthPx + style.gutterWidthPx + style.codePaddingPx * 2f + widest,
+    ).toInt()
   }
 
   fun lineNumberColor(change: String): Int = when (change) {
