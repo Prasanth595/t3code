@@ -79,6 +79,32 @@ const layerServices = Layer.mergeAll(
 );
 const memory = layerServices.pipe(Layer.provideMerge(Sqlite.layerMemory));
 
+it.effect("rolls back event and projection when its command receipt cannot be reserved", () =>
+  Effect.gen(function* () {
+    const service = yield* MissionService.MissionService;
+    const result = yield* service.execute(create()).pipe(Effect.result);
+    assert.strictEqual(result._tag, "Failure");
+    assert.strictEqual(Option.isNone(yield* service.get(fixture().id)), true);
+    const store = yield* EventStore.OrchestrationEventStore;
+    assert.strictEqual((yield* store.readMissionEvents(fixture().id)).length, 0);
+  }).pipe(
+    Effect.provide(
+      MissionService.layer.pipe(
+        Layer.provideMerge(EventStore.layer),
+        Layer.provide(
+          Layer.succeed(Receipts.OrchestrationCommandReceiptRepository, {
+            insertIfAbsent: () => Effect.succeed(false),
+            upsert: () => Effect.void,
+            getByCommandId: () => Effect.succeed(Option.none()),
+          }),
+        ),
+        Layer.provide(Layer.succeed(MissionService.MissionAuthority, scope)),
+        Layer.provideMerge(Sqlite.layerMemory),
+      ),
+    ),
+  ),
+);
+
 it.effect("commits concurrent duplicate commands once and detects changed requests", () =>
   Effect.gen(function* () {
     const service = yield* MissionService.MissionService;

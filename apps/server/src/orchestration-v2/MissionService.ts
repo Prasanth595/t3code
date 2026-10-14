@@ -146,7 +146,7 @@ const make = Effect.gen(function* () {
           occurredAt: now,
         });
         if (Result.isFailure(planned)) {
-          yield* receipts.insertIfAbsent({
+          const reserved = yield* receipts.insertIfAbsent({
             commandId: command.commandId,
             aggregateKind: "mission",
             aggregateId: command.mission.id,
@@ -157,6 +157,11 @@ const make = Effect.gen(function* () {
             error: yield* encodeRejection(planned.failure),
             requestHash,
           });
+          if (!reserved)
+            return yield* new MissionServiceError({
+              operation: "commit",
+              category: "request_conflict",
+            });
           return Result.fail(planned.failure);
         }
         const event = yield* events.appendMissionEvent(planned.success.event);
@@ -182,7 +187,12 @@ const make = Effect.gen(function* () {
           error: null,
           requestHash,
         };
-        yield* receipts.insertIfAbsent(receipt);
+        if (!(yield* receipts.insertIfAbsent(receipt))) {
+          return yield* new MissionServiceError({
+            operation: "commit",
+            category: "request_conflict",
+          });
+        }
         return Result.succeed({ receipt, committed: true });
       }),
     );

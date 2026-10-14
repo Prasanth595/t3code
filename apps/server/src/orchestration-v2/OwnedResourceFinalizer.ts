@@ -269,6 +269,24 @@ const make = Effect.gen(function* () {
           verifiedAbsent: false,
         };
       }
+      if (
+        !nonEmpty(receipt.resourceId) ||
+        !nonEmpty(receipt.taskId) ||
+        !nonEmpty(receipt.attemptId) ||
+        !nonEmpty(receipt.hostId) ||
+        !nonEmpty(receipt.bootId) ||
+        !nonEmpty(controller.hostId) ||
+        !nonEmpty(controller.bootId) ||
+        !Number.isInteger(receipt.controllerEpoch) ||
+        receipt.controllerEpoch < 0 ||
+        !Number.isInteger(controller.epoch) ||
+        controller.epoch < 0 ||
+        !Array.isArray(receipt.sharedOwners) ||
+        typeof receipt.protected !== "boolean" ||
+        typeof receipt.keepAlive !== "boolean"
+      ) {
+        return decline("unknown-ownership");
+      }
       if (receipt.controllerEpoch !== controller.epoch) {
         return decline("stale-controller-epoch");
       }
@@ -289,8 +307,7 @@ const make = Effect.gen(function* () {
       if (!isTerminalOwnerAck(receipt.owner)) {
         return decline(ownerDeclineReason(receipt.owner));
       }
-      const sharedOwners = Array.isArray(receipt.sharedOwners) ? receipt.sharedOwners : [];
-      if (sharedOwners.length > 0) {
+      if (receipt.sharedOwners.length > 0) {
         return decline("shared-owners");
       }
       if (receipt.protected === true) {

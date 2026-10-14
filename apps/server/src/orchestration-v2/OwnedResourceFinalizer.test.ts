@@ -152,6 +152,23 @@ const runFinalize = (args: {
 };
 
 describe("OwnedResourceFinalizer", () => {
+  it.effect("declines malformed or unknown ownership without contacting a resource", () =>
+    Effect.gen(function* () {
+      for (const overrides of [
+        { attemptId: "" },
+        { hostId: "" },
+        { controllerEpoch: -1 },
+        { sharedOwners: null as unknown as ReadonlyArray<string> },
+      ]) {
+        const { outcome, calls } = yield* runFinalize({
+          receipt: baseReceipt(overrides),
+          entries: [{ identity: processIdentity(), present: true }],
+        });
+        expect(outcome.reason).toBe("unknown-ownership");
+        expect(calls).toEqual([]);
+      }
+    }),
+  );
   it.effect("cleans a completed-ack terminal process after verifying the exact identity", () =>
     Effect.gen(function* () {
       const identity = processIdentity();
