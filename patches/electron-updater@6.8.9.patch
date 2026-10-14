@@ -1,7 +1,7 @@
 diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
 --- a/out/NsisUpdater.js
 +++ b/out/NsisUpdater.js
-@@ -27,10 +27,31 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+@@ -27,10 +27,35 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
              this._verifyUpdateCodeSignature = value;
          }
      }
@@ -10,6 +10,10 @@ diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
 +     * arm64 files are preferred when available. On x64 hosts, arm64 files are excluded. */
 +    static filterFilesForArch(files, isArm64Windows) {
 +        const isArm64File = (file) => { var _a; return file.url.pathname.includes("arm64") || ((_a = file.info.url) === null || _a === void 0 ? void 0 : _a.includes("arm64")); };
++        const hasExplicitArch = files.some(file => /(?:^|[\/_-])(?:arm64|x64|ia32)(?=[\/_.-]|$)/i.test(file.url.pathname) || /(?:^|[\/_-])(?:arm64|x64|ia32)(?=[\/_.-]|$)/i.test(file.info.url || ""));
++        if (!hasExplicitArch) {
++            return files;
++        }
 +        if (isArm64Windows && (process.arch === "arm64" || files.some(isArm64File))) {
 +            return files.filter(file => isArm64Windows === isArm64File(file));
 +        }
