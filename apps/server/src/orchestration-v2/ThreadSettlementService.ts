@@ -602,9 +602,11 @@ export const make = Effect.gen(function* () {
         thread.lineage.relationshipToParent === "subagent" &&
         thread.lineage.parentThreadId !== null
       ) {
-        const parent = yield* projections
-          .getThread(thread.lineage.parentThreadId)
-          .pipe(Effect.orElseSucceed(() => null));
+        const parent = yield* projections.getThread(thread.lineage.parentThreadId).pipe(
+          Effect.catchTags({
+            ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+          }),
+        );
         if (parent?.worktreePath === worktreePath) return;
       }
       const run = yield* projectScripts.runForThread({
