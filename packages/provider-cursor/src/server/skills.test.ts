@@ -290,6 +290,62 @@ describe("Cursor skills", () => {
       ),
   );
 
+  it("stops the plugin scan at the scan limits without failing discovery", async () =>
+    await runNode(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const userHome = yield* fileSystem
+          .makeTempDirectoryScoped({ directory: NodeOS.tmpdir(), prefix: "cursor-skills-home-" })
+          .pipe(Effect.flatMap((directory) => fileSystem.realPath(directory)));
+        const writeSkill = Effect.fn("writeCursorSkill")(function* (directory: string) {
+          yield* fileSystem.makeDirectory(directory, { recursive: true });
+          yield* fileSystem.writeFileString(path.join(directory, "SKILL.md"), "---\n---\n");
+        });
+        const marketplace = path.join(userHome, ".cursor", "plugins", "cache", "cursor-public");
+        const crowded = path.join(marketplace, "crowded", "3a7f1c9");
+        const later = path.join(marketplace, "later", "8e2b6d4");
+
+        yield* writeSkill(path.join(userHome, ".cursor", "skills", "review"));
+        yield* fileSystem.makeDirectory(path.join(crowded, ".cursor-plugin"), { recursive: true });
+        yield* fileSystem.writeFileString(path.join(crowded, ".cache-complete"), "");
+        yield* fileSystem.writeFileString(
+          path.join(crowded, ".cursor-plugin", "plugin.json"),
+          JSON.stringify({
+            name: "crowded",
+            description: "x".repeat(1_000_000),
+            skills: "./custom/",
+          }),
+        );
+        yield* writeSkill(path.join(crowded, "custom", "oversized-manifest"));
+        yield* writeSkill(path.join(crowded, "skills", "a-first"));
+        yield* Effect.forEach(
+          Array.from({ length: 10_000 }, (_, index) =>
+            path.join(crowded, "skills", `entry-${index}`),
+          ),
+          (file) => fileSystem.writeFileString(file, ""),
+          { concurrency: 64, discard: true },
+        );
+        yield* writeSkill(path.join(later, "skills", "after-limit"));
+        yield* fileSystem.writeFileString(path.join(later, ".cache-complete"), "");
+
+        expect(yield* probeCursorSkills(undefined, { HOME: userHome })).toEqual([
+          {
+            name: "a-first",
+            path: path.join(crowded, "skills", "a-first", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+          {
+            name: "review",
+            path: path.join(userHome, ".cursor", "skills", "review", "SKILL.md"),
+            scope: "user",
+            enabled: true,
+          },
+        ]);
+      }),
+    ));
+
   it("skips a skill tree deeper than the limit instead of failing discovery", async () =>
     await runNode(
       Effect.gen(function* () {
