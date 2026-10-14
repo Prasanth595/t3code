@@ -90,6 +90,12 @@ const picking = {
   threadId: ThreadId.make("thread-1"),
 };
 const next = { environmentId: EnvironmentId.make("environment-b"), threadId: picking.threadId };
+// Another thread in the same environment, as when ChatView keeps the panel for a shared surface.
+const sibling = { environmentId: picking.environmentId, threadId: ThreadId.make("thread-2") };
+const switches = [
+  ["the same thread id in another environment", next],
+  ["another thread in the same environment", sibling],
+] as const;
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
 const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
   id: "device:phone",
@@ -117,10 +123,16 @@ const startPhone = (renderer: ReactTestRenderer) =>
     renderer.root.findByProps({ "aria-label": "Start Phone" }).props.onClick();
   });
 const errors = (renderer: ReactTestRenderer) => renderer.root.findAllByProps({ role: "alert" });
+const startButtons = (renderer: ReactTestRenderer) =>
+  renderer.root.findAllByProps({ "aria-label": "Start Phone" });
+const pressPowerOff = (renderer: ReactTestRenderer) =>
+  act(async () => {
+    renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();
+  });
 const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
 });
 
 describe("DevicePanel", () => {
@@ -144,14 +156,34 @@ describe("DevicePanel", () => {
     });
   });
 
-  it("keeps the next thread's picker usable while an earlier pick is pending", async () => {
-    mocks.open.mockReturnValue(deferred().promise);
+  it.each(switches)(
+    "keeps the picker usable after switching to %s while a pick is pending",
+    async (_, target) => {
+      mocks.open.mockReturnValue(deferred().promise);
+      const renderer = await act(async () => create(render(picking)));
+
+      await startPhone(renderer);
+      await act(async () => renderer.update(render(target)));
+
+      expect(renderer.root.findByProps({ "aria-label": "Start Phone" }).props.disabled).toBe(false);
+    },
+  );
+
+  it("keeps the next thread's own pick pending when an earlier pick settles", async () => {
+    const first = deferred();
+    const second = deferred();
+    mocks.open.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
     const renderer = await act(async () => create(render(picking)));
 
     await startPhone(renderer);
-    await act(async () => renderer.update(render(next)));
+    await act(async () => renderer.update(render(sibling)));
+    await startPhone(renderer);
+    await act(async () => first.settle(opened));
 
-    expect(renderer.root.findByProps({ "aria-label": "Start Phone" }).props.disabled).toBe(false);
+    expect(startButtons(renderer)).toHaveLength(0);
+    await act(async () => second.settle(opened));
+    expect(startButtons(renderer).length).toBeGreaterThan(0);
+    expect(mocks.openDevice.mock.calls.map(([threadRef]) => threadRef)).toEqual([picking, sibling]);
   });
 
   it("opens a pick that settles after a switch in the thread it started in", async () => {
@@ -172,27 +204,30 @@ describe("DevicePanel", () => {
     expect(renderer.root.findByProps({ "aria-label": "Start Phone" }).props.disabled).toBe(false);
   });
 
-  it("hides a failed pick that settles after the panel moved, even back again", async () => {
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    const renderer = await act(async () => create(render(picking)));
+  it.each(switches)(
+    "hides a failed pick that settles after switching to %s and back",
+    async (_, target) => {
+      const pick = deferred();
+      mocks.open.mockReturnValue(pick.promise);
+      const renderer = await act(async () => create(render(picking)));
 
-    await startPhone(renderer);
-    await act(async () => renderer.update(render(next)));
-    await act(async () => renderer.update(render(picking)));
-    await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
+      await startPhone(renderer);
+      await act(async () => renderer.update(render(target)));
+      await act(async () => renderer.update(render(picking)));
+      await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
 
-    expect(errors(renderer)).toHaveLength(0);
-    expect(mocks.openDevice).not.toHaveBeenCalled();
-  });
+      expect(errors(renderer)).toHaveLength(0);
+      expect(mocks.openDevice).not.toHaveBeenCalled();
+    },
+  );
 
-  it("does not carry an operation error into another thread", async () => {
+  it.each(switches)("does not carry an operation error to %s", async (_, target) => {
     mocks.open.mockResolvedValue({ _tag: "Failure", cause: new Error("boom") });
     const renderer = await act(async () => create(render(picking)));
 
     await startPhone(renderer);
     expect(errors(renderer)).toHaveLength(1);
-    await act(async () => renderer.update(render(next)));
+    await act(async () => renderer.update(render(target)));
 
     expect(errors(renderer)).toHaveLength(0);
   });
@@ -202,9 +237,7 @@ describe("DevicePanel", () => {
     mocks.close.mockReturnValue(powerOff.promise);
     const renderer = await act(async () => create(render(picking, streaming)));
 
-    await act(async () => {
-      renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();
-    });
+    await pressPowerOff(renderer);
     expect(mocks.close).toHaveBeenCalledWith({
       environmentId: picking.environmentId,
       input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", shutdown: true },
@@ -215,14 +248,21 @@ describe("DevicePanel", () => {
     expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(picking, streaming.id);
   });
 
-  it("closes the surface when a power-off settles in the same thread", async () => {
-    mocks.close.mockResolvedValue(opened);
+  it("shows a failed power-off only in the thread that started it", async () => {
+    const late = deferred();
+    mocks.close
+      .mockResolvedValueOnce({ _tag: "Failure", cause: new Error("boom") })
+      .mockReturnValueOnce(late.promise);
     const renderer = await act(async () => create(render(picking, streaming)));
 
-    await act(async () => {
-      renderer.root.findByProps({ hostLabel: "This Mac" }).props.onPowerOff();
-    });
+    await pressPowerOff(renderer);
+    expect(errors(renderer)).toHaveLength(1);
 
-    expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(picking, streaming.id);
+    await pressPowerOff(renderer);
+    await act(async () => renderer.update(render(sibling, streaming)));
+    await act(async () => late.settle({ _tag: "Failure", cause: new Error("boom") }));
+
+    expect(errors(renderer)).toHaveLength(0);
+    expect(mocks.closeSurface).not.toHaveBeenCalled();
   });
 });
