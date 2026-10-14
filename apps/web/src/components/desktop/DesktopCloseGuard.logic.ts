@@ -3,7 +3,6 @@ import {
   isProviderNativeSubagentThread,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import { isDesktopLocalConnectionTarget } from "../../connection/desktopLocal";
 
@@ -20,8 +19,9 @@ export function isDesktopOwnedTarget(target: ConnectionTarget): boolean {
 
 /**
  * A thread whose work stops when its server does: a run in progress, including
- * one waiting on subagents or input, or settled work the agent is still
- * waiting on. Provider-native subagents are counted through their parent.
+ * one waiting on subagents or input, or background work the settled run left
+ * behind, such as a subagent, monitor, or shell command. Provider-native
+ * subagents are counted through their parent.
  */
 export function isBusyThreadShell(
   thread: Pick<
@@ -30,10 +30,7 @@ export function isBusyThreadShell(
   >,
 ): boolean {
   if (isProviderNativeSubagentThread(thread)) return false;
-  return (
-    thread.activityRunStatus != null ||
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
-  );
+  return thread.activityRunStatus != null || (thread.pendingBackgroundTasks?.length ?? 0) > 0;
 }
 
 /** Confirmation copy for quitting while the given threads are busy. */

@@ -35,20 +35,14 @@ describe("isBusyThreadShell", () => {
     expect(isBusyThreadShell(shell({ activityRunStatus: undefined }))).toBe(false);
   });
 
-  it("counts a settled thread still waiting on subagents or monitors", () => {
-    expect(isBusyThreadShell(shell({ pendingBackgroundTasks: [backgroundTask("subagent")] }))).toBe(
-      true,
-    );
-    expect(isBusyThreadShell(shell({ pendingBackgroundTasks: [backgroundTask("monitor")] }))).toBe(
-      true,
-    );
-  });
-
-  it("does not count a settled thread that only left a command running", () => {
-    expect(isBusyThreadShell(shell({ pendingBackgroundTasks: [backgroundTask("command")] }))).toBe(
-      false,
-    );
-  });
+  it.each(["subagent", "monitor", "background_task", "command"] as const)(
+    "counts a settled thread that left a %s running",
+    (kind) => {
+      expect(isBusyThreadShell(shell({ pendingBackgroundTasks: [backgroundTask(kind)] }))).toBe(
+        true,
+      );
+    },
+  );
 
   it("counts a provider-native subagent through its parent only", () => {
     const subagent = shell({
