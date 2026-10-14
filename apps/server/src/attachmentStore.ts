@@ -4,6 +4,8 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type { ChatAttachment } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { htmlRenderFromToolItem, mcpAppFromToolItem } from "@t3tools/shared/toolOutput";
 
 import {
@@ -180,33 +182,52 @@ export function resolveAttachmentPath(input: {
   });
 }
 
+/**
+ * On-disk paths an attachment id can resolve to, in lookup order. Generic files
+ * carry their extension in the id; images do not, so each safe image extension
+ * (then `.bin`) is a candidate.
+ */
+export function attachmentPathCandidatesById(input: {
+  readonly attachmentsDir: string;
+  readonly attachmentId: string;
+}): ReadonlyArray<string> {
+  const normalizedId = normalizeAttachmentRelativePath(input.attachmentId);
+  if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
+    return [];
+  }
+  const fileExtension = parseAttachmentFileExtension(normalizedId);
+  const relativePaths = fileExtension
+    ? [`${normalizedId}.${fileExtension.toLowerCase()}`]
+    : ATTACHMENT_FILENAME_EXTENSIONS.map((extension) => `${normalizedId}${extension}`);
+  return relativePaths.flatMap((relativePath) => {
+    const resolved = resolveAttachmentRelativePath({
+      attachmentsDir: input.attachmentsDir,
+      relativePath,
+    });
+    return resolved ? [resolved] : [];
+  });
+}
+
 export function resolveAttachmentPathById(input: {
   readonly attachmentsDir: string;
   readonly attachmentId: string;
 }): string | null {
-  const normalizedId = normalizeAttachmentRelativePath(input.attachmentId);
-  if (!normalizedId || normalizedId.includes("/") || normalizedId.includes(".")) {
-    return null;
-  }
-  const fileExtension = parseAttachmentFileExtension(normalizedId);
-  if (fileExtension) {
-    const filePath = resolveAttachmentRelativePath({
-      attachmentsDir: input.attachmentsDir,
-      relativePath: `${normalizedId}.${fileExtension.toLowerCase()}`,
-    });
-    return filePath && NodeFS.existsSync(filePath) ? filePath : null;
-  }
-  for (const extension of ATTACHMENT_FILENAME_EXTENSIONS) {
-    const maybePath = resolveAttachmentRelativePath({
-      attachmentsDir: input.attachmentsDir,
-      relativePath: `${normalizedId}${extension}`,
-    });
-    if (maybePath && NodeFS.existsSync(maybePath)) {
-      return maybePath;
-    }
-  }
-  return null;
+  return (
+    attachmentPathCandidatesById(input).find((candidate) => NodeFS.existsSync(candidate)) ?? null
+  );
 }
+
+/** Non-blocking `resolveAttachmentPathById` for request paths; keeps the event loop free. */
+export const resolveAttachmentPathByIdEffect = Effect.fn("attachmentStore.resolvePathById")(
+  function* (input: { readonly attachmentsDir: string; readonly attachmentId: string }) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (const candidate of attachmentPathCandidatesById(input)) {
+      const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+      if (exists) return candidate;
+    }
+    return null;
+  },
+);
 
 export type AttachmentClaimPlan =
   | {

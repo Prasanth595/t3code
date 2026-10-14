@@ -3,6 +3,9 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -13,6 +16,8 @@ import {
   parseAttachmentUuid,
   planAttachmentClaim,
   parseThreadSegmentFromAttachmentId,
+  resolveAttachmentPathById,
+  resolveAttachmentPathByIdEffect,
   sweepStalePendingAttachments,
   threadHtmlRenderAttachmentIds,
 } from "./attachmentStore.ts";
@@ -76,6 +81,34 @@ describe("attachmentStore", () => {
       "pending_thread",
     );
   });
+
+  effectIt.effect("resolves attachment paths without blocking, matching the sync resolver", () =>
+    Effect.gen(function* () {
+      const attachmentsDir = NodeFS.mkdtempSync(
+        NodePath.join(NodeOS.tmpdir(), "t3code-attachment-async-"),
+      );
+      try {
+        const imageId = "thread-1-00000000-0000-4000-8000-000000000002";
+        const fileId = "thread-1-00000000-0000-4000-8000-000000000003-zip";
+        const jpgPath = NodePath.join(attachmentsDir, `${imageId}.jpg`);
+        const zipPath = NodePath.join(attachmentsDir, `${fileId}.zip`);
+        NodeFS.writeFileSync(jpgPath, Buffer.from("img"));
+        NodeFS.writeFileSync(zipPath, Buffer.from("zip"));
+
+        for (const attachmentId of [imageId, fileId, "thread-1-missing", "../escape"]) {
+          const input = { attachmentsDir, attachmentId };
+          expect(yield* resolveAttachmentPathByIdEffect(input)).toBe(
+            resolveAttachmentPathById(input),
+          );
+        }
+        expect(
+          yield* resolveAttachmentPathByIdEffect({ attachmentsDir, attachmentId: imageId }),
+        ).toBe(jpgPath);
+      } finally {
+        NodeFS.rmSync(attachmentsDir, { recursive: true, force: true });
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   it("plans pending attachment claims with direct filename lookups", () => {
     const attachmentsDir = NodeFS.mkdtempSync(

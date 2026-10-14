@@ -18,7 +18,7 @@ import {
   createPendingAttachmentId,
   parseThreadSegmentFromAttachmentId,
   PENDING_ATTACHMENT_THREAD_SEGMENT,
-  resolveAttachmentPathById,
+  resolveAttachmentPathByIdEffect,
   sweepStalePendingAttachments,
 } from "../attachmentStore.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
@@ -229,7 +229,7 @@ export const deletePendingAttachment = Effect.fn("AttachmentUpload.deletePending
   }
 
   const config = yield* ServerConfig.ServerConfig;
-  const attachmentPath = resolveAttachmentPathById({
+  const attachmentPath = yield* resolveAttachmentPathByIdEffect({
     attachmentsDir: config.attachmentsDir,
     attachmentId,
   });
