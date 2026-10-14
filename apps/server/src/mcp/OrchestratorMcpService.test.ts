@@ -2208,6 +2208,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     const service = (
       saved: Ref.Ref<ReadonlyArray<ScheduledTask["modelSelection"]>>,
       enabledForProject = true,
+      extraProviders: ReadonlyArray<ServerProvider> = [],
     ) =>
       OrchestratorMcpService.layer.pipe(
         Layer.provide(
@@ -2225,8 +2226,12 @@ describe("OrchestratorMcpService provider resolution", () => {
                   { slug: miniModel, name: miniModel, isCustom: false, capabilities: null },
                 ],
               },
+              ...extraProviders,
             ]),
-            adapterRegistryLayer([codexInstanceId]),
+            adapterRegistryLayer([
+              codexInstanceId,
+              ...extraProviders.map((provider) => provider.instanceId),
+            ]),
             Layer.mock(ProjectService.ProjectService)({
               getById: () => Effect.succeedSome({ id: projectId } as never),
             }),
@@ -2317,6 +2322,53 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(retargeted.model, miniModel);
         const listed = yield* mcp.listScheduledTasks(scope, {});
         assert.equal(listed.tasks[0]?.model, miniModel);
+      }),
+    );
+
+    it.effect("keeps the stored model on a provider-only update, or refuses it", () =>
+      Effect.gen(function* () {
+        const sharedInstanceId = ProviderInstanceId.make("codex-shared");
+        const otherInstanceId = ProviderInstanceId.make("codex-other");
+        const codexDriver = ProviderDriverKind.make("codex");
+        // Lists a different default first, so falling back to models[0] would
+        // silently swap the stored gpt-5.4.
+        const shared = providerSnapshot({
+          instanceId: sharedInstanceId,
+          driver: codexDriver,
+          model: "shared-default",
+        });
+        const sharedWithStoredModel = {
+          ...shared,
+          models: [
+            ...shared.models,
+            { slug: "gpt-5.4", name: "gpt-5.4", isCustom: false, capabilities: null },
+          ],
+        };
+        const other = providerSnapshot({
+          instanceId: otherInstanceId,
+          driver: codexDriver,
+          model: "other-default",
+        });
+        const saved = yield* Ref.make<ReadonlyArray<ScheduledTask["modelSelection"]>>([]);
+        const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+          Effect.provide(service(saved, true, [sharedWithStoredModel, other])),
+        );
+        const moved = yield* mcp.updateScheduledTask(scope, {
+          scheduledTaskId: stored.id,
+          target: { providerInstanceId: sharedInstanceId },
+        });
+        assert.equal(moved.providerInstanceId, sharedInstanceId);
+        assert.equal(moved.model, "gpt-5.4");
+        const refused = yield* mcp
+          .updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { providerInstanceId: otherInstanceId },
+          })
+          .pipe(Effect.flip);
+        assert.equal(refused.code, "model_unavailable");
+        assert.deepEqual(yield* Ref.get(saved), [
+          { instanceId: sharedInstanceId, model: "gpt-5.4" },
+        ]);
       }),
     );
 

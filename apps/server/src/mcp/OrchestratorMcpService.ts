@@ -1193,6 +1193,14 @@ const make = Effect.gen(function* () {
      * command id than the one checked for a receipt.
      */
     readonly skipProjectEnablementFilter?: boolean;
+    /**
+     * When the target switches provider instance without naming a model, keep
+     * the inherited model instead of taking the new provider's first model,
+     * failing with `model_unavailable` when the new provider does not
+     * advertise it. Scheduled task updates set this so a provider-only change
+     * never silently swaps the stored model.
+     */
+    readonly keepInheritedModelAcrossProviders?: boolean;
   }): Effect.Effect<ResolvedTarget, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       const requestedInstanceId = input.target?.providerInstanceId;
@@ -1276,9 +1284,23 @@ const make = Effect.gen(function* () {
 
       const inheritedSelection = input.parent.thread.modelSelection;
       const requestedModel = input.target?.model;
+      const keepInheritedModel =
+        requestedModel === undefined &&
+        instanceId !== inheritedSelection.instanceId &&
+        input.keepInheritedModelAcrossProviders === true;
+      if (
+        keepInheritedModel &&
+        provider.models.length > 0 &&
+        !provider.models.some((candidate) => candidate.slug === inheritedSelection.model)
+      ) {
+        return yield* failure(
+          "model_unavailable",
+          `Model ${inheritedSelection.model} is not advertised by provider ${instanceId}; name a model in target to switch providers.`,
+        );
+      }
       const model =
         requestedModel ??
-        (instanceId === inheritedSelection.instanceId
+        (instanceId === inheritedSelection.instanceId || keepInheritedModel
           ? inheritedSelection.model
           : provider?.models[0]?.slug);
       if (model === undefined) {
@@ -1334,12 +1356,16 @@ const make = Effect.gen(function* () {
     readonly projectId: ProjectId;
     readonly inherited: ModelSelection;
     readonly target: OrchestratorMcpTarget;
+    readonly keepInheritedModelAcrossProviders?: boolean;
   }) =>
     Effect.gen(function* () {
       const { modelSelection } = yield* resolveTargetRechecking({
         parent: { thread: { projectId: input.projectId, modelSelection: input.inherited } },
         target: input.target,
         providers: yield* loadProviders,
+        ...(input.keepInheritedModelAcrossProviders === true
+          ? { keepInheritedModelAcrossProviders: true }
+          : {}),
       });
       const enabled = yield* threadManagement.isProviderInstanceEnabledForProject({
         projectId: input.projectId,
@@ -1767,6 +1793,7 @@ const make = Effect.gen(function* () {
                 projectId: existing.projectId,
                 inherited: existing.modelSelection,
                 target: input.target,
+                keepInheritedModelAcrossProviders: true,
               });
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
