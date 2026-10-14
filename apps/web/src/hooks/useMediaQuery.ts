@@ -85,3 +85,10 @@ export function useMediaQuery(query: BreakpointQuery | MediaQueryInput | (string
 export function useIsMobile(): boolean {
   return useMediaQuery("max-md");
 }
+
+/** Keep phone viewport handling active when a touch phone rotates to landscape. */
+export function useIsPhoneViewport(): boolean {
+  return useMediaQuery(
+    "(max-width: 639px), (pointer: coarse) and (max-width: 1023px) and (max-height: 639px)",
+  );
+}
