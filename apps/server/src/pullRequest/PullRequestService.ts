@@ -1322,10 +1322,11 @@ export const make = Effect.gen(function* () {
       // Reporting them keeps "N repositories were unavailable" honest instead of dropping them.
       const unreadable = selected
         .filter(({ host }) => viewers[host] === undefined)
-        .map(({ cursorKey, project, repository }) => ({
+        .map(({ cursorKey, host, project, repository }) => ({
           projectId: project.id,
           projectTitle: project.title,
           message: `${repository} could not be read.`,
+          host,
           cursorKey,
         }));
       if (readable.length === 0) {
@@ -1418,16 +1419,17 @@ export const make = Effect.gen(function* () {
                       : null,
                 };
               }),
-              // One unreachable repository must not blank the page. A host-level failure is
-              // already reported through `providers`, so it degrades the same way here.
-              Effect.orElseSucceed((): RepositoryBatch => ({
+              // One unreachable repository must not blank the page. Keep the provider's cause so
+              // clients can distinguish a missing repository from a host-wide auth failure.
+              Effect.orElseSucceed((error): RepositoryBatch => ({
                 key,
                 entries: [],
                 errors: [
                   {
                     projectId: project.project.id,
                     projectTitle: project.project.title,
-                    message: `${project.repository} could not be read.`,
+                    message: providerDetail(error),
+                    host: project.host,
                     cursorKey: key,
                   },
                 ],

@@ -102,7 +102,17 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           const next = appendPullRequestListPage(previous, response.value, input);
           registry.set(pagesAtom, next);
           // Keep failed repositories eligible for retry after appending the readable rows.
-          if (response.value.errors.length) return response.value.errors;
+          if (response.value.errors.length)
+            return {
+              errors: response.value.errors.map((error) => ({
+                ...error,
+                environmentId: target.environmentId,
+              })),
+              providers: response.value.providers.map((provider) => ({
+                ...provider,
+                environmentId: target.environmentId,
+              })),
+            };
           if (
             input.cursors &&
             Object.keys(next.nextCursors).length &&
@@ -114,12 +124,14 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
       );
       if (requests.current.page === controller) delete requests.current.page;
       if (!controller.signal.aborted && activeScope.current === scopeKey) {
-        const repositoryErrors = responses.flatMap((result) =>
-          result.status === "fulfilled" ? (result.value ?? []) : [],
+        const partial = responses.flatMap((result) =>
+          result.status === "fulfilled" && result.value ? [result.value] : [],
         );
+        const repositoryErrors = partial.flatMap((result) => result.errors);
+        const providers = partial.flatMap((result) => result.providers);
         const error = [
           requestErrors(responses),
-          repositoryErrors.length ? pullRequestListErrorMessage(repositoryErrors) : null,
+          repositoryErrors.length ? pullRequestListErrorMessage(repositoryErrors, providers) : null,
         ]
           .filter(Boolean)
           .join("\n");

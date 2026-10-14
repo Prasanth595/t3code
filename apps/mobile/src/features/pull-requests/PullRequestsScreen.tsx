@@ -1,7 +1,7 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
 import { use, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ProjectId, type EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   ActivityIndicator,
@@ -61,13 +61,30 @@ function PullRequestListErrors(props: {
     readonly projectId?: string;
     readonly projectTitle: string;
     readonly message: string;
+    readonly host?: string;
   }[];
+  readonly providers: readonly {
+    readonly environmentId: EnvironmentId;
+    readonly host: string;
+    readonly detail: string | null;
+  }[];
+  readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly environmentLabel: (environmentId: EnvironmentId) => string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const { environments, repositories } = groupPullRequestListErrors(props.errors);
+  const { environments, providers, repositories } = groupPullRequestListErrors(
+    props.errors,
+    props.providers,
+    props.connectedEnvironmentIds,
+  );
   const lines = environments.map(
     (error) => `${props.environmentLabel(error.environmentId)}: ${error.message}`,
+  );
+  lines.push(
+    ...providers.map(
+      (provider) =>
+        `${props.environmentLabel(provider.environmentId)}: ${provider.host}: ${provider.detail}`,
+    ),
   );
   if (repositories.length === 1)
     lines.push(`${repositories[0]!.projectTitle}: ${repositories[0]!.message}`);
@@ -194,6 +211,10 @@ export function PullRequestsScreen(
   const sidebar = props.sidebar === true || primaryColumn !== null;
   const selectedKey = props.selectedPullRequestKey ?? primaryColumn?.selectedPullRequestKey;
   const connectedKey = connectedTargets.map((target) => target.environmentId).join("\n");
+  const connectedEnvironmentIds = useMemo(
+    () => new Set(connectedKey ? connectedKey.split("\n").map((id) => EnvironmentId.make(id)) : []),
+    [connectedKey],
+  );
   const entries = useMemo(
     () =>
       filterPullRequestList(
@@ -202,9 +223,9 @@ export function PullRequestsScreen(
         result.data?.viewers ?? {},
         query,
         result.data.localSearchHosts,
-        new Set(connectedKey.split("\n")),
+        connectedEnvironmentIds,
       ),
-    [result.entries, controls, query, result.data, connectedKey],
+    [result.entries, controls, query, result.data, connectedEnvironmentIds],
   );
   const facets = useMemo(() => pullRequestListFacets(result.entries), [result.entries]);
   const [knownFacets, setKnownFacets] = useState({ environmentId, source: facets, ...facets });
@@ -346,9 +367,13 @@ export function PullRequestsScreen(
               }
               projects={projects}
             />
-            {result.data?.errors.length ? (
+            {result.data &&
+            (result.data.errors.length ||
+              result.data.providers.some((provider) => provider.detail !== null)) ? (
               <PullRequestListErrors
                 errors={result.data.errors}
+                providers={result.data.providers}
+                connectedEnvironmentIds={connectedEnvironmentIds}
                 environmentLabel={(id) =>
                   environments.find((environment) => environment.environmentId === id)
                     ?.environmentLabel ?? "Environment"
