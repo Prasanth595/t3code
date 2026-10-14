@@ -158,6 +158,42 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         }),
       );
 
+      it.effect("labels a glob-named directory's children as git does for each child", () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ git: true });
+          yield* writeTextFile(cwd, ".gitignore", "\\[id\\]/\n");
+          yield* writeTextFile(cwd, "i/page.tsx");
+          yield* git(cwd, ["add", ".gitignore", "i/page.tsx"]);
+          yield* writeWideDirectory(cwd, "[id]");
+          yield* writeTextFile(cwd, "[id]/page.tsx");
+
+          const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+          const listing = yield* workspaceEntries.list({ cwd, directoryPath: "[id]" });
+
+          // `check-ignore` reads each path as a pathspec, so `[id]/page.tsx` matches the tracked
+          // `i/page.tsx` and is not reported as ignored. Ask git per child for the answer.
+          const vcsProcess = yield* VcsProcess.VcsProcess;
+          const childPaths = listing.entries.map((entry) => entry.path);
+          const answer = yield* vcsProcess.run({
+            operation: "WorkspaceEntries.test.checkIgnore",
+            command: "git",
+            args: ["check-ignore", "-z", "--stdin"],
+            cwd,
+            stdin: `${childPaths.join("\0")}\0`,
+            allowNonZeroExit: true,
+            timeoutMs: 10_000,
+          });
+          const expectedIgnored = new Set(answer.stdout.split("\0").filter(Boolean));
+
+          expect(childPaths).toHaveLength(WIDE + 1);
+          expect(expectedIgnored.has("[id]/pkg-0.js")).toBe(true);
+          expect(expectedIgnored.has("[id]/page.tsx")).toBe(false);
+          expect(
+            new Set(listing.entries.filter((entry) => entry.ignored).map((entry) => entry.path)),
+          ).toEqual(expectedIgnored);
+        }),
+      );
+
       it.effect("keeps a force-tracked file and a directory with tracked files unignored", () =>
         Effect.gen(function* () {
           const cwd = yield* makeTempDir({ git: true });

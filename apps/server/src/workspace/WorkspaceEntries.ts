@@ -344,10 +344,13 @@ export const make = Effect.gen(function* () {
         // Git consults the index for every path it classifies, which costs hundreds of
         // milliseconds for a `node_modules`-sized folder. An ignored directory hides all of its
         // children, so when nothing under it is tracked they are all ignored without asking.
+        // `check-ignore` reads each path as a pathspec, so a folder like `[id]` can match tracked
+        // files elsewhere and git then answers differently per child; those folders ask git.
         const wholeDirectoryIgnored =
           entries.length > IGNORE_CHECK_CHUNK_SIZE &&
           target.relativePath !== "" &&
           !throughSymlink &&
+          !/[*?[\\]/.test(target.relativePath) &&
           (yield* Effect.gen(function* () {
             const directory = yield* runGit(
               ["check-ignore", "-z", "--stdin"],
