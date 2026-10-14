@@ -37,8 +37,8 @@ export class AcpAgent extends Context.Service<
     readonly raw: {
       /**
        * Stream of inbound ACP notifications observed on the connection. Unread
-       * ones are kept best-effort: the newest 32 that fit in 16 MiB of JSON,
-       * always including the latest. Ends when the connection does.
+       * ones are kept best-effort: the newest 32 whose JSON lines fit in 16Mi
+       * characters, always including the latest. Ends when the connection does.
        */
       readonly notifications: Stream.Stream<AcpProtocol.AcpIncomingNotification>;
       /**

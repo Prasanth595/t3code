@@ -193,7 +193,7 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
-  it.effect("keeps the newest unread raw notifications that fit in 16 MiB of JSON", () =>
+  it.effect("keeps the newest unread raw notifications whose JSON fits in 16Mi characters", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
       const handled = yield* Queue.unbounded<number>();
@@ -278,6 +278,50 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
       yield* Scope.close(connection, Exit.void);
 
       assert.deepEqual(yield* Fiber.join(reader), []);
+    }),
+  );
+
+  it.effect("keeps the ended raw backlog intact when notifications arrive after termination", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      const terminated = yield* Deferred.make<void>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio: Stdio.make({
+          args: stdio.args,
+          stdin: stdio.stdin,
+          stdout: () => Sink.forEach(() => Effect.die("stdout failed")),
+          stderr: () => Sink.drain,
+        }),
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Queue.offer(handled, decodeIndex(notification.params).index).pipe(Effect.asVoid),
+        onTermination: () => Deferred.succeed(terminated, undefined).pipe(Effect.asVoid),
+      });
+      const deliver = (index: number) =>
+        Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({ jsonrpc: "2.0", method: "x/late", params: { index } })}\n`,
+          ),
+        ).pipe(Effect.andThen(Queue.take(handled)));
+
+      for (let index = 0; index < 32; index++) {
+        assert.equal(yield* deliver(index), index);
+      }
+      // A failed write terminates the connection while the reader keeps running.
+      yield* transport.notify("x/fail", {}).pipe(Effect.exit);
+      yield* Deferred.await(terminated);
+      assert.equal(yield* deliver(32), 32);
+
+      const retained = yield* transport.incoming.pipe(
+        Stream.map((notification) => decodeIndex(notification.params).index),
+        Stream.runCollect,
+      );
+      assert.deepEqual(
+        retained,
+        Array.from({ length: 32 }, (_, index) => index),
+      );
     }),
   );
 

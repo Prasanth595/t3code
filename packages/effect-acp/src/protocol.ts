@@ -185,7 +185,8 @@ const makeStrictNdJsonRpcParser = () => {
   };
 };
 // Unread raw notifications are best-effort. The newest is always kept; older
-// ones are dropped once the backlog passes either limit.
+// ones are dropped once the backlog passes either limit. The length limit counts
+// JSON line characters (UTF-16 code units), not bytes or heap size.
 const MAX_BUFFERED_RAW_NOTIFICATIONS = 32;
 const MAX_BUFFERED_RAW_NOTIFICATION_JSON_LENGTH = 16 * 1024 * 1024;
 // Outbound JSON-RPC notification: no `id`, so peers never treat it as a request.
@@ -411,20 +412,22 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
       ),
     );
 
+  // Offer first so an ended queue rejects the notification without evicting the
+  // backlog readers are still draining. Offer and eviction share one sync block,
+  // so readers never see more than the limits allow.
   const bufferRawNotification = (notification: AcpIncomingNotification, lineLength: number) =>
     Effect.sync(() => {
       if (Queue.sizeUnsafe(rawNotifications) === 0) rawNotificationsJsonLength = 0;
+      if (!Queue.offerUnsafe(rawNotifications, { notification, lineLength })) return;
+      rawNotificationsJsonLength += lineLength;
       while (
-        Queue.sizeUnsafe(rawNotifications) >= MAX_BUFFERED_RAW_NOTIFICATIONS ||
-        (Queue.sizeUnsafe(rawNotifications) > 0 &&
-          rawNotificationsJsonLength + lineLength > MAX_BUFFERED_RAW_NOTIFICATION_JSON_LENGTH)
+        Queue.sizeUnsafe(rawNotifications) > MAX_BUFFERED_RAW_NOTIFICATIONS ||
+        (Queue.sizeUnsafe(rawNotifications) > 1 &&
+          rawNotificationsJsonLength > MAX_BUFFERED_RAW_NOTIFICATION_JSON_LENGTH)
       ) {
         const dropped = Queue.takeUnsafe(rawNotifications);
         if (dropped === undefined || Exit.isFailure(dropped)) break;
         rawNotificationsJsonLength -= dropped.value.lineLength;
-      }
-      if (Queue.offerUnsafe(rawNotifications, { notification, lineLength })) {
-        rawNotificationsJsonLength += lineLength;
       }
     });
 
