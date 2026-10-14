@@ -16,7 +16,7 @@ import {
   type Px0SearchInput,
   type Px0TreeInput,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { Platform as HostProcessPlatform } from "@t3tools/shared/HostProcess";
 import * as Net from "@t3tools/shared/Net";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { Px0 } from "@t3tools/px0-sdk";
