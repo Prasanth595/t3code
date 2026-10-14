@@ -1668,7 +1668,10 @@ export const layer = Layer.effect(
                             ? consumedRef.success
                             : replay
                               ? undefined
-                              : yield* taskError(consumedRef.failure.message, { taskId: id });
+                              : yield* taskError(consumedRef.failure.message, {
+                                  taskId: id,
+                                  cause: consumedRef.failure,
+                                });
                       // A ref, when given, is the only source: a plain secret sent
                       // alongside it must not replace what a replayed save stored.
                       const provided =
@@ -1795,7 +1798,11 @@ export const layer = Layer.effect(
             ? undefined
             : yield* secretRequests
                 .consume({ ref: signatureInput.secretRef, projectId: input.projectId })
-                .pipe(Effect.mapError((error) => taskError(error.message, { taskId: input.id })));
+                .pipe(
+                  Effect.mapError((error) =>
+                    taskError(error.message, { taskId: input.id, cause: error }),
+                  ),
+                );
         const task = yield* retryContended(
           sql.withTransaction(
             Effect.gen(function* () {
