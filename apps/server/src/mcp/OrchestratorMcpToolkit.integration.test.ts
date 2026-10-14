@@ -2723,8 +2723,6 @@ describe("orchestrator MCP toolkit", () => {
             ).toMatchObject({ state: "disposed" });
             yield* expectOffersToStay(0);
 
-            // A child's question ends a blocking wait, which then gives up
-            // delivery the same way a timeout does.
             const questionFiber = yield* invoke("delegate_task", {
               task: cancellationPrompt,
               title: "Wait question",
