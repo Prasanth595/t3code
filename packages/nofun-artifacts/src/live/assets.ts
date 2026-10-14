@@ -235,7 +235,8 @@ function resolveStageFile(root: string, ref: string): string | undefined {
  * Paths outside the directory, including `..`, are left untouched.
  */
 export function stageAssets(assetDir: string, text: string): StagedAssets {
-  const root = assertAssetDir(assetDir);
+  // realpath so macOS /var -> /private/var matches the realpath'd files below.
+  const root = NodeFs.realpathSync(assertAssetDir(assetDir));
   const refs = new Set<string>();
   for (const match of text.matchAll(/["'`]([^"'`\r\n]+)["'`]/g)) {
     const value = match[1]!;
