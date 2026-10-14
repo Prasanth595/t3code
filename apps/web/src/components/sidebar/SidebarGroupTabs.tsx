@@ -36,7 +36,7 @@ import { ThreadCardStatusGlyph, THREAD_CARD_TITLE_CLASS } from "./threadCardPart
 import type { SidebarGroupTab } from "./useSidebarGroups";
 
 /** The data attribute that marks a drop target in the tab bar: a tab id, or `new`. */
-export const SIDEBAR_GROUP_DROP_ATTRIBUTE = "data-sidebar-group-drop";
+const SIDEBAR_GROUP_DROP_ATTRIBUTE = "data-sidebar-group-drop";
 export const SIDEBAR_GROUP_DROP_NEW = "new";
 
 const attentionKeyframes: Keyframe[] = [

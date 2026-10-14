@@ -54,7 +54,7 @@ export const isSidebarGroupView = (group: Pick<SidebarGroup, "rules">) =>
   group.rules.some((rule) => rule.field === "group");
 
 /** The values that a thread has for a field. Null stands for "none". */
-export function sidebarGroupThreadValues(input: {
+function sidebarGroupThreadValues(input: {
   readonly field: Exclude<SidebarGroupRuleField, "title">;
   readonly thread: SidebarGroupThread;
   readonly projects: SidebarGroupProjectLookup;
@@ -81,7 +81,7 @@ export function sidebarGroupThreadValues(input: {
   }
 }
 
-export function sidebarGroupRuleMatches(input: {
+function sidebarGroupRuleMatches(input: {
   readonly rule: SidebarGroupRule;
   readonly thread: SidebarGroupThread;
   readonly projects: SidebarGroupProjectLookup;
@@ -155,23 +155,6 @@ export function sidebarGroupShowsThread(input: {
       groupId: input.threadGroupId,
     }),
   );
-}
-
-/** The tab ids, default first, then the groups in tab order. */
-export function sidebarGroupTabIds(settings: SidebarGroups): string[] {
-  return [DEFAULT_SIDEBAR_GROUP_ID, ...settings.groups.map((group) => group.id)];
-}
-
-/** The tab that shows a thread: its own group, else the first view that shows it. */
-export function resolveSidebarThreadTabId(input: {
-  readonly thread: SidebarGroupThread;
-  readonly threadGroupId: string;
-  readonly settings: SidebarGroups;
-  readonly projects: SidebarGroupProjectLookup;
-  readonly currentTabId: string;
-}): string {
-  if (sidebarGroupShowsThread({ ...input, tabId: input.currentTabId })) return input.currentTabId;
-  return input.threadGroupId;
 }
 
 // Highest first. A tab shows the status of its most urgent thread.
