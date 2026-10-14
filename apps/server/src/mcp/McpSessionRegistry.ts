@@ -33,6 +33,10 @@ export interface McpSessionRegistryShape {
   readonly resolve: (
     rawToken: string,
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
+  /** Checks an already authenticated scope without minting or renewing credentials. */
+  readonly isActiveScope?: (
+    scope: McpInvocationContext.McpThreadInvocationScope,
+  ) => Effect.Effect<boolean>;
   /**
    * Records a sign of life for every credential bound to `threadId`. Provider
    * turns call this so that a session which is plainly alive keeps its
@@ -85,6 +89,31 @@ const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const tokenFromBytes = (bytes: Uint8Array): string => Buffer.from(bytes).toString("base64url");
+
+// Keep registry identity private: returned capability sets and caller objects
+// must not let a consumer rewrite a credential's authenticated identity.
+const copyScope = (
+  scope: McpInvocationContext.McpThreadInvocationScope,
+): McpInvocationContext.McpThreadInvocationScope => ({
+  ...scope,
+  thread: { ...scope.thread },
+  capabilities: new Set(scope.capabilities),
+});
+
+const sameScope = (
+  stored: McpInvocationContext.McpThreadInvocationScope,
+  scope: McpInvocationContext.McpThreadInvocationScope,
+): boolean =>
+  scope.client === undefined &&
+  scope.thread !== undefined &&
+  stored.environmentId === scope.environmentId &&
+  stored.requestNamespace === scope.requestNamespace &&
+  stored.issuedAt === scope.issuedAt &&
+  stored.thread.threadId === scope.thread.threadId &&
+  stored.thread.providerSessionId === scope.thread.providerSessionId &&
+  stored.thread.providerInstanceId === scope.thread.providerInstanceId &&
+  stored.capabilities.size === scope.capabilities.size &&
+  [...stored.capabilities].every((capability) => scope.capabilities.has(capability));
 
 // A wildcard bind is reachable on loopback, which is where the provider
 // subprocesses run; anything else is announced as the address it bound.
@@ -147,7 +176,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
       };
       yield* SynchronizedRef.update(state, ({ records }) => {
         const next = new Map(pruneDead(records, issuedAt));
-        next.set(tokenHash, { tokenHash, scope, lastAliveAt: issuedAt });
+        next.set(tokenHash, { tokenHash, scope: copyScope(scope), lastAliveAt: issuedAt });
         return { records: next };
       });
       return {
@@ -176,10 +205,32 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         if (!record) return [undefined, { records: current }] as const;
         const next = new Map(current);
         next.set(tokenHash, { ...record, lastAliveAt: timestamp });
-        return [record.scope, { records: next }] as const;
+        return [copyScope(record.scope), { records: next }] as const;
       });
     },
   );
+
+  const isActiveScope: NonNullable<McpSessionRegistryShape["isActiveScope"]> = Effect.fn(
+    "McpSessionRegistry.isActiveScope",
+  )(function* (scope) {
+    // Read time and records under the same lock as revocation. Unlike resolve,
+    // this never prunes, touches, or otherwise extends a session's lifetime.
+    return yield* SynchronizedRef.modifyEffect(state, (current) =>
+      currentTimeMillis.pipe(
+        Effect.map(
+          (timestamp) =>
+            [
+              [...current.records.values()].some(
+                (record) =>
+                  timestamp - record.lastAliveAt <= livenessWindowMs &&
+                  sameScope(record.scope, scope),
+              ),
+              current,
+            ] as const,
+        ),
+      ),
+    );
+  });
 
   const touch: McpSessionRegistryShape["touch"] = Effect.fn("McpSessionRegistry.touch")(
     function* (threadId) {
@@ -205,6 +256,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   return McpSessionRegistry.of({
     issue,
     resolve,
+    isActiveScope,
     touch,
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {

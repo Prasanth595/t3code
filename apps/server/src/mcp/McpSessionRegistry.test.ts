@@ -7,6 +7,7 @@ import * as NetAddress from "effect/net/NetAddress";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
+import type * as McpInvocationContext from "./McpInvocationContext.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 const makeFakeHttpServer = (hostname: string, port = 43123) =>
@@ -178,5 +179,104 @@ it.effect("does not keep credentials of other threads alive", () =>
     timestamp += 2;
 
     expect(yield* registry.resolve(token)).toBeUndefined();
+  }),
+);
+
+const authenticatedScope = (registry: McpSessionRegistry.McpSessionRegistryShape) =>
+  Effect.gen(function* () {
+    const issued = yield* registry.issue({
+      threadId: ThreadId.make("authority-thread"),
+      providerInstanceId: ProviderInstanceId.make("custom-codex-instance"),
+    });
+    const scope = yield* registry.resolve(
+      issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+    );
+    if (scope === undefined) return yield* Effect.die("Test credential was not resolved.");
+    return { issued, scope };
+  });
+
+it.effect("queries existing scope liveness without renewing its expiry", () =>
+  Effect.gen(function* () {
+    let timestamp = 1_000;
+    const registry = yield* makeRegistry(() => timestamp);
+    const { scope } = yield* authenticatedScope(registry);
+    timestamp = 1_100;
+    expect(yield* registry.isActiveScope!(scope)).toBe(true);
+    timestamp = 1_101;
+    expect(yield* registry.isActiveScope!(scope)).toBe(false);
+    yield* registry.touch(scope.thread.threadId);
+    expect(yield* registry.isActiveScope!(scope)).toBe(false);
+  }),
+);
+
+it.effect("rejects changes to every part of the authenticated scope identity", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const { scope } = yield* authenticatedScope(registry);
+    const altered: ReadonlyArray<McpInvocationContext.McpThreadInvocationScope> = [
+      { ...scope, environmentId: EnvironmentId.make("other-env") },
+      { ...scope, requestNamespace: "other-namespace" },
+      { ...scope, issuedAt: scope.issuedAt + 1 },
+      { ...scope, thread: { ...scope.thread, threadId: ThreadId.make("other-thread") } },
+      { ...scope, thread: { ...scope.thread, providerSessionId: "other-session" } },
+      {
+        ...scope,
+        thread: { ...scope.thread, providerInstanceId: ProviderInstanceId.make("other-instance") },
+      },
+      { ...scope, capabilities: new Set(["orchestration"]) },
+      { ...scope, capabilities: new Set([...scope.capabilities, "device"]) },
+      {
+        ...scope,
+        client: { sessionId: "client", label: "client", runtimeModeCeiling: "full-access" },
+      },
+    ];
+    for (const candidate of altered) expect(yield* registry.isActiveScope!(candidate)).toBe(false);
+    expect(
+      yield* registry.isActiveScope!({
+        ...scope,
+        capabilities: new Set([...scope.capabilities].toReversed()),
+      }),
+    ).toBe(true);
+  }),
+);
+
+it.effect("rejects revoked and replaced sessions even on the same thread", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const first = yield* authenticatedScope(registry);
+    yield* registry.revokeProviderSession(first.scope.thread.providerSessionId);
+    const second = yield* authenticatedScope(registry);
+    expect(yield* registry.isActiveScope!(first.scope)).toBe(false);
+    expect(yield* registry.isActiveScope!(second.scope)).toBe(true);
+    yield* registry.revokeThread(second.scope.thread.threadId);
+    expect(yield* registry.isActiveScope!(second.scope)).toBe(false);
+    const third = yield* authenticatedScope(registry);
+    yield* registry.revokeAll;
+    expect(yield* registry.isActiveScope!(third.scope)).toBe(false);
+  }),
+);
+
+it.effect("keeps issued and resolved objects from rewriting private registry identity", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry(() => 1_000);
+    const { issued, scope } = yield* authenticatedScope(registry);
+    const original = {
+      ...scope,
+      thread: { ...scope.thread },
+      capabilities: new Set(scope.capabilities),
+    };
+    (issued.config.capabilities as Set<McpInvocationContext.McpCapability>).add("device");
+    (scope.capabilities as Set<McpInvocationContext.McpCapability>).clear();
+    const changed = {
+      ...original,
+      thread: { ...original.thread, providerSessionId: "forged-session" },
+    };
+    expect(yield* registry.isActiveScope!(changed)).toBe(false);
+    expect(yield* registry.isActiveScope!(scope)).toBe(false);
+    expect(yield* registry.isActiveScope!(original)).toBe(true);
+    const fresh = yield* registry.resolve(
+      issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+    );
+    expect(fresh?.capabilities).toEqual(original.capabilities);
   }),
 );
