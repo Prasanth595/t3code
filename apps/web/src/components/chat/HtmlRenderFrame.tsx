@@ -6,12 +6,14 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import { Maximize2Icon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
+import { cn } from "~/lib/utils";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
+import { Skeleton } from "../ui/skeleton";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { HtmlRenderDialog } from "./HtmlRenderDialog";
@@ -64,7 +66,17 @@ export function HtmlRenderFrame(props: {
   // page again; one near expiry is minted afresh, since a frame cannot report a
   // failed load. The page keeps its first URL for its lifetime.
   const [src, setSrc] = useState<string | null>(null);
+  // Full screen reuses the inline URL while it has life left, so the page
+  // comes from the browser's cache instead of a new mint and download.
+  const srcExpiresAt = useRef(0);
   const [expandedSrc, setExpandedSrc] = useState<string | null>(null);
+  // The page stays hidden behind a skeleton until it reports its content.
+  const [ready, setReady] = useState(false);
+  const showPage = useCallback(() => setReady(true), []);
+  const fitPage = useCallback((contentHeight: number) => {
+    setContentHeight(contentHeight);
+    setReady(true);
+  }, []);
   const { onFullscreenChange } = props;
   useEffect(() => {
     if (expandedSrc === null) return;
@@ -89,6 +101,7 @@ export function HtmlRenderFrame(props: {
     }
     if (cachedUrl === null) return;
     if (cachedExpiresAt - Date.now() > MIN_URL_LIFE_MS) {
+      srcExpiresAt.current = cachedExpiresAt;
       setSrc(cachedUrl);
       return;
     }
@@ -101,14 +114,19 @@ export function HtmlRenderFrame(props: {
 
   return (
     <div ref={boxRef} className="group/html-render relative" style={{ height }}>
+      {!ready && !failed ? <HtmlRenderSkeleton title={title} height={height} /> : null}
       {src !== null ? (
         <>
           <HtmlRenderDocument
             src={src}
             title={title}
             threadRef={props.threadRef}
-            className="block size-full"
-            onContentHeight={setContentHeight}
+            className={cn(
+              "block size-full motion-safe:transition-opacity motion-safe:duration-200",
+              !ready && "opacity-0",
+            )}
+            onContentHeight={fitPage}
+            onLoad={showPage}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
             <Tooltip>
@@ -119,7 +137,10 @@ export function HtmlRenderFrame(props: {
                     size="icon-xs"
                     variant="glass"
                     onClick={async () => {
-                      const url = await refresh().catch(() => null);
+                      const url =
+                        srcExpiresAt.current - Date.now() > MIN_URL_LIFE_MS
+                          ? src
+                          : await refresh().catch(() => null);
                       if (url !== null) setExpandedSrc(url);
                       else
                         toastManager.add({
@@ -150,6 +171,29 @@ export function HtmlRenderFrame(props: {
           Unable to load {title}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+// One heading, a line of text, and a chart-sized block, the shape most pages
+// take, repeated to fill the frame's reserved height.
+const SKELETON_SECTION_HEIGHT = 264;
+
+function HtmlRenderSkeleton(props: { readonly title: string; readonly height: number }) {
+  const sections = Math.ceil(props.height / SKELETON_SECTION_HEIGHT);
+  return (
+    <div
+      role="status"
+      aria-label={`Loading ${props.title}`}
+      className="pointer-events-none absolute inset-0 flex flex-col gap-6 overflow-hidden pt-1"
+    >
+      {Array.from({ length: sections }, (_, index) => (
+        <div key={index} className="flex shrink-0 flex-col gap-2">
+          <Skeleton className="h-4 w-2/5" />
+          <Skeleton className="h-3 w-3/5" />
+          <Skeleton shape="card" className="mt-2 h-40 w-full" />
+        </div>
+      ))}
     </div>
   );
 }
