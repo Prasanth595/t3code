@@ -8,12 +8,14 @@ import { parseCanvasBackground, parseCanvasSize, writeCanvasBundle } from "./can
 import { compileArtifact, compilePage } from "./compiler.ts";
 import { compileLinked } from "./linked.ts";
 import { componentsCommit } from "./live/source.ts";
+import { canvasPreset, withPresetCss, withPresetDefaults } from "./presets.ts";
 import { compilerVersion, readStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
 
 const USAGE =
-  "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) --theme <id> --size WxH [--background transparent|match|#rrggbb] [--name <name>] [--linked --runtime-sha <sha>] --out <dir>";
+  "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) (--preset <id> | --theme <id> --size WxH) [--background transparent|match|#rrggbb] [--name <name>] [--linked --runtime-sha <sha>] --out <dir>";
 
 interface Flags {
+  preset?: string;
   spec?: string;
   tsx?: string;
   page?: string;
@@ -49,6 +51,9 @@ function parseFlags(argv: readonly string[]): Flags {
       i += 1;
     };
     switch (flag) {
+      case "--preset":
+        take("preset");
+        break;
       case "--spec":
         take("spec");
         break;
@@ -88,7 +93,8 @@ function parseFlags(argv: readonly string[]): Flags {
 }
 
 async function compile(argv: readonly string[]): Promise<void> {
-  const flags = parseFlags(argv);
+  const flags = withPresetDefaults(parseFlags(argv));
+  const preset = flags.preset ? canvasPreset(flags.preset) : undefined;
   const chosen = [flags.spec, flags.tsx, flags.page].filter((file) => file !== undefined);
   if (chosen.length !== 1)
     throw new Error(`Pass exactly one of --spec, --tsx, or --page. ${USAGE}`);
@@ -120,9 +126,15 @@ async function compile(argv: readonly string[]): Promise<void> {
         size,
         runtimeSHA: flags.runtimeSha!,
         ...(title ? { title } : {}),
+        ...(preset ? { scheme: preset.scheme } : {}),
       })
     : lane === "page"
-      ? await compilePage({ spec: text, brand: theme, ...(title ? { title } : {}) })
+      ? await compilePage({
+          spec: text,
+          brand: theme,
+          ...(title ? { title } : {}),
+          ...(preset ? { scheme: preset.scheme } : {}),
+        })
       : await compileArtifact(
           lane === "tsx"
             ? { tsx: text, theme, ...(title ? { title } : {}) }
@@ -140,7 +152,7 @@ async function compile(argv: readonly string[]): Promise<void> {
   if (!stamp) throw new Error("Compiled HTML is missing the nofun-artifact stamp.");
   const manifest = writeCanvasBundle({
     outDir: flags.out,
-    html: compiled.html,
+    html: preset ? withPresetCss(compiled.html, preset) : compiled.html,
     name: "title" in compiled ? compiled.title : title || "No Fun artifact",
     size,
     background,
