@@ -94,3 +94,22 @@ it("re-reads on desktop change events instead of polling", async () => {
   await act(() => root.unmount());
   expect(notifyChange).toBeUndefined();
 });
+
+it("polls a desktop shell that predates the change event", async () => {
+  const { onLocalEnvironmentBootstrapsChange: _, ...legacyBridge } = (
+    window as unknown as { desktopBridge: Record<string, unknown> }
+  ).desktopBridge;
+  vi.stubGlobal("window", { ...window, desktopBridge: legacyBridge });
+  await act(() => root.render(<BootstrapsProbe />));
+  expect(rendered).toEqual([wsl]);
+
+  const moved = { ...wsl, httpBaseUrl: "http://127.0.0.1:4001" };
+  readBootstraps = () => [moved];
+  await act(() => vi.advanceTimersByTime(2_000));
+  expect(rendered).toEqual([moved]);
+
+  await act(() => root.unmount());
+  const readsAfterUnmount = bridgeReads;
+  await act(() => vi.advanceTimersByTime(10_000));
+  expect(bridgeReads).toBe(readsAfterUnmount);
+});
