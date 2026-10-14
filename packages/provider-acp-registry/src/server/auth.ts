@@ -11,9 +11,11 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as AcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
@@ -26,6 +28,25 @@ type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
 >;
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+const MAX_AGENT_REASON_LENGTH = 300;
+
+/**
+ * Appends the agent's own JSON-RPC error message to a sign-in failure. Agents
+ * that sign in themselves (method type "agent") explain failures only there,
+ * for example Mistral Vibe's "Browser sign-in status could not be retrieved."
+ */
+function withAgentReason(detail: string, cause: unknown) {
+  if (!isAcpRequestError(cause) || cause.operation !== "receive-response") return detail;
+  const reason = cause.errorMessage.replace(/\s+/gu, " ").trim();
+  if (!reason) return detail;
+  const bounded =
+    reason.length > MAX_AGENT_REASON_LENGTH
+      ? `${reason.slice(0, MAX_AGENT_REASON_LENGTH - 1)}…`
+      : reason;
+  return `${detail.replace(/\.$/u, "")}: ${bounded}`;
+}
 
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
@@ -48,7 +69,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+    new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: withAgentReason(detail, cause),
+      cause,
+    });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(

@@ -110,6 +110,10 @@ const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const initializeAuthMethodId =
   advertisedAuthMethodId ?? (supportsSessionLifecycle ? "test" : undefined);
 const requiresAuthentication = process.env.T3_ACP_REQUIRE_AUTH === "1";
+// Agents that sign in themselves (method type "agent") report a failed login as
+// a JSON-RPC error on `authenticate`, as Mistral Vibe does when its browser
+// sign-in status poll fails.
+const authenticateErrorMessage = process.env.T3_ACP_AUTHENTICATE_ERROR_MESSAGE;
 const commandAdvertisementDelayMs = Number(
   process.env.T3_ACP_COMMAND_ADVERTISEMENT_DELAY_MS ?? "-1",
 );
@@ -548,6 +552,9 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.invalidParams(
           `Unknown mock authentication method: ${request.methodId}`,
         );
+      }
+      if (authenticateErrorMessage) {
+        return yield* AcpError.AcpRequestError.internalError(authenticateErrorMessage);
       }
       authenticated = true;
       return {};
