@@ -146,10 +146,29 @@ const decodeEvent = Schema.decodeUnknownSync(
   ]),
 );
 
-export type Connection = "connecting" | "live" | "offline";
+/** `signed-out`: the Cloudflare Access session ended, so only a new sign-in helps (MM-1804). */
+export type Connection = "connecting" | "live" | "offline" | "signed-out";
 
 const PING_MS = 30_000;
 const MAX_BACKOFF_MS = 30_000;
+
+/**
+ * MM-1804: an ended Access session answers every portal path with a redirect to the sign-in.
+ * The manifest is a small file that the service worker does not cache, so it makes a cheap probe.
+ */
+async function sessionEnded(): Promise<boolean> {
+  try {
+    const response = await fetch("/manifest.webmanifest", {
+      credentials: "same-origin",
+      redirect: "manual",
+      cache: "no-store",
+    });
+    return response.type === "opaqueredirect" || response.status === 401 || response.status === 403;
+  } catch {
+    // No network: the page is offline, and the sign-in may still be good.
+    return false;
+  }
+}
 
 /** Connects, reconnects with backoff, and pings so idle proxies keep the socket open. */
 export function usePortal(): { state: PortalState; connection: Connection } {
@@ -185,9 +204,14 @@ export function usePortal(): { state: PortalState; connection: Connection } {
       current.addEventListener("close", () => {
         clearInterval(ping);
         if (stopped) return;
-        setConnection("offline");
-        retry = setTimeout(open, backoff);
-        backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+        void sessionEnded().then((ended) => {
+          if (stopped) return;
+          // A retry would only meet the sign-in redirect again.
+          if (ended) return setConnection("signed-out");
+          setConnection("offline");
+          retry = setTimeout(open, backoff);
+          backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
+        });
       });
     };
     open();

@@ -6,6 +6,7 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "launch_handler": { "client_mode": ["navigate-existing", "auto"] },
   "background_color": "#e4e7ff",
   "theme_color": "#e4e7ff",
   "icons": [
@@ -18,5 +19,22 @@
       "sizes": "512x512",
       "purpose": "maskable"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "Emergency pause",
+      "short_name": "Pause",
+      "description": "Open the big red button.",
+      "url": "/?open=emergency#/map",
+      "icons": [{ "src": "/icon-192.png", "type": "image/png", "sizes": "192x192" }]
+    },
+    { "name": "Inbox", "description": "Proposals that wait for you.", "url": "/#/inbox" },
+    {
+      "name": "Health",
+      "description": "Alerts and resources of every machine.",
+      "url": "/#/health"
+    },
+    { "name": "Queue", "description": "Work that waits for offline machines.", "url": "/#/queue" },
+    { "name": "Tasks", "description": "Scheduled tasks of every machine.", "url": "/#/tasks" }
   ]
 }

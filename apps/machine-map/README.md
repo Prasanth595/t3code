@@ -11,7 +11,9 @@ The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir
 - `src/rules/`: pure rules with tests: changes and their inverse, desired state, map roles, self-escalation, queue, presets and lockdown.
 - `src/api.ts`: request and response shapes of the HTTP API, shared by the Worker and the page.
 - `src/ui/`: the React page.
-- `public/`: the favicon, the app icons and the web app manifest. The PNG icons are `favicon.svg` rendered at each size; the full-bleed ones (`apple-touch-icon.png`, `icon-maskable-512.png`) put it on the canvas colour with a margin.
+- `src/sw/sw.ts`: the service worker of the installed app (MM-1801 to MM-1808). `vite.config.ts` builds it to `dist/sw.js` and writes the file list of the build into it.
+- `src/push.ts`: Web Push with Web Crypto: the VAPID JWT and the `aes128gcm` encryption (MM-1807).
+- `public/`: the favicon, the app icons, the web app manifest and the offline page. The PNG icons are `favicon.svg` rendered at each size; the full-bleed ones (`apple-touch-icon.png`, `icon-maskable-512.png`) put it on the canvas colour with a margin.
 
 ## Set up Cloudflare Access
 
@@ -35,6 +37,14 @@ Set secrets with `wrangler secret put <NAME>` in this folder.
 - `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
 - `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
 
+- `VAPID_JWK` (optional, MM-1807). The P-256 private key that signs push messages, as a JSON Web Key. Without it, push is off and the Clients view says so. Make it and set it in one step:
+
+  ```sh
+  node -e 'const { generateKeyPairSync } = require("node:crypto"); console.log(JSON.stringify(generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" })))' | ./node_modules/.bin/wrangler secret put VAPID_JWK
+  ```
+
+  A new key turns off the push subscription of every device. Turn notifications on again in the Clients view of each device.
+
 ## Deploy
 
 1. Run `vp i` at the repository root.
@@ -44,6 +54,7 @@ Set secrets with `wrangler secret put <NAME>` in this folder.
 
 1. Put `SECRET_KEY=<base64 key>` in `.dev.vars` in this folder. Git ignores the file.
 2. Run `vp run dev` in this folder. Open `http://localhost:8787`.
+3. To test push, also put `VAPID_JWK=<JSON Web Key>` in `.dev.vars`. `localhost` counts as a secure origin, so the service worker and push work there.
 
 Local development skips the Access JWT: `DEV_FAKE_ACCESS=1` on a loopback hostname makes every page request the first owner email. A fake machine sends the header `X-Dev-Machine-Client-Id` with its token client id. Production never sets the variable.
 

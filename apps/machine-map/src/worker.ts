@@ -13,6 +13,8 @@ import {
   CommandRequest,
   EnrollRequest,
   JoinCodeRequest,
+  PushEndpointRequest,
+  PushSubscribeRequest,
   RevisionRequest,
   ThresholdsRequest,
 } from "./api.ts";
@@ -179,6 +181,20 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.devices(owner));
     case "POST /devices/sign-out-everywhere":
       return toResponse(await stub.signOutEverywhere(owner));
+    case "GET /push":
+      return toResponse(await stub.pushKey(owner));
+    case "POST /push/subscribe": {
+      const body = await readBody(request, PushSubscribeRequest);
+      return body instanceof Response ? body : toResponse(await stub.subscribePush(owner, body));
+    }
+    case "POST /push/unsubscribe": {
+      const body = await readBody(request, PushEndpointRequest);
+      return body instanceof Response ? body : toResponse(await stub.unsubscribePush(owner, body));
+    }
+    case "POST /push/test": {
+      const body = await readBody(request, PushEndpointRequest);
+      return body instanceof Response ? body : toResponse(await stub.testPush(owner, body));
+    }
     default:
       return fail(404, `No route ${request.method} ${url.pathname}.`);
   }

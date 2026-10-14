@@ -25,6 +25,8 @@ export interface Env {
   readonly CF_API_TOKEN?: string;
   /** MM-1201: AES-GCM key for secrets that wait for their machine. */
   readonly SECRET_KEY?: string;
+  /** MM-1807: a P-256 private key as JSON Web Key. Without it, push is off. */
+  readonly VAPID_JWK?: string;
   /** Local development only. See `access.ts`. */
   readonly DEV_FAKE_ACCESS?: string;
 }

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Offline · T3 machines</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- MM-1803: the service worker shows this page when a navigation gets no answer. It holds no machine state. -->
+    <style>
+      :root {
+        color-scheme: light;
+        --canvas: #e4e7ff;
+        --surface: #ffffff;
+        --ink: #000000;
+        --muted: #3d3d5c;
+        --shadow-ink: #000000;
+        --select: #ffe14d;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color-scheme: dark;
+          --canvas: #15122b;
+          --surface: #262147;
+          --ink: #f3f0ff;
+          --muted: #bdb6e6;
+          --shadow-ink: #b9a8ff;
+          --select: #6c5ce7;
+        }
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+        box-sizing: border-box;
+        font-family: "Bricolage Grotesque", system-ui, sans-serif;
+        color: var(--ink);
+        background: var(--canvas);
+      }
+      main {
+        max-width: 26rem;
+        padding: 1.5rem;
+        background: var(--surface);
+        border: 2px solid var(--ink);
+        border-radius: 0.25rem;
+        box-shadow: 4px 4px 0 0 var(--shadow-ink);
+      }
+      img {
+        width: 3.5rem;
+        height: 3.5rem;
+      }
+      h1 {
+        margin: 0.75rem 0 0.25rem;
+        font-size: 1.6rem;
+        font-weight: 800;
+      }
+      p {
+        margin: 0 0 1.25rem;
+        color: var(--muted);
+      }
+      a {
+        display: inline-block;
+        padding: 0.5rem 1rem;
+        font-weight: 600;
+        color: var(--ink);
+        text-decoration: none;
+        background: var(--select);
+        border: 2px solid var(--ink);
+        border-radius: 0.25rem;
+        box-shadow: 4px 4px 0 0 var(--shadow-ink);
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <img src="/favicon.svg" alt="" />
+      <h1>Offline.</h1>
+      <p>The portal needs the network. It shows no saved machine state, so nothing here is old.</p>
+      <a href="/">Try again</a>
+    </main>
+  </body>
+</html>

@@ -77,8 +77,9 @@
       },
     },
     "apps/machine-map": {
-      // Wrangler bundles the Worker from `main` in wrangler.jsonc. Vite builds the page from index.html.
-      "entry": ["src/worker.ts!", "src/ui/main.tsx!"],
+      // Wrangler bundles the Worker from `main` in wrangler.jsonc. Vite builds the page from index.html
+      // and the service worker from its second input in vite.config.ts.
+      "entry": ["src/worker.ts!", "src/ui/main.tsx!", "src/sw/sw.ts!"],
     },
     "apps/mobile": {
       // Expo loads plugins and the fingerprint config by string; Metro embeds the browser entry in the native WebView.
