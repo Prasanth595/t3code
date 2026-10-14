@@ -4103,6 +4103,103 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["archive", "delete"] as const)(
+    "cancels a delegated worktree's preparation when its parent is %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const parentId = ThreadId.make(`runtime-subagent-preparing-${operation}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${parentId}:create`),
+          threadId: parentId,
+          projectId: ProjectId.make(`${parentId}:project`),
+          title: "Parent with a preparing worktree subagent",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: `/tmp/${parentId}`,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${parentId}:message`),
+          threadId: parentId,
+          messageId: MessageId.make(`${parentId}:message`),
+          text: "Delegate into a separate worktree.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const [parentRun] = (yield* orchestrator.getThreadProjection(parentId)).runs;
+        assert.isDefined(parentRun);
+        assert.isNotNull(parentRun.rootNodeId);
+        const delegated = yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make(`${parentId}:delegate`),
+          parentThreadId: parentId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId,
+          task: "Prepare a child worktree.",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          workspaceStrategy: { type: "worktree", baseRef: "HEAD", startFromOrigin: false },
+        });
+        const childEvent = delegated.storedEvents.find(
+          (stored) => stored.event.type === "thread.created",
+        )?.event;
+        assert.ok(childEvent?.type === "thread.created");
+        const childId = childEvent.threadId;
+        const before = yield* orchestrator.getThreadProjection(childId);
+        const [childRun] = before.runs;
+        assert.isDefined(childRun);
+        assert.equal(childRun.status, "preparing");
+        assert.isNull(before.thread.worktreePath);
+        // The parent's provider execution is outside this preparation regression.
+        yield* outbox.cancelUnsettled({
+          threadId: parentId,
+          effectTypes: ["provider-turn.start"],
+          reason: "not under test",
+        });
+        yield* orchestrator.dispatch({
+          type: `thread.${operation}`,
+          commandId: CommandId.make(`${parentId}:${operation}`),
+          threadId: parentId,
+        });
+        yield* worker.drain();
+        const child = yield* orchestrator.getThreadProjection(childId);
+        assert.isNotNull(
+          operation === "archive" ? child.thread.archivedAt : child.thread.deletedAt,
+        );
+        assert.equal(child.runs.find((run) => run.id === childRun.id)?.status, "cancelled");
+        assert.equal(
+          child.attempts.find((attempt) => attempt.runId === childRun.id)?.status,
+          "cancelled",
+        );
+        assert.equal(
+          child.nodes.find((node) => node.id === childRun.rootNodeId)?.status,
+          "cancelled",
+        );
+        const release = yield* orchestrator
+          .dispatch({
+            type: "prepared-run.release",
+            commandId: CommandId.make(`${childId}:release`),
+            threadId: childId,
+            runId: childRun.id,
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(release, Orchestrator.OrchestratorDispatchError);
+      }),
+  );
+
   it.effect("refuses new delegated work under an archived parent", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
