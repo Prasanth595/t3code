@@ -1981,6 +1981,25 @@ describe("deriveMessagesTimelineRows", () => {
       kind: "thinking",
       createdAt: "2026-01-01T00:00:10Z",
     });
+    // An entry ordered later can carry an older start (a proposed plan keeps its
+    // turn's start), so the stamp follows the newest start, not the last entry.
+    expect(
+      deriveThinkingRow([
+        userEntry,
+        assistantEntry,
+        {
+          ...assistantEntry,
+          id: "older-active-entry",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            ...assistantEntry.message,
+            id: "older-active" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            updatedAt: "2026-01-01T00:00:05Z",
+          },
+        },
+      ]),
+    ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:10Z" });
     // An optimistic steer is appended after the run's entries. It is the
     // user's input, not the agent's activity, so it does not move the stamp.
     expect(

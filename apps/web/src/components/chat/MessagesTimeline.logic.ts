@@ -1969,14 +1969,20 @@ export function deriveMessagesTimelineRows(input: {
     // turn. Later sends (a steer) are not that activity; event cards carry
     // their run on the projected item. Start times stay fixed while text
     // streams, which keeps the incremental streaming path in parity.
-    const latestActiveEntry = timelineEntries.findLast((entry) =>
-      runIdIsActiveResponse(
-        entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry),
-      ),
+    // Timeline order follows item ordinals, not start times (a proposed plan keeps
+    // its turn's start), so take the newest start rather than the last entry.
+    const latestActiveCreatedAt = timelineEntries.reduce<string | null>(
+      (latest, entry) =>
+        runIdIsActiveResponse(
+          entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry),
+        )
+          ? maxIsoTimestamp(latest, entry.createdAt)
+          : latest,
+      null,
     );
     const thinkingCreatedAt = maxIsoTimestamp(
       input.activeTurnStartedAt ?? null,
-      latestActiveEntry?.createdAt ?? null,
+      latestActiveCreatedAt,
     );
     // A failed latest tool hands the row back to thinking, but its group
     // stays reachable through the same disclosure the live row offers.
