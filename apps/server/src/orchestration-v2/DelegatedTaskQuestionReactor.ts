@@ -25,8 +25,7 @@ export class DelegatedTaskQuestionReactor extends Context.Service<
   }
 >()("t3/orchestration-v2/DelegatedTaskQuestionReactor") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
 
@@ -39,25 +38,14 @@ export const make = Effect.gen(function* () {
       ) {
         return;
       }
-      const childRecords = yield* projections.getThreadRecords(event.threadId, ["runtimeRequests"]);
-      const child = childRecords.thread;
+      const child = yield* projections.getThread(event.threadId);
       const parentThreadId = child.lineage.parentThreadId;
-      if (
-        childRecords.runtimeRequests.find((request) => request.id === event.payload.id)?.status !==
-          "pending" ||
-        child.lineage.relationshipToParent !== "subagent" ||
-        parentThreadId === null ||
-        child.forkedFrom?.type !== "node"
-      ) {
-        return;
-      }
-      const taskId = child.forkedFrom.nodeId;
+      if (parentThreadId === null) return;
+      const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
+      if (request?.status !== "pending") return;
       const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
       const task = parent.subagents.find(
-        (candidate) =>
-          candidate.id === taskId &&
-          candidate.origin === "app_owned" &&
-          candidate.childThreadId === child.id,
+        (candidate) => candidate.origin === "app_owned" && candidate.childThreadId === child.id,
       );
       if (
         task === undefined ||
@@ -68,6 +56,7 @@ export const make = Effect.gen(function* () {
       ) {
         return;
       }
+      const taskId = task.id;
       const label = reportLabel(task.title?.trim() || task.prompt);
       // Keyed by the request, so a request updated while still pending wakes the parent once.
       const key = `${parentThreadId}:${event.payload.id}`;

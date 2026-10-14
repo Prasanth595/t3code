@@ -675,38 +675,31 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     });
     const task = (yield* projections.getThreadProjection(parentThreadId)).subagents[0]!;
     const now = yield* DateTime.now;
-    const question: OrchestrationV2DomainEvent = {
-      id: EventId.make("event:question"),
-      type: "runtime-request.updated",
-      threadId: task.childThreadId!,
-      occurredAt: now,
-      payload: {
-        id: RuntimeRequestId.make("request:question"),
-        nodeId: NodeId.make("node:question"),
-        providerTurnId: null,
-        nativeRequestRef: null,
-        kind: "user_input",
-        status: "pending",
-        responseCapability: { type: "message" },
-        createdAt: now,
-        resolvedAt: null,
-      },
-    };
-
-    const answered = {
-      ...question,
-      id: EventId.make("event:answered"),
-      payload: { ...question.payload, id: RuntimeRequestId.make("request:answered") },
-    };
-    const approval = {
-      ...question,
-      id: EventId.make("event:approval"),
-      payload: {
-        ...question.payload,
-        id: RuntimeRequestId.make("request:approval"),
-        kind: "command",
-      },
-    } satisfies OrchestrationV2DomainEvent;
+    const requestEvent = (
+      eventId: string,
+      requestId: string,
+      kind: "user_input" | "command" = "user_input",
+    ) =>
+      ({
+        id: EventId.make(eventId),
+        type: "runtime-request.updated",
+        threadId: task.childThreadId!,
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make(requestId),
+          nodeId: NodeId.make(`node:${requestId}`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind,
+          status: "pending",
+          responseCapability: { type: "message" },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      }) satisfies OrchestrationV2DomainEvent;
+    const question = requestEvent("event:question", "request:question");
+    const answered = requestEvent("event:answered", "request:answered");
+    const approval = requestEvent("event:approval", "request:approval", "command");
     const eventSink = yield* EventSink.EventSinkV2;
     yield* eventSink.write({
       events: [
