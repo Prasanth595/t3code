@@ -58,7 +58,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { DiffPanelLoadingState } from "../diffs/DiffLoadingState";
+import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
