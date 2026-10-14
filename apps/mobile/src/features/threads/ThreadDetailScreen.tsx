@@ -461,6 +461,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     preparationDetailsThreadKey === selectedThreadKey &&
     props.creationState?.kind === "preparing" &&
     !props.worktreeSetup;
+  // Forget the sheet once the setup card takes over or another thread opens,
+  // so returning to this thread does not reopen it.
+  if (preparationDetailsThreadKey !== null && !preparationDetailsOpen) {
+    setPreparationDetailsThreadKey(null);
+  }
   const preparationInput = (creation: { preparingWorktree: boolean; sent: boolean }) => ({
     sent: creation.sent,
     preparingWorktree: creation.preparingWorktree,
