@@ -84,8 +84,11 @@ import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 
 const SERVER_HOST_CLIENT_ID = SERVER_BROWSER_AUTOMATION_CLIENT_ID;
 const RENDER_SCALE = 2;
-// Chromium allows three unacked frames, so 100 ms pacing caps viewers near 30 fps.
+// Each frame is acked 100 ms after it arrives, so viewers get at most
+// SCREENCAST_FRAMES_IN_FLIGHT frames per 100 ms. On a page animating at 60 Hz,
+// Chromium's default of three delivers about 25 fps and six about 50 fps.
 const SCREENCAST_ACK_PACE_MS = 100;
+const SCREENCAST_FRAMES_IN_FLIGHT = 6;
 const SCREENCAST_SETTLE_MS = 200;
 // Only scrolling triggers reduced-quality motion frames; animations stay sharp.
 const SCREENCAST_MOTION_FRAMES = 4;
@@ -2211,14 +2214,15 @@ const make = Effect.gen(function* () {
           // A scaled capture is rendering; its resume starts the stream.
           if (tab.capturing > 0) return;
           await session.send("Page.stopScreencast").catch(constVoid);
-          await session
-            .send("Page.startScreencast", {
-              format: "jpeg",
-              quality: screencastScale < 1 ? Math.min(quality, SCREENCAST_MOTION_QUALITY) : quality,
-              maxWidth: Math.max(1, Math.round(input.maxWidth * screencastScale)),
-              maxHeight: Math.max(1, Math.round(input.maxHeight * screencastScale)),
-            })
-            .catch(constVoid);
+          // Playwright's protocol types predate `maxFramesInFlight`; the bundled Chromium has it.
+          const params = {
+            format: "jpeg",
+            quality: screencastScale < 1 ? Math.min(quality, SCREENCAST_MOTION_QUALITY) : quality,
+            maxWidth: Math.max(1, Math.round(input.maxWidth * screencastScale)),
+            maxHeight: Math.max(1, Math.round(input.maxHeight * screencastScale)),
+            maxFramesInFlight: SCREENCAST_FRAMES_IN_FLIGHT,
+          } as const;
+          await session.send("Page.startScreencast", params).catch(constVoid);
         });
         return screencastParams;
       };

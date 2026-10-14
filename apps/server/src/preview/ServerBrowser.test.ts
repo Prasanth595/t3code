@@ -492,6 +492,20 @@ it.live("streams to a read-only viewer without allowing takeover, input, or view
   ).pipe(Effect.provide(layer)),
 );
 
+it.live("lets six screencast frames wait for their ack, twice Chromium's default", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { browser, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const session = contexts[0]!.sessions.at(-1)!;
+      expect(session.send).toHaveBeenCalledWith(
+        "Page.startScreencast",
+        expect.objectContaining({ format: "jpeg", quality: 70, maxFramesInFlight: 6 }),
+      );
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.live("applies any client's viewport, appearance, and zoom to a headless tab", () =>
   Effect.scoped(
     Effect.gen(function* () {
