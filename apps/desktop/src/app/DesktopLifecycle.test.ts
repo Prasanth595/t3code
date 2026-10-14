@@ -14,6 +14,7 @@ import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 
 function layerElectronApp(
   appListeners: Map<string, (...args: readonly unknown[]) => void>,
@@ -101,6 +102,12 @@ function layerDesktopWindow(
   });
 }
 
+function layerDesktopUpdates(prepareShutdown: Effect.Effect<void> = Effect.void) {
+  return Layer.succeed(DesktopUpdates.DesktopUpdates, {
+    prepareShutdown,
+  } as DesktopUpdates.DesktopUpdates["Service"]);
+}
+
 describe("DesktopLifecycle", () => {
   it.effect.each(["darwin", "win32", "linux"] satisfies ReadonlyArray<NodeJS.Platform>)(
     "lets the updater's quit event proceed on %s",
@@ -126,6 +133,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(layerDesktopUpdates()),
       );
 
       return Effect.scoped(
@@ -157,9 +165,11 @@ describe("DesktopLifecycle", () => {
     },
   );
 
-  it.effect("destroys windows before waiting for backend shutdown", () =>
+  it.effect("waits for the installer before destroying windows and shutting down", () =>
     Effect.gen(function* () {
       const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const installerWaitStarted = yield* Deferred.make<void>();
+      const installerComplete = yield* Deferred.make<void>();
       const shutdownRequested = yield* Deferred.make<void>();
       const allowShutdown = yield* Deferred.make<void>();
       const quitRequested = yield* Deferred.make<void>();
@@ -198,6 +208,13 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(layerDesktopShutdown),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(
+          layerDesktopUpdates(
+            Deferred.succeed(installerWaitStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(installerComplete)),
+            ),
+          ),
+        ),
       );
 
       yield* Effect.scoped(
@@ -208,6 +225,9 @@ describe("DesktopLifecycle", () => {
           const event = { preventDefault: () => undefined } as Electron.Event;
           appListeners.get("before-quit")?.(event);
 
+          yield* Deferred.await(installerWaitStarted);
+          assert.deepEqual(events, []);
+          yield* Deferred.succeed(installerComplete, undefined);
           yield* Deferred.await(shutdownRequested);
           const eventsBeforeCleanup = [...events];
           yield* Deferred.succeed(allowShutdown, undefined);
@@ -239,6 +259,7 @@ describe("DesktopLifecycle", () => {
         Layer.provideMerge(layerEnvironment),
         Layer.provideMerge(DesktopShutdown.layer),
         Layer.provideMerge(DesktopState.layer),
+        Layer.provideMerge(layerDesktopUpdates()),
       );
 
       yield* Effect.scoped(

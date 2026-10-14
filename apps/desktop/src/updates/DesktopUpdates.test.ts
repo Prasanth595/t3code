@@ -677,6 +677,94 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("keeps ownership when the install caller is interrupted during installation", () =>
+    Effect.gen(function* () {
+      const installing = yield* Deferred.make<void>();
+      const finishInstaller = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        quitAndInstall: Deferred.succeed(installing, undefined).pipe(
+          Effect.andThen(Deferred.await(finishInstaller)),
+          Effect.andThen(
+            Effect.fail(
+              new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+                channel: "nightly",
+                isSilent: true,
+                isForceRunAfter: true,
+                cause: new Error("authentication cancelled"),
+              }),
+            ),
+          ),
+        ),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const installFiber = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(installing);
+          const interrupt = yield* Fiber.interrupt(installFiber).pipe(Effect.forkChild);
+          yield* Effect.yieldNow;
+          assert.isTrue(yield* updates.isInstallActive);
+          assert.isTrue(yield* Ref.get(state.quitting));
+          assert.equal(harness.updateRestartMarkers.size, 1);
+          assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
+          yield* Deferred.succeed(finishInstaller, undefined);
+          yield* Fiber.join(interrupt);
+          assert.isFalse(yield* updates.isInstallActive);
+          assert.isFalse(yield* Ref.get(state.quitting));
+          assert.equal(harness.updateRestartMarkers.size, 0);
+          assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("graceful shutdown waits for recovery and blocks another install", () =>
+    Effect.gen(function* () {
+      const recovering = yield* Deferred.make<void>();
+      const finishRecovery = yield* Deferred.make<void>();
+      const shutdownReady = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        quitAndInstall: Effect.fail(
+          new ElectronUpdater.ElectronUpdaterQuitAndInstallError({
+            channel: "nightly",
+            isSilent: true,
+            isForceRunAfter: true,
+            cause: new Error("installer refused"),
+          }),
+        ),
+        startBackend: Deferred.succeed(recovering, undefined).pipe(
+          Effect.andThen(Deferred.await(finishRecovery)),
+        ),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const state = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const install = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(recovering);
+          const shutdown = yield* updates.prepareShutdown.pipe(
+            Effect.andThen(Deferred.succeed(shutdownReady, undefined)),
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          assert.isFalse(yield* Deferred.isDone(shutdownReady));
+          yield* Deferred.succeed(finishRecovery, undefined);
+          yield* Fiber.join(install);
+          yield* Fiber.join(shutdown);
+          assert.isTrue(yield* Ref.get(state.quitting));
+          assert.isFalse((yield* updates.install).accepted);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
     const harness = makeHarness({
       quitAndInstall: Effect.fail(

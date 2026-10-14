@@ -15,6 +15,7 @@ import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
+import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 
 export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLifecycleRelaunchError>()(
   "DesktopLifecycleRelaunchError",
@@ -30,6 +31,7 @@ export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLif
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
+  | DesktopUpdates.DesktopUpdates
   | DesktopShutdown.DesktopShutdown
   | DesktopState.DesktopState
   | DesktopWindow.DesktopWindow
@@ -41,7 +43,7 @@ type DesktopLifecycleRegistrationServices =
   | ElectronWindow.ElectronWindow;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopUpdates | DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -84,8 +86,14 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
 const requestDesktopShutdownAndWait = Effect.fn("desktop.lifecycle.requestShutdownAndWait")(
   function* (
     afterBoundsFlush: Effect.Effect<void> = Effect.void,
-  ): Effect.fn.Return<void, never, DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow> {
+  ): Effect.fn.Return<
+    void,
+    never,
+    DesktopShutdown.DesktopShutdown | DesktopWindow.DesktopWindow | DesktopUpdates.DesktopUpdates
+  > {
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    yield* updates.prepareShutdown;
     const desktopWindow = yield* DesktopWindow.DesktopWindow;
     yield* desktopWindow.flushMainWindowBounds;
     yield* afterBoundsFlush;
