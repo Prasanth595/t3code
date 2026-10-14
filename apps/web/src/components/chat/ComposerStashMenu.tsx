@@ -1,5 +1,5 @@
 import { BookmarkIcon, FileIcon, FileTextIcon } from "lucide-react";
-import { memo, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type RefObject } from "react";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 
 import { formatRelativeTimeLabel } from "../../timestampFormat";
@@ -33,12 +33,14 @@ function stashEntrySnippet(entry: PromptStashEntry): string {
  * Attached banner listing the stashed prompts. Opened by the stash badge or ⌘S
  * when the empty composer cannot restore a single entry. Navigated with arrows,
  * restored with Enter, dismissed with Escape. The listener runs capture-phase
- * on window so it wins over the owning editor's handlers while the menu is open.
+ * on window so it wins over the composer's handlers while the menu is open, but
+ * only for keys aimed at the composer, the drawer or nothing focused. Inputs in
+ * the command palette or a dialog keep their own Enter, Escape and delete-word.
  */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
   stashShortcutLabel: string | null;
-  composerFormRef?: RefObject<HTMLFormElement | null>;
+  composerFormRef: RefObject<HTMLFormElement | null>;
   onRestore: (entry: PromptStashEntry) => void;
   onDelete: (entry: PromptStashEntry) => void;
   onClose: () => void;
@@ -48,60 +50,6 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
-
-  const deleteEntry = useCallback(
-    (entry: PromptStashEntry) => {
-      const drawer = drawerRef.current;
-      const focusedRow = document.activeElement?.closest("[data-stash-entry]");
-      if (
-        drawer?.contains(document.activeElement) &&
-        focusedRow?.getAttribute("data-stash-entry") === entry.id
-      ) {
-        // Move focus before deleting the row so it cannot fall outside the drawer.
-        const nextButton = Array.from(
-          drawer.querySelectorAll<HTMLButtonElement>("[data-stash-restore]"),
-        ).find((button) => button.dataset.stashRestore !== entry.id);
-        (
-          nextButton ?? drawer.querySelector<HTMLButtonElement>('button[aria-label="Close stash"]')
-        )?.focus({ preventScroll: true });
-      }
-      onDelete(entry);
-    },
-    [onDelete],
-  );
-
-  useEffect(() => {
-    const activeElement = document.activeElement;
-    // The global stash shortcut and badge can open the drawer without editor focus.
-    if (
-      activeElement === document.body ||
-      activeElement === document.documentElement ||
-      (activeElement instanceof Element &&
-        composerFormRef?.current?.contains(activeElement) &&
-        activeElement.closest('[data-prompt-stash-badge="true"]'))
-    ) {
-      const editor = composerFormRef?.current?.querySelector<HTMLElement>(
-        '[data-testid="composer-editor"]',
-      );
-      editor?.focus({ preventScroll: true });
-      if (editor && document.activeElement === editor) return;
-
-      const drawer = drawerRef.current;
-      const button =
-        drawer?.querySelector<HTMLButtonElement>("[data-stash-restore]") ??
-        drawer?.querySelector<HTMLButtonElement>("button");
-      button?.focus({ preventScroll: true });
-      return () => {
-        if (
-          activeElement instanceof HTMLElement &&
-          activeElement.matches('[data-prompt-stash-badge="true"]') &&
-          (document.activeElement === document.body || drawer?.contains(document.activeElement))
-        ) {
-          activeElement.focus({ preventScroll: true });
-        }
-      };
-    }
-  }, [composerFormRef]);
 
   useEffect(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
@@ -123,12 +71,10 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
     const handler = (event: KeyboardEvent) => {
       const target = event.target;
       if (
-        !(target instanceof Element) ||
-        (!drawerRef.current?.contains(target) &&
-          !(
-            composerFormRef?.current?.contains(target) &&
-            target.closest('[data-testid="composer-editor"]')
-          ))
+        target instanceof Element &&
+        target !== document.body &&
+        !drawerRef.current?.contains(target) &&
+        !composerFormRef.current?.contains(target)
       ) {
         return;
       }
@@ -171,12 +117,12 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
         if (!highlightedEntry) return;
         event.preventDefault();
         event.stopPropagation();
-        deleteEntry(highlightedEntry);
+        onDelete(highlightedEntry);
       }
     };
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [composerFormRef, deleteEntry, entries, highlightedEntry, onClose, onRestore]);
+  }, [composerFormRef, entries, highlightedEntry, onClose, onDelete, onRestore]);
 
   return (
     <ComposerBanner.Root ref={drawerRef} data-composer-stash-drawer="true">
@@ -280,7 +226,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
                     className="z-10"
                     aria-label="Delete stashed prompt"
                     onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => deleteEntry(entry)}
+                    onClick={() => onDelete(entry)}
                   />
                 </ComposerBanner.Actions>
               </ComposerBanner.Row>
