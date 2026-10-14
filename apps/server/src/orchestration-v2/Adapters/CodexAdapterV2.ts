@@ -1896,6 +1896,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
          * request arrives and add to that same set when the user answers, so a
          * late answer from a turn whose mode has since ended is dropped.
          */
+        /** Every native turn registers here. A turn in another mode ends the allowance. */
+        const endSessionApprovalsOnModeChange = (context: ActiveCodexTurnContext) => {
+          const nativeThreadId = context.providerThread.nativeThreadRef?.nativeId;
+          if (
+            nativeThreadId != null &&
+            sessionApprovals.get(nativeThreadId)?.runtimeMode !==
+              context.input.runtimePolicy.runtimeMode
+          ) {
+            sessionApprovals.delete(nativeThreadId);
+          }
+        };
         const sessionAllowance = (
           nativeThreadId: string,
           context: ActiveCodexTurnContext,
@@ -2058,6 +2069,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               return next;
             });
             beginTurnTokenUsage(context);
+            endSessionApprovalsOnModeChange(context);
             yield* Ref.update(activeTurns, (current) => {
               const updated = new Map(current);
               updated.set(input.nativeTurnId, context);
@@ -2643,6 +2655,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               itemPositions: new Map(),
             };
             beginTurnTokenUsage(activeContext);
+            endSessionApprovalsOnModeChange(activeContext);
             yield* Ref.update(activeTurns, (current) => {
               const updated = new Map(current);
               updated.set(turn.nativeTurnId, activeContext);
@@ -6268,12 +6281,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
-            // Returning to the earlier mode must not bring the allowance back.
-            if (
-              sessionApprovals.get(threadId)?.runtimeMode !== turnInput.runtimePolicy.runtimeMode
-            ) {
-              sessionApprovals.delete(threadId);
-            }
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
