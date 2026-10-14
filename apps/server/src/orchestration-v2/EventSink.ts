@@ -119,6 +119,22 @@ export interface EventSinkV2Shape {
     },
     EventSinkV2Error
   >;
+  /**
+   * Atomically commit only while the provider thread row still has the
+   * `updatedAt` its writer read, so a read-modify-write of the row cannot
+   * overwrite an update a provider published in between.
+   */
+  readonly writeIfProviderThreadUnchanged: (input: {
+    readonly providerThreadId: ProviderThreadId;
+    readonly expectedUpdatedAt: DateTime.Utc;
+    readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  }) => Effect.Effect<
+    {
+      readonly committed: boolean;
+      readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
+    },
+    EventSinkV2Error
+  >;
   readonly commitCommand: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -509,6 +525,38 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const writeIfProviderThreadUnchangedEffect = Effect.fn(
+      "orchestrationV2.EventSink.writeIfProviderThreadUnchanged",
+    )(function* (input: Parameters<EventSinkV2Shape["writeIfProviderThreadUnchanged"]>[0]) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.provider_thread_id": input.providerThreadId,
+      });
+
+      return yield* commitThenPublish(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ readonly updated_at: string | null }>`
+            SELECT updated_at
+            FROM orchestration_v2_projection_provider_threads
+            WHERE provider_thread_id = ${input.providerThreadId}
+            LIMIT 1
+          `;
+          if (rows[0]?.updated_at !== DateTime.formatIso(input.expectedUpdatedAt)) {
+            return {
+              committed: false as const,
+              storedEvents: [] as ReadonlyArray<OrchestrationV2StoredEvent>,
+            };
+          }
+
+          const normalized = yield* normalizeEvents(input.events);
+          const storedEvents = yield* eventStore.append({ events: normalized });
+          yield* applyStoredEvents(storedEvents);
+          return { committed: true as const, storedEvents };
+        }),
+        (result) => (result.committed ? publishStoredEvents(result.storedEvents) : Effect.void),
+      );
+    });
+
     const existingCommandResult = (commandId: CommandId) =>
       Effect.gen(function* () {
         const existing = yield* commandReceipts.getByCommandId(commandId);
@@ -802,6 +850,12 @@ const layerBase: Layer.Layer<
                 ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
                 cause,
               }),
+          ),
+        ),
+      writeIfProviderThreadUnchanged: (input) =>
+        writeIfProviderThreadUnchangedEffect(input).pipe(
+          Effect.mapError(
+            (cause) => new EventSinkWriteError({ eventCount: input.events.length, cause }),
           ),
         ),
       commitCommand: (input) =>

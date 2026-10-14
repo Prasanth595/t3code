@@ -826,7 +826,9 @@ export const layerWithOptions = (
       // Removes the tasks `readReleasedBackgroundTasks` found from their
       // rosters. Their process is gone, so nothing will report them ending,
       // and a leftover roster keeps the thread Waiting (#15239). Tasks a
-      // replacement session reported since are left in place.
+      // replacement session reported since are left in place. The write
+      // commits only if the row did not change after it was read, and is
+      // retried a few times when a provider update lands in between.
       const writeReleasedBackgroundWorkEvents = (
         released: ReadonlyArray<ReleasedBackgroundTasks>,
       ) =>
@@ -834,33 +836,38 @@ export const layerWithOptions = (
           released,
           ({ threadId, providerSessionId, providerThreadId, taskIds }) =>
             Effect.gen(function* () {
-              const projection = yield* projectionStore.getThreadRecords(threadId, [
-                "providerThreads",
-              ]);
-              const providerThread = projection.providerThreads.find(
-                (candidate) => candidate.id === providerThreadId,
-              );
-              const tasks = providerThread?.pendingBackgroundTasks ?? [];
-              const remaining = tasks.filter((task) => !taskIds.has(task.taskId));
-              if (providerThread === undefined || remaining.length === tasks.length) return;
-              const now = yield* DateTime.now;
-              yield* eventSink.write({
-                events: [
-                  {
-                    id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
-                    type: "provider-thread.updated",
-                    threadId,
-                    driver: providerThread.driver,
-                    providerInstanceId: providerThread.providerInstanceId,
-                    occurredAt: now,
-                    payload: {
-                      ...providerThread,
-                      pendingBackgroundTasks: remaining,
-                      updatedAt: now,
+              for (let attempt = 0; attempt < 3; attempt++) {
+                const projection = yield* projectionStore.getThreadRecords(threadId, [
+                  "providerThreads",
+                ]);
+                const providerThread = projection.providerThreads.find(
+                  (candidate) => candidate.id === providerThreadId,
+                );
+                const tasks = providerThread?.pendingBackgroundTasks ?? [];
+                const remaining = tasks.filter((task) => !taskIds.has(task.taskId));
+                if (providerThread === undefined || remaining.length === tasks.length) return;
+                const now = yield* DateTime.now;
+                const { committed } = yield* eventSink.writeIfProviderThreadUnchanged({
+                  providerThreadId,
+                  expectedUpdatedAt: providerThread.updatedAt,
+                  events: [
+                    {
+                      id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                      type: "provider-thread.updated",
+                      threadId,
+                      driver: providerThread.driver,
+                      providerInstanceId: providerThread.providerInstanceId,
+                      occurredAt: now,
+                      payload: {
+                        ...providerThread,
+                        pendingBackgroundTasks: remaining,
+                        updatedAt: now,
+                      },
                     },
-                  },
-                ],
-              });
+                  ],
+                });
+                if (committed) return;
+              }
             }),
           { discard: true },
         );

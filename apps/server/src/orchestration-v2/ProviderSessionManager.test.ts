@@ -147,6 +147,22 @@ const layerPausingAttachEventSink = (pause: {
     }),
   ).pipe(Layer.provide(layerTestEventSink));
 
+const layerBeforeUnchangedWriteEventSink = (before: Ref.Ref<Effect.Effect<void>>) =>
+  Layer.effect(
+    EventSink.EventSinkV2,
+    Effect.gen(function* () {
+      const delegate = yield* EventSink.EventSinkV2;
+      return EventSink.EventSinkV2.of({
+        ...delegate,
+        writeIfProviderThreadUnchanged: (input) =>
+          Ref.getAndSet(before, Effect.void).pipe(
+            Effect.flatten,
+            Effect.andThen(delegate.writeIfProviderThreadUnchanged(input)),
+          ),
+      });
+    }),
+  ).pipe(Layer.provide(layerTestEventSink));
+
 const CodexCapabilities: OrchestrationV2ProviderCapabilities = CodexProviderCapabilitiesV2;
 const ExclusiveCapabilities: OrchestrationV2ProviderCapabilities = {
   ...CodexCapabilities,
@@ -458,6 +474,8 @@ function layerTest(input: {
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
+  /** Runs once, right before the next provider-thread compare-and-set write. */
+  readonly beforeUnchangedWrite?: Ref.Ref<Effect.Effect<void>>;
   /** Once armed, holds the next credential lookup until it is interrupted. */
   readonly pauseResolve?: {
     readonly armed: Ref.Ref<boolean>;
@@ -478,9 +496,11 @@ function layerTest(input: {
       ? layerFlakyReleaseEventSink(input.flakyReleaseWrites)
       : input.pauseAttachWrite !== undefined
         ? layerPausingAttachEventSink(input.pauseAttachWrite)
-        : input.failReleaseEventWrites
-          ? layerFailingReleaseEventSink
-          : layerTestEventSink;
+        : input.beforeUnchangedWrite !== undefined
+          ? layerBeforeUnchangedWriteEventSink(input.beforeUnchangedWrite)
+          : input.failReleaseEventWrites
+            ? layerFailingReleaseEventSink
+            : layerTestEventSink;
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -2930,6 +2950,39 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 keeps a provider update that lands while release clears", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const beforeUnchangedWrite = yield* Ref.make<Effect.Effect<void>>(Effect.void);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, providerThreads, writeProviderThread, rosters } =
+        yield* openSessionWithBackgroundCommand("provider-session-manager-raced-roster");
+      // A replacement reports a task after cleanup read the row, before it writes.
+      const seeded = providerThreads[0]!;
+      yield* Ref.set(
+        beforeUnchangedWrite,
+        writeProviderThread({
+          ...seeded,
+          pendingBackgroundTasks: [
+            ...seeded.pendingBackgroundTasks,
+            { taskId: "replacement-task", kind: "command" },
+          ],
+          updatedAt: DateTime.add(seeded.updatedAt, { seconds: 1 }),
+        }).pipe(Effect.orDie),
+      );
+
+      yield* manager.close(providerSessionId);
+
+      assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
+    });
+
+    yield* effect.pipe(
+      Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, beforeUnchangedWrite })),
+    );
+  }),
 );
 
 it.effect("ProviderSessionManagerV2 defers idle release while background work is pending", () =>
