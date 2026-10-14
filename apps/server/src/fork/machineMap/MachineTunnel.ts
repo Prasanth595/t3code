@@ -69,7 +69,7 @@ export const readJoinedTunnel = (stateDir: string) =>
   });
 
 /** The official `cloudflared` release asset of this platform. Null where Cloudflare has none. */
-export function cloudflaredAsset(
+function cloudflaredAsset(
   platform: NodeJS.Platform,
   arch: NodeJS.Architecture,
 ): { readonly name: string; readonly archive: boolean } | null {
