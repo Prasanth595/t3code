@@ -69,6 +69,12 @@ const ESTIMATE = {
   compact: { node: { w: 156, h: 100 }, pair: { w: 200, h: 84 }, note: { w: 140, h: 60 } },
 } as const;
 
+/**
+ * Cards cover at most this share of the map, so they fit apart. A narrow map with many cards grows
+ * taller than the screen, and the page scrolls through it.
+ */
+const CARD_SHARE = 0.3;
+
 interface Size {
   readonly w: number;
   readonly h: number;
@@ -263,22 +269,33 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     ...(sizes[`node:${m.id}`] ?? estimate.node),
   });
 
+  const noteSize = (note: MapNote): Size => sizes[`note:${note.id}`] ?? estimate.note;
   /** A note stays inside the map, also on a narrower screen than the one that placed it. */
-  const noteAt = (note: MapNote): Point => {
+  const savedNoteAt = (note: MapNote): Point => {
     const p = toPixels(heldPlace(`note:${note.id}`) ?? note.position);
-    const { w, h } = sizes[`note:${note.id}`] ?? estimate.note;
+    const { w, h } = noteSize(note);
     return {
       x: clamp(p.x, w / 2, Math.max(w / 2, size.width - w / 2)),
       y: clamp(p.y, h / 2, Math.max(h / 2, size.height - h / 2)),
     };
   };
 
-  /** The machines where the page shows them: saved places, pushed apart (see `layout.ts`). */
-  const nodes = separate(
-    machines.map((m) => nodeBox(m, toPixels(position(m)))),
+  /**
+   * The machines and notes where the page shows them: saved places, pushed apart (see
+   * `layout.ts`), so a note never covers a machine card on a narrow map.
+   */
+  const spread = separate(
+    [
+      ...machines.map((m) => nodeBox(m, toPixels(position(m)))),
+      ...map.notes.map((note) => ({ ...savedNoteAt(note), ...noteSize(note) })),
+    ],
     size.width,
     size.height,
   );
+  const nodes = spread.slice(0, machines.length);
+  const noteBoxes = spread.slice(machines.length);
+  const noteAt = (note: MapNote): Point =>
+    noteBoxes[map.notes.findIndex((n) => n.id === note.id)] ?? savedNoteAt(note);
 
   /**
    * Where each card goes. During a drag the dragged machine follows the pointer and the other
@@ -307,10 +324,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       boxes,
       size.width,
       size.height,
-      map.notes.map((note) => ({
-        ...noteAt(note),
-        ...(sizes[`note:${note.id}`] ?? estimate.note),
-      })),
+      noteBoxes,
     );
     return { at, spots };
   };
@@ -508,10 +522,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     const index = machines.findIndex((m) => m.id === id);
     const machine = machines[index];
     if (!machine) return toPosition(p);
-    const boxes = machines.map((m, i) =>
-      i === index ? nodeBox(m, p) : (nodes[i] ?? nodeBox(m, toPixels(m.position))),
-    );
-    const fixed = new Set(machines.map((_, i) => i).filter((i) => i !== index));
+    const boxes = [
+      ...machines.map((m, i) =>
+        i === index ? nodeBox(m, p) : (nodes[i] ?? nodeBox(m, toPixels(m.position))),
+      ),
+      ...noteBoxes,
+    ];
+    const fixed = new Set([...boxes.keys()].filter((i) => i !== index));
     const box = separate(boxes, size.width, size.height, fixed)[index];
     return toPosition(box ?? p);
   };
@@ -680,6 +697,13 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     );
   };
 
+  const cardArea = [
+    ...machines.map((m) => sizes[`node:${m.id}`] ?? estimate.node),
+    ...pairs.map((pair) => sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
+    ...map.notes.map(noteSize),
+  ].reduce((sum, { w, h }) => sum + w * h, 0);
+  const fitHeight = size.width > 0 ? Math.ceil(cardArea / CARD_SHARE / size.width) : 0;
+
   const notes: ReadonlyArray<EditingNote> = [
     ...map.notes.map((note) => (editing?.note.id === note.id ? editing : { note, saved: true })),
     ...(editing && !editing.saved ? [editing] : []),
@@ -706,8 +730,9 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             </>
           ) : (
             <span className="muted">
-              Tap a machine to focus it. Drag a dot on its edge onto another machine to connect
-              them. {compact ? "Hold" : "Double-click"} empty space to add a machine or a note.
+              {compact
+                ? "Tap a machine to focus it. Drag a dot to connect. Hold empty space to add."
+                : "Tap a machine to focus it. Drag a dot on its edge onto another machine to connect them. Double-click empty space to add a machine or a note."}
             </span>
           )}
         </div>
@@ -715,6 +740,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       <div
         className={`card map${compact ? " compact" : ""}${focus ? " focused" : ""}`}
         ref={ref}
+        style={{ minHeight: fitHeight }}
         onClick={onMapClick}
         onClickCapture={(event) => {
           if (!swallowClick.current) return;

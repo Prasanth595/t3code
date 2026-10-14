@@ -138,9 +138,12 @@ export function pointOffset(a: Point, b: Point, p: Point, scale: number): PairOf
 }
 
 /**
- * Places each pair card on its line. A card with a `fixed` center (MM-1108) stays there. Each
- * other card takes the first spot that covers no machine card, no note and no pair card placed
- * before it. Without a free spot, it takes the spot that covers the least.
+ * Places each pair card on its line. A card with a `fixed` center (MM-1108) stays there, unless
+ * it covers a machine card or a note, for example on a narrower map than the one that placed it.
+ * Then it moves the shortest way off them. Each other card takes the first spot that covers no
+ * machine card, no note and no pair card placed before it. Without a free spot, it takes the spot
+ * that covers the least. A second push for that card can move it onto a machine card, so it
+ * stays; the owner can drag it. Revisit when crowded maps on desktop show stacked pair cards.
  */
 export function placePairs(
   pairs: ReadonlyArray<{
@@ -157,9 +160,12 @@ export function placePairs(
 ): Array<Point> {
   const pad = (box: Box): Box => ({ ...box, w: box.w + GAP, h: box.h + GAP });
   const padded = machines.map(pad);
+  const cards = [...machines, ...notes];
+  const keepOff = (box: Box): Box =>
+    separate([...cards, box], width, height, new Set(cards.keys()))[cards.length] ?? box;
   // Cards that the owner placed go first, so automatic cards keep off them.
   const fixedBoxes = pairs.map(({ fixed, w, h }) =>
-    fixed ? clampBox({ ...fixed, w, h }, width, height) : null,
+    fixed ? keepOff(clampBox({ ...fixed, w, h }, width, height)) : null,
   );
   const placed: Array<Box> = [
     ...notes.map(pad),
