@@ -16,6 +16,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import {
+  MissionCompletionSelector,
+  type MissionCompletionSelector as MissionCompletionSelectorType,
+} from "../../../../packages/contracts/src/missionCompletion.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as MissionService from "../orchestration-v2/MissionService.ts";
 import { MissionRetroReportReceiveCommand } from "../orchestration-v2/MissionRetroReportStore.ts";
@@ -68,6 +72,9 @@ const decodeReportCommand = Schema.decodeUnknownSync(MissionRetroReportReceiveCo
   onExcessProperty: "error",
 });
 const decodeMission = Schema.decodeUnknownEffect(Schema.fromJsonString(Mission));
+const decodeCompletionSelectorSync = Schema.decodeUnknownSync(MissionCompletionSelector, {
+  onExcessProperty: "error",
+});
 
 /**
  * Detach a proposed commit body from caller-mutable memory. Returns undefined
@@ -160,6 +167,26 @@ const make = Effect.gen(function* () {
     const missionId = request.missionId;
     const operation = request.operation;
     const requestKey = request.requestKey;
+    const deny = new MissionMcpService.MissionMcpFailure({
+      code: "scope_denied",
+      message: "The current credential, project, or mission controller binding is not authorized.",
+    });
+    // Completion-route-read: early detach + strict decode BEFORE any
+    // policy/registry/private SQL. Selector is a key only; no alleged
+    // scope/team/role/epoch rides along (excess properties fail decode).
+    let completionSelector: MissionCompletionSelectorType | undefined;
+    if (operation === "completion-route-read") {
+      if (requestKey === undefined) return yield* deny;
+      try {
+        const cloned = structuredClone(
+          (request as { command?: unknown }).command,
+        ) as MissionCompletionSelectorType;
+        completionSelector = Object.freeze(decodeCompletionSelectorSync(cloned));
+      } catch {
+        return yield* deny;
+      }
+      if (completionSelector.missionId !== missionId) return yield* deny;
+    }
     const reportCommand =
       operation === "retro-report-receive"
         ? (() => {
@@ -171,11 +198,9 @@ const make = Effect.gen(function* () {
           })()
         : undefined;
     const command =
-      operation === "retro-report-receive" ? undefined : snapshotCommand(request.command);
-    const deny = new MissionMcpService.MissionMcpFailure({
-      code: "scope_denied",
-      message: "The current credential, project, or mission controller binding is not authorized.",
-    });
+      operation === "retro-report-receive" || operation === "completion-route-read"
+        ? undefined
+        : snapshotCommand((request as { command?: unknown }).command);
     if (
       operation === "retro-report-receive" &&
       (reportCommand === undefined ||
@@ -190,7 +215,13 @@ const make = Effect.gen(function* () {
             missionId: MissionId.make(missionId),
             command: reportCommand as MissionRetroReportReceiveCommand,
           }
-        : { operation, missionId, command };
+        : operation === "completion-route-read"
+          ? {
+              operation,
+              missionId: MissionId.make(missionId),
+              command: completionSelector as MissionCompletionSelectorType,
+            }
+          : { operation, missionId, command };
     // Snapshot the proposed commit body before any I/O: the caller's object
     // stays mutable while policy, projection, and session reads yield.
     const proposedMission =
@@ -297,7 +328,8 @@ const make = Effect.gen(function* () {
       `;
         const row = rows[0];
         if (row === undefined) {
-          if (operation === "retro-report-receive") return yield* deny;
+          if (operation === "retro-report-receive" || operation === "completion-route-read")
+            return yield* deny;
           // Missing reads and creates share the explicitly authorized bootstrap
           // root gate; knowledge of a missing id is not an authority grant.
           if (
@@ -313,8 +345,14 @@ const make = Effect.gen(function* () {
           )
             return yield* deny;
           const mission = yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
+          const completionRole =
+            operation === "completion-route-read" && completionSelector !== undefined
+              ? completionSelector.kind === "task-result"
+                ? "delivery"
+                : "retro"
+              : undefined;
           const manager =
-            operation === "retro-report-receive"
+            operation === "retro-report-receive" || completionRole === "retro"
               ? mission.managers.retro
               : mission.managers.delivery;
           if (
@@ -324,6 +362,8 @@ const make = Effect.gen(function* () {
             mission.revision !== row.revision ||
             manager?.threadId !== thread.id ||
             manager.epoch === undefined ||
+            (operation === "completion-route-read" &&
+              (!Number.isSafeInteger(manager.epoch) || (manager.epoch as number) < 0)) ||
             (operation === "retro-report-receive" && manager.epoch !== reportCommand?.retroEpoch) ||
             !mission.bindings.some((binding) => binding.projectId === thread.projectId) ||
             !mission.bindings.every(
@@ -347,7 +387,7 @@ const make = Effect.gen(function* () {
           if (stableStringify(actual) !== stableStringify(expectedMission)) return yield* deny;
         }
         let lineage;
-        if (operation === "retro-report-receive") {
+        if (operation === "retro-report-receive" || operation === "completion-route-read") {
           // Historical ancestors remain lineage evidence after archival. The
           // current caller must stay active; deleted ancestors still deny.
           const root = yield* projections
@@ -441,16 +481,25 @@ const make = Effect.gen(function* () {
                       yield* assertLive;
                       yield* checkLocalPolicy;
                       const current = yield* readBinding(expectedMission);
-                      // The owning transaction may create/replace its mission. Compare
-                      // external bindings separately from its explicitly expected result.
-                      const external = { ...current, mission: null };
-                      const originalExternal = { ...binding, mission: null };
-                      if (
-                        stableStringify(external) !== stableStringify(originalExternal) ||
-                        (expectedMission === undefined &&
-                          stableStringify(current) !== stableStringify(binding))
-                      )
-                        return yield* deny;
+                      if (operation === "completion-route-read") {
+                        // Read-only handle: never create/replace. Any drift
+                        // in canonical mission (manager/epoch/revision),
+                        // thread, project, or lineage denies, and an
+                        // expectedMission spoof cannot bless changed state.
+                        if (stableStringify(current) !== stableStringify(binding))
+                          return yield* deny;
+                      } else {
+                        // The owning transaction may create/replace its mission. Compare
+                        // external bindings separately from its explicitly expected result.
+                        const external = { ...current, mission: null };
+                        const originalExternal = { ...binding, mission: null };
+                        if (
+                          stableStringify(external) !== stableStringify(originalExternal) ||
+                          (expectedMission === undefined &&
+                            stableStringify(current) !== stableStringify(binding))
+                        )
+                          return yield* deny;
+                      }
                       yield* checkLocalPolicy;
                       yield* assertLive;
                       // Registry check is synchronized with revocation. The local

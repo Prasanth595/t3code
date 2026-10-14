@@ -15,6 +15,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import { Mission } from "../../../../packages/contracts/src/mission.ts";
+import {
+  decodeMissionCompletionSelector,
+  type MissionCompletionSelector,
+} from "../../../../packages/contracts/src/missionCompletion.ts";
 import { MissionResultRecord } from "../../../../packages/contracts/src/missionResult.ts";
 import { MissionRetroReportReceipt } from "../../../../packages/contracts/src/missionRetroReportReceipt.ts";
 import {
@@ -24,7 +28,6 @@ import {
   type CompletionRouteDecision,
   type CompletionScope,
 } from "./MissionCompletionRouting.ts";
-import { isHandoffSafeId } from "./MissionManagerHandoff.ts";
 import { MissionManagerReservationAuthority } from "./MissionManagerTransferStore.ts";
 
 export class MissionCompletionRouteResolverError extends Schema.TaggedError<MissionCompletionRouteResolverError>()(
@@ -39,21 +42,13 @@ export class MissionCompletionRouteResolverError extends Schema.TaggedError<Miss
   }
 }
 
-/** Strict detached bounded metadata selector: key only, never proof. */
-export type CompletionSelector =
-  | {
-      readonly kind: "task-result";
-      readonly missionId: string;
-      readonly taskId: string;
-      readonly attemptNumber: number;
-      readonly resultRevision: number;
-    }
-  | {
-      readonly kind: "retro-report";
-      readonly missionId: string;
-      readonly checkpointId: string;
-      readonly reportRevision: number;
-    };
+/**
+ * Strict detached bounded metadata selector: key only, never proof.
+ * Shared leaf canonical shape; the strict decode below preserves the exact
+ * accept set of the previous inline validator (exact keys, compact ASCII
+ * ids, safe-integer counters, positive retro revisions).
+ */
+export type CompletionSelector = MissionCompletionSelector;
 
 export class MissionCompletionRouteResolver extends Context.Service<
   MissionCompletionRouteResolver,
@@ -69,15 +64,9 @@ const isResultRecord = Schema.is(MissionResultRecord);
 const isReceipt = Schema.is(MissionRetroReportReceipt);
 const isResolverError = Schema.is(MissionCompletionRouteResolverError);
 
-const TASK_SELECTOR_KEYS = ["kind", "missionId", "taskId", "attemptNumber", "resultRevision"] as const;
-const RETRO_SELECTOR_KEYS = ["kind", "missionId", "checkpointId", "reportRevision"] as const;
-
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
-const exactKeys = (value: Record<string, unknown>, keys: ReadonlyArray<string>): boolean => {
-  const actual = Object.keys(value);
-  return actual.length === keys.length && keys.every((key) => key in value);
-};
+
 const isCounter = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
@@ -144,46 +133,11 @@ const make = Effect.gen(function* () {
     }
     // Strict bounded selector validation BEFORE any private SQL: no caller
     // team/env/thread/epoch/role/provenance/lease/hashes/body accepted.
-    let selector: CompletionSelector;
-    if (!isRecord(detached) || typeof detached.kind !== "string") {
-      return yield* Effect.fail(requestConflict());
-    }
-    if (detached.kind === "task-result") {
-      if (
-        !exactKeys(detached, TASK_SELECTOR_KEYS) ||
-        !isHandoffSafeId(detached.missionId) ||
-        !isHandoffSafeId(detached.taskId) ||
-        !isCounter(detached.attemptNumber) ||
-        !isCounter(detached.resultRevision)
-      ) {
-        return yield* Effect.fail(requestConflict());
-      }
-      selector = {
-        kind: "task-result",
-        missionId: detached.missionId as string,
-        taskId: detached.taskId as string,
-        attemptNumber: detached.attemptNumber as number,
-        resultRevision: detached.resultRevision as number,
-      };
-    } else if (detached.kind === "retro-report") {
-      if (
-        !exactKeys(detached, RETRO_SELECTOR_KEYS) ||
-        !isHandoffSafeId(detached.missionId) ||
-        !isHandoffSafeId(detached.checkpointId) ||
-        !isCounter(detached.reportRevision) ||
-        (detached.reportRevision as number) <= 0
-      ) {
-        return yield* Effect.fail(requestConflict());
-      }
-      selector = {
-        kind: "retro-report",
-        missionId: detached.missionId as string,
-        checkpointId: detached.checkpointId as string,
-        reportRevision: detached.reportRevision as number,
-      };
-    } else {
-      return yield* Effect.fail(requestConflict());
-    }
+    // Shared leaf decode with excess properties rejected; the detached clone
+    // above is the only input so caller mutation cannot retarget the check.
+    const selector: CompletionSelector = yield* decodeMissionCompletionSelector(detached).pipe(
+      Effect.mapError(() => requestConflict()),
+    );
 
     if (captured === null || !authorityIsCurrent()) return yield* Effect.fail(scopeDenied());
     // Role is derived from the selector kind and must match the private port

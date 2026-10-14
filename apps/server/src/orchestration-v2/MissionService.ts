@@ -22,6 +22,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as EventStore from "../persistence/OrchestrationEventStore.ts";
+import type { MissionCompletionSelector } from "../../../../packages/contracts/src/missionCompletion.ts";
 import * as MissionCommands from "./MissionCommands.ts";
 import type { MissionRetroReportReceiveCommand } from "./MissionRetroReportStore.ts";
 
@@ -35,6 +36,16 @@ export type MissionTransactionRequest =
       readonly operation: "retro-report-receive";
       readonly missionId: MissionId;
       readonly command: MissionRetroReportReceiveCommand;
+    }
+  | {
+      /**
+       * Read-only completion-route handle: the selector rides as the
+       * command so the opaque guard binds every actual selector byte.
+       * No consumer executes or writes through this variant yet.
+       */
+      readonly operation: "completion-route-read";
+      readonly missionId: MissionId;
+      readonly command: MissionCompletionSelector;
     };
 
 // A server-only handle: no enumerable authority, callbacks, policy, or credential
@@ -121,7 +132,7 @@ export class MissionAuthority extends Context.Service<
 export class MissionServiceError extends Schema.TaggedError<MissionServiceError>()(
   "MissionServiceError",
   {
-    operation: Schema.Literals(["read", "commit", "retro-report-receive"]),
+    operation: Schema.Literals(["read", "commit", "retro-report-receive", "completion-route-read"]),
     category: Schema.Literals(["scope_denied", "request_conflict", "persistence"]),
     cause: Schema.optional(Schema.Defect()),
   },

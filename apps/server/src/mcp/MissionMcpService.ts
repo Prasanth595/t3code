@@ -23,6 +23,7 @@ import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as MissionCommands from "../orchestration-v2/MissionCommands.ts";
 import * as MissionService from "../orchestration-v2/MissionService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import type { MissionCompletionSelector } from "../../../../packages/contracts/src/missionCompletion.ts";
 import type { MissionRetroReportReceiveCommand } from "../orchestration-v2/MissionRetroReportStore.ts";
 
 /**
@@ -76,6 +77,22 @@ export type MissionMcpAuthorityRequest =
       readonly operation: "retro-report-receive";
       readonly missionId: MissionId;
       readonly command: MissionRetroReportReceiveCommand;
+      readonly requestKey: object;
+      readonly proposedMission?: never;
+    }
+  | {
+      /**
+       * Opaque authority handle preparation for the internal
+       * completion-route read. The strictly decoded selector rides as the
+       * command and the request key is required, so the minted guard binds
+       * the exact selector bytes to this invocation. No proposed mission:
+       * this handle never creates or replaces a mission. No public
+       * MCP service method consumes this operation yet.
+       */
+      readonly scope: McpInvocationContext.McpThreadInvocationScope;
+      readonly operation: "completion-route-read";
+      readonly missionId: MissionId;
+      readonly command: MissionCompletionSelector;
       readonly requestKey: object;
       readonly proposedMission?: never;
     };

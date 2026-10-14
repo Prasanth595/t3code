@@ -1173,3 +1173,357 @@ it.effect(
       yield* denied(receive({ ...command, missionId: MissionId.make("foreign") }));
     }).pipe(Effect.provide(memory)),
 );
+
+const taskSelector = {
+  kind: "task-result",
+  missionId,
+  taskId: "task-alpha",
+  attemptNumber: 2,
+  resultRevision: 5,
+} as const;
+const retroSelector = {
+  kind: "retro-report",
+  missionId,
+  checkpointId: "chk-1",
+  reportRevision: 3,
+} as const;
+const bothManagers = () =>
+  ({
+    ...mission(),
+    managers: {
+      delivery: { threadId, epoch: 3 },
+      retro: { threadId, epoch: 7 },
+    },
+  }) as unknown as ReturnType<typeof mission>;
+const completionResolve = (
+  h: Effect.Success<ReturnType<typeof setup>>,
+  selector: unknown = taskSelector,
+  requestKey: object = {},
+  caller = h.scope,
+) =>
+  h.authority.resolve({
+    scope: caller,
+    operation: "completion-route-read",
+    missionId,
+    command: selector as never,
+    requestKey,
+  });
+const guardCheck = (
+  facts: MissionMcpService.MissionMcpAuthorityFacts,
+  requestKey: object,
+  selector: unknown = taskSelector,
+  expectedMission?: Mission | null,
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* MissionService.MissionTransactionGuard.check({
+      sql,
+      authority: {
+        teamId: facts.teamId,
+        environmentId: facts.environmentId,
+        controllerThreadId: facts.controllerThreadId,
+        transactionGuard: facts.transactionGuard,
+        requestKey,
+      },
+      request: {
+        operation: "completion-route-read",
+        missionId,
+        command: selector as never,
+      },
+      expectedMission,
+    });
+  });
+const guardDenied = (
+  facts: MissionMcpService.MissionMcpAuthorityFacts,
+  requestKey: object,
+  selector: unknown = taskSelector,
+  expectedMission?: Mission | null,
+) =>
+  Effect.gen(function* () {
+    const failure = yield* Effect.flip(guardCheck(facts, requestKey, selector, expectedMission));
+    assert.strictEqual(failure.category, "scope_denied");
+  });
+
+it.effect("completion-route-read authorizes both derived roles and mints an opaque same-SQL guard", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* saveMission(bothManagers());
+    const key = {};
+    const taskFacts = yield* completionResolve(h, taskSelector, key);
+    assert.strictEqual(taskFacts.controllerThreadId, threadId);
+    assert.isDefined(taskFacts.transactionGuard);
+    assert.deepStrictEqual(Object.keys(taskFacts.transactionGuard!), []);
+    yield* guardCheck(taskFacts, key, taskSelector);
+    const retroKey = {};
+    const retroFacts = yield* completionResolve(h, retroSelector, retroKey);
+    yield* guardCheck(retroFacts, retroKey, retroSelector);
+    // Selector swap and forged/plain handles never authorize under this guard.
+    yield* guardDenied(taskFacts, key, retroSelector);
+    yield* guardDenied(retroFacts, retroKey, taskSelector);
+    const forged = { ...taskFacts, transactionGuard: {} as never };
+    yield* guardDenied(forged, key, taskSelector);
+    const copied = {
+      ...taskFacts,
+      transactionGuard: { ...(taskFacts.transactionGuard as object) } as never,
+    };
+    yield* guardDenied(copied, key, taskSelector);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion-route-read denies missing canonical mission even for bootstrap roots", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const before = yield* counts;
+    yield* denied(completionResolve(h, taskSelector));
+    yield* denied(completionResolve(h, retroSelector));
+    assert.deepStrictEqual(yield* counts, before);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion-route-read derives role from selector kind, never from the other manager", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* saveMission({
+      ...mission(),
+      managers: {
+        delivery: { threadId: ThreadId.make("delivery-other"), epoch: 1 },
+        retro: { threadId, epoch: 7 },
+      },
+    } as unknown as ReturnType<typeof mission>);
+    yield* denied(completionResolve(h, taskSelector));
+    assert.isDefined((yield* completionResolve(h, retroSelector)).transactionGuard);
+    yield* saveMission({
+      ...mission(),
+      managers: {
+        delivery: { threadId, epoch: 3 },
+        retro: { threadId: ThreadId.make("retro-other"), epoch: 7 },
+      },
+    } as unknown as ReturnType<typeof mission>);
+    assert.isDefined((yield* completionResolve(h, taskSelector)).transactionGuard);
+    yield* denied(completionResolve(h, retroSelector));
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion-route-read rejects malformed or excess selectors before policy or record I/O", () =>
+  Effect.gen(function* () {
+    let policyReads = 0;
+    const h = yield* setup({
+      readPolicy: Effect.sync(() => {
+        policyReads++;
+        return policy();
+      }),
+    });
+    yield* saveMission(bothManagers());
+    const before = yield* counts;
+    for (const bad of [
+      { ...taskSelector, teamId: "foreign-team" },
+      { ...taskSelector, scope: "alleged" },
+      { ...retroSelector, role: "delivery" },
+      { ...taskSelector, missionId: MissionId.make("foreign-mission") },
+      { ...taskSelector, taskId: "bad/path" },
+      { ...taskSelector, taskId: "x".repeat(129) },
+      { ...taskSelector, attemptNumber: -1 },
+      { ...taskSelector, resultRevision: 1.5 },
+      { ...retroSelector, reportRevision: 0 },
+      { kind: "task-result", missionId },
+      null,
+      "task-result",
+    ]) {
+      policyReads = 0;
+      yield* denied(completionResolve(h, bad));
+      assert.strictEqual(policyReads, 0);
+    }
+    // Missing requestKey also fails before policy.
+    policyReads = 0;
+    yield* denied(
+      h.authority.resolve({
+        scope: h.scope,
+        operation: "completion-route-read",
+        missionId,
+        command: taskSelector as never,
+      } as never),
+    );
+    assert.strictEqual(policyReads, 0);
+    assert.deepStrictEqual(yield* counts, before);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion guard binds the exact requestKey and selector bytes on the same SQL", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const h = yield* setup();
+      yield* saveMission(bothManagers());
+      const key = {};
+      const facts = yield* completionResolve(h, taskSelector, key);
+      yield* guardDenied(facts, {}, taskSelector);
+      yield* guardDenied(facts, key, { ...taskSelector, resultRevision: 6 });
+      yield* guardDenied(facts, key, { ...taskSelector, taskId: "task-beta" });
+      const foreignContext = yield* Layer.build(Layer.fresh(Sqlite.layerMemory));
+      const foreignSql = Context.get(foreignContext, SqlClient.SqlClient);
+      const foreignFailure = yield* Effect.flip(
+        MissionService.MissionTransactionGuard.check({
+          sql: foreignSql,
+          authority: {
+            teamId: facts.teamId,
+            environmentId: facts.environmentId,
+            controllerThreadId: facts.controllerThreadId,
+            transactionGuard: facts.transactionGuard,
+            requestKey: key,
+          },
+          request: { operation: "completion-route-read", missionId, command: taskSelector as never },
+        }),
+      );
+      assert.strictEqual(foreignFailure.category, "scope_denied");
+      // Ambient transaction on the resolver SQL is not this guard's SQL check:
+      // a handle minted here does not bless a different MissionService request.
+      const inner = yield* MissionService.MissionService.pipe(
+        Effect.provide(
+          Layer.fresh(
+            MissionService.layer.pipe(
+              Layer.provide(Layer.mergeAll(EventStore.layer, Receipts.layer)),
+            ),
+          ),
+        ),
+        Effect.provideService(MissionService.MissionAuthority, {
+          teamId: facts.teamId,
+          environmentId: facts.environmentId,
+          controllerThreadId: facts.controllerThreadId,
+          transactionGuard: facts.transactionGuard,
+          requestKey: key,
+        }),
+      );
+      assert.strictEqual((yield* Effect.flip(inner.get(missionId))).category, "scope_denied");
+    }).pipe(Effect.provide(memory)),
+  ),
+);
+
+it.effect("completion selector snapshot is immune to private-body mutation after resolution", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* saveMission(bothManagers());
+    const mutable = { ...taskSelector } as { -readonly [K in keyof typeof taskSelector]: (typeof taskSelector)[K] };
+    const key = {};
+    const facts = yield* completionResolve(h, mutable, key);
+    (mutable as { resultRevision: number }).resultRevision = 99;
+    (mutable as { taskId: string }).taskId = "mutated-task";
+    yield* guardCheck(facts, key, taskSelector);
+    yield* guardDenied(facts, key, mutable);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion guard denies canonical manager epoch and revision drift at its own check", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* saveMission(bothManagers());
+    const key = {};
+    const facts = yield* completionResolve(h, taskSelector, key);
+    yield* saveMission({
+      ...mission(),
+      managers: { delivery: { threadId, epoch: 4 }, retro: { threadId, epoch: 7 } },
+    } as unknown as ReturnType<typeof mission>);
+    yield* guardDenied(facts, key, taskSelector);
+    yield* saveMission(bothManagers());
+    yield* guardCheck(facts, key, taskSelector);
+    yield* saveMission({
+      ...bothManagers(),
+      revision: 1,
+    } as unknown as ReturnType<typeof mission>);
+    yield* guardDenied(facts, key, taskSelector);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion guard denies registry revocation and policy generation change at its own check", () =>
+  Effect.gen(function* () {
+    let current: unknown = policy();
+    const h = yield* setup({
+      readPolicy: Effect.sync(() => current),
+      currentPolicy: () => current,
+    });
+    yield* saveMission(bothManagers());
+    const key = {};
+    const facts = yield* completionResolve(h, taskSelector, key);
+    current = { ...policy(), revision: "2" };
+    yield* guardDenied(facts, key, taskSelector);
+    current = policy();
+    yield* guardCheck(facts, key, taskSelector);
+    yield* h.registry.revokeThread(threadId);
+    yield* guardDenied(facts, key, taskSelector);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion read guard cannot be blessed by an expectedMission spoof of changed state", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* saveMission(bothManagers());
+    const key = {};
+    const facts = yield* completionResolve(h, taskSelector, key);
+    const changed = {
+      ...mission(),
+      revision: 1,
+      managers: { delivery: { threadId, epoch: 9 }, retro: { threadId, epoch: 7 } },
+    };
+    yield* saveMission(changed as unknown as ReturnType<typeof mission>);
+    yield* guardDenied(facts, key, taskSelector, proposed(changed));
+    yield* guardDenied(facts, key, taskSelector, proposed(bothManagers()));
+    yield* guardDenied(facts, key, taskSelector);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("completion lineage allows archived ancestors but denies deleted ancestors and archived callers", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const childId = ThreadId.make("authority-child");
+    const date = DateTime.makeUnsafe(now);
+    yield* h.actualProjections.apply({
+      id: EventId.make("authority-child-created"),
+      type: "thread.created",
+      threadId: childId,
+      occurredAt: date,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: childId,
+        projectId,
+        title: "Authority child",
+        providerInstanceId: instanceId,
+        modelSelection: { instanceId, model: "configured-model" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: { parentThreadId: threadId, relationshipToParent: "subagent", rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: date,
+        updatedAt: date,
+        archivedAt: null,
+        settledAt: null,
+        settledOverride: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    const credential = yield* h.registry.issue({ threadId: childId, providerInstanceId: instanceId });
+    const childScope = yield* h.registry.resolve(
+      credential.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+    );
+    if (childScope === undefined) return yield* Effect.die("Child credential did not resolve.");
+    yield* saveMission({
+      ...mission(),
+      managers: { delivery: { threadId: childId, epoch: 3 }, retro: { threadId: childId, epoch: 7 } },
+    } as unknown as ReturnType<typeof mission>);
+    const sql = yield* SqlClient.SqlClient;
+    const rootThread = yield* encodeThread(yield* h.actualProjections.getThread(threadId));
+    // Archived historical ancestor remains lineage evidence.
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${yield* encodeUnknownJson({ ...rootThread, archivedAt: now })} WHERE thread_id = ${threadId}`;
+    assert.isDefined((yield* completionResolve(h, taskSelector, {}, childScope)).transactionGuard);
+    // Deleted ancestor denies.
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${yield* encodeUnknownJson({ ...rootThread, archivedAt: null, deletedAt: now })} WHERE thread_id = ${threadId}`;
+    yield* denied(completionResolve(h, taskSelector, {}, childScope));
+    // Current caller archived denies even with a healthy ancestor.
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${yield* encodeUnknownJson(rootThread)} WHERE thread_id = ${threadId}`;
+    const childThread = yield* encodeThread(yield* h.actualProjections.getThread(childId));
+    yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${yield* encodeUnknownJson({ ...childThread, archivedAt: now })} WHERE thread_id = ${childId}`;
+    yield* denied(completionResolve(h, taskSelector, {}, childScope));
+  }).pipe(Effect.provide(memory)),
+);

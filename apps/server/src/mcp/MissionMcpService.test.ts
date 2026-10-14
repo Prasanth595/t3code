@@ -104,7 +104,9 @@ const verifiedFacts = (
     transactionGuard: MissionService.MissionTransactionGuard.make({
       sql,
       requestKey: request.requestKey!,
-      request: request.operation === "retro-report-receive"
+      request: request.operation === "completion-route-read"
+        ? { operation: request.operation, missionId: request.missionId, command: request.command }
+        : request.operation === "retro-report-receive"
         ? { operation: request.operation, missionId: request.missionId, command: request.command }
         : { operation: request.operation, missionId: request.missionId, command: request.command },
       authority: {
