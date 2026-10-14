@@ -759,7 +759,6 @@ export function MarkdownCodeBlockFrame({
   title,
   actions,
   headerProps,
-  className,
   children,
 }: {
   as?: React.ElementType;
@@ -771,15 +770,11 @@ export function MarkdownCodeBlockFrame({
   title?: React.ReactNode;
   actions?: React.ReactNode;
   headerProps?: React.HTMLAttributes<HTMLDivElement>;
-  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <Wrapper
-      className={cn(
-        "chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32",
-        className,
-      )}
+      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-lg border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -865,10 +860,10 @@ function MarkdownCodeBlock({
   theme: "light" | "dark";
   onRunShellCommand?: ((command: string) => void) | undefined;
   isStreaming: boolean;
-  /** Switches between source and rendered content; stays below the block in both views. */
+  /** Switches between source and rendered content; sits left of copy in both views. */
   viewToggle?: ReactNode;
   canWrap?: boolean;
-  /** Renders content instead of code, with actions below it like tables. */
+  /** Renders content frameless, with the code header's actions above it. */
   diagram?: boolean;
   children: ReactNode;
 }) {
@@ -948,19 +943,20 @@ function MarkdownCodeBlock({
 
   if (diagram) {
     return (
-      <div className="my-[0.65rem]" data-language={language}>
-        {children}
-        <div className="mt-0.5 flex items-center justify-between select-none">
+      // The transparent border and header padding match the code frame, so the
+      // actions stay in place when switching views.
+      <div className="my-[0.65rem] border border-transparent" data-language={language}>
+        <div className="flex items-center justify-end gap-0.5 pt-1.5 pr-1.5 select-none">
           {viewToggle}
           {copyButton}
         </div>
+        {children}
       </div>
     );
   }
 
-  const frame = (
+  return (
     <MarkdownCodeBlockFrame
-      {...(viewToggle ? { className: "my-0" } : {})}
       language={language}
       fenceTitle={fenceTitle}
       theme={theme}
@@ -1006,20 +1002,13 @@ function MarkdownCodeBlock({
               <TooltipPopup side="top">Run in terminal</TooltipPopup>
             </Tooltip>
           ) : null}
+          {viewToggle}
           {copyButton}
         </span>
       }
     >
       {children}
     </MarkdownCodeBlockFrame>
-  );
-  if (!viewToggle) return frame;
-  // The toggle keeps its place under the block so switching views never moves it.
-  return (
-    <div className="my-[0.65rem]">
-      {frame}
-      <div className="mt-0.5 flex items-center select-none">{viewToggle}</div>
-    </div>
   );
 }
 
