@@ -12,7 +12,7 @@ import {
 } from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
-import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
+import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useEnvironmentQuery } from "~/state/query";
 
@@ -85,18 +85,12 @@ export function PullRequestLinkPreview({
         })
       : link;
   const detail = detailQuery.data;
-  const summary = useSharedPullRequestSummary(
-    target.environmentId,
-    target.input,
-    detail,
-    detailQuery.dataUpdatedAt,
-  );
   const showCard = detail !== null || (detailQuery.error !== null && fallback !== undefined);
   const showUrlTooltip = open && detailQuery.error !== null && !showCard;
   const state =
-    summary === null
+    detail === null
       ? null
-      : resolvePullRequestState({ state: summary.state, isDraft: summary.isDraft ?? false });
+      : resolvePullRequestState({ state: detail.state, isDraft: detail.isDraft });
   const authorLabel =
     detail?.author === null
       ? "ghost"
@@ -139,7 +133,7 @@ export function PullRequestLinkPreview({
                   )}
                 </div>
                 <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
-                  {summary?.title ?? detail.title}
+                  {detail.title}
                 </p>
                 <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <PullRequestActorAvatar actor={detail.author} className="size-4" />

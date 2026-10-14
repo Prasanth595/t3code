@@ -790,17 +790,16 @@ function PullRequestSurfaceIcon({
   const reference = useMemo(
     () => ({
       projectId: surface.projectId as ProjectId,
-      ...(host === null ? {} : { host }),
       repository: surface.repository,
       number: surface.number,
     }),
-    [surface.projectId, host, surface.repository, surface.number],
+    [surface.projectId, surface.repository, surface.number],
   );
   const sharedSummary = useSharedPullRequestSummary(resolvedEnvironmentId, reference, null);
   // The compact tab intentionally shows lifecycle and draft state only. Conflict warnings have
   // their own presentation on surfaces that have mergeability, while this tab stays stable as
   // detail data arrives.
-  const status = newestPullRequestSummary(detail, sharedSummary) ?? linkedSnapshot ?? seed ?? null;
+  const status = linkedSnapshot ?? newestPullRequestSummary(detail, sharedSummary) ?? seed ?? null;
   if (status === null) {
     return <PullRequestGlyph.pullRequest className="size-3 shrink-0 text-muted-foreground" />;
   }

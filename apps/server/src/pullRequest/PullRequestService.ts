@@ -99,10 +99,7 @@ export interface PullRequestMergeEvent extends PullRequestRef {
   readonly mergedAt: string;
 }
 
-type PullRequestReading = Pick<
-  PullRequestSummary,
-  "state" | "updatedAt" | "observedAt" | "mergeability"
->;
+type PullRequestReading = Pick<PullRequestSummary, "state" | "updatedAt" | "observedAt">;
 
 /** Whether `next` is a newer reading of a pull request than `current`. Merged is final. */
 function supersedesReading(current: PullRequestReading | undefined, next: PullRequestReading) {
@@ -242,8 +239,8 @@ export class PullRequestService extends Context.Service<
       Scope.Scope
     >;
     /**
-     * Pull requests a detail read saw for the first time or changed (state, host update time,
-     * mergeability), so thread links can catch up before the next sync sweep. Best effort.
+     * Pull requests a detail read saw for the first time or in a new state (opened, closed,
+     * merged), so thread links can catch up before the next sync sweep. Best effort.
      */
     readonly subscribeStateChanges: Effect.Effect<
       Stream.Stream<ThreadPullRequestKey>,
@@ -3139,9 +3136,9 @@ export const make = Effect.gen(function* () {
   // it read under. Summary reads stay out: they would hide a change from the detail read after.
   const detailStates = new Map<string, PullRequestReading>();
   /**
-   * Announces a pull request a detail read sees first or changed, so a client showing a fresh
-   * merge, edit, or conflict brings the thread's link and its settlement along, rather than
-   * leaving them to the next sync sweep.
+   * Announces a pull request a detail read sees first or in a new state, so a client showing a
+   * fresh merge brings the thread's link and its settlement along, rather than leaving them to
+   * the next sync sweep.
    */
   const noteDetailReading = (ref: PullRequestRef, next: PullRequestSummary) =>
     Effect.suspend(() => {
@@ -3157,16 +3154,8 @@ export const make = Effect.gen(function* () {
         state: next.state,
         updatedAt: next.updatedAt,
         observedAt: next.observedAt,
-        mergeability: next.mergeability,
       });
-      // Hosts bump `updatedAt` for title, branch, draft, and diff changes; mergeability moves
-      // with the base branch instead.
-      const changed =
-        current === undefined ||
-        current.state !== next.state ||
-        current.updatedAt !== next.updatedAt ||
-        current.mergeability !== next.mergeability;
-      return changed && ref.host !== undefined
+      return current?.state !== next.state && ref.host !== undefined
         ? PubSub.publish(stateChanges, {
             host: ref.host,
             repository: ref.repository,
