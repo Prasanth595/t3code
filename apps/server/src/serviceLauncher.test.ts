@@ -419,7 +419,6 @@ if (context.update?.status === "pending") {
       const trialMarker = path.join(root, "trial-started");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "database");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds paths in fake child source.
       const encoded = JSON.stringify({ databasePath, replyPath, trialMarker });
       const childSource = `
 import { writeFileSync } from "node:fs";
@@ -515,7 +514,6 @@ if (context.update?.status === "pending") {
       const databasePath = path.join(root, "userdata", "state.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "database");
-      // @effect-diagnostics-next-line preferSchemaOverJson:off - embeds paths in fake child source.
       const encoded = JSON.stringify({ databasePath });
       const childSource = `
 const paths = ${encoded};
