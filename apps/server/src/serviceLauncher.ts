@@ -114,11 +114,16 @@ async function syncDirectory(directory: string): Promise<void> {
  * full copy. Anywhere cloning is unavailable, or `cp` fails, this is a
  * regular copy.
  */
-function copyDatabaseFile(source: string, destination: string): Promise<void> {
+async function copyDatabaseFile(source: string, destination: string): Promise<void> {
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const platform = process.platform;
+  // `cp -c` replaces the destination with a new file, which would cut a
+  // hard-linked database off from its other links; copy into it instead.
+  const hardLinked =
+    platform === "darwin" &&
+    ((await NodeFSP.stat(destination).catch(() => undefined))?.nlink ?? 1) > 1;
   const args =
-    platform === "darwin"
+    platform === "darwin" && !hardLinked
       ? ["-c", source, destination]
       : platform === "linux"
         ? ["--reflink=auto", source, destination]
@@ -182,12 +187,15 @@ async function backupCanClone(dbPath: string, backupRoot: string): Promise<boole
     ]);
     if (backupFs.type !== systemFs.type) return false;
     // `stat` follows symlinks, so a file linked from another volume is caught.
+    // A hard-linked file is restored by a full copy, so it needs the full space.
     for (const suffix of DB_FILE_SUFFIXES) {
       const source = await NodeFSP.stat(`${dbPath}${suffix}`).catch((cause: unknown) => {
         if (suffix !== "" && (cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
         throw cause;
       });
-      if (source !== undefined && source.dev !== backupDirectory.dev) return false;
+      if (source !== undefined && (source.dev !== backupDirectory.dev || source.nlink > 1)) {
+        return false;
+      }
     }
     return true;
   }
@@ -304,17 +312,25 @@ async function restoreDatabaseBackup(
   if (!(await pathExists(backupDir))) return;
 
   await markDatabaseRestorePending(backupDir);
+  const directories = new Set([NodePath.dirname(pending.dbPath)]);
   for (const suffix of DB_FILE_SUFFIXES) {
-    const target = `${pending.dbPath}${suffix}`;
+    const livePath = `${pending.dbPath}${suffix}`;
     const source = databaseBackupFile(backupDir, suffix);
     if (await pathExists(source)) {
+      // A clone replaces its destination, so restore into the file a symlinked
+      // database resolves to and keep the link itself.
+      const target = await NodeFSP.realpath(livePath).catch((cause: unknown) => {
+        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return livePath;
+        throw cause;
+      });
       await copyDatabaseFile(source, target);
       await syncFile(target);
+      directories.add(NodePath.dirname(target));
     } else {
-      await NodeFSP.rm(target, { force: true });
+      await NodeFSP.rm(livePath, { force: true });
     }
   }
-  await syncDirectory(NodePath.dirname(pending.dbPath));
+  for (const directory of directories) await syncDirectory(directory);
 }
 
 async function discardDatabaseBackup(baseDir: string, updateId: string): Promise<void> {
