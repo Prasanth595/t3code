@@ -115,6 +115,7 @@ import {
 } from "@t3tools/shared/codexMarkdownDirectives";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import {
+  describeMediaUnavailable,
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
 } from "./chat/ExpandedImagePreview";
@@ -185,6 +186,7 @@ import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
+import { readEnvironmentLabel } from "../state/environments";
 import {
   readEnvironmentScope,
   readPreparedConnection,
@@ -2309,6 +2311,8 @@ function useChatMarkdownState({
   const canUseShellActions =
     canOperateHost &&
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
+  const remoteEnvironmentId =
+    remoteOpen.isResolved && remoteOpen.state.mode !== "local-exec" ? environmentId : null;
   const openMarkdownMedia = (
     source: string,
     resolvedFilePath?: string,
@@ -2345,10 +2349,10 @@ function useChatMarkdownState({
           stackedThreadToast({
             type: "error",
             title: "Media unavailable",
-            description:
-              error instanceof Error
-                ? error.message
-                : "The file could not be loaded. It may have been moved or deleted.",
+            description: describeMediaUnavailable(
+              error,
+              remoteEnvironmentId === null ? null : readEnvironmentLabel(remoteEnvironmentId),
+            ),
           }),
         );
       },
