@@ -12,9 +12,8 @@ import {
   turnItemOutputText,
 } from "@t3tools/client-runtime/work-log/item-detail";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
-import { approvalResolutionDetail } from "@t3tools/client-runtime/state/turn-item-presentation";
-import { pluginContextInspection } from "@t3tools/client-runtime/work-log/presentation";
 import { memo, Suspense, use, useMemo } from "react";
 
 import { useTheme } from "../../hooks/useTheme";
@@ -45,13 +44,22 @@ interface V2ItemInspectorProps {
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
 }
 
-function JsonTokens({ text }: { readonly text: string }) {
+function SyntaxTokens({
+  text,
+  language,
+}: {
+  readonly text: string;
+  readonly language: "json" | "typescript";
+}) {
   const { resolvedTheme } = useTheme();
-  const highlighter = use(getSyntaxHighlighterPromise("json"));
+  const highlighter = use(getSyntaxHighlighterPromise(language));
   const { tokens } = useMemo(
     () =>
-      highlighter.codeToTokens(text, { lang: "json", theme: resolveDiffThemeName(resolvedTheme) }),
-    [highlighter, text, resolvedTheme],
+      highlighter.codeToTokens(text, {
+        lang: language,
+        theme: resolveDiffThemeName(resolvedTheme),
+      }),
+    [highlighter, text, language, resolvedTheme],
   );
   return tokens.flatMap((line, lineIndex) => [
     lineIndex > 0 ? "\n" : "",
@@ -69,9 +77,11 @@ const monoClassName =
 function StructuredValue({
   value,
   highlightJson = false,
+  language,
 }: {
   readonly value: unknown;
   readonly highlightJson?: boolean;
+  readonly language?: "typescript";
 }) {
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   const isJson = useMemo(() => {
@@ -86,10 +96,10 @@ function StructuredValue({
   if (!text) return null;
   return (
     <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
-      {isJson ? (
+      {language || isJson ? (
         <RenderErrorBoundary fallback={text}>
           <Suspense fallback={text}>
-            <JsonTokens text={text} />
+            <SyntaxTokens text={text} language={language ?? "json"} />
           </Suspense>
         </RenderErrorBoundary>
       ) : (
@@ -196,6 +206,7 @@ function ToolCallBody(
   props: ToolOutputState & {
     readonly command?: string;
     readonly args?: unknown;
+    readonly toolName?: string | null;
     readonly exitCode?: number | undefined;
   },
 ) {
@@ -208,7 +219,11 @@ function ToolCallBody(
           {call.args.map(([key, value]) => (
             <div key={key}>
               <span className="text-muted-foreground">{key} </span>
-              {value}
+              {key === "code" && isJavaScriptReplTool(props.toolName) ? (
+                <StructuredValue value={value} language="typescript" />
+              ) : (
+                value
+              )}
             </div>
           ))}
         </div>
@@ -226,8 +241,6 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
   const fetched = useFetchedTurnItem(props.projectedItem, props.environmentId);
   const item = fetched.item;
   const outputState = fetched.output;
-  const pluginContext = pluginContextInspection(item);
-  const approvalResolution = approvalResolutionDetail(item);
   const support = useV2ItemSupport({
     environmentId: props.environmentId,
     sourceThreadId: props.projectedItem.sourceThreadId,
@@ -352,24 +365,16 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         </ul>
       ) : null}
 
-      {pluginContext ? (
-        <div className="space-y-2">
-          <p className="text-muted-foreground">From {pluginContext.source}</p>
-          {pluginContext.blocks.map((block) => (
-            <div key={JSON.stringify(block)}>
-              <p className="mb-1 text-3xs font-medium tracking-wide uppercase text-muted-foreground">
-                {block.label}
-              </p>
-              <StructuredValue value={block.text} />
-            </div>
-          ))}
-        </div>
-      ) : item.type === "dynamic_tool" ? (
-        <ToolCallBody args={item.input} {...outputState} onImageExpand={props.onImageExpand} />
+      {item.type === "dynamic_tool" ? (
+        <ToolCallBody
+          toolName={item.toolName}
+          args={item.input}
+          {...outputState}
+          onImageExpand={props.onImageExpand}
+        />
       ) : null}
 
       {item.type === "approval_request" ? <StructuredValue value={item.prompt} /> : null}
-      {approvalResolution ? <p className="text-muted-foreground">{approvalResolution}</p> : null}
       {item.type === "user_input_request" ? (
         <StructuredValue value={item.questions.map((question) => question.question).join("\n\n")} />
       ) : null}

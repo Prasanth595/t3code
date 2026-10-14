@@ -70,12 +70,6 @@ describe("closedViewStore", () => {
       threadRef: refA,
       surface: { kind: "pull-request", id: "pull-request:x", repository: "owner/repo", number: 1 },
     },
-    {
-      id: "bad",
-      kind: "panel-tab",
-      threadRef: refA,
-      surface: { kind: "plugin-view", id: "plugin-view:i:board", installationId: "i" },
-    },
   ])("discards incomplete saved views %j while retaining valid history", async (entry) => {
     const id = useClosedViewStore.getState().remember(diff(refA));
     const { storage, name } = useClosedViewStore.persist.getOptions();
@@ -127,13 +121,6 @@ describe("closedViewStore", () => {
         environmentId: "env-1",
         host: "github.com",
         url: "https://github.com/owner/repo/pull/1",
-      },
-      {
-        kind: "plugin-view",
-        id: "plugin-view:installation-1:board",
-        installationId: "installation-1",
-        viewId: "board",
-        title: "Board",
       },
     ];
     const entries = surfaces.map((surface, index) => ({

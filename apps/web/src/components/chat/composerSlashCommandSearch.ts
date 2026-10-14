@@ -9,15 +9,14 @@ import { scoreProviderSkill } from "../../providerSkillSearch";
 
 type SlashSearchItem = Extract<
   ComposerCommandItem,
-  { type: "slash-command" | "provider-slash-command" | "skill" | "plugin-action" }
+  { type: "slash-command" | "provider-slash-command" | "skill" }
 >;
 
 /**
  * A provider expands a slash command only when it opens the whole message;
  * anywhere else it reaches the agent as literal text, so it is not offered
- * there. Built-ins and plugin actions apply locally on selection and skills
- * insert a `$` mention the server dispatches from any position, so they stay
- * available.
+ * there. Built-ins apply locally on selection and skills insert a `$` mention
+ * the server dispatches from any position, so both stay available.
  */
 export function slashCommandItemsForPromptPosition(
   items: ReadonlyArray<SlashSearchItem>,
@@ -43,11 +42,7 @@ function scoreSlashCommandItem(item: SlashSearchItem, query: string): number | n
   }
 
   const primaryValue =
-    item.type === "slash-command"
-      ? item.command.toLowerCase()
-      : item.type === "plugin-action"
-        ? item.action.name.toLowerCase()
-        : item.command.name.toLowerCase();
+    item.type === "slash-command" ? item.command.toLowerCase() : item.command.name.toLowerCase();
   const description = item.description.toLowerCase();
 
   const scores = [
@@ -109,9 +104,7 @@ export function searchSlashCommandItems(
             ? `0\u0000${item.command}`
             : item.type === "provider-slash-command"
               ? `1\u0000${item.command.name}\u0000${item.provider}`
-              : item.type === "plugin-action"
-                ? `3\u0000${item.action.name}\u0000${item.action.id}`
-                : `2\u0000${item.skill.name}\u0000${item.provider}`,
+              : `2\u0000${item.skill.name}\u0000${item.provider}`,
       },
       Number.POSITIVE_INFINITY,
     );

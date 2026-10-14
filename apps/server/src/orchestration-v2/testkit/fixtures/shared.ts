@@ -7,7 +7,6 @@ import {
   ProjectId,
   ThreadId,
   type ModelSelection,
-  type OrchestrationV2ApprovalResolvedBy,
   type OrchestrationV2Command,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
@@ -279,8 +278,6 @@ export type OrchestratorFixtureInputStep =
         OrchestrationV2Command,
         { readonly type: "runtime-request.respond" }
       >["decision"];
-      /** Answers as this plugin instead of the user; its decision replaces `decision`. */
-      readonly resolvedBy?: OrchestrationV2ApprovalResolvedBy;
       /** Captures the shell snapshot under this key while the request is pending. */
       readonly shellSnapshotKeyWhilePending?: string;
     }
@@ -759,7 +756,6 @@ export function materializeFixtureInput(input: {
             threadId: ids.threadId,
             commandId: commands.at(-1)!.commandId,
             decision: step.decision ?? "accept",
-            ...(step.resolvedBy === undefined ? {} : { resolvedBy: step.resolvedBy }),
             ...(step.shellSnapshotKeyWhilePending === undefined
               ? {}
               : { shellSnapshotKeyWhilePending: step.shellSnapshotKeyWhilePending }),

@@ -7,13 +7,14 @@ import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { InputGroup, InputGroupInput } from "~/components/ui/input-group";
 import { MorphIcon } from "~/components/MorphIcon";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -39,12 +40,7 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
-  /** Inserts a mention into the chat composer of the thread this panel belongs to. */
-  addToChat: (text: string) => AddToChatResult;
 }
-
-/** "dropped" means the panel left the thread before the action settled. */
-export type AddToChatResult = "inserted" | "no-composer" | "not-ready" | "dropped";
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
@@ -108,9 +104,9 @@ export default function FileBrowserPanel({
   onOpenFile,
   onRefreshSelectedFile,
   workspaceMutationId,
-  addToChat,
 }: FileBrowserPanelProps) {
   const { resolvedTheme } = useTheme();
+  const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
   const {
     entries: directoryEntries,
@@ -217,8 +213,8 @@ export default function FileBrowserPanel({
         return;
       }
       if (clicked === "add-to-chat") {
-        const result = addToChat(`${mention} `);
-        if (result === "no-composer") {
+        const composer = composerRef?.current;
+        if (!composer) {
           toastManager.add({
             type: "error",
             title: "Unable to add to chat",
@@ -226,7 +222,8 @@ export default function FileBrowserPanel({
           });
           return;
         }
-        if (result === "not-ready") {
+        const inserted = composer.insertTextAtEnd(`${mention} `, { ensureLeadingBoundary: true });
+        if (!inserted) {
           toastManager.add({
             type: "error",
             title: "Unable to add to chat",
@@ -242,14 +239,6 @@ export default function FileBrowserPanel({
   useEffect(() => {
     showEntryContextMenuRef.current = showEntryContextMenu;
   });
-  // The tree keeps its first selection callback, so it reads the current
-  // opener through a ref; otherwise a click after a thread switch opens the
-  // file in the thread the panel first showed. Updated at commit, so a click
-  // that lands before passive effects run already opens in the new thread.
-  const onOpenFileRef = useRef(onOpenFile);
-  useLayoutEffect(() => {
-    onOpenFileRef.current = onOpenFile;
-  }, [onOpenFile]);
 
   // The tree reads decorations at render time; a folder still loading its
   // children shows a spinner in its row instead of a banner that shifts the tree.
@@ -294,7 +283,7 @@ export default function FileBrowserPanel({
       const selectedPath = selectedPaths.at(-1)?.replace(/\/$/, "");
       if (selectedPath && entryKindsRef.current.get(selectedPath) === "file") {
         treeSelectionPathRef.current = selectedPath;
-        onOpenFileRef.current(selectedPath);
+        onOpenFile(selectedPath);
       }
     },
     paths: [],

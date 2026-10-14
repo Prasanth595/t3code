@@ -119,7 +119,6 @@ const layerMcpRegistry = Layer.succeed(
       }),
     resolve: () => Effect.succeed(undefined),
     touch: () => Effect.void,
-    setPluginToolGrants: () => Effect.void,
     revokeProviderSession: () => Effect.void,
     revokeThread: () => Effect.void,
     revokeAll: Effect.void,

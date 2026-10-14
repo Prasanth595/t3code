@@ -36,7 +36,6 @@ import {
 } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { readLocalApi } from "../localApi";
-import { runPluginAction, threadMenuPluginActions } from "../pluginActions";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -148,7 +147,6 @@ export function useThreadActionMenu(input: {
         };
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
-        const pluginActions = threadMenuPluginActions(threadRef, thread.projectId);
         const items = buildThreadActionMenuItems({
           canOperate: readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope),
           branch: thread.branch ?? null,
@@ -162,7 +160,6 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           supports,
           snoozePresets,
-          pluginActions,
         });
         const clicked = await settlePromise(() => api.contextMenu.show(items, position));
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -175,11 +172,6 @@ export function useThreadActionMenu(input: {
             "Thread action unavailable",
             new Error("This connection cannot change threads."),
           );
-          return;
-        }
-        const pluginAction = pluginActions.find((entry) => entry.id === action);
-        if (pluginAction) {
-          await runPluginAction(pluginAction);
           return;
         }
         if (action.startsWith("snooze:")) {

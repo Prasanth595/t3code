@@ -37,7 +37,6 @@ import {
   setPendingUserInputCustomAnswer,
   isPendingUserInputOptionSelected,
   buildPendingUserInputAnswers,
-  expandedWorkRowCall,
 } from "./threadActivity";
 
 const threadId = ThreadId.make("thread-1");
@@ -117,161 +116,6 @@ it("labels file searches with the adapter title and its search target", () => {
 
   expect(activity?.summary).toBe("Searched TODO in web");
   expect(activity ? workEntryRowLabel(activity.workEntry) : null).toBe("Searched TODO in web");
-});
-
-it("shows plugin context, or why it was not added, in the expanded detail", () => {
-  const record = (
-    id: string,
-    ordinal: number,
-    fields: Partial<Extract<OrchestrationV2TurnItem, { type: "dynamic_tool" }>>,
-  ) =>
-    ({
-      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
-      type: "dynamic_tool",
-      title: "Added context from Context fixture",
-      toolName: "plugin_context",
-      toolSource: { key: "plugin:test.context", name: "Context fixture", kind: "integration" },
-      input: {
-        plugin: {
-          id: "test.context",
-          name: "Context fixture",
-          installationId: "i-1",
-          generation: 3,
-        },
-      },
-      ...fields,
-    }) satisfies OrchestrationV2TurnItem;
-  const details = buildThreadFeed([
-    projected(
-      record("added", 1, {
-        output: {
-          context: [{ title: "Project codename", text: "The project codename is PERIWINKLE-42." }],
-        },
-      }),
-      0,
-    ),
-    projected(
-      record("failed", 2, {
-        status: "failed",
-        title: "Context from Context fixture not added",
-        output: {
-          reason: 'Plugin test.context failed "t3.transform.enrich": the notes index is offline',
-        },
-      }),
-      1,
-    ),
-    projected(
-      record("interrupted", 3, {
-        status: "interrupted",
-        title: "Context from Context fixture not added",
-        output: { reason: "The run was interrupted before the plugin answered." },
-      }),
-      2,
-    ),
-  ])
-    .flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []))
-    .map((activity) => activity.getFullDetail());
-
-  // Expanded, the row shows that detail rather than the plugin input as a tool call.
-  expect(expandedWorkRowCall(record("expanded", 4, { output: { context: [] } }), false)).toBeNull();
-  expect(expandedWorkRowCall(record("tool", 5, { toolName: "lookup" }), false)?.args).toBeTruthy();
-  expect(details).toEqual([
-    "From Context fixture (test.context)\n\nProject codename\nThe project codename is PERIWINKLE-42.",
-    'From Context fixture (test.context)\n\nNot added\nPlugin test.context failed "t3.transform.enrich": the notes index is offline',
-    "From Context fixture (test.context)\n\nNot added\nThe run was interrupted before the plugin answered.",
-  ]);
-});
-
-it("titles plugin-answered approvals with the plugin and keeps the reason when expanded", () => {
-  const approval = (
-    id: string,
-    ordinal: number,
-    resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
-  ) =>
-    ({
-      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
-      ...(resolvedBy?.decision === "decline" ? { status: "cancelled" as const } : {}),
-      type: "approval_request",
-      requestId: RuntimeRequestId.make(`request-${id}`),
-      requestKind: "command",
-      prompt: `Create ${id}.txt file`,
-      ...(resolvedBy
-        ? {
-            resolvedBy: {
-              _tag: "plugin" as const,
-              pluginId: "proof.policy",
-              pluginName: "Proof policy",
-              ...resolvedBy,
-            },
-          }
-        : {}),
-    }) satisfies OrchestrationV2TurnItem;
-  const activities = buildThreadFeed([
-    projected(approval("approved", 1, { decision: "accept", reason: "Allowed." }), 0),
-    projected(approval("declined", 2, { decision: "decline", reason: "Not on the list." }), 1),
-    projected(approval("answered", 3), 2),
-  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
-
-  expect(
-    activities.map((activity) => [
-      workEntryRowLabel(activity.workEntry),
-      workEntryRowLabel(activity.workEntry, true),
-    ]),
-  ).toEqual([
-    ["Approved by plugin Proof policy", "Create approved.txt file · Allowed."],
-    ["Declined by plugin Proof policy", "Create declined.txt file · Not on the list."],
-    ["Create answered.txt file", "Create answered.txt file"],
-  ]);
-});
-
-it("leads a plugin-answered approval's full detail with the plugin and its reason", () => {
-  const approval = (
-    id: string,
-    ordinal: number,
-    resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
-  ) =>
-    ({
-      ...base(id, `2026-06-20T00:00:0${ordinal}.000Z`, ordinal),
-      type: "approval_request",
-      requestId: RuntimeRequestId.make(`request-${id}`),
-      requestKind: "command",
-      prompt: `Create ${id}.txt file`,
-      ...(resolvedBy
-        ? {
-            resolvedBy: {
-              _tag: "plugin" as const,
-              pluginId: "proof.policy",
-              pluginName: "Proof policy",
-              ...resolvedBy,
-            },
-          }
-        : {}),
-    }) satisfies OrchestrationV2TurnItem;
-  const [approved, declined, answered] = buildThreadFeed([
-    projected(
-      approval("approved", 1, {
-        decision: "accept",
-        reason: "The proof allows this exact command.",
-      }),
-      0,
-    ),
-    projected(
-      approval("declined", 2, {
-        decision: "decline",
-        reason: "The proof forbids this exact command.",
-      }),
-      1,
-    ),
-    projected(approval("answered", 3), 2),
-  ]).flatMap((entry) => (entry.type === "activity-group" ? entry.activities : []));
-
-  expect(approved?.getFullDetail()?.split("\n")[0]).toBe(
-    "Approved by plugin Proof policy: The proof allows this exact command.",
-  );
-  expect(declined?.getFullDetail()?.split("\n")[0]).toBe(
-    "Declined by plugin Proof policy: The proof forbids this exact command.",
-  );
-  expect(answered?.getFullDetail()?.split("\n")[0]).toBe("{");
 });
 
 it("keeps approval prompts rather than presenting them as tool work", () => {
@@ -1606,16 +1450,54 @@ describe("buildThreadFeed", () => {
     expect(activity?.getCopyText().split("\n")[0]).toBe("Read a T3 thread");
   });
 
-  it("uses the CUA action title in the mobile feed", () => {
+  it.each(["cua_repl.js", "node_repl.js", "js"])(
+    "uses the %s action title in the mobile feed",
+    (toolName) => {
+      const item: OrchestrationV2TurnItem = {
+        ...base("cua", "2026-09-23T20:20:00.000Z", 1),
+        type: "dynamic_tool",
+        toolName,
+        input: {
+          code: "await game.getAXStateAndScreenshot();",
+          title: "Inspect Saga music screen",
+        },
+      };
+      const feed = buildThreadFeed([projected(item, 0)]);
+      const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
+      expect(activity?.summary).toBe("Inspect Saga music screen");
+    },
+  );
+
+  it.each([
+    [
+      "failed",
+      "await sky.type_text({app:'T3 Code (Nightly)',text:'debug(ga.run)'});",
+      "Restrict the breakpoint to Git actions",
+      "computer",
+    ],
+    [
+      "completed",
+      "await fetch('http://127.0.0.1/json/list');",
+      "Discover the live Electron debugging endpoint",
+      "code",
+    ],
+  ] as const)("recovers the retained js title and %s call icon", (status, code, title, icon) => {
     const item: OrchestrationV2TurnItem = {
-      ...base("cua", "2026-09-23T20:20:00.000Z", 1),
+      ...base("retained-js", "2026-09-23T20:20:00.000Z", 1),
       type: "dynamic_tool",
-      toolName: "cua_repl.js",
-      input: { code: "await game.getAXStateAndScreenshot();", title: "Inspect Saga music screen" },
+      status,
+      title: "js",
+      toolName: "node_repl.js",
+      toolSource: { key: "mcp:node_repl", name: "node repl", kind: "integration" },
+      input: { code, title },
     };
     const feed = buildThreadFeed([projected(item, 0)]);
     const activity = feed[0]?.type === "activity-group" ? feed[0].activities[0] : null;
-    expect(activity?.summary).toBe("Inspect Saga music screen");
+    expect(activity?.summary).toBe(title);
+    expect(activity?.icon).toBe(icon);
+    expect(activity?.workEntry.toolSource?.kind).toBe(
+      icon === "computer" ? "computer" : "integration",
+    );
   });
 
   it("uses canonical T3 orchestration summaries in compact work groups", () => {

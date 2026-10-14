@@ -17,7 +17,6 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
-import { supportsPlugins } from "./SettingsPluginsRouteScreen";
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -212,9 +211,6 @@ function SettingsIndexSections() {
           target="SettingsEnvironmentMaintenance"
           disabled={noServerTargets}
         />
-        {selectedTargets.some(supportsPlugins) ? (
-          <SettingsRow icon="cube" label="Plugins" target="SettingsPlugins" />
-        ) : null}
       </SettingsSection>
 
       <SettingsSection title="App">

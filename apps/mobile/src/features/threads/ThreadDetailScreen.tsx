@@ -6,6 +6,7 @@ import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import type {
   CodexFeedbackSubmission,
   EnvironmentThreadStatus,
@@ -123,10 +124,6 @@ import { ComposerFeedback } from "./ComposerFeedback";
 import { ComposerUsageLimits } from "./ComposerUsageLimits";
 import { PendingUserInputCard } from "./PendingUserInputCard";
 import { ProviderSubagentBar } from "./ProviderSubagentBar";
-import {
-  ThreadContributionStatusStrip,
-  useThreadContributionStatusStripInset,
-} from "./ThreadContributionStatusStrip";
 import { ThreadCreationFailedCard } from "./ThreadCreationFailedCard";
 import {
   FLOATING_WORKING_CONTROL_COVERAGE,
@@ -166,6 +163,7 @@ export interface ThreadDetailScreenProps {
   readonly feedbackSubmissions: ReadonlyArray<CodexFeedbackSubmission>;
   readonly onDismissFeedback: (id: MessageId) => void;
   readonly selectedThreadFeed: ReadonlyArray<ThreadFeedEntry>;
+  readonly pendingHandoff?: HandoffEndpoints | null;
   readonly activityRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
   /** The live work is a provider-native subagent's runless root turn. */
@@ -859,12 +857,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         providerSubagentProvider.models,
       )
     : null;
-  const statusStripInset = useThreadContributionStatusStripInset({
-    environmentId: props.environmentId,
-    threadId: props.selectedThread.id,
-    supported: props.serverConfig?.environment.capabilities.contributionStatus === true,
-    driver: providerSubagentProvider?.driver,
-  });
   const providerSubagentCatalogModel = providerSubagentProvider?.models.find(
     (model) => model.slug === providerSubagentModelSlug,
   );
@@ -1169,6 +1161,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               threadId={props.selectedThread.id}
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
+              pendingHandoff={props.pendingHandoff}
               worktreeSetup={props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
               queuedMessages={props.queuedMessages}
@@ -1188,7 +1181,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               submittedMessageId={submittedMessageId}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
               contentTopInset={0}
-              topOverlayInset={statusStripInset}
               contentBottomInset={
                 estimatedOverlayHeight +
                 (showFloatingStatus ? FLOATING_WORKING_CONTROL_COVERAGE : 0)
@@ -1218,21 +1210,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
           loaded={browserTabs.loaded}
           top={navigationHeaderHeight + 8}
           onOpen={openBrowserPreview}
-        />
-      ) : null}
-
-      {showContent ? (
-        <ThreadContributionStatusStrip
-          environmentId={props.environmentId}
-          threadId={props.selectedThread.id}
-          // A transparent (glass) header overlaps the screen; an opaque one
-          // ends where the screen begins.
-          top={
-            props.usesAutomaticContentInsets === true && Platform.OS === "ios"
-              ? navigationHeaderHeight
-              : 0
-          }
-          contentMaxWidth={contentMaxWidth}
         />
       ) : null}
 

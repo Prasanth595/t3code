@@ -195,15 +195,12 @@ export default defineConfig({
         },
       },
       {
-        // These clients are session metadata, device streams, an Expo update adapter, and plugin
-        // subscriptions bound to one session so a lost transport cannot leave stale state live.
+        // These clients are session metadata, device streams, and an Expo update adapter.
         files: [
           "apps/web/src/components/settings/ConnectionsSettings.tsx",
           "apps/mobile/src/features/updates/app-updates.ts",
           "apps/web/src/components/device/DevicePhoneViewport.tsx",
           "apps/web/src/components/device/DeviceDuoViewport.tsx",
-          "apps/web/src/state/pluginViewSessions.ts",
-          "packages/client-runtime/src/state/pluginNotifications.ts",
         ],
         rules: { "t3code/no-rpc-permission-bypass": ["error", { allowRawClientAccess: true }] },
       },
@@ -396,7 +393,7 @@ export default defineConfig({
           "apps/mobile/src/lib/useMobileNavigationTheme.ts",
           "apps/mobile/src/native/T3ComposerEditor.ios.tsx",
           "apps/mobile/src/native/T3ComposerEditor.native.tsx",
-          "apps/mobile/src/native/SelectableMarkdownText.android.tsx",
+          "apps/mobile/src/native/SelectableMarkdownText.tsx",
         ],
         rules: {
           "t3code/no-mobile-uniwind-theme-escape-hatches": ["error", { allowUniwindTheme: true }],

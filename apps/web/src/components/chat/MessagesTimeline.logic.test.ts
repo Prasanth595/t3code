@@ -304,65 +304,6 @@ describe("work entry labels", () => {
     ).toBe(prompt);
   });
 
-  it("titles a plugin-answered approval with the plugin and keeps the reason in its detail", () => {
-    const fixture = makeStreamingTimelineFixture();
-    const source = fixture.visibleTurnItems[0]!;
-    const approval = (
-      id: string,
-      resolvedBy?: { readonly decision: "accept" | "decline"; readonly reason: string },
-    ): OrchestrationV2ProjectedTurnItem => {
-      const item: OrchestrationV2ProjectedTurnItem["item"] = {
-        ...source.item,
-        id: TurnItemId.make(id),
-        threadId: fixture.threadId,
-        runId: fixture.runId,
-        nodeId: null,
-        providerThreadId: null,
-        providerTurnId: null,
-        nativeItemRef: null,
-        parentItemId: null,
-        status: resolvedBy?.decision === "decline" ? "cancelled" : "completed",
-        type: "approval_request",
-        requestId: RuntimeRequestId.make(`request-${id}`),
-        requestKind: "command",
-        prompt: `Create ${id}.txt file`,
-        ...(resolvedBy
-          ? {
-              resolvedBy: {
-                _tag: "plugin" as const,
-                pluginId: "proof.policy",
-                pluginName: "Proof policy",
-                ...resolvedBy,
-              },
-            }
-          : {}),
-      };
-      return { ...source, item, sourceItemId: item.id };
-    };
-    const entries = deriveTimelineEntriesFromVisibleTurnItems({
-      visibleTurnItems: [
-        approval("approved", {
-          decision: "accept",
-          reason: "The proof allows this exact command.",
-        }),
-        approval("declined", { decision: "decline", reason: "Not on the list." }),
-        approval("answered"),
-      ].map((item, position) => ({ ...item, position })),
-      optimisticMessages: [],
-    }).flatMap((timelineEntry) => (timelineEntry.kind === "work" ? [timelineEntry.entry] : []));
-
-    expect(
-      entries.map((workEntry) => [workEntryDisplayLabel(workEntry, undefined), workEntry.detail]),
-    ).toEqual([
-      [
-        "Approved by plugin Proof policy",
-        "Create approved.txt file · The proof allows this exact command.",
-      ],
-      ["Declined by plugin Proof policy", "Create declined.txt file · Not on the list."],
-      ["Create answered.txt file", "Create answered.txt file"],
-    ]);
-  });
-
   it("keeps custom titles and output for unrecognized tools", () => {
     const unknownEntry = { ...entry, toolTitle: "mcp__github__search_issues" };
     expect(liveWorkEntryLabel(unknownEntry, undefined, true)).toBe("Mcp__github__search_issues");
@@ -805,34 +746,70 @@ describe("deriveMessagesTimelineRows", () => {
     expect(first.kind === "work" && first.entry.toolLifecycleStatus).toBe("inProgress");
   });
 
-  it("shows the CUA action title for a retained tool item", () => {
+  it.each(["cua_repl.js", "node_repl.js", "js"])(
+    "shows the %s action title for a retained tool item",
+    (toolName) => {
+      const fixture = makeStreamingTimelineFixture();
+      const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
+      if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
+      const item = {
+        ...source.item,
+        title: null,
+        toolName,
+        input: {
+          code: "await game.getAXStateAndScreenshot();",
+          title: "Inspect Saga music screen",
+        },
+      };
+      const entries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [{ ...source, item }],
+        optimisticMessages: [],
+      });
+      const work = entries.find((entry) => entry.kind === "work");
+      expect(work?.kind === "work" && workEntryDisplayLabel(work.entry, undefined)).toBe(
+        "Inspect Saga music screen",
+      );
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: entries,
+        isWorking: false,
+        runningRunId: fixture.runId,
+        activeTurnStartedAt: fixture.time(0),
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.find((row) => row.kind === "work")).toMatchObject({
+        displayLabel: "Inspect Saga music screen",
+      });
+    },
+  );
+
+  it("recovers the failed Sky call stored as a generic js integration", () => {
     const fixture = makeStreamingTimelineFixture();
     const source = fixture.visibleTurnItems.find((row) => row.item.type === "dynamic_tool")!;
     if (source.item.type !== "dynamic_tool") throw new Error("Expected tool fixture");
     const item = {
       ...source.item,
-      title: null,
-      toolName: "cua_repl.js",
-      input: { code: "await game.getAXStateAndScreenshot();", title: "Inspect Saga music screen" },
+      type: "dynamic_tool" as const,
+      status: "failed" as const,
+      title: "js",
+      toolName: "node_repl.js",
+      toolSource: { key: "mcp:node_repl", name: "node repl", kind: "integration" as const },
+      input: {
+        title: "Restrict the breakpoint to Git actions",
+        code: "await sky.type_text({app:'T3 Code (Nightly)',text:'debug(ga.run)'});",
+      },
     };
     const entries = deriveTimelineEntriesFromVisibleTurnItems({
       visibleTurnItems: [{ ...source, item }],
       optimisticMessages: [],
     });
-    const work = entries.find((entry) => entry.kind === "work");
-    expect(work?.kind === "work" && workEntryDisplayLabel(work.entry, undefined)).toBe(
-      "Inspect Saga music screen",
+    const entry = entries.find((row) => row.kind === "work");
+    expect(entry?.kind === "work" && workEntryDisplayLabel(entry.entry, undefined)).toBe(
+      "Restrict the breakpoint to Git actions",
     );
-    const rows = deriveMessagesTimelineRows({
-      timelineEntries: entries,
-      isWorking: false,
-      runningRunId: fixture.runId,
-      activeTurnStartedAt: fixture.time(0),
-      turnDiffSummaries: [],
-      supportsConversationRollback: false,
-    });
-    expect(rows.find((row) => row.kind === "work")).toMatchObject({
-      displayLabel: "Inspect Saga music screen",
+    expect(entry?.kind === "work" && entry.entry).toMatchObject({
+      toolSurface: "computer",
+      toolSource: { key: "computer-use", kind: "computer" },
     });
   });
 

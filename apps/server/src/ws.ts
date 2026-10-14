@@ -89,7 +89,7 @@ import {
   ChatAttachmentId,
   PersistChatAttachmentsError,
   RpcClientId,
-  type EnvironmentAuthorizationError,
+  EnvironmentAuthorizationError,
   type ProjectId,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -100,8 +100,6 @@ import {
   type TerminalMetadataStreamEvent,
   type PullRequestRef,
   WS_METHODS,
-  WsCoreRpcGroup,
-  WsPluginRpcGroup,
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -126,12 +124,6 @@ import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts"
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
-import * as PluginCatalog from "./plugins/PluginCatalog.ts";
-import * as PluginSettings from "./plugins/PluginSettings.ts";
-import * as PluginActions from "./plugins/PluginActions.ts";
-import * as PluginViews from "./plugins/PluginViews.ts";
-import * as PluginNpm from "./plugins/PluginNpm.ts";
-import * as PluginNotifications from "./plugins/PluginNotifications.ts";
 import {
   archivedShellStreamItemFromThreadShell,
   buildActiveShellSnapshot,
@@ -193,7 +185,11 @@ import * as DeviceService from "./device/DeviceService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
-import { attachmentRelativePath, createDeterministicAttachmentId } from "./attachmentStore.ts";
+import {
+  attachmentRelativePath,
+  chatAttachmentStableKey,
+  createDeterministicAttachmentId,
+} from "./attachmentStore.ts";
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -220,7 +216,6 @@ import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as DefectReporter from "./observability/DefectReporter.ts";
 import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
-import * as ContributionStatusStore from "@t3tools/provider-core/server/ContributionStatusStore";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { requiredScopeForDeviceList, rpcAuthorizationError } from "./auth/RpcAuthorization.ts";
 import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
@@ -407,7 +402,10 @@ const persistChatAttachments = Effect.fn("ws.assets.persistChatAttachments")(fun
           message: `Attachment ${attachment.name} size does not match its payload.`,
         });
       }
-      const rawId = createDeterministicAttachmentId(input.threadId, `${input.messageId}:${index}`);
+      const rawId = createDeterministicAttachmentId(
+        input.threadId,
+        chatAttachmentStableKey(input.messageId, index, bytes),
+      );
       if (rawId === null) {
         return yield* new PersistChatAttachmentsError({
           message: "Could not allocate an attachment identifier.",
@@ -551,7 +549,6 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
 // Middleware added later wraps middleware added earlier, so instrumentation wraps authorization.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
-const ServerWsPluginRpcGroup = WsPluginRpcGroup.middleware(RpcInstrumentation);
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
 // snapshot instead. Replaying each intervening event costs a shell refetch;
@@ -808,6 +805,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           afterSequence,
           throughSequence,
           limit: THREAD_RESUME_MAX_REPLAY_EVENTS + 1,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every resubscribe. The live tail resumes from `highWater`, so a
+          // dropped row never hides later events.
+          skipUnknownEventTypes: true,
         })
         .pipe(
           Stream.map((stored) => ({
@@ -1162,6 +1163,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
         applicationEvents.readApplicationEvents({
           afterSequence: input.afterSequence,
           throughSequence: highWater,
+          // A row a newer build wrote (e.g. after a downgrade) must not fail
+          // every shell resubscribe. The live tail below resumes from
+          // highWater, so a dropped row never hides later events.
+          skipUnknownEventTypes: true,
         }),
       );
       return composeShellStreamWithEnrichment({
@@ -1192,43 +1197,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
   },
 );
 
-// The plugin RPCs' handlers; see `WsPluginRpcGroup` for why they are a layer of their own.
-const layerWsPluginRpc = ServerWsPluginRpcGroup.toLayer(
-  Effect.gen(function* () {
-    const pluginCatalog = yield* PluginCatalog.PluginCatalog;
-    const pluginSettings = yield* PluginSettings.PluginSettings;
-    const pluginActions = yield* PluginActions.PluginActions;
-    const pluginViews = yield* PluginViews.PluginViews;
-    const pluginNpm = yield* PluginNpm.PluginNpm;
-    const pluginNotifications = yield* PluginNotifications.PluginNotifications;
-    return ServerWsPluginRpcGroup.of({
-      [WS_METHODS.pluginsList]: (_input) => pluginCatalog.list,
-      [WS_METHODS.pluginsSubscribe]: (_input) => pluginCatalog.subscribe,
-      [WS_METHODS.pluginsAdd]: (input) => pluginCatalog.add(input),
-      [WS_METHODS.pluginsRefresh]: (input) => pluginCatalog.refresh(input),
-      [WS_METHODS.pluginsConsent]: (input) => pluginCatalog.consent(input),
-      [WS_METHODS.pluginsEnable]: (input) => pluginCatalog.enable(input),
-      [WS_METHODS.pluginsDisable]: (input) => pluginCatalog.disable(input),
-      [WS_METHODS.pluginsRemove]: (input) => pluginCatalog.remove(input),
-      [WS_METHODS.pluginsResume]: (input) => pluginCatalog.resume(input),
-      [WS_METHODS.pluginsSettingsSubscribe]: (input) =>
-        pluginSettings.subscribe(input.installationId),
-      [WS_METHODS.pluginsSettingsUpdate]: (input) => pluginSettings.update(input),
-      [WS_METHODS.pluginActionsSubscribe]: (_input) => pluginActions.subscribe,
-      [WS_METHODS.pluginActionsInvoke]: (input) => pluginActions.invoke(input),
-      [WS_METHODS.pluginViewsSubscribe]: (_input) => pluginViews.subscribe,
-      [WS_METHODS.pluginViewsReadBundle]: (input) => pluginViews.readBundle(input),
-      [WS_METHODS.pluginViewsCall]: (input) => pluginViews.call(input),
-      [WS_METHODS.pluginsNpmList]: (_input) => pluginNpm.list,
-      [WS_METHODS.pluginsNpmAdd]: (input) => pluginNpm.add(input),
-      [WS_METHODS.pluginsNpmStageUpdate]: (input) => pluginNpm.stageUpdate(input),
-      [WS_METHODS.pluginsNpmApplyUpdate]: (input) => pluginNpm.applyUpdate(input),
-      [WS_METHODS.pluginsNpmDiscardUpdate]: (input) => pluginNpm.discardUpdate(input),
-      [WS_METHODS.pluginsNotificationsSubscribe]: () => pluginNotifications.subscribe,
-    });
-  }),
-);
-
 const layerWsRpc = (
   currentSession: EnvironmentAuth.AuthenticatedSession,
   clientOrigin: OrchestrationClientOrigin,
@@ -1236,10 +1204,7 @@ const layerWsRpc = (
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
 ) =>
-  // Handlers are typed against the group without instrumentation. RpcServer finds a
-  // handler by its tag alone, and typing every handler against the instrumented group
-  // exceeds the type checker's instantiation limit.
-  WsCoreRpcGroup.toLayer(
+  ServerWsRpcGroup.toLayer(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
       const sql = yield* SqlClient.SqlClient;
@@ -1377,7 +1342,6 @@ const layerWsRpc = (
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
-      const contributionStatus = yield* ContributionStatusStore.ContributionStatusStore;
       const relayClient = yield* RelayClient.RelayClient;
       // A webhook URL starts agent runs, so only sessions that may operate
       // see it; read-only sessions still see the task itself.
@@ -1868,7 +1832,7 @@ const layerWsRpc = (
         return result;
       });
 
-      const handlers = WsCoreRpcGroup.of({
+      const handlers = ServerWsRpcGroup.of({
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -3184,12 +3148,10 @@ const layerWsRpc = (
               Stream.concat(Stream.make(latest), changes),
             ),
           ),
-        [WS_METHODS.subscribeContributionStatus]: (_input) =>
-          ContributionStatusStore.subscriptionStream(contributionStatus),
       });
       return handlers;
     }),
-  ).pipe(Layer.merge(layerWsPluginRpc));
+  );
 
 // A defect in a handler's effect fails only its own request. RpcServer's default
 // sends a socket-level Defect frame instead, and the client ends every pending

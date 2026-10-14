@@ -1,10 +1,8 @@
-import {
-  type OrchestrationV2DomainEvent,
-  type OrchestrationV2ContextHandoff,
-  type OrchestrationV2ThreadProjection,
-  type OrchestrationV2TurnItem,
-  isPluginContextTurnItem,
-  PLUGIN_ENRICH_LIMITS,
+import type {
+  OrchestrationV2DomainEvent,
+  OrchestrationV2ContextHandoff,
+  OrchestrationV2ThreadProjection,
+  OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import {
   compactDynamicToolOutput,
@@ -113,15 +111,6 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
         result: item.result === null ? null : (truncateDetail(item.result) ?? null),
       };
     case "dynamic_tool": {
-      // Plugin context is the record users inspect, so it travels whole. The
-      // transform limits bound it: one record's answer and a run's kept
-      // context are each at most 8 KiB, and a run has at most five records.
-      if (
-        isPluginContextTurnItem(item) &&
-        Buffer.byteLength(JSON.stringify(item.output ?? null), "utf8") <=
-          PLUGIN_ENRICH_LIMITS.maxResultBytes
-      )
-        return item;
       const { output: rawOutput, ...projected } = item;
       const output = compactDynamicToolOutput(rawOutput);
       return {

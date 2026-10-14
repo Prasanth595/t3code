@@ -37,11 +37,7 @@ import type {
 } from "@t3tools/client-runtime/state/thread-requests";
 import type { ThreadRunSummary, ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
 import { threadRuntimeHasInterruptibleRun } from "@t3tools/client-runtime/state/thread-execution";
-import {
-  approvalRequestDetail,
-  approvalResolutionLabel,
-  turnItemIsWorkspacePreparation,
-} from "@t3tools/client-runtime/state/turn-item-presentation";
+import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 
 import {
   isImageAttachment,
@@ -551,8 +547,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "approval_request":
       return {
         ...common,
-        label: approvalResolutionLabel(item) ?? title ?? "Approval requested",
-        detail: approvalRequestDetail(item) ?? item.requestKind,
+        label: title ?? "Approval requested",
+        detail: item.prompt ?? item.requestKind,
         toolData: item,
       };
     case "user_input_request":

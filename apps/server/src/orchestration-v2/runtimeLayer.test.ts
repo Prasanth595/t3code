@@ -4516,106 +4516,146 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
   );
 });
 
-it.layer(layerSharedApplicationDataPlaneTest)("plugin context interruption", (it) => {
-  it.effect("closes context a plugin is still adding when the run is interrupted", () =>
-    Effect.gen(function* () {
-      const projects = yield* ProjectService.ProjectService;
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const projectId = ProjectId.make("runtime-layer-plugin-context-project");
-      const threadId = ThreadId.make("runtime-layer-plugin-context-thread");
-
-      yield* projects.create({
-        commandId: CommandId.make("runtime-layer-plugin-context-project-create"),
-        projectId,
-        title: "Plugin context project",
-        workspaceRoot: "/tmp/runtime-layer-plugin-context-project",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-plugin-context-create"),
-        threadId,
-        projectId,
-        title: "Plugin context",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-layer-plugin-context-message"),
-        threadId,
-        messageId: MessageId.make("runtime-layer-plugin-context-message"),
-        text: "Add context first.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const starting = yield* orchestrator.getThreadProjection(threadId);
-      const run = starting.runs[0];
-      assert.isDefined(run);
-      // What the provider-turn start effect commits before it calls the plugin.
-      const now = yield* DateTime.now;
-      yield* eventSink.write({
-        events: [
-          {
-            id: EventId.make("runtime-layer-plugin-context-started"),
-            type: "turn-item.updated",
+it.layer(layerTest)("snooze queued runs", (it) => {
+  it.effect.each(["notification", "delegated-completion", "user"] as const)(
+    "only user messages block snooze with a held %s run",
+    (kind) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`snooze-queued:${kind}`);
+        const snoozedUntil = "2099-07-25T09:00:00.000Z";
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId: ProjectId.make("snooze-queued-project"),
+          title: "Snooze with held queued work",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: "/tmp/snooze-queued",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`active:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`active:${threadId}`),
+          text: "Active run",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const activeRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        if (kind === "delegated-completion") {
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`completion:${threadId}`),
+                type: "run.updated",
+                threadId,
+                runId: activeRun.id,
+                occurredAt: now,
+                payload: {
+                  ...activeRun,
+                  delegatedCompletion: {
+                    disposition: "open",
+                    nextGeneration: 2,
+                    delivery: {
+                      messageId: MessageId.make(`queued:${threadId}`),
+                      generation: 1,
+                      taskIds: [NodeId.make("snooze-queued-task")],
+                    },
+                  },
+                },
+              },
+            ],
+          });
+        }
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`queued:${threadId}`),
+          threadId,
+          messageId: MessageId.make(`queued:${threadId}`),
+          text: "Queued work",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: kind === "user" ? "user" : "agent",
+          creationSource: kind === "user" ? "web" : "server",
+          ...(kind === "notification"
+            ? {
+                notification: {
+                  source: { kind: "background_task" as const },
+                  outcome: "updated" as const,
+                  summary: "Background activity updated",
+                },
+              }
+            : kind === "delegated-completion"
+              ? {
+                  delegatedCompletion: {
+                    parentRunId: activeRun.id,
+                    generation: 1,
+                    taskIds: [NodeId.make("snooze-queued-task")],
+                  },
+                }
+              : {}),
+        });
+        // Recovery holds the queue while the thread's active run ends.
+        const beforeRecovery = yield* orchestrator.getThreadProjection(threadId);
+        yield* eventSink.commitCommand({
+          commandId: CommandId.make(`recovery:${threadId}`),
+          threadId,
+          commandType: "provider-runtime.reconcile",
+          acceptedAt: now,
+          events: beforeRecovery.runs.map((run) => ({
+            id: EventId.make(`recovery:${run.id}`),
+            type: "run.updated" as const,
             threadId,
             runId: run.id,
-            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
-            providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: {
-              id: TurnItemId.make("runtime-layer-plugin-context-item"),
-              type: "dynamic_tool",
-              threadId,
-              runId: run.id,
-              nodeId: run.rootNodeId,
-              providerThreadId: run.providerThreadId,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 2,
-              status: "running",
-              title: "Adding context from Notes",
-              toolName: "plugin_context",
-              toolSource: { key: "plugin:test.notes", name: "Notes", kind: "integration" },
-              input: { plugin: { id: "test.notes" } },
-              startedAt: now,
-              completedAt: null,
-              updatedAt: now,
-            },
-          },
-        ],
-      });
-
-      yield* threadManagement.interruptThread({
-        projectId,
-        commandId: CommandId.make("runtime-layer-plugin-context-interrupt"),
-        threadId,
-        runId: run.id,
-        reason: "Stop",
-      });
-
-      const interrupted = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(interrupted.runs[0]?.status, "interrupted");
-      const item = interrupted.turnItems.find(
-        (candidate) => candidate.id === "runtime-layer-plugin-context-item",
-      );
-      assert.equal(item?.status, "interrupted");
-      assert.equal(item?.title, "Context from Notes not added");
-      assert.deepEqual(item?.type === "dynamic_tool" ? item.output : undefined, {
-        reason: "The run was interrupted before the plugin answered.",
-      });
-    }),
+            payload:
+              run.status === "queued"
+                ? { ...run, queueHeld: true }
+                : { ...run, status: "completed" as const, completedAt: now },
+          })),
+          effects: [],
+        });
+        const beforeSnooze = yield* orchestrator.getThreadProjection(threadId);
+        assert.isTrue(beforeSnooze.runs.some((run) => run.status === "queued" && run.queueHeld));
+        const snooze = orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make(`snooze:${threadId}`),
+          threadId,
+          snoozedUntil,
+        });
+        if (kind === "user") {
+          const error = yield* snooze.pipe(Effect.flip);
+          assert.equal(error._tag, "OrchestratorDispatchError");
+          assert.equal(error.cause, `Thread ${threadId} has a queued run and cannot be snoozed.`);
+          assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.snoozedUntil);
+        } else {
+          yield* snooze;
+          const snoozed = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(DateTime.formatIso(snoozed.thread.snoozedUntil!), snoozedUntil);
+          assert.deepEqual(snoozed.runs, beforeSnooze.runs);
+          yield* orchestrator.dispatch({
+            type: "thread.unsnooze",
+            commandId: CommandId.make(`unsnooze:${threadId}`),
+            threadId,
+            reason: "user",
+          });
+          const awake = yield* orchestrator.getThreadProjection(threadId);
+          assert.isNull(awake.thread.snoozedUntil);
+          assert.deepEqual(awake.runs, beforeSnooze.runs);
+        }
+      }),
   );
 });
 

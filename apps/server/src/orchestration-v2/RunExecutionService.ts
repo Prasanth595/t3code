@@ -49,7 +49,6 @@ import {
   makeProviderFailureTurnItem,
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
-import { checkpointCaptureEffectId } from "./RunFinalized.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -699,7 +698,7 @@ export const layer: Layer.Layer<
             input.terminal.status === "cancelled"
               ? [
                   {
-                    id: checkpointCaptureEffectId(input.run.id),
+                    id: `effect:checkpoint.capture:${input.run.id}`,
                     commandId: checkpointCaptureCommandId,
                     threadId: input.run.threadId,
                     request: {

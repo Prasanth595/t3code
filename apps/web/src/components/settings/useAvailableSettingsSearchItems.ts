@@ -61,9 +61,6 @@ export function useAvailableSettingsSearchItems(scopeSearch: SettingsScopeSearch
         hasThreadAutoSettlement:
           getThreadAutoSettlementSearchAvailability(environments).eligibleEnvironmentIds.length > 0,
         managedTunnelActive,
-        hasPluginEnvironment: environments.some(
-          (environment) => environment.serverConfig?.environment.capabilities.plugins === true,
-        ),
       }),
     [
       managedTunnelActive,

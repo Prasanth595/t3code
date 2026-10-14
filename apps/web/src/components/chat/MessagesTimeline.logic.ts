@@ -9,7 +9,6 @@ import {
 } from "@t3tools/shared/assistantCitations";
 import { shallow } from "zustand/vanilla/shallow";
 import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
-import { approvalResolutionLabel } from "@t3tools/client-runtime/state/turn-item-presentation";
 import {
   commandDisplayText,
   commandProgramName,
@@ -98,7 +97,8 @@ function singleToolCallLabel(entry: WorkLogEntry): string {
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
   const item = entry.structuredPayload;
-  const title = item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : null;
+  const title =
+    item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
   if (title) return title;
   // A lone web search keeps its heading; the query stays in its detail.
   if (entry.itemType === "web_search") return entry.toolTitle ?? "Web search";
@@ -132,9 +132,6 @@ function workEntryReadPaths(entry: WorkLogEntry, workspaceRoot: string | undefin
 
 export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string | undefined) {
   if (entry.itemType === "system_notice") return entry.label;
-  // A plugin's answer leads with who answered; the prompt and reason stay in the detail.
-  const resolution = entry.structuredPayload && approvalResolutionLabel(entry.structuredPayload);
-  if (resolution) return resolution;
   if (entry.itemType === "reasoning" || entry.tone === "thinking") {
     const thought = entry.detail?.trim().replace(/\s+/g, " ");
     return thought || entry.label;
@@ -161,7 +158,8 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const providerRetry =
     entry.projectedItem?.item.type === "error" && entry.projectedItem.item.retry !== undefined;
   const item = entry.structuredPayload;
-  const title = item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input) : null;
+  const title =
+    item?.type === "dynamic_tool" ? dynamicToolTitle(item.toolName, item.input, item.title) : null;
   if (title) return title;
   const compactDetail = entry.detail?.trim();
   const detailIsSearchOutput =
@@ -1506,9 +1504,10 @@ export function deriveMessagesTimelineRows(input: {
       } else if ((entry.attempt?.id ?? null) !== tailAttemptId) {
         break;
       }
-      activeToolEntries.unshift(entry);
+      activeToolEntries.push(entry);
     }
   }
+  activeToolEntries.reverse();
   const visibleActiveToolEntries = activeToolEntries.filter((entry) =>
     workEntryIsVisibleInGroup(entry.entry, true),
   );
