@@ -35,7 +35,8 @@ usage() {
   cat <<EOF
 Usage: install.sh [--join <code>] [--from-source] [--dir <path>] [--port <port>] [--no-service] [--force]
 
-  --join <code>   Join the machine map with this one-time code after the install.
+  --join <code>   Join the machine map with this one-time code. The server joins at once;
+                  the app joins when it starts.
   --from-source   Build the server from a fork checkout instead of a release.
   --dir <path>    From source: the fork checkout. Default: $dir
   --port <port>   Server: the loopback port of the server. Default: $port
@@ -108,13 +109,21 @@ install_mac() {
     rm -rf "/Applications/$name"
     ditto "$app" "/Applications/$name"
   fi
+  leave_join_code
   open "/Applications/$name"
-  if [[ -n "$join_code" ]]; then
-    printf '%s' "$join_code" | pbcopy
-    log "the join code is on the clipboard. In T3 Code, open Settings > Machines and paste it."
-  else
+}
+
+# MM-211: the app server joins the machine map with this file at its next start, then deletes it.
+leave_join_code() {
+  if [[ -z "$join_code" ]]; then
     log "next: in T3 Code, open Settings > Machines and paste the join code from the portal."
+    return
   fi
+  local file="${T3CODE_HOME:-$HOME/.t3}/userdata/machine-map-join-code"
+  mkdir -p "$(dirname "$file")"
+  (umask 077 && printf '%s\n' "$join_code" >"$file")
+  log "T3 Code joins the machine map when it starts. If it was open already, quit it and open it again."
+  log "if it does not join within 10 minutes, open Settings > Machines and paste $join_code"
 }
 
 # Linux ------------------------------------------------------------------------------------------
@@ -126,20 +135,6 @@ linux_arch() {
     aarch64 | arm64) echo arm64 ;;
     *) die "the fork publishes Linux builds for x86_64 and aarch64 only, not $(uname -m)." ;;
   esac
-}
-
-# Puts the join code on the clipboard when a clipboard tool exists, like on macOS.
-join_with_app() {
-  local message="the join code is on the clipboard. In T3 Code, open Settings > Machines and paste it."
-  if [[ -z "$join_code" ]]; then
-    log "next: in T3 Code, open Settings > Machines and paste the join code from the portal."
-  elif command -v wl-copy >/dev/null 2>&1 && printf '%s' "$join_code" | wl-copy 2>/dev/null; then
-    log "$message"
-  elif command -v xclip >/dev/null 2>&1 && printf '%s' "$join_code" | xclip -selection clipboard 2>/dev/null; then
-    log "$message"
-  else
-    log "next: in T3 Code, open Settings > Machines and paste the join code $join_code"
-  fi
 }
 
 # The AppImage updates itself in place, so its file name has no version.
@@ -171,8 +166,8 @@ EOF
   if ! ldconfig -p 2>/dev/null | grep -qF libfuse.so.2; then
     log "if the app does not start, install FUSE 2, for example: sudo apt install libfuse2t64"
   fi
+  leave_join_code
   nohup "$LINUX_APP" >/dev/null 2>&1 &
-  join_with_app
 }
 
 # Installs the newest server archive into $SERVER_DIR/<version> and points $SERVER_DIR/current at
@@ -317,7 +312,8 @@ Environment=PATH=$PATH
 WorkingDirectory=%h
 # Loopback only. Publish it with a tunnel, as docs/fork.md describes.
 ExecStart=${server[*]} --mode web --host 127.0.0.1 --port $port --no-browser %h
-Restart=on-failure
+# Always: the machine map restarts the server with a clean exit (restartServer, a new tunnel).
+Restart=always
 RestartSec=5
 
 [Install]
