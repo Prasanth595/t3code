@@ -391,7 +391,7 @@ The server setting `worktreePathTemplate` decides where new worktrees go. It is 
 
 Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an app. Desktop Chrome and Edge show "Install" in the address bar. Android Chrome shows "Install app" in its menu. On iPhone, use Share > Add to Home Screen. The app has shortcuts for a new thread, pull requests and settings.
 
-The client setting `installedAppEnabled` adds a service worker. It is off by default. Turn it on in Settings > General > Installed app, in each browser and for each server.
+The client setting `installedAppEnabled` adds a service worker. It is on by default. Turn it off in Settings > General > Installed app, in each browser and for each server.
 
 - An offline page shows when the device is offline, or when the tunnel answers but the server is down.
 - Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first. The page must still run, so a closed app shows nothing.

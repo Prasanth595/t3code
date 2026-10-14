@@ -484,7 +484,7 @@ export const ClientSettingsSchema = Schema.Struct({
    * Fork: the web app registers a service worker for the installed app (`apps/web/public/sw.js`):
    * an offline page, notifications on Android and iOS, and the badge on the app icon.
    */
-  installedAppEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  installedAppEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
    * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
