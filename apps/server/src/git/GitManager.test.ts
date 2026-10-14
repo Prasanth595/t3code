@@ -5451,6 +5451,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   const headShaField = (headSha: string | undefined) => (headSha === undefined ? {} : { headSha });
   const setUpLocalCheckoutPullRequest = Effect.fnUntraced(function* (
     reportedHead: (pullHead: string) => string | undefined = (pullHead) => pullHead,
+    syncCheckoutWithPullHead = true,
   ) {
     const repoDir = yield* makeTempDir("t3code-git-manager-");
     yield* initRepo(repoDir);
@@ -5478,7 +5479,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           state: "open",
           ...headShaField(reportedHead(pullHead)),
         },
-        syncCheckoutWithPullHead: true,
+        syncCheckoutWithPullHead,
       },
     });
     return { repoDir, manager, ghCalls, firstCommit, pullHead };
@@ -5564,6 +5565,29 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "keep me\n",
         );
       }),
+  );
+
+  it.effect("local PR checkout fast-forwards a branch the host's checkout only switched to", () =>
+    Effect.gen(function* () {
+      // Like Bitbucket or Forgejo without `force`: the existing branch is checked out as it was.
+      const { repoDir, manager, firstCommit, pullHead } = yield* setUpLocalCheckoutPullRequest(
+        (head) => head,
+        false,
+      );
+      yield* runGit(repoDir, ["checkout", "main"]);
+      expect((yield* runGit(repoDir, ["rev-parse", "feature/pr-safe"])).stdout.trim()).toBe(
+        firstCommit,
+      );
+
+      const result = yield* preparePullRequestThread(manager, {
+        cwd: repoDir,
+        reference: "91",
+        mode: "local",
+      });
+
+      expect(result).toMatchObject({ branch: "feature/pr-safe", isOnPullRequestHead: true });
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
+    }),
   );
 
   it.effect(

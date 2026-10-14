@@ -2691,16 +2691,19 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Whether HEAD is the head commit the provider reported. A provider that reports none, or a
-  // commit this checkout does not have, cannot confirm it.
-  const isHeadAtCommit = (cwd: string, headSha: string | undefined) =>
+  // Brings a local checkout onto the head commit the provider reported and says whether it got
+  // there. Unforced, some hosts' checkout only switches to an existing branch (Bitbucket,
+  // Forgejo, GitCafe), leaving it behind the pull request, so a clean fast-forward is taken here;
+  // nothing is ever reset. A provider that reports no head commit, or one this checkout does not
+  // have, cannot confirm it.
+  const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
     headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
       ? Effect.succeed(false)
-      : Effect.all([
-          gitCore.resolveCommit({ cwd, revision: "HEAD" }),
-          gitCore.resolveCommit({ cwd, revision: headSha }),
-        ]).pipe(
-          Effect.map(([head, target]) => head.commitSha === target.commitSha),
+      : gitCore.resolveCommit({ cwd, revision: headSha }).pipe(
+          Effect.flatMap(({ commitSha }) =>
+            gitCore.refreshCheckedOutBranch({ cwd, targetCommit: commitSha }),
+          ),
+          Effect.map((refreshed) => refreshed.onTarget),
           Effect.orElseSucceed(() => false),
         );
 
@@ -2757,7 +2760,7 @@ export const make = Effect.gen(function* () {
           worktreePath: null,
           // Unforced checkout leaves a branch that is ahead of, or could not be advanced to, the
           // pull request where it is, so only the resulting HEAD says whether this is its head.
-          isOnPullRequestHead: yield* isHeadAtCommit(input.cwd, pullRequestSummary.headSha),
+          isOnPullRequestHead: yield* moveToPullRequestHead(input.cwd, pullRequestSummary.headSha),
         };
       }
 

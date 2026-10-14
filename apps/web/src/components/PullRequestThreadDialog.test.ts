@@ -229,7 +229,7 @@ describe("pull request worktree permissions", () => {
 
     expect(state.prepared).toEqual([{ branch: "feature/pr", worktreePath: null }]);
     expect(state.toasts).toMatchObject([
-      { type: "warning", title: "Checked out, but not on the pull request's commit" },
+      { type: "warning", title: "Checked out, but not confirmed on the latest commit" },
     ]);
   });
 
