@@ -59,6 +59,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -927,18 +928,30 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** A client has no thread to inherit a model from, so it falls back to the project default. */
+  /**
+   * A client has no thread to inherit a model from, so it takes what a new thread
+   * in the project would: the project's own default, else the environment's.
+   */
   const projectDefaultModelSelection = (
     project: Effect.Success<ReturnType<typeof requireProject>>,
   ) =>
-    project.defaultModelSelection === null
-      ? Effect.fail(
-          failure(
-            "invalid_request",
-            `Project ${project.id} has no default model, so this caller cannot pick one for it.`,
-          ),
-        )
-      : Effect.succeed(project.defaultModelSelection);
+    serverSettings.getSettings.pipe(
+      Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      Effect.map(
+        (settings) =>
+          resolveProjectSettings(settings, project.id, project).settings.defaultModelSelection,
+      ),
+      Effect.flatMap((selection) =>
+        selection === null
+          ? Effect.fail(
+              failure(
+                "invalid_request",
+                `Neither project ${project.id} nor the environment has a default model, so this caller cannot pick one for it.`,
+              ),
+            )
+          : Effect.succeed(selection),
+      ),
+    );
   const secretRequests = yield* SecretRequests.SecretRequests;
 
   const requireCapability = (scope: McpInvocationScope) =>

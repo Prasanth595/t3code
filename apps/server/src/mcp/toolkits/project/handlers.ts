@@ -1,4 +1,5 @@
 import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -7,6 +8,7 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -124,16 +126,29 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 }),
             ),
           );
+        // A caller outside any thread has no model to inherit, so it gets what a
+        // new thread in this project would: the project's own, else the environment's.
         const modelSelection =
           input.modelSelection ??
           caller?.modelSelection ??
-          (yield* readProject)?.defaultModelSelection ??
+          (yield* Effect.all([
+            ServerSettings.ServerSettingsService.pipe(
+              Effect.flatMap((settings) => settings.getSettings),
+              Effect.mapError(unavailable),
+            ),
+            readProject,
+          ]).pipe(
+            Effect.map(
+              ([settings, project]) =>
+                resolveProjectSettings(settings, projectId, project).settings.defaultModelSelection,
+            ),
+          )) ??
           undefined;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
-              "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
+              "Pass modelSelection: neither the project nor the environment has a default model. orchestrator_capabilities lists providers and models.",
           });
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,

@@ -305,6 +305,9 @@ const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
+  /** Leave the project without a default model of its own. */
+  readonly projectHasNoModel?: boolean;
+  readonly environmentSettings?: Parameters<typeof ServerSettings.layerTest>[0];
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
 }) => {
   const projectId = ProjectId.make("project:client-target");
@@ -316,7 +319,7 @@ const clientLaunchHarness = (input: {
     model: "claude-opus",
   };
   const layerDependencies = Layer.mergeAll(
-    ServerSettings.layerTest(),
+    ServerSettings.layerTest(input.environmentSettings),
     NodeCrypto.layer,
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
@@ -356,7 +359,7 @@ const clientLaunchHarness = (input: {
             ? Option.some({
                 id,
                 workspaceRoot: input.workspaceRoot ?? "/projects/client-target",
-                defaultModelSelection: modelSelection,
+                defaultModelSelection: input.projectHasNoModel === true ? null : modelSelection,
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
@@ -404,6 +407,53 @@ it.effect("a client launches at its ceiling with the project's default model", (
     const untargeted = yield* handle({ title: "Fix" });
     expect(untargeted.at(-1)?.result).toMatchObject({ code: "target_required" });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a client's launch takes the environment's default model when the project has none", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const environmentModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet-5-5",
+    };
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      projectHasNoModel: true,
+      environmentSettings: { defaultModelSelection: environmentModel },
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Fix", projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({ projectId, modelSelection: environmentModel });
+    expect(launched[0]?.modelSelection).toEqual(environmentModel);
+  }),
+);
+
+it.effect("a client's launch asks for a model when neither project nor environment has one", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "auto",
+      launched,
+      projectHasNoModel: true,
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { title: "Fix", projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(result.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(0);
   }),
 );
 
