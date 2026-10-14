@@ -338,7 +338,7 @@ export function snoozeFavoriteDurationMs(favorite: SnoozeFavorite): number {
 /**
  * One favorite per length ("60 minutes" and "1 hour" are the same choice), at
  * most {@link MAX_SNOOZE_FAVORITES} of them with the newest kept, and none
- * too long to wake. Settings decoding applies it, so stored or imported
+ * too short or too long to wake. Settings decoding applies it, so stored or imported
  * favorites follow the same rules as saving one. Unchanged input is returned
  * as is.
  */
@@ -348,7 +348,10 @@ export function normalizeSnoozeFavorites(
   const seen = new Set<number>();
   const kept = favorites.filter((favorite) => {
     const durationMs = snoozeFavoriteDurationMs(favorite);
-    if (durationMs > MAX_SNOOZE_FAVORITE_MS || seen.has(durationMs)) return false;
+    // Under a millisecond a wake lands on "now", which no menu can offer.
+    if (durationMs < 1 || durationMs > MAX_SNOOZE_FAVORITE_MS || seen.has(durationMs)) {
+      return false;
+    }
     seen.add(durationMs);
     return true;
   });

@@ -1201,6 +1201,7 @@ describe("ClientSettings snooze favorites", () => {
       { amount: 60, unit: "minutes" },
       { amount: 2, unit: "hours" },
       { amount: 1e9, unit: "days" },
+      { amount: 0.000001, unit: "minutes" },
       { amount: 3, unit: "hours" },
       { amount: 4, unit: "hours" },
       { amount: 5, unit: "hours" },
