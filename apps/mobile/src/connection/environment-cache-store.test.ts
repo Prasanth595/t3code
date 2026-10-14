@@ -2,6 +2,7 @@ import {
   ORCHESTRATION_CACHE_SCHEMA_VERSION,
   ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
   StoredOrchestrationShellSnapshot,
+  makeStoredShellSnapshotEncoder,
 } from "@t3tools/client-runtime/platform";
 import {
   CommandId,
@@ -26,7 +27,6 @@ import * as Option from "effect/Option";
 
 import * as MobileDatabase from "../persistence/mobile-database";
 import { make } from "./environment-cache-store";
-import { makeStoredShellSnapshotEncoder } from "./shell-cache-encoding";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
