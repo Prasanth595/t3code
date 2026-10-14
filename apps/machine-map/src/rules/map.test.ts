@@ -172,7 +172,7 @@ describe("desiredState", () => {
       { _tag: "setArrow", arrow: { ...findArrow(threeMachines(), MAC, VPS), level: "admin" } },
       { _tag: "setArrow", arrow: { ...findArrow(threeMachines(), WIN, MAC), level: "read" } },
     ]).map;
-    const state = desiredState(map, VPS);
+    const state = desiredState(map, VPS, false);
     expect(state?.self.id).toBe(VPS);
     expect(state?.peers.map((p) => p.id)).toEqual([MAC, WIN]);
     expect(state?.peers[0]).not.toHaveProperty("position");
@@ -182,8 +182,17 @@ describe("desiredState", () => {
     ]);
     expect(state?.arrowsOut.every((a) => a.from === VPS)).toBe(true);
     expect(state?.settings).toEqual({ server: { theme: "dark" }, client: {} });
-    expect(desiredState(map, MAC)?.settings).toEqual({ server: { theme: "light" }, client: {} });
-    expect(desiredState(map, MachineId.make("gone"))).toBeUndefined();
+    expect(desiredState(map, MAC, false)?.settings).toEqual({
+      server: { theme: "light" },
+      client: {},
+    });
+    expect(desiredState(map, MachineId.make("gone"), false)).toBeUndefined();
+  });
+
+  it("says paused while the emergency pause is on, and not paused after Resume (MM-718)", () => {
+    const map = threeMachines();
+    expect(desiredState(map, MAC, true)?.paused).toBe(true);
+    expect(desiredState(map, MAC, false)?.paused).toBe(false);
   });
 });
 
@@ -241,7 +250,7 @@ describe("display data (MM-1108, MM-1109)", () => {
     const revision = { changes: display, inverse: applied.inverse };
     expect(machinesTouched(revision)).toEqual(new Set());
     for (const m of before.machines) {
-      expect(desiredState(applied.map, m.id)).toEqual(desiredState(before, m.id));
+      expect(desiredState(applied.map, m.id, false)).toEqual(desiredState(before, m.id, false));
     }
   });
 
