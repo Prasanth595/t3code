@@ -9,6 +9,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import {
   DEFAULT_SERVER_SETTINGS,
+  type EnvironmentId,
   type ProjectScopedServerSettingKey,
   type ServerSettings,
   type UnifiedSettings,
@@ -24,6 +25,7 @@ import {
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toastManager } from "../ui/toast";
+import { useShareToMachineMap } from "../../machineMap/shareSettings";
 import { useOptionalSettingsScope, useSettingsScope } from "./SettingsScopeContext";
 import {
   persistScopedSettingsPatch,
@@ -65,7 +67,11 @@ export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) 
 function useRunScopedPlan() {
   const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   return useCallback(
-    (plan: ReturnType<typeof planScopedSettingsPatch>) => {
+    (
+      plan: ReturnType<typeof planScopedSettingsPatch>,
+      // Fork: MM-411. Runs after the save with the environments that saved it.
+      onSaved?: (saved: readonly { readonly environmentId: EnvironmentId }[]) => void,
+    ) => {
       if (plan.unavailableReason) {
         toastManager.add({
           type: "warning",
@@ -93,6 +99,7 @@ function useRunScopedPlan() {
         },
         persistClientSettingsPatch,
       ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+        onSaved?.(savedEnvironments);
         if (failedEnvironments.length === 0) return;
         toastManager.add({
           type: "error",
@@ -116,9 +123,14 @@ function useRunScopedPlan() {
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
+  const shareToMachineMap = useShareToMachineMap();
   return useCallback(
-    (patch: ScopedSettingsPatch) => run(planScopedSettingsPatch(scope, environments, patch)),
-    [environments, run, scope],
+    (patch: ScopedSettingsPatch) => {
+      const plan = planScopedSettingsPatch(scope, environments, patch);
+      // Fork: MM-411. A change for all environments also becomes the shared value of the map.
+      run(plan, scope.kind === "all" ? (saved) => shareToMachineMap(plan, saved) : undefined);
+    },
+    [environments, run, scope, shareToMachineMap],
   );
 }
 

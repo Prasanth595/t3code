@@ -62,7 +62,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3773/
 
 The last command prints `200`. Then check in the portal that the machine is online with the new version, and open `https://t3-oracle.yarden-zamir.com` on the phone.
 
-6. Turn on automatic updates. In the portal Settings view, manage the setting `forkAutoUpdate` and set it to on for this machine (MM-406). Or ask an agent to call `machines_set_setting` with `key: "forkAutoUpdate"`, `value: true` and the machine id.
+6. Turn on automatic updates. In the portal Settings view, open the setting `forkAutoUpdate` and set it to on for this machine (MM-406). Or ask an agent to call `machines_set_setting` with `key: "forkAutoUpdate"`, `value: true` and the machine id.
 
 7. After the next fork release, check that the machine moved to it when no agent turn ran. The portal shows the version.
 

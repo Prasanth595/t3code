@@ -1,10 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type {
-  MachineId,
-  MachineKind,
-  MapPosition,
-  SettingScope,
-} from "@t3tools/contracts/machineMap";
+import type { MachineId, MachineKind, MapPosition } from "@t3tools/contracts/machineMap";
 
 import {
   FORK_RELEASES_PAGE,
@@ -30,7 +25,7 @@ import {
   type InstallTarget,
 } from "./install.ts";
 import { VIEW_LABEL, VIEWS } from "./route.ts";
-import { knownKeys } from "./settingControls.ts";
+import { importSharedChanges } from "./settingControls.ts";
 
 /**
  * A native modal dialog: it keeps focus inside, closes on Escape and on a tap outside, and gives
@@ -167,8 +162,8 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
       );
     case "savePreset":
       return <SavePresetDialog close={close} />;
-    case "manageSetting":
-      return <ManageSettingDialog close={close} />;
+    case "importSettings":
+      return <ImportSettingsDialog close={close} />;
     case "emergency":
       return (
         <Modal title="Emergency pause" onClose={close}>
@@ -634,93 +629,52 @@ function SavePresetDialog({ close }: { close: () => void }) {
   );
 }
 
-/** MM-406: manage a setting, with the current value of one machine as the shared value. */
-function ManageSettingDialog({ close }: { close: () => void }) {
+/** MM-413: many shared values at once, for example from a saved settings file. */
+function ImportSettingsDialog({ close }: { close: () => void }) {
   const portal = usePortalContext();
-  const { map, snapshot } = portal;
-  const [scope, setScope] = useState<SettingScope>("server");
-  const [machineId, setMachineId] = useState(map.machines[0]?.id ?? "");
-  const [key, setKey] = useState("");
-  const reported = snapshot.reportedSettings[machineId]?.[scope] ?? {};
-  const keys = [...new Set([...knownKeys(scope), ...Object.keys(reported)])]
-    .filter((k) => !map.settings.managed.some((s) => s.scope === scope && s.key === k))
-    .sort();
-  const trimmed = key.trim();
-  const hasValue = Object.hasOwn(reported, trimmed);
-  const listId = useId();
+  const [text, setText] = useState("");
+  const [problem, setProblem] = useState<string | null>(null);
   return (
-    <Modal title="Manage a setting" onClose={close}>
+    <Modal title="Import shared values" onClose={close}>
       <form
         className="stack"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!trimmed) return;
-          portal.submit(`Manage ${scope}.${trimmed}`, [
-            { _tag: "manageSetting", scope, key: trimmed, managed: true },
-            ...(hasValue
-              ? [
-                  {
-                    _tag: "setSetting" as const,
-                    machineId: null,
-                    scope,
-                    key: trimmed,
-                    present: true,
-                    value: reported[trimmed],
-                  },
-                ]
-              : []),
-          ]);
+          const result = importSharedChanges(portal.map, text);
+          if (typeof result === "string") {
+            setProblem(result);
+            return;
+          }
+          if (result.length > 0) {
+            portal.submit(`Imported ${result.length} shared values`, result);
+          }
           close();
         }}
       >
-        <div className="seg" role="group" aria-label="Scope">
-          {(["server", "client"] as const).map((s) => (
-            <button key={s} type="button" aria-pressed={scope === s} onClick={() => setScope(s)}>
-              {s === "server" ? "Server setting" : "Client setting"}
-            </button>
-          ))}
-        </div>
+        <p className="hint">
+          Paste JSON in the form {'{ "server": { ... }, "client": { ... } }'}. Each key becomes a
+          shared value, and every machine applies it.
+        </p>
         <label className="field">
-          Setting
-          <input
-            list={listId}
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
+          Values
+          <textarea
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              setProblem(null);
+            }}
             data-autofocus
             required
-            autoComplete="off"
             spellCheck={false}
-            placeholder="Start typing a setting name"
           />
-          <datalist id={listId}>
-            {keys.map((k) => (
-              <option key={k} value={k} />
-            ))}
-          </datalist>
         </label>
-        <label className="field">
-          Take the shared value from
-          <select value={machineId} onChange={(e) => setMachineId(e.target.value)}>
-            {map.machines.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-          <span className="hint">
-            {!trimmed
-              ? "The map copies the value that this machine reports."
-              : hasValue
-                ? `Shared value: ${JSON.stringify(reported[trimmed])}`
-                : "This machine did not report this setting. The shared value stays empty."}
-          </span>
-        </label>
+        {problem && <p className="error-text">{problem}</p>}
         <div className="actions end">
           <button type="button" className="btn" onClick={close}>
             Cancel
           </button>
-          <button type="submit" className="btn primary" disabled={!trimmed}>
-            Manage
+          <button type="submit" className="btn primary" disabled={text.trim() === ""}>
+            Import
           </button>
         </div>
       </form>
@@ -768,9 +722,9 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
       run: () => portal.open({ _tag: "savePreset" }),
     });
     out.push({
-      label: "Manage a setting",
+      label: "Import shared values",
       kind: "action",
-      run: () => portal.open({ _tag: "manageSetting" }),
+      run: () => portal.open({ _tag: "importSettings" }),
     });
     // MM-708: the palette opens the big red button, so the cover still confirms the press.
     out.push(

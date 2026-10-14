@@ -481,6 +481,11 @@ export const ClientSettingsSchema = Schema.Struct({
   /** Fork: a changelog of fork releases, upstream changes and Fork Sync runs from the update UI. */
   forkChangelogEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
+   * Fork: the web app registers a service worker for the installed app (`apps/web/public/sw.js`):
+   * an offline page, notifications on Android and iOS, and the badge on the app icon.
+   */
+  installedAppEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Fork: filter by repository owner (`repositoryOwnerOf`) on the pull request page and in the
    * sidebar. Remove when upstream T3 Code ships its own owner or organization filter.
    */
@@ -1953,6 +1958,7 @@ export const ClientSettingsPatch = Schema.Struct({
   appToggleShortcuts: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   backgroundWorkDetails: Schema.optionalKey(Schema.Boolean),
   forkChangelogEnabled: Schema.optionalKey(Schema.Boolean),
+  installedAppEnabled: Schema.optionalKey(Schema.Boolean),
   repositoryOwnerFilters: Schema.optionalKey(Schema.Boolean),
   pullRequestFilterChips: Schema.optionalKey(Schema.Boolean),
   sidebarOwnerFilter: Schema.optionalKey(SidebarOwnerFilter),

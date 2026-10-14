@@ -217,6 +217,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.machineMapJoin]: "machineMap",
   [WS_METHODS.machineMapLeave]: "machineMap",
   [WS_METHODS.machineMapReportDesktop]: "machineMap",
+  [WS_METHODS.machineMapShareSettings]: "machineMap",
   [WS_METHODS.machineMapRead]: "machineMap",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 

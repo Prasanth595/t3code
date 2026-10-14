@@ -124,6 +124,21 @@ export const MachineMapDesktopReport = Schema.Struct({
 });
 export type MachineMapDesktopReport = typeof MachineMapDesktopReport.Type;
 
+/**
+ * MM-411: a change that T3 Settings saved for all environments. The server sends the saved values
+ * of `server` and the given `client` values to the portal as shared values.
+ */
+export const MachineMapShareSettingsInput = Schema.Struct({
+  /** Server settings keys. The server reads their saved values. */
+  server: Schema.Array(Schema.String),
+  client: SettingValues,
+});
+export type MachineMapShareSettingsInput = typeof MachineMapShareSettingsInput.Type;
+
+/** False when this machine is not on the map or not connected: the change stays a bulk edit. */
+export const MachineMapShareSettingsResult = Schema.Struct({ shared: Schema.Boolean });
+export type MachineMapShareSettingsResult = typeof MachineMapShareSettingsResult.Type;
+
 /** MM-1701: the part of a `machines_read` result that the Machines panel shows. */
 export const MachinesReadResult = Schema.TaggedStruct("read", {
   map: MachineMapDocument,

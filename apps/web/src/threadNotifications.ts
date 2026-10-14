@@ -2,6 +2,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 
 import completionUrl from "./assets/notification-completion.mp3";
 import inputUrl from "./assets/notification-input.mp3";
+import { setInstalledAppBadge } from "./installedApp";
 
 type NotificationMode = ClientSettings["notificationMode"];
 export const NOTIFICATION_MODE_LABELS = {
@@ -43,6 +44,7 @@ export function setNotificationBadge(count: number) {
     }
   }
   if (!bridge) {
+    setInstalledAppBadge(count);
     if (image) {
       if (!badgeFavicon) {
         originalFavicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]') ?? undefined;

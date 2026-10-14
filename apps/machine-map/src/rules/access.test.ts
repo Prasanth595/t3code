@@ -125,7 +125,14 @@ describe("raisesAnyAccess (MM-711)", () => {
     expect(raisesAnyAccess(map, [lowerRole])).toBe(false);
     expect(
       raisesAnyAccess(map, [
-        { _tag: "manageSetting", scope: "server", key: "theme", managed: true },
+        {
+          _tag: "setSetting",
+          machineId: null,
+          scope: "server",
+          key: "theme",
+          present: true,
+          value: 1,
+        },
       ]),
     ).toBe(false);
   });

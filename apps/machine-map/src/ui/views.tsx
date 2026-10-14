@@ -18,7 +18,7 @@ import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
-import { machineQueue } from "./derive.ts";
+import { machineQueue, settingEntries } from "./derive.ts";
 import {
   actorText,
   ALERT_STICKER,
@@ -262,30 +262,52 @@ export function TableView() {
 
 const sameValue = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
 
-/** MM-405: one row per managed setting, one column per machine, drift marked. */
+/** MM-405, MM-406: one row per setting, one column per machine, drift marked. */
 export function SettingsView() {
   const portal = usePortalContext();
   const { map, snapshot, route } = portal;
-  const managed = map.settings.managed;
+  const [query, setQuery] = useState("");
   const selected = route.selection;
+  const needle = query.trim().toLowerCase();
+  const rows = (["server", "client"] as const)
+    .flatMap((scope) =>
+      settingEntries(map, snapshot.reportedSettings, scope).map((key) => ({ scope, key })),
+    )
+    .filter(({ key }) => key.toLowerCase().includes(needle))
+    .toSorted(
+      (a, b) =>
+        Number(Object.hasOwn(map.settings.shared[b.scope], b.key)) -
+        Number(Object.hasOwn(map.settings.shared[a.scope], a.key)),
+    );
+  const effective = new Map(map.machines.map((m) => [m.id, effectiveSettings(map, m.id)]));
   return (
     <div className="card view stack">
       <div className="view-head">
         <div>
           <h2>Settings</h2>
-          <p className="small muted">The map manages only the settings that you add here.</p>
+          <p className="small muted">
+            Every setting that a machine reports. A setting syncs once it has a shared value.
+          </p>
         </div>
         <button
           type="button"
           className="btn primary"
-          onClick={() => portal.open({ _tag: "manageSetting" })}
+          onClick={() => portal.open({ _tag: "importSettings" })}
         >
-          Manage a setting
+          Import shared values
         </button>
       </div>
-      {managed.length === 0 ? (
-        <Empty title="No managed settings yet">
-          Pick a setting with "Manage a setting". Its value then syncs to every machine.
+      <input
+        type="search"
+        className="full"
+        aria-label="Find a setting"
+        placeholder="Find a setting"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {rows.length === 0 ? (
+        <Empty title={needle ? "No setting matches" : "No settings yet"}>
+          Machines report their settings when they connect.
         </Empty>
       ) : (
         <>
@@ -305,7 +327,7 @@ export function SettingsView() {
                 </tr>
               </thead>
               <tbody>
-                {managed.map(({ scope, key }) => {
+                {rows.map(({ scope, key }) => {
                   const shared = map.settings.shared[scope];
                   const hasShared = Object.hasOwn(shared, key);
                   const on =
@@ -323,7 +345,7 @@ export function SettingsView() {
                       {map.machines.map((machine) => {
                         const own = map.settings.overrides[machine.id]?.[scope];
                         const hasOwn = own !== undefined && Object.hasOwn(own, key);
-                        const effective = effectiveSettings(map, machine.id)[scope][key];
+                        const desired = effective.get(machine.id)?.[scope] ?? {};
                         const reported = snapshot.reportedSettings[machine.id]?.[scope];
                         const reportedValue =
                           reported && Object.hasOwn(reported, key) ? reported[key] : undefined;
@@ -333,10 +355,12 @@ export function SettingsView() {
                             hasShared &&
                             !sameValue(reportedValue, shared[key]));
                         const pending =
-                          reportedValue !== undefined && !sameValue(reportedValue, effective);
+                          reportedValue !== undefined &&
+                          Object.hasOwn(desired, key) &&
+                          !sameValue(reportedValue, desired[key]);
                         return (
                           <td key={machine.id}>
-                            {valueText(reportedValue ?? effective)}
+                            {valueText(reportedValue ?? desired[key])}
                             {(drift || pending) && (
                               <div className="stickers">
                                 {hasOwn && <span className="sticker warn flat">own</span>}
@@ -354,6 +378,7 @@ export function SettingsView() {
             </table>
           </div>
           <p className="legend small muted">
+            <span>— no shared value: each machine keeps its own</span>
             <span>
               <span className="sticker warn flat">own</span> the machine keeps its own value
             </span>

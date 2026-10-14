@@ -5,6 +5,7 @@
 import * as Schema from "effect/Schema";
 import {
   ArrowRecord,
+  isMachineLocalSetting,
   MachineMapRole,
   type MachineId,
   type MachineLevel,
@@ -19,9 +20,9 @@ import {
   findArrow,
   findMachine,
   findNote,
-  isManaged,
   pairOffset,
   sameArrow,
+  settingKeys,
 } from "./map.ts";
 
 /** Summaries that the portal writes itself. The history reads them to tell what a revision did. */
@@ -122,24 +123,21 @@ export function restoreChanges(
     ),
   );
 
-  for (const { scope, key } of target.settings.managed) {
-    if (!isManaged(current, scope, key))
-      changes.push({ _tag: "manageSetting", scope, key, managed: true });
-  }
-  for (const { scope, key } of target.settings.managed) {
-    changes.push(
-      ...settingValueChanges(
-        current,
-        target,
-        scope,
-        key,
-        restoredMachines.map((m) => m.id),
-      ),
-    );
-  }
-  for (const { scope, key } of current.settings.managed) {
-    if (!isManaged(target, scope, key))
-      changes.push({ _tag: "manageSetting", scope, key, managed: false });
+  for (const scope of ["server", "client"] as const) {
+    const keys = new Set([...settingKeys(current, scope), ...settingKeys(target, scope)]);
+    for (const key of keys) {
+      // An older map can hold a value for a key that became machine-local. The map cannot set it.
+      if (isMachineLocalSetting(scope, key)) continue;
+      changes.push(
+        ...settingValueChanges(
+          current,
+          target,
+          scope,
+          key,
+          restoredMachines.map((m) => m.id),
+        ),
+      );
+    }
   }
 
   for (const preset of target.presets) {

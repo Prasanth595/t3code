@@ -35,6 +35,13 @@ export const reportMachineMapDesktop = createEnvironmentRpcCommand(connectionAto
   concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
 });
 
+/** MM-411: a change saved for all environments becomes the shared value of the map. */
+export const shareMachineMapSettings = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:machine-map:share-settings",
+  tag: WS_METHODS.machineMapShareSettings,
+  concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+});
+
 export function useMachineMapState(environmentId: EnvironmentId | null): {
   readonly state: MachineMapClientState | null;
   readonly error: string | null;

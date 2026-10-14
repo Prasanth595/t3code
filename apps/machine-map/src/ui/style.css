@@ -991,7 +991,8 @@ details.more[open] summary {
   position: relative;
   height: clamp(560px, calc(100vh - 290px), 980px);
   overflow: hidden;
-  touch-action: none;
+  /* A finger on empty map scrolls and zooms the page. Cards take their own drags. */
+  touch-action: pan-y pinch-zoom;
   /* A double click on the map opens the add menu (MM-1110); it selects no text. */
   user-select: none;
   -webkit-user-select: none;
@@ -1415,6 +1416,7 @@ details.more[open] summary {
 }
 .map.compact .node .sub {
   font-size: 0.68rem;
+  white-space: normal;
 }
 .map.compact .node .tags {
   gap: 4px;
@@ -1429,7 +1431,7 @@ details.more[open] summary {
   gap: 0;
 }
 .map.compact .dir {
-  min-height: 32px;
+  min-height: 44px;
   font-size: 0.88rem;
   padding: 2px 6px;
   gap: 6px;
@@ -2358,7 +2360,60 @@ dialog.palette .dialog-body {
   color: #ffffff;
 }
 
-/* Phone: bottom sheet (MM-1102), 16 px text and 44 px touch targets. */
+/* Tablet and small laptop window: the tabs wrap as chips, so every view stays reachable, and the
+   selected item opens in a bottom sheet (MM-1102), so the map keeps the full width. */
+@media (max-width: 1100px) {
+  .tabs {
+    order: 2;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    background: none;
+    border: 0;
+    box-shadow: none;
+    overflow: visible;
+  }
+  .tabs a,
+  .tabs a + a {
+    flex: 1 1 auto;
+    justify-content: center;
+    min-height: 46px;
+    padding: 6px 10px;
+    font-size: 1rem;
+    background: var(--surface);
+    border: var(--bw) solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: 2px 2px 0 0 var(--shadow-ink);
+  }
+  .tabs a[aria-current="page"] {
+    background: var(--select);
+  }
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    z-index: 30;
+    max-height: 66vh;
+    padding: 16px 18px calc(24px + env(safe-area-inset-bottom));
+    border-radius: var(--radius) var(--radius) 0 0;
+    box-shadow: 0 -4px 0 0 var(--shadow-ink);
+  }
+  .panel .head {
+    top: -16px;
+    margin: -16px -18px 12px;
+    padding: 10px 14px 8px 18px;
+  }
+  .layout.sheet-open {
+    padding-bottom: 66vh;
+  }
+}
+
+/* Phone: 16 px text and 44 px touch targets. */
 @media (max-width: 760px) {
   html {
     font-size: 16px;
@@ -2386,31 +2441,6 @@ dialog.palette .dialog-body {
     height: 46px;
     font-size: 1.25rem;
   }
-  .tabs {
-    order: 2;
-    flex-wrap: wrap;
-    gap: 8px;
-    width: 100%;
-    background: none;
-    border: 0;
-    box-shadow: none;
-    overflow: visible;
-  }
-  .tabs a,
-  .tabs a + a {
-    flex: 1 1 auto;
-    justify-content: center;
-    min-height: 46px;
-    padding: 6px 10px;
-    font-size: 1rem;
-    background: var(--surface);
-    border: var(--bw) solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: 2px 2px 0 0 var(--shadow-ink);
-  }
-  .tabs a[aria-current="page"] {
-    background: var(--select);
-  }
   /* A compact button on a phone: the well, the mushroom and one line of hint. */
   .top .panic-inner {
     gap: 14px;
@@ -2436,40 +2466,22 @@ dialog.palette .dialog-body {
   .toolbar {
     gap: 10px;
   }
-  /* Presets stay in the command palette on a phone, so the toolbar keeps two rows. */
+  /* Presets stay in the command palette on a phone, so the toolbar keeps one row. */
   .toolbar .spacer,
   .toolbar .group,
   .btn kbd {
     display: none;
   }
+  .toolbar .btn {
+    flex: 1 1 auto;
+    padding: 8px 10px;
+    font-size: 0.95rem;
+  }
   .btn.small {
     min-height: 44px;
   }
-  .layout {
-    grid-template-columns: 1fr;
-  }
   .view {
     padding: 16px;
-  }
-  .panel {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    top: auto;
-    z-index: 30;
-    max-height: 66vh;
-    padding: 16px 18px calc(24px + env(safe-area-inset-bottom));
-    border-radius: var(--radius) var(--radius) 0 0;
-    box-shadow: 0 -4px 0 0 var(--shadow-ink);
-  }
-  .panel .head {
-    top: -16px;
-    margin: -16px -18px 12px;
-    padding: 10px 14px 8px 18px;
-  }
-  .layout.sheet-open {
-    padding-bottom: 66vh;
   }
   /* Notices sit at the top, above the bottom sheet and the thumb. */
   .toast {
@@ -2486,8 +2498,8 @@ dialog.palette .dialog-body {
   }
   /* The pause info opens as a bottom sheet, like the dialogs. */
   .panic-info {
-    width: 2.2rem;
-    height: 2.2rem;
+    width: 44px;
+    height: 44px;
   }
   .pause-info {
     inset: auto 0 0;
