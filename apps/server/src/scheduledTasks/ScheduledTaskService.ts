@@ -1555,7 +1555,17 @@ export const layer = Layer.effect(
     // stopped until restart. Pausing an already paused task is a no-op.
     const lifecycleEvents = Stream.unwrap(
       Ref.get(reactorCursor).pipe(
-        Effect.flatMap(Option.match({ onNone: () => latestEventSeq, onSome: Effect.succeed })),
+        Effect.flatMap(
+          Option.match({
+            // Keep the recovered cursor, so a subscription that fails before
+            // its first event still resumes from here.
+            onNone: () =>
+              latestEventSeq.pipe(
+                Effect.tap((sequence) => Ref.set(reactorCursor, Option.some(sequence))),
+              ),
+            onSome: Effect.succeed,
+          }),
+        ),
         Effect.map((afterSequence) => threadManagement.streamStoredEventsFrom({ afterSequence })),
       ),
     );

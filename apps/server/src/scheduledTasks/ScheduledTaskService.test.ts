@@ -2949,6 +2949,110 @@ it.effect("the domain-event reactor resumes after its event stream fails", () =>
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
+it.effect("the reactor keeps a cursor it recovered after the startup read failed", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        const threadId = ThreadId.make("thread:reactor-recovered-cursor");
+        const reactorFailures = yield* Queue.unbounded<void>();
+        const secondSubscribed = yield* Deferred.make<void>();
+        const cursors: Array<number | undefined> = [];
+        const threadManagement = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamStoredEventsFrom: (input) =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                cursors.push(input?.afterSequence);
+                if (cursors.length === 1) {
+                  return Stream.fail(
+                    new Orchestrator.OrchestratorDomainEventStreamError({
+                      cause: "database is locked",
+                    }),
+                  );
+                }
+                yield* Deferred.succeed(secondSubscribed, undefined);
+                const rows = yield* sql<{
+                  readonly sequence: number;
+                  readonly event_id: string;
+                  readonly event_type: string;
+                  readonly stream_id: string;
+                }>`
+                  SELECT sequence, event_id, event_type, stream_id
+                  FROM orchestration_events
+                  WHERE sequence > ${input?.afterSequence ?? 0}
+                  ORDER BY sequence
+                `;
+                return Stream.fromIterable(
+                  rows.map(
+                    (row) =>
+                      ({
+                        sequence: row.sequence,
+                        commandId: null,
+                        event: {
+                          id: EventId.make(row.event_id),
+                          type: row.event_type,
+                          threadId: ThreadId.make(row.stream_id),
+                          providerInstanceId: ProviderInstanceId.make("codex"),
+                          occurredAt: DateTime.makeUnsafe(boundThreadArchivedAt),
+                          payload: { id: row.stream_id },
+                        } as unknown as OrchestrationV2DomainEvent,
+                      }) satisfies OrchestrationV2StoredEvent,
+                  ),
+                ).pipe(Stream.concat(Stream.never));
+              }).pipe(Effect.orDie),
+            ),
+        });
+        // The event log is unreadable at startup, so the reactor has no cursor.
+        yield* sql.unsafe(`ALTER TABLE orchestration_events RENAME TO orchestration_events_hidden`);
+        const context = yield* Layer.build(
+          ScheduledTaskService.layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeCrypto.layer,
+                Scheduler.layer,
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                threadManagement,
+                Logger.layer([
+                  Logger.make(({ message }) => {
+                    if (
+                      Array.isArray(message) &&
+                      message[0] === "Schedule task archive reactor failed; resubscribing"
+                    ) {
+                      Queue.offerUnsafe(reactorFailures, undefined);
+                    }
+                  }),
+                ]),
+              ),
+            ),
+          ),
+        );
+        const tasks = Context.get(context, ScheduledTaskService.ScheduledTaskService);
+        yield* Queue.take(reactorFailures);
+        yield* sql.unsafe(`ALTER TABLE orchestration_events_hidden RENAME TO orchestration_events`);
+        yield* setBoundThreadState(threadId, "active");
+        const task = yield* tasks.upsert({ ...boundTaskInput, enabled: true, threadId });
+
+        // The next attempt reads the cursor, then its subscription fails at once.
+        yield* TestClock.adjust("5 seconds");
+        yield* Queue.take(reactorFailures);
+        yield* setBoundThreadState(threadId, "archived");
+        yield* insertThreadEvent(threadId, "thread.archived", boundThreadArchivedAt);
+        yield* TestClock.adjust("5 seconds");
+        yield* Deferred.await(secondSubscribed);
+
+        assert.deepEqual(cursors, [cursors[0], cursors[0]]);
+        const paused = yield* tasks.subscribeList().pipe(
+          Stream.map(({ tasks: all }) => all.find((candidate) => candidate.id === task.task.id)),
+          Stream.filter((candidate) => candidate !== undefined && candidate.enabled === false),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(paused));
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
 it.effect("replays an archive committed after the startup sweep checked its thread", () =>
   Effect.gen(function* () {
     yield* Effect.scoped(
