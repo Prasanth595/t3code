@@ -5372,20 +5372,23 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const isCrossRepository = repositoryType === "fork";
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
+        // The checkout is on github.com, which also has a same-named repository,
+        // and the pull request is on another host. Clone lookups that fall back
+        // to the checkout's host find the github.com repository.
         const enterpriseRemote = yield* createBareRemote();
         const defaultHostRemote = yield* createBareRemote();
         const host = "github.enterprise.test";
         const repository = isCrossRepository ? "fork/repo" : "owner/base";
         const cloneUrl = `https://${host}/${repository}.git`;
-        yield* runGit(repoDir, ["remote", "add", "origin", enterpriseRemote]);
-        yield* runGit(repoDir, ["push", "origin", "main"]);
-        yield* runGit(repoDir, ["push", defaultHostRemote, "main:feature/host"]);
+        yield* runGit(repoDir, ["remote", "add", "origin", defaultHostRemote]);
+        yield* runGit(repoDir, ["push", "origin", "main", "main:feature/host"]);
+        yield* runGit(repoDir, ["push", enterpriseRemote, "main"]);
         yield* runGit(repoDir, ["checkout", "-b", "feature/host"]);
         NodeFS.writeFileSync(NodePath.join(repoDir, "host.txt"), "enterprise head\n");
         yield* runGit(repoDir, ["add", "host.txt"]);
         yield* runGit(repoDir, ["commit", "-m", "Enterprise head"]);
         const expectedHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
-        yield* runGit(repoDir, ["push", "origin", "feature/host"]);
+        yield* runGit(repoDir, ["push", enterpriseRemote, "feature/host"]);
         yield* runGit(repoDir, ["checkout", "main"]);
         if (mode === "worktree") {
           yield* runGit(repoDir, ["branch", "-D", "feature/host"]);
@@ -5393,12 +5396,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* configureVisibleRemoteUrlWithLocalRewrite(
           repoDir,
           "origin",
-          `https://${host}/owner/base.git`,
-          enterpriseRemote,
+          "https://github.com/owner/base.git",
+          defaultHostRemote,
         );
-        yield* runGit(repoDir, ["config", "--add", `url.${enterpriseRemote}.insteadOf`, cloneUrl]);
+        yield* runGit(repoDir, ["config", `url.${enterpriseRemote}.insteadOf`, cloneUrl]);
         const defaultCloneUrl = `https://github.com/${repository}.git`;
-        yield* runGit(repoDir, ["config", `url.${defaultHostRemote}.insteadOf`, defaultCloneUrl]);
+        yield* runGit(repoDir, [
+          "config",
+          "--add",
+          `url.${defaultHostRemote}.insteadOf`,
+          defaultCloneUrl,
+        ]);
 
         const { manager } = yield* makeManager({
           ghScenario: {
