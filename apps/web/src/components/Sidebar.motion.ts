@@ -11,12 +11,6 @@ const rowTravel = (height: number) => Math.min(height, 40);
 const MAX_FADED_ROWS_PER_UPDATE = 40;
 
 type RowPosition = { top: number; left: number; width: number; height: number };
-type RowBelow = { top: number; offset: number };
-
-// A fading row stays transparent while a displaced neighbour slides across
-// it. Offsets are eased progress; the translate keeps its two endpoints.
-const hiddenFrame = (at: number): Keyframe[] =>
-  at > 0 && at < 1 ? [{ offset: at, opacity: 0 }] : [];
 
 function progress(animation: Animation) {
   return animation.playState === "finished"
@@ -33,10 +27,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     "(prefers-reduced-motion: reduce)",
   );
   const running = new Map<HTMLElement, { animation: Animation; offset: number }>();
-  const entering = new Map<
-    HTMLElement,
-    { animation: Animation; travel: number; revealAt: number }
-  >();
+  const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
   // Visual tops at drag release, relative to the list, so the release
   // commit can glide every row from where dnd-kit left it into its slot.
@@ -60,7 +51,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     node: HTMLElement,
     position: RowPosition,
     travel: number,
-    below: RowBelow | undefined,
+    hidden: Keyframe[],
   ) => {
     if (position.height === 0) return;
     // React owns the removed row; only a noninteractive copy stays for the fade.
@@ -94,16 +85,11 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     });
     parent.append(clone);
     const entry = entering.get(node);
-    const entryOpacity = entry
-      ? Math.max(0, (progress(entry.animation) - entry.revealAt) / (1 - entry.revealAt))
-      : 1;
-    // Gone before the row below, closing the gap, reaches the clone.
-    const bottom = position.top + remainingOffset(node) + position.height;
-    const hideAt = below ? (below.top + below.offset - bottom) / (below.offset + travel) : 1;
+    const entryProgress = entry ? progress(entry.animation) : 1;
     const animation = clone.animate(
       [
-        { opacity: entryOpacity, transform: "translateY(0px)" },
-        ...hiddenFrame(hideAt),
+        { opacity: entryProgress, transform: "translateY(0px)" },
+        ...hidden,
         { opacity: 0, transform: `translateY(${travel}px)` },
       ],
       motionTiming,
@@ -195,18 +181,20 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         }
         return undefined;
       };
-      const rowBelow = (
+      // A fading row stays transparent until the next retained row, sliding
+      // across it, has passed. Takes the fading row's bottom at start and end.
+      const hiddenUntilCrossed = (
         order: readonly HTMLElement[],
         index: number,
-        retained: (node: HTMLElement) => boolean,
-      ): RowBelow | undefined => {
-        for (let cursor = index + 1; cursor < order.length; cursor++) {
-          const node = order[cursor]!;
-          const position = next.get(node);
-          if (!retained(node) || !position?.height) continue;
-          return { top: position.top, offset: movedDelta.get(node) ?? remainingOffset(node) };
-        }
-        return undefined;
+        bottomFrom: number,
+        bottomTo: number,
+      ): Keyframe[] => {
+        const below = order.slice(index + 1).find((n) => positions!.has(n) && next.get(n)?.height);
+        if (!below) return [];
+        const top = next.get(below)!.top;
+        const gapFrom = top + (movedDelta.get(below) ?? remainingOffset(below)) - bottomFrom;
+        const at = gapFrom / (gapFrom - (top - bottomTo));
+        return at > 0 && at < 1 ? [{ offset: at, opacity: 0 }] : [];
       };
       if (!shouldAnimate) clearFades();
       else {
@@ -222,10 +210,11 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         for (const [node, position] of positions!) {
           if (next.has(node)) continue;
           const index = oldOrder.indexOf(node);
-          const retained = (n: HTMLElement) => next.has(n);
-          const delta = ridingDelta(oldOrder, index, retained);
+          const delta = ridingDelta(oldOrder, index, (n) => next.has(n));
           const travel = delta === undefined ? rowTravel(position.height) : -delta;
-          fadeOut(node, position, travel, rowBelow(oldOrder, index, retained));
+          const bottom = position.top + remainingOffset(node) + position.height;
+          const hidden = hiddenUntilCrossed(oldOrder, index, bottom, bottom + travel);
+          fadeOut(node, position, travel, hidden);
         }
       }
       for (const [node, entry] of entering) {
@@ -243,27 +232,18 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           const previousTop = positions!.get(node)?.top;
           if (previousTop === undefined) {
             if (position.height > 0) {
-              const retained = (n: HTMLElement) => positions!.has(n);
-              const delta = ridingDelta(nextOrder, index, retained);
+              const delta = ridingDelta(nextOrder, index, (n) => positions!.has(n));
               const travel = delta === undefined ? -rowTravel(position.height) : delta;
-              // Appears once the row below, pushed down, has left this slot.
-              const below = rowBelow(nextOrder, index, retained);
-              const revealAt = below
-                ? 1 - (below.top - position.top - position.height) / (travel - below.offset)
-                : 0;
+              const bottom = position.top + position.height;
               const animation = node.animate(
                 [
                   { opacity: 0, transform: `translateY(${travel}px)` },
-                  ...hiddenFrame(revealAt),
+                  ...hiddenUntilCrossed(nextOrder, index, bottom + travel, bottom),
                   { opacity: 1, transform: "translateY(0px)" },
                 ],
                 motionTiming,
               );
-              entering.set(node, {
-                animation,
-                travel,
-                revealAt: revealAt > 0 && revealAt < 1 ? revealAt : 0,
-              });
+              entering.set(node, { animation, travel });
               animation.addEventListener(
                 "finish",
                 () => {
