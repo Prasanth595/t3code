@@ -194,7 +194,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   runtimeMode: Schema.optional(
     OrchestratorMcpRuntimeMode.annotate({
       description:
-        "Defaults to inherit; omit it unless the user asks for a supervised child. A narrower mode is not a read-only switch: on most providers, approval-required and auto-accept-edits pause the child at each action that needs approval until a person approves it in the child's thread, which this thread cannot do. To limit what the child does, say so in the task. A mode broader than this thread's is rejected.",
+        "Defaults to inherit; omit it unless the user asks for a supervised child. A narrower mode is not a read-only switch: on most providers, approval-required and auto-accept-edits pause the child at each action that needs approval until a person approves it in the child's thread, which this thread cannot do. To limit what the child does, say so in the task. A mode ranked above this thread's is rejected; that ranking does not promise the child's provider permissions are narrower than this thread's.",
     }),
   ),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
