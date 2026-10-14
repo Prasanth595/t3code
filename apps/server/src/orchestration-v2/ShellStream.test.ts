@@ -1,17 +1,23 @@
 import { describe, expect, it } from "@effect/vitest";
 import type {
   ApplicationStoredEvent,
+  OrchestrationProjectShell,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
@@ -143,6 +149,73 @@ describe("loadShellSnapshotParts", () => {
       expect(snapshot.snapshotSequence).toBe(7);
       expect(snapshot.threads.threads).toEqual([thread]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect(
+    "reads threads, projects and sequence from one reader snapshot while a write commits",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-shell-snapshot-" });
+        const filename = path.join(directory, "state.sqlite");
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`CREATE TABLE threads(id TEXT NOT NULL)`;
+          yield* sql`CREATE TABLE projects(id TEXT NOT NULL)`;
+          yield* sql`CREATE TABLE events(sequence INTEGER NOT NULL)`;
+          yield* sql`INSERT INTO threads VALUES ('thread-a')`;
+          yield* sql`INSERT INTO projects VALUES ('project-a')`;
+          yield* sql`INSERT INTO events VALUES (1)`;
+
+          const threadsRead = yield* Deferred.make<void>();
+          const write = yield* Effect.forkChild(
+            Deferred.await(threadsRead).pipe(
+              Effect.andThen(
+                sql.withTransaction(
+                  Effect.all([
+                    sql`INSERT INTO threads VALUES ('thread-b')`,
+                    sql`INSERT INTO projects VALUES ('project-b')`,
+                    sql`INSERT INTO events VALUES (2)`,
+                  ]),
+                ),
+              ),
+            ),
+          );
+
+          const snapshot = yield* loadShellSnapshotParts({
+            sql,
+            readThreads: Effect.gen(function* () {
+              const rows = yield* sql<{ id: string }>`SELECT id FROM threads ORDER BY id`;
+              yield* Deferred.succeed(threadsRead, undefined);
+              // The write commits before the rest of the snapshot is read. Holding
+              // the writer here would deadlock this join.
+              yield* Fiber.join(write);
+              return Effect.succeed({
+                schemaVersion: 1 as const,
+                snapshotSequence: 0,
+                threads: rows.map((row) => shellFixture({ id: ThreadId.make(row.id) })),
+                archivedThreads: [],
+              });
+            }),
+            listProjects: Effect.map(
+              sql<{ id: string }>`SELECT id FROM projects ORDER BY id`,
+              (rows) => rows.map((row) => ({ id: row.id }) as OrchestrationProjectShell),
+            ),
+            latestSequence: Effect.map(
+              sql<{ sequence: number }>`SELECT MAX(sequence) AS sequence FROM events`,
+              (rows) => rows[0]?.sequence ?? 0,
+            ),
+          });
+
+          expect({
+            threads: snapshot.threads.threads.map((thread) => thread.id),
+            projects: snapshot.projects.map((project) => project.id),
+            snapshotSequence: snapshot.snapshotSequence,
+          }).toEqual({ threads: ["thread-a"], projects: ["project-a"], snapshotSequence: 1 });
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename, readerWorker: true })));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
 
