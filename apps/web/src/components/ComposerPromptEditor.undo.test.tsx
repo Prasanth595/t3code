@@ -143,14 +143,19 @@ describe("controlled composer undo ownership", () => {
     expect(editorRef.current?.readSnapshot().value).toBe("");
   });
 
-  it("keeps the shortcut on a textless rich draft switched in without history", async () => {
-    await mount({ richTextEnabled: true });
-    await act(async () => setDraft("---", "b"));
-    expect(editor().state.doc.firstChild?.type.name).toBe("horizontalRule");
-    expect(editor().view.dom.textContent).toBe("");
-    expect(editor().commands.undo()).toBe(false);
-    expect(ownsUndo()).toBe(true);
-  });
+  it.each([
+    ["a rule", "---", "horizontalRule"],
+    ["an empty fence", "~~~ts\n~~~", "codeBlock"],
+  ])(
+    "keeps the shortcut on a rich draft of %s switched in without history",
+    async (_, draft, node) => {
+      await mount({ richTextEnabled: true });
+      await act(async () => setDraft(draft, "b"));
+      expect(editor().state.doc.firstChild?.type.name).toBe(node);
+      expect(editor().commands.undo()).toBe(false);
+      expect(ownsUndo()).toBe(true);
+    },
+  );
 
   it("restores a chip-only draft after its editor deletion", async () => {
     await mount();

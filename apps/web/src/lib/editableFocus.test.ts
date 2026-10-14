@@ -34,7 +34,7 @@ function composer() {
   cleanups.push(
     registerEditableUndoHistory(
       editor.view.dom,
-      () => undoDepth(editor.state) > 0 || !editor.isEmpty,
+      () => undoDepth(editor.state) > 0 || editor.getText().length > 0,
     ),
   );
   return editor;

@@ -1505,10 +1505,11 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
 
   useEffect(() => {
     if (!editor) return;
-    // Any content (text, chips, rules) keeps the shortcut on the draft.
+    // Any serialized draft (text, chips, rules, empty fences) keeps the
+    // shortcut; serialize only once history is empty, as this runs per keydown.
     return registerEditableUndoHistory(
       editor.view.dom,
-      () => undoDepth(editor.state) > 0 || !editor.isEmpty,
+      () => undoDepth(editor.state) > 0 || serializeEditorDoc(editor.state.doc).value.length > 0,
     );
   }, [editor]);
 
