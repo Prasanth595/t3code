@@ -652,6 +652,7 @@ export const make = Effect.gen(function* () {
                   (expectedVersion === undefined || state.downloadedVersion === expectedVersion);
                 if (
                   (yield* Ref.get(desktopState.quitting)) ||
+                  Option.isSome(yield* Ref.get(installCompletionRef)) ||
                   !(yield* Ref.get(updaterConfiguredRef)) ||
                   !hasExpectedDownload
                 ) {

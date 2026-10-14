@@ -765,6 +765,50 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("keeps the shutdown handoff when an error event makes retry available", () =>
+    Effect.gen(function* () {
+      const installing = yield* Deferred.make<void>();
+      const finishInstaller = yield* Deferred.make<void>();
+      const shutdownReady = yield* Deferred.make<void>();
+      let attempts = 0;
+      const harness = makeHarness({
+        quitAndInstall: Effect.suspend(() =>
+          ++attempts === 1
+            ? Deferred.succeed(installing, undefined).pipe(
+                Effect.andThen(Deferred.await(finishInstaller)),
+              )
+            : Effect.void,
+        ),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const install = yield* updates.install.pipe(Effect.forkScoped);
+          yield* Deferred.await(installing);
+          yield* Effect.gen(function* () {
+            harness.emit("error", new Error("native installer refused"));
+            yield* flushCallbacks;
+            assert.isFalse(yield* updates.isActionActive);
+            assert.isFalse((yield* updates.install).accepted);
+            assert.equal(attempts, 1);
+            const shutdown = yield* updates.prepareShutdown.pipe(
+              Effect.andThen(Deferred.succeed(shutdownReady, undefined)),
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            assert.isFalse(yield* Deferred.isDone(shutdownReady));
+            yield* Deferred.succeed(finishInstaller, undefined);
+            yield* Fiber.join(install);
+            yield* Fiber.join(shutdown);
+          }).pipe(Effect.ensuring(Deferred.succeed(finishInstaller, undefined)));
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
   it.effect("keeps windows and restarts backends when quitAndInstall fails", () => {
     const harness = makeHarness({
       quitAndInstall: Effect.fail(
