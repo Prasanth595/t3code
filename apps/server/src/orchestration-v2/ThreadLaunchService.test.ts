@@ -1111,6 +1111,40 @@ it.effect("runs a Scratch thread launched at the root in its own folder", () =>
   }),
 );
 
+it.effect("runs a worktree request in Scratch in its own folder", () =>
+  Effect.gen(function* () {
+    // Only `projectId` stands in for the Scratch project here.
+    const harness = makeHarness({
+      managedFolders: Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/projects",
+        folderForThread: (input) =>
+          Effect.succeed(
+            input.projectId === projectId ? Option.some("/scratch/folder") : Option.none(),
+          ),
+      }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "command:launch:scratch-worktree",
+          thread: "thread:launch:scratch-worktree",
+          message: "Summarize my day",
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        }),
+      );
+      yield* waitUntil(() => Effect.sync(() => harness.runSetup.mock.calls.length === 1));
+      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.worktreePath, "/scratch/folder");
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+        "/scratch/folder",
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("names the worktree itself when the client provides no branch", () =>
   Effect.gen(function* () {
     const harness = makeHarness();

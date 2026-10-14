@@ -298,20 +298,42 @@ const make = Effect.gen(function* () {
   });
 
   const prepareInBackground = Effect.fn("ThreadLaunchService.prepareInBackground")(function* (
-    input: PreparationInput,
+    requested: PreparationInput,
     threadId: ThreadId,
     runId: RunId | null,
   ) {
-    const project = yield* projects.getById(input.projectId).pipe(
-      Effect.mapError(mapError(input, "resolve-project", threadId)),
+    const project = yield* projects.getById(requested.projectId).pipe(
+      Effect.mapError(mapError(requested, "resolve-project", threadId)),
       Effect.flatMap(
         Option.match({
           onNone: () =>
-            Effect.fail(mapError(input, "resolve-project", threadId)("Project no longer exists.")),
+            Effect.fail(
+              mapError(requested, "resolve-project", threadId)("Project no longer exists."),
+            ),
           onSome: Effect.succeed,
         }),
       ),
     );
+    // Scratch is not a Git repository, so a worktree request there (a stale
+    // composer mode, an agent, a scheduled task, or a retry of one) runs in a
+    // folder of its own, like a root launch.
+    const scratchFolder =
+      requested.workspaceStrategy.type === "worktree"
+        ? yield* managedFolders
+            .folderForThread({
+              projectId: requested.projectId,
+              threadId,
+              text: requested.initialMessage?.text ?? "",
+            })
+            .pipe(Effect.mapError(mapError(requested, "provision-worktree", threadId)))
+        : Option.none<string>();
+    const input: PreparationInput = Option.match(scratchFolder, {
+      onNone: () => requested,
+      onSome: (worktreePath) => ({
+        ...requested,
+        workspaceStrategy: { type: "existing_worktree", worktreePath },
+      }),
+    });
 
     const reused = input.reusedWorktree;
     const tracked = input.workspaceStrategy.type === "worktree" || reused !== undefined;
