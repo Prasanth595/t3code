@@ -15,6 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 
+import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 /**
@@ -23,6 +24,18 @@ import * as ProcessRunner from "../processRunner.ts";
  * agents directly.
  */
 const AGENT_SLICE = "app-t3code-agents.slice";
+
+/**
+ * The child slice for one server's agents, named after its state directory.
+ * Only one server uses a state directory at a time, so an agent in this slice
+ * when the server starts was left by an earlier server on the same state,
+ * for example one the launcher killed during an update. Other servers on the
+ * machine, such as dev servers, have their own slice.
+ */
+export function ownedAgentSlice(stateDir: string): string {
+  const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
+  return `app-t3code-agents-${hash}.slice`;
+}
 
 const GiB = 1024 ** 3;
 
@@ -99,6 +112,8 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const hostEnvironment = yield* HostProcess.Environment;
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  const ownedSlice = ownedAgentSlice(stateDir);
   const layerScope = yield* Effect.scope;
 
   const resolve = (command: string, env: NodeJS.ProcessEnv) =>
@@ -111,8 +126,45 @@ export const make = Effect.gen(function* () {
   const run = (command: string, args: ReadonlyArray<string>) =>
     runner.run({ command, args, timeout: "5 seconds" }).pipe(Effect.option);
 
-  // Runs once, on the first agent launch. It proves this process can reach a
-  // systemd user manager, creates the agents slice, and sets its limits.
+  const readCgroupFile = (controlGroup: string, file: string) =>
+    fileSystem
+      .readFileString(path.join("/sys/fs/cgroup", controlGroup, file))
+      .pipe(Effect.orElseSucceed(() => ""));
+
+  // Old agents keep their scopes when the server is killed, and the restarted
+  // server resumes their sessions. Stop them first, so two copies of one
+  // session never work in the same worktree.
+  const stopLeftoverAgents = (systemctl: string) =>
+    Effect.gen(function* () {
+      const shown = yield* run(systemctl, [
+        "--user",
+        "show",
+        ownedSlice,
+        "--property=ActiveState,ControlGroup",
+      ]);
+      if (shown._tag === "None") return;
+      const values = parseKeyValues(shown.value.stdout);
+      if (values.get("ActiveState") !== "active") return;
+      // An active slice can be empty once its last agent exited.
+      const controlGroup = values.get("ControlGroup") ?? "";
+      const events = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
+      if (parseCgroupCounter(events, "populated") === 0) return;
+      yield* Effect.logWarning("Stopping agents left by a previous server", { slice: ownedSlice });
+      // Agents get SIGTERM and then SIGKILL, so the stop can take a moment.
+      const stopped = yield* runner
+        .run({ command: systemctl, args: ["--user", "stop", ownedSlice], timeout: "30 seconds" })
+        .pipe(Effect.option);
+      if (stopped._tag === "None" || stopped.value.code !== 0) {
+        yield* Effect.logWarning("Could not stop agents left by a previous server", {
+          slice: ownedSlice,
+          stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
+        });
+      }
+    });
+
+  // Runs once, on the first agent or terminal launch. It proves this process
+  // can reach a systemd user manager, stops agents a previous server left,
+  // creates the agents slice, and sets its limits.
   const systemd = yield* Effect.cached(
     Effect.gen(function* () {
       const runtimeDir = hostEnvironment.XDG_RUNTIME_DIR;
@@ -120,6 +172,7 @@ export const make = Effect.gen(function* () {
       const systemdRun = yield* resolve("systemd-run", hostEnvironment);
       const systemctl = yield* resolve("systemctl", hostEnvironment);
       if (systemdRun === null || systemctl === null) return undefined;
+      yield* stopLeftoverAgents(systemctl);
       const probe = (options: ReadonlyArray<string>) =>
         run(systemdRun, [
           "--user",
@@ -175,11 +228,6 @@ export const make = Effect.gen(function* () {
   // The newest scope per thread, oldest thread first. A thread runs one agent
   // at a time, so only its latest scope can explain a failure.
   const scopeByThread = new Map<string, { unit: string; oomKilled: boolean }>();
-
-  const readCgroupFile = (controlGroup: string, file: string) =>
-    fileSystem
-      .readFileString(path.join("/sys/fs/cgroup", controlGroup, file))
-      .pipe(Effect.orElseSucceed(() => ""));
 
   const readScope = (systemctl: string, unit: string) =>
     Effect.gen(function* () {
@@ -290,7 +338,14 @@ export const make = Effect.gen(function* () {
     });
 
   return {
-    wrap: Effect.fn("AgentScope.wrap")(function* ({ command, args, name, threadId, env }) {
+    wrap: Effect.fn("AgentScope.wrap")(function* ({
+      command,
+      args,
+      name,
+      threadId,
+      env,
+      survivesRestart,
+    }) {
       const resolved = yield* resolve(command, env ?? hostEnvironment);
       // Leave unresolved commands alone so the spawn reports the missing binary.
       if (resolved === null) return { command, args };
@@ -301,7 +356,7 @@ export const make = Effect.gen(function* () {
       const systemdScope: AgentSystemdScope = {
         systemdRun: scope.systemdRun,
         runtimeDir: scope.runtimeDir,
-        slice: AGENT_SLICE,
+        slice: survivesRestart === true ? AGENT_SLICE : ownedSlice,
         unit,
         // Without a thread nothing reads the result, so let systemd unload
         // the unit even when it fails.
