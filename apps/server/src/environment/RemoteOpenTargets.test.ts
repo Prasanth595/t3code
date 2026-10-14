@@ -104,6 +104,7 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: false, ipv6: false },
         tailscale: TAILSCALE_SSH,
         hostname: "bb-1",
+        username: null,
       });
       expect(targets).toEqual([{ kind: "tailscale", host: "bb-1.tail1234.ts.net" }]);
     }),
@@ -115,6 +116,7 @@ describe("RemoteOpenTargets", () => {
         sshd: { ipv4: false, ipv6: false },
         tailscale: { status: STATUS_UP, prefs: prefsJson({ RunSSH: true, WantRunning: false }) },
         hostname: "bb-1",
+        username: null,
       });
       expect(targets).toEqual([]);
     }),
