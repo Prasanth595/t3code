@@ -378,13 +378,21 @@ if (context.update?.status === "pending") {
         const databasePath = path.join(root, "userdata", "state.sqlite");
         // A symlinked database keeps its link: rollback restores the file it points to,
         // even one the trial left missing, as a crash during a macOS clone restore can.
+        // The dangling case reaches its file through a directory link and a relative
+        // `..` link, which only resolves correctly by following the directory link.
         const databaseFile =
-          kind === "file" ? databasePath : path.join(root, "elsewhere", "state.sqlite");
+          kind === "file" ? databasePath : path.join(root, "data", "original.sqlite");
+        const linkTarget = kind === "dangling symlink" ? "../original.sqlite" : databaseFile;
         const original = "database before migration";
-        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
         yield* fs.makeDirectory(path.dirname(databaseFile), { recursive: true });
+        if (kind === "dangling symlink") {
+          yield* fs.makeDirectory(path.join(root, "data", "sub"));
+          yield* fs.symlink(path.join(root, "data", "sub"), path.dirname(databasePath));
+        } else {
+          yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        }
         yield* fs.writeFileString(databaseFile, original);
-        if (kind !== "file") yield* fs.symlink(databaseFile, databasePath);
+        if (kind !== "file") yield* fs.symlink(linkTarget, databasePath);
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
 import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
@@ -432,7 +440,8 @@ if (context.update?.status === "pending") {
         assert.equal(state.activeVersion, "1.0.0");
         assert.equal(state.update?.status, "rolled-back");
         assert.equal(yield* fs.readFileString(databaseFile), original);
-        if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), databaseFile);
+        if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), linkTarget);
+        assert.isFalse(yield* fs.exists(path.join(root, "original.sqlite")));
         assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
         assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
         const updateId = state.update?.id;

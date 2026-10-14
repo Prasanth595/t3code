@@ -325,7 +325,11 @@ async function restoreTarget(path: string): Promise<string> {
       throw cause;
     });
     if (link === undefined) return current;
-    current = NodePath.resolve(NodePath.dirname(current), link);
+    // Joined without normalizing: a `..` in the link must follow directory links
+    // the way the filesystem does, not cancel a path segment.
+    current = NodePath.isAbsolute(link)
+      ? link
+      : `${await NodeFSP.realpath(NodePath.dirname(current))}${NodePath.sep}${link}`;
   }
   throw new Error(`Too many symbolic links resolving ${path}.`);
 }
