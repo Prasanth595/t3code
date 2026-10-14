@@ -1966,11 +1966,13 @@ export function deriveMessagesTimelineRows(input: {
     (!hasActivityRow || latestToolFailed)
   ) {
     // Stamp when the latest activity in the active response started, not the
-    // turn. Later sends (a steer) are not that activity. Start times stay
-    // fixed while text streams, which keeps the incremental streaming path in
-    // parity.
+    // turn. Later sends (a steer) are not that activity; event cards carry
+    // their run on the projected item. Start times stay fixed while text
+    // streams, which keeps the incremental streaming path in parity.
     const latestActiveEntry = timelineEntries.findLast((entry) =>
-      runIdIsActiveResponse(timelineEntryRunId(entry)),
+      runIdIsActiveResponse(
+        entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry),
+      ),
     );
     const thinkingCreatedAt = maxIsoTimestamp(
       input.activeTurnStartedAt ?? null,

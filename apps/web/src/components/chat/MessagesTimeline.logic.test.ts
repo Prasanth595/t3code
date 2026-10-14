@@ -2004,6 +2004,20 @@ describe("deriveMessagesTimelineRows", () => {
         },
       ]),
     ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:10Z" });
+    // Event cards carry their run on the projected item, so a card the run
+    // added still counts as its latest activity.
+    expect(
+      deriveThinkingRow([
+        userEntry,
+        assistantEntry,
+        {
+          id: "subagent-card-entry",
+          kind: "event",
+          createdAt: "2026-01-01T00:00:15Z",
+          projectedItem: { item: { type: "subagent", runId: "turn-1" } } as never,
+        },
+      ]),
+    ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:15Z" });
   });
 
   it("does not fold the active in-progress turn", () => {
