@@ -774,14 +774,106 @@ export const layerWithOptions = (
           }
         });
 
+      // Reads the background tasks a released session's process left on its
+      // provider threads. Read as soon as the session leaves the live map:
+      // after that, a replacement session with the same id can open and report
+      // tasks of its own on the same provider threads. Server shutdown keeps
+      // rosters, since startup recovery clears them and records the cancelled
+      // work.
+      const readReleasedBackgroundTasks = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly reason: ProviderSessionReleaseReason;
+        readonly detachedThreadId?: ThreadId;
+      }) =>
+        Effect.gen(function* () {
+          if (input.reason === "server_shutdown") return [];
+          const providerSessionId = input.entry.runtime.providerSessionId;
+          // A detach that released the session already removed its thread
+          // from the attached set.
+          const threadIds = new Set(input.entry.attachedThreadIds);
+          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+          const released = [];
+          for (const threadId of threadIds) {
+            const projection = yield* projectionStore.getThreadRecords(threadId, [
+              "providerThreads",
+            ]);
+            for (const providerThread of projection.providerThreads) {
+              const tasks = providerThread.pendingBackgroundTasks ?? [];
+              if (providerThread.providerSessionId !== providerSessionId || tasks.length === 0) {
+                continue;
+              }
+              released.push({
+                threadId,
+                providerSessionId,
+                providerThreadId: providerThread.id,
+                taskIds: new Set(tasks.map((task) => task.taskId)),
+              });
+            }
+          }
+          return released;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-session-release-roster-read-failed", {
+              providerSessionId: input.entry.runtime.providerSessionId,
+              cause,
+            }).pipe(Effect.as([])),
+          ),
+        );
+      type ReleasedBackgroundTasks = Effect.Success<
+        ReturnType<typeof readReleasedBackgroundTasks>
+      >[number];
+
+      // Removes the tasks `readReleasedBackgroundTasks` found from their
+      // rosters. Their process is gone, so nothing will report them ending,
+      // and a leftover roster keeps the thread Waiting (#15239). Tasks a
+      // replacement session reported since are left in place.
+      const writeReleasedBackgroundWorkEvents = (
+        released: ReadonlyArray<ReleasedBackgroundTasks>,
+      ) =>
+        Effect.forEach(
+          released,
+          ({ threadId, providerSessionId, providerThreadId, taskIds }) =>
+            Effect.gen(function* () {
+              const projection = yield* projectionStore.getThreadRecords(threadId, [
+                "providerThreads",
+              ]);
+              const providerThread = projection.providerThreads.find(
+                (candidate) => candidate.id === providerThreadId,
+              );
+              const tasks = providerThread?.pendingBackgroundTasks ?? [];
+              const remaining = tasks.filter((task) => !taskIds.has(task.taskId));
+              if (providerThread === undefined || remaining.length === tasks.length) return;
+              const now = yield* DateTime.now;
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+                    type: "provider-thread.updated",
+                    threadId,
+                    driver: providerThread.driver,
+                    providerInstanceId: providerThread.providerInstanceId,
+                    occurredAt: now,
+                    payload: {
+                      ...providerThread,
+                      pendingBackgroundTasks: remaining,
+                      updatedAt: now,
+                    },
+                  },
+                ],
+              });
+            }),
+          { discard: true },
+        );
+
       // Records a released session as stopped and resolves the live runtime
-      // requests it left. Each write runs even if the other fails. Once a
-      // replacement session opens with the same id, it owns the session status,
-      // so only the requests are settled.
+      // requests and background-task rosters it left. Each write runs even if
+      // another fails. Once a replacement session opens with the same id, it
+      // owns the session status, so only the requests are settled.
       const writeReleaseRecords = (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
+        readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
         readonly replaced: boolean;
       }) =>
@@ -795,6 +887,7 @@ export const layerWithOptions = (
                 input.entry.requestEventPermit.withPermits(1),
               ),
             ),
+            Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
           ],
           { concurrency: 1 },
         ).pipe(Effect.flatMap(Exit.asVoidAll));
@@ -937,6 +1030,8 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
+        /** The thread whose detach released the session; it is no longer attached. */
+        readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
@@ -948,6 +1043,13 @@ export const layerWithOptions = (
               onNone: () => Effect.void,
               onSome: (entry) =>
                 Effect.gen(function* () {
+                  const releasedBackgroundTasks = yield* readReleasedBackgroundTasks({
+                    entry,
+                    reason: input.reason,
+                    ...(input.detachedThreadId === undefined
+                      ? {}
+                      : { detachedThreadId: input.detachedThreadId }),
+                  });
                   if (input.cancelIdleFiber !== false) {
                     yield* cancelIdleFiber(entry.idleFiber);
                   }
@@ -969,6 +1071,7 @@ export const layerWithOptions = (
                     entry,
                     reason: input.reason,
                     ...(input.detail === undefined ? {} : { detail: input.detail }),
+                    releasedBackgroundTasks,
                     releasedAt,
                   };
                   const recorded = yield* Effect.exit(
@@ -2406,6 +2509,7 @@ export const layerWithOptions = (
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
+                detachedThreadId: input.threadId,
               });
               return;
             }

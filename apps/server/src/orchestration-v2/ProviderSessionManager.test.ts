@@ -2769,6 +2769,169 @@ it.effect("ProviderSessionManagerV2 persists release when session scope close ha
   }),
 );
 
+// Seeds a thread with a background command on a provider thread of the
+// session it then opens, and one on a provider thread of another session.
+const openSessionWithBackgroundCommand = (fixtureName: string) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const threadId = yield* idAllocator.allocate.thread({
+      fixtureName,
+      projectId: yield* idAllocator.allocate.project({ fixtureName }),
+    });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    const otherProviderSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    const pendingBackgroundTasks = [
+      { taskId: "dev-server", kind: "command", description: "python3 -m http.server" },
+    ] as const;
+    const providerThreads = [
+      {
+        ...makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+        pendingBackgroundTasks,
+      },
+      {
+        ...makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId: otherProviderSessionId,
+          now,
+          nativeThreadId: "native-thread-other-session",
+        }),
+        pendingBackgroundTasks,
+      },
+    ];
+    const writeProviderThread = (payload: OrchestrationV2ProviderThread) =>
+      Effect.gen(function* () {
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload,
+            },
+          ],
+        });
+      });
+    yield* eventSink.write({
+      events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+    });
+    yield* Effect.forEach(providerThreads, writeProviderThread);
+    yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+    // The task ids each seeded provider thread lists now.
+    const rosters = Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      return providerThreads.map((seeded) =>
+        (
+          projection.providerThreads.find((thread) => thread.id === seeded.id)
+            ?.pendingBackgroundTasks ?? []
+        ).map((task) => task.taskId),
+      );
+    });
+    return { threadId, providerSessionId, providerThreads, writeProviderThread, rosters };
+  });
+
+it.effect(
+  "ProviderSessionManagerV2 clears the background roster of a session a detach releases",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { threadId, providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+          "provider-session-manager-detach-roster",
+        );
+        assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+
+        // Settle and archive detach the thread, which releases an exclusive
+        // (Claude-like) session.
+        yield* manager.detach({ providerSessionId, threadId, detail: "Thread settled." });
+
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({ state, idleTimeoutMs: 60_000, capabilities: ExclusiveCapabilities }),
+        ),
+      );
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 clears the background roster of an idle-released session", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const { providerSessionId, rosters } = yield* openSessionWithBackgroundCommand(
+        "provider-session-manager-idle-roster",
+      );
+      assert.deepStrictEqual(yield* rosters, [["dev-server"], ["dev-server"]]);
+
+      yield* TestClock.adjust("1 second");
+      yield* Effect.yieldNow;
+
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.deepStrictEqual(yield* rosters, [[], ["dev-server"]]);
+    });
+
+    yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps background tasks a replacement reports during release",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const { providerSessionId, providerThreads, writeProviderThread, rosters } =
+          yield* openSessionWithBackgroundCommand("provider-session-manager-replacement-roster");
+        const release = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+
+        // While the old process closes, a replacement session with the same id
+        // reports a task of its own next to the dead one.
+        yield* Deferred.await(scopeCloseReached);
+        yield* writeProviderThread({
+          ...providerThreads[0]!,
+          pendingBackgroundTasks: [
+            ...providerThreads[0]!.pendingBackgroundTasks,
+            { taskId: "replacement-task", kind: "command" },
+          ],
+        });
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(release);
+
+        assert.deepStrictEqual(yield* rosters, [["replacement-task"], ["dev-server"]]);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 defers idle release while background work is pending", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
