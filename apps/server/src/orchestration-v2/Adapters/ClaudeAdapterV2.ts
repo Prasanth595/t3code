@@ -1026,12 +1026,19 @@ export const layerQueryRunner: Layer.Layer<
 
 type ClaudeFlagSettings = Parameters<ClaudeQuery["applyFlagSettings"]>[0];
 
-/** Thinking is a launch flag (`--thinking`), so only a new process can change it. */
+/**
+ * Thinking is a launch flag (`--thinking`), so only a new process can change
+ * it. Clearing an explicit effort also needs one: the live reset goes to the
+ * model default, while a new process reads the user's settings files.
+ */
 function canApplyClaudeSelectionLive(
   live: CompiledClaudeModelSelection,
   next: CompiledClaudeModelSelection,
 ): boolean {
-  return live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled;
+  return (
+    live.settings.alwaysThinkingEnabled === next.settings.alwaysThinkingEnabled &&
+    (next.effort !== undefined || live.effort === undefined)
+  );
 }
 
 /**
@@ -1042,7 +1049,7 @@ function claudeLiveSelectionFlagSettings(
   selection: CompiledClaudeModelSelection,
 ): ClaudeFlagSettings {
   return {
-    effortLevel: (selection.effort ?? null) as EffortLevel | null,
+    ...(selection.effort === undefined ? {} : { effortLevel: selection.effort as EffortLevel }),
     fastMode: selection.settings.fastMode ?? null,
     ultracode: selection.settings.ultracode ?? null,
   };
@@ -8417,13 +8424,20 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.selection.queryIdentity !== compiledSelection.queryIdentity &&
             canApplyClaudeSelectionLive(existing.selection, compiledSelection)
           ) {
-            if (existing.selection.apiModelId !== compiledSelection.apiModelId) {
-              yield* existing.query.setModel(compiledSelection.apiModelId);
-            }
-            yield* existing.query.applyFlagSettings(
-              claudeLiveSelectionFlagSettings(compiledSelection),
+            const live = existing;
+            yield* live.query.setModel(compiledSelection.apiModelId).pipe(
+              Effect.andThen(
+                live.query.applyFlagSettings(claudeLiveSelectionFlagSettings(compiledSelection)),
+              ),
+              // A partial change leaves the process state unknown. A blank
+              // identity matches no selection, so the next turn sends both again.
+              Effect.tapError(() =>
+                Effect.sync(() => {
+                  live.selection = { ...live.selection, queryIdentity: "" };
+                }),
+              ),
             );
-            existing.selection = compiledSelection;
+            live.selection = compiledSelection;
           }
           if (
             existing !== null &&

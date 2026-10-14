@@ -2651,7 +2651,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   );
 
   it.effect(
-    "applies model, effort and Fast changes to a process running a background shell, but not a thinking change",
+    "applies model, effort and Fast changes to a process running a background shell, but not thinking or a cleared effort",
     () =>
       Effect.scoped(
         Effect.gen(function* () {
@@ -2702,6 +2702,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* harness.runtime.startTurn(turn(4, { ...normal, model: "claude-sonnet-4-6" }));
           yield* settle;
           assert.deepEqual(harness.liveSelectionChanges, [
+            { model: "claude-opus-5-5" },
             { effortLevel: "xhigh", fastMode: true, ultracode: true },
             { model: "claude-sonnet-4-6" },
             // Sonnet's default effort; it has no Fast mode.
@@ -2710,18 +2711,26 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.strictEqual(harness.getOpenedOptions(), originalOptions);
           assert.lengthOf(harness.offeredMessages, 4);
 
-          const refused = yield* harness.runtime
-            .startTurn(turn(5, CLAUDE_TEST_RESTART_MODEL_SELECTION))
-            .pipe(Effect.result);
-          assert.equal(refused._tag, "Failure");
-          if (refused._tag === "Failure") {
-            assert.instanceOf(
-              refused.failure.cause,
-              ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
-            );
+          // Thinking is a launch flag. Haiku 4.5 has no effort, and only a new
+          // process reads the user's configured effort again.
+          for (const [ordinal, selection] of [
+            [5, CLAUDE_TEST_RESTART_MODEL_SELECTION],
+            [6, { ...normal, model: "claude-haiku-4-5-20251001" }],
+          ] as const) {
+            const refused = yield* harness.runtime
+              .startTurn(turn(ordinal, selection))
+              .pipe(Effect.result);
+            assert.equal(refused._tag, "Failure");
+            if (refused._tag === "Failure") {
+              assert.instanceOf(
+                refused.failure.cause,
+                ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+              );
+            }
           }
           assert.strictEqual(harness.getOpenedOptions(), originalOptions);
           assert.lengthOf(harness.offeredMessages, 4);
+          assert.lengthOf(harness.liveSelectionChanges, 4);
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
         }).pipe(
           Effect.provide(
