@@ -2729,7 +2729,7 @@ describe("orchestrator MCP toolkit", () => {
               title: "Wait question",
               target: { providerInstanceId: codexInstanceId, model: codexModel },
               mode: "wait",
-              timeoutMs: 600_000,
+              timeoutMs: 30_000,
               clientRequestId: "delegate-wait-question-1",
             }).pipe(Effect.forkChild);
             const question = (yield* waitForProjection(orchestrator, parentThreadId, (p) =>
@@ -2751,7 +2751,8 @@ describe("orchestrator MCP toolkit", () => {
                   payload: {
                     id: RuntimeRequestId.make("request:wait-question"),
                     nodeId: question.id,
-                    providerTurnId: null,
+                    providerTurnId: asking.providerTurns.find((turn) => turn.status === "running")!
+                      .id,
                     nativeRequestRef: null,
                     kind: "user_input",
                     status: "pending",
