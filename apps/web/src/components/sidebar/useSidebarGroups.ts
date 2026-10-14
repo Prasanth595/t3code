@@ -15,9 +15,10 @@ import { useShallow } from "zustand/react/shallow";
 
 import { randomUUID } from "~/lib/utils";
 import {
-  getClientSettings,
   useClientSettings,
-  useUpdateClientSettings,
+  usePrimarySettings,
+  usePrimarySettingsAvailable,
+  useUpdatePrimarySettings,
 } from "../../hooks/useSettings";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import type { SidebarThreadSummary } from "../../types";
@@ -76,11 +77,13 @@ export function useSidebarGroups(input: {
   readonly searching: boolean;
 }) {
   const { threads, projectGroups, routeThreadKey, searching } = input;
-  const enabled = useClientSettings((s) => s.sidebarGroupsEnabled);
-  const savedSettings = useClientSettings((s) => s.sidebarGroups);
+  // The groups live in the shared server settings, so every device and machine sees the same
+  // groups. The hosted app has no primary server to hold them, so it shows none.
+  const enabled = useClientSettings((s) => s.sidebarGroupsEnabled) && usePrimarySettingsAvailable();
+  const savedSettings = usePrimarySettings((s) => s.sidebarGroups);
   const singleThreadOpens = useClientSettings((s) => s.sidebarGroupSingleThreadOpens);
   const settings = enabled ? savedSettings : EMPTY_SETTINGS;
-  const updateClientSettings = useUpdateClientSettings();
+  const updatePrimarySettings = useUpdatePrimarySettings();
   const storedTabId = useSidebarGroupTabStore((s) => s.tabId);
   const setTabId = useSidebarGroupTabStore((s) => s.setTabId);
   const tabId =
@@ -221,11 +224,20 @@ export function useSidebarGroups(input: {
     setTabId(groupId);
   }, [enabled, groupIdByThreadKey, routeThreadKey, setTabId, showsThread, tabId, tabs, threads]);
 
-  // Reads the newest saved value, so two quick edits do not overwrite each other.
+  // Each write replaces the groups whole. Two quick edits chain through this ref, so the second
+  // does not undo the first before the server echoes it. Edits from two devices at the same
+  // moment still keep only the last one; revisit with per-group commands if that bites.
+  const latestSettingsRef = useRef(savedSettings);
+  useEffect(() => {
+    latestSettingsRef.current = savedSettings;
+  }, [savedSettings]);
   const update = useCallback(
-    (change: (current: SidebarGroups) => SidebarGroups) =>
-      void updateClientSettings({ sidebarGroups: change(getClientSettings().sidebarGroups) }),
-    [updateClientSettings],
+    (change: (current: SidebarGroups) => SidebarGroups) => {
+      const next = change(latestSettingsRef.current);
+      latestSettingsRef.current = next;
+      updatePrimarySettings({ sidebarGroups: next });
+    },
+    [updatePrimarySettings],
   );
 
   const assignThreads = useCallback(

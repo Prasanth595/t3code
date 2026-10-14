@@ -350,7 +350,10 @@ The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the 
 - Settled and snoozed threads stay in their group, in its Settled and Snoozed shelves. They do not count in the tab status.
 - Search covers every tab. When you open a thread from a link or a notification, the sidebar shows its tab.
 - The client setting `sidebarGroupSingleThreadOpens` makes a group with one thread show that thread on its tab. A click opens the thread.
-- The groups are saved on this device in the client setting `sidebarGroups`. Other devices and the mobile app do not show them. Revisit this when the groups need to follow the user to other devices or to agents.
+- The groups and the drag assignments are saved in the server setting `sidebarGroups`. It is a shared setting: a change goes to every connected server, so all devices and machines see the same groups.
+- The client setting `sidebarGroupsEnabled` decides per device whether the tabs show. The open tab is also per device.
+- A change replaces all groups at once. When two devices change groups at the same moment, the last change wins.
+- The hosted app at app.t3.codes has no primary server to keep the groups, so it shows no tabs. The mobile app does not show groups yet.
 
 ## Thread card layouts
 
