@@ -77,6 +77,8 @@ const PROC_FD_WALK_LIMIT = 50_000;
 /** Scans that retry the fd walk for a listening socket whose owner was not found. */
 const SOCKET_OWNER_ATTEMPTS = 3;
 const WINDOWS_LISTENER_TIMEOUT_MS = 5_000;
+const WINDOWS_LISTENER_CACHE_TTL_MS = Duration.toMillis(POLL_INTERVAL);
+const WINDOWS_LISTENER_RETRY_MAX_MS = 60_000;
 const WEB_PROBE_TIMEOUT = Duration.seconds(1);
 const WEB_PROBE_CACHE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 const WEB_PROBE_CONCURRENCY = 16;
@@ -255,12 +257,15 @@ const parseWindowsListenerOutput = (
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<number, DiscoveredLocalServer>();
   for (const line of raw.split(/\r?\n/g)) {
-    const [hostRaw, portRaw, pidRaw, processNameRaw] = line.trim().split("|", 4);
-    const host = hostRaw?.trim() ?? "";
-    if (!LSOF_LOCAL_HOST_TOKENS.has(host) && host !== "::") continue;
-    const port = Number(portRaw);
+    const [protocol, localAddress, remoteAddress, _state, pidRaw, extra] = line.trim().split(/\s+/);
+    // -ano includes IPv4 and IPv6, never resolves names, and omits bound
+    // non-listening sockets (-q would include them). Listeners have an empty
+    // remote endpoint; avoid depending on the localized state/header text.
+    if (protocol !== "TCP" || extra !== undefined || localAddress === undefined) continue;
+    if (remoteAddress !== "0.0.0.0:0" && remoteAddress !== "[::]:0") continue;
+    const port = parsePortFromLsofName(localAddress);
+    if (port === null) continue;
     const pid = Number(pidRaw);
-    if (!Number.isInteger(port) || port <= 0 || port >= 65536) continue;
     const normalizedPid = Number.isInteger(pid) && pid > 0 ? pid : null;
     const terminal =
       normalizedPid === null ? null : (terminalByProcessId.get(normalizedPid) ?? null);
@@ -273,7 +278,9 @@ const parseWindowsListenerOutput = (
       host: "localhost",
       port,
       url: `http://localhost:${port}`,
-      processName: processNameRaw?.trim() || null,
+      // PID ownership is all discovery needs. Resolving names via WMI or
+      // netstat -b dominates the scan and may require elevated privileges.
+      processName: null,
       pid: normalizedPid,
       terminal,
     });
@@ -612,6 +619,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         platform: hostPlatform,
       }).pipe(Effect.as(null));
 
+  // Accessed only under scanSemaphore. Cache the raw table so every read
+  // applies current terminal ownership, including unregisters during its TTL.
+  let windowsListenerCache: { readonly stdout: string; readonly expiresAt: number } | null = null;
+  let windowsListenerFailures = 0;
+  let windowsListenerRetryAt = 0;
+
   const scanUnlocked = Effect.fn("PortDiscovery.scanUnlocked")(function* (
     configuredUrls: ReadonlyArray<string>,
   ) {
@@ -623,18 +636,24 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
     }
     if (hostPlatform === "win32") {
+      if (terminalByProcessId.size === 0) return yield* probeWebServers([], configuredUrls);
+      const now = yield* Clock.currentTimeMillis;
+      if (now < windowsListenerRetryAt) return yield* probeWebServers([], configuredUrls);
+      if (windowsListenerCache !== null && windowsListenerCache.expiresAt > now) {
+        return yield* probeWebServers(
+          parseWindowsListenerOutput(windowsListenerCache.stdout, terminalByProcessId),
+          configuredUrls,
+        );
+      }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
-      const command =
-        'Get-NetTCPConnection -State Listen -ErrorAction Stop | ForEach-Object { $processName = (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName; Write-Output "$($_.LocalAddress)|$($_.LocalPort)|$($_.OwningProcess)|$processName" }';
-      const listeners = yield* processRunner
+      const result = yield* processRunner
         .run({
-          command: "powershell.exe",
-          args: ["-NoProfile", "-NonInteractive", "-Command", command],
+          command: "netstat.exe",
+          args: ["-ano"],
           timeout: Duration.millis(WINDOWS_LISTENER_TIMEOUT_MS),
           maxOutputBytes: 1024 * 1024,
         })
         .pipe(
-          Effect.map((result) => parseWindowsListenerOutput(result.stdout, terminalByProcessId)),
           Effect.catchTags({
             ProcessSpawnError: recoverWindowsProbeFailure,
             ProcessStdinError: recoverWindowsProbeFailure,
@@ -643,8 +662,28 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
             ProcessTimeoutError: recoverWindowsProbeFailure,
           }),
         );
-      if (listeners !== null) return yield* probeWebServers(listeners, configuredUrls);
-      return yield* probeWebServers([], configuredUrls);
+      const completedAt = yield* Clock.currentTimeMillis;
+      if (result === null || result.code !== 0 || result.timedOut || result.stdoutTruncated) {
+        windowsListenerCache = null;
+        windowsListenerFailures = Math.min(windowsListenerFailures + 1, 5);
+        windowsListenerRetryAt =
+          completedAt +
+          Math.min(
+            WINDOWS_LISTENER_TIMEOUT_MS * 2 ** (windowsListenerFailures - 1),
+            WINDOWS_LISTENER_RETRY_MAX_MS,
+          );
+        return yield* probeWebServers([], configuredUrls);
+      }
+      windowsListenerFailures = 0;
+      windowsListenerRetryAt = 0;
+      windowsListenerCache = {
+        stdout: result.stdout,
+        expiresAt: completedAt + WINDOWS_LISTENER_CACHE_TTL_MS,
+      };
+      return yield* probeWebServers(
+        parseWindowsListenerOutput(result.stdout, terminalByProcessId),
+        configuredUrls,
+      );
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
     if (yield* Ref.get(lsofMissingRef)) {

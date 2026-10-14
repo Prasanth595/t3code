@@ -1,4 +1,6 @@
 import * as NodeNet from "node:net";
+import * as NodeProcess from "node:process";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import { it as effectIt } from "@effect/vitest";
 import {
@@ -19,6 +21,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
 
@@ -74,6 +77,194 @@ const layerTestPortDiscovery = PortScanner.layer.pipe(
 );
 
 const LSOF_TEST_PORT = 43_123;
+
+const windowsProbeOutput = (stdout: string): ProcessRunner.ProcessRunOutput => ({
+  stdout,
+  stderr: "",
+  code: ChildProcessSpawner.ExitCode(0),
+  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+const layerWindowsScanner = (
+  run: ProcessRunner.ProcessRunner["Service"]["run"],
+  fetch: typeof globalThis.fetch,
+) =>
+  PortScanner.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        layerNoProc,
+        Layer.succeed(ProcessRunner.ProcessRunner, { run }),
+        Layer.succeed(HostProcess.Platform, "win32"),
+        FetchHttpClient.layer.pipe(Layer.provide(Layer.succeed(FetchHttpClient.Fetch, fetch))),
+      ),
+    ),
+  );
+
+effectIt.effect(
+  "discovers owned Windows IPv4 and IPv6 listeners without names or localized states",
+  () => {
+    const requests: string[] = [];
+    const fetch = ((input: Parameters<typeof globalThis.fetch>[0]) => {
+      requests.push(String(input));
+      return Promise.resolve(new Response("app", { headers: { "content-type": "text/html" } }));
+    }) as typeof globalThis.fetch;
+    const stdout = `Localized headers\r\n
+  TCP    0.0.0.0:43123     0.0.0.0:0      LISTENING    1234
+  TCP    [::]:43124        [::]:0         ABHÖREN      1234
+  TCP    127.0.0.1:43125   0.0.0.0:0      LISTENING    1234
+  TCP    [::1]:43125       [::]:0         LISTENING    5678
+  TCP    127.0.0.1:43126   127.0.0.1:80   ESTABLISHED  1234
+  TCP    192.168.1.2:43127 0.0.0.0:0      LISTENING    1234
+  UDP    127.0.0.1:43128   *:*                         1234
+  TCP    127.0.0.1:65536   0.0.0.0:0      LISTENING    1234
+  TCP    127.0.0.1:43129   0.0.0.0:0      LISTENING    invalid
+`;
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      const servers = yield* scanner.scan();
+      expect(servers.map((server) => server.port)).toEqual([43123, 43124]);
+      expect(servers.every((server) => server.terminal?.terminalId === "scanner-terminal")).toBe(
+        true,
+      );
+      expect(requests).toEqual(["http://localhost:43123/", "http://localhost:43124/"]);
+    }).pipe(
+      Effect.provide(layerWindowsScanner(() => Effect.succeed(windowsProbeOutput(stdout)), fetch)),
+    );
+  },
+);
+
+effectIt.effect(
+  "skips Windows process probes without terminal owners while still probing configured URLs",
+  () => {
+    let spawns = 0;
+    const fetch = (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as typeof globalThis.fetch;
+    const layer = layerWindowsScanner(
+      () =>
+        Effect.sync(() => {
+          spawns++;
+          return windowsProbeOutput("");
+        }),
+      fetch,
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* PortScanner.PortDiscovery;
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(yield* scanner.scan(["http://localhost:43123/docs"])).toHaveLength(1);
+      yield* scanner.retain;
+      yield* TestClock.adjust(Duration.seconds(30));
+      expect(spawns).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  },
+);
+
+effectIt.effect(
+  "shares Windows listener scans and applies current ownership to the cached table",
+  () => {
+    let spawns = 0;
+    const fetch = (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as typeof globalThis.fetch;
+    const layer = layerWindowsScanner(
+      () =>
+        Effect.sync(() => {
+          spawns++;
+          return windowsProbeOutput("TCP 127.0.0.1:43123 0.0.0.0:0 LISTENING 1234");
+        }),
+      fetch,
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      const results = yield* Effect.all([scanner.scan(), scanner.scan(), scanner.scan()], {
+        concurrency: "unbounded",
+      });
+      expect(results.every((servers) => servers.length === 1)).toBe(true);
+      expect(spawns).toBe(1);
+      yield* scanner.unregisterTerminal({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(spawns).toBe(1);
+      yield* scanner.registerTerminalProcesses({
+        threadId: "other-thread",
+        terminalId: "other-terminal",
+        processIds: [1234],
+      });
+      expect((yield* scanner.scan())[0]?.terminal?.terminalId).toBe("other-terminal");
+      expect(spawns).toBe(1);
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* scanner.scan();
+      expect(spawns).toBe(2);
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+effectIt.effect(
+  "backs off failed Windows probes, keeps configured URLs usable, and recovers",
+  () => {
+    let spawns = 0;
+    let fails = true;
+    const fetch = (() =>
+      Promise.resolve(
+        new Response("app", { headers: { "content-type": "text/html" } }),
+      )) as typeof globalThis.fetch;
+    const layer = layerWindowsScanner(
+      (input) =>
+        Effect.suspend(() => {
+          spawns++;
+          return fails
+            ? Effect.fail(
+                new ProcessRunner.ProcessTimeoutError({
+                  command: input.command,
+                  argumentCount: input.args.length,
+                  timeoutMs: 5000,
+                }),
+              )
+            : Effect.succeed(windowsProbeOutput("TCP [::]:43123 [::]:0 LISTENING 1234"));
+        }),
+      fetch,
+    );
+    return Effect.gen(function* () {
+      const scanner = yield* ownedScanner();
+      yield* scanner.scan();
+      expect(yield* scanner.scan(["http://localhost:43124/docs"])).toHaveLength(1);
+      expect(spawns).toBe(1);
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* scanner.scan();
+      expect(spawns).toBe(2);
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* scanner.scan();
+      expect(spawns).toBe(2);
+      yield* TestClock.adjust(Duration.seconds(5));
+      yield* scanner.scan();
+      expect(spawns).toBe(3);
+      yield* TestClock.adjust(Duration.seconds(20));
+      yield* scanner.scan();
+      expect(spawns).toBe(4);
+      yield* TestClock.adjust(Duration.seconds(40));
+      yield* scanner.scan();
+      expect(spawns).toBe(5);
+      fails = false;
+      yield* TestClock.adjust(Duration.seconds(59));
+      expect(yield* scanner.scan()).toEqual([]);
+      expect(spawns).toBe(5);
+      yield* TestClock.adjust(Duration.seconds(1));
+      expect(yield* scanner.scan()).toHaveLength(1);
+      expect(spawns).toBe(6);
+      yield* TestClock.adjust(Duration.seconds(3));
+      expect(yield* scanner.scan()).toHaveLength(1);
+      expect(spawns).toBe(7);
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 /** The scanner with `processIds` registered to a T3 terminal, so their listeners get probes. */
 const ownedScanner = (processIds: ReadonlyArray<number> = [1234]) =>
@@ -163,6 +354,33 @@ const commonNonHttpServer = Effect.acquireRelease(
     socket.once("data", () => socket.end("MYSQL\r\n\r\n"));
   }),
   ({ server }) => closeServer(server),
+);
+
+effectIt.effect.skipIf(NodeProcess.platform !== "win32")(
+  "discovers a real owned Windows HTTP listener through netstat",
+  () =>
+    Effect.gen(function* () {
+      const { port } = yield* commonDevServer;
+      const scanner = yield* ownedScanner([NodeProcess.pid]);
+      const servers = yield* scanner.scan();
+      expect(servers.find((server) => server.port === port)?.terminal).toEqual({
+        threadId: "scanner-thread",
+        terminalId: "scanner-terminal",
+      });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        PortScanner.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer)),
+              FetchHttpClient.layer,
+            ),
+          ),
+        ),
+      ),
+    ),
 );
 
 /**
