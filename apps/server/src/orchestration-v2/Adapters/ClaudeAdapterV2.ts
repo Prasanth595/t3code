@@ -1,4 +1,5 @@
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { fitClaudeImage } from "./claudeImageFit.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -1585,6 +1586,9 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
   readonly skillNames?: ReadonlySet<string>;
+  // Claude Code scales the images of a message that starts a turn, but stores
+  // a steer's images as sent. Only steers pay for scaling them here.
+  readonly fitImages?: boolean;
 }) {
   if (input.attachments.length === 0) {
     return makeClaudeUserMessage({
@@ -1651,7 +1655,9 @@ const makeClaudeUserMessageWithAttachments = Effect.fnUntraced(function* (input:
       source: {
         type: "base64",
         media_type: attachment.mimeType,
-        data: Buffer.from(bytes).toString("base64"),
+        data: Buffer.from(
+          input.fitImages === true ? yield* fitClaudeImage(bytes, attachment.mimeType) : bytes,
+        ).toString("base64"),
       },
     });
   }
@@ -8986,6 +8992,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               priority: "now",
               attachmentsDir,
               fileSystem,
+              fitImages: true,
               skillNames: yield* userInvocableSkillNames(currentTurn.input.runtimePolicy.cwd),
             });
             yield* Ref.update(steeredTurns, (current) => {

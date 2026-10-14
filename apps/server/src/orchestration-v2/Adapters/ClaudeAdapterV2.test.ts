@@ -22,6 +22,8 @@ import type {
   TaskUpdateOutput,
 } from "@anthropic-ai/claude-agent-sdk/sdk-tools";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as JpegJs from "jpeg-js";
+import { PNG } from "pngjs";
 import {
   ChatAttachmentId,
   ChatFileAttachment,
@@ -1653,6 +1655,155 @@ describe("ClaudeAdapterV2 attachments", () => {
             text: `Ultrathink:\nFocus on the diagram labels.\n\n[Attached image "diagram.png" is saved at: ${expectedAttachmentPath}]\n\n[Attached file "requirements.pdf" is saved at: ${expectedDocumentPath}]`,
           },
         ]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("scales images over 2000px on a side when they steer a running turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const path = yield* Path.Path;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-v2-oversized-attachments-",
+        });
+        const offeredMessages: Array<SDKUserMessage> = [];
+        const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed("native-thread-claude-oversized-attachments"),
+            open: () =>
+              Effect.succeed({
+                messages: Stream.never,
+                offer: (message) =>
+                  Effect.sync(() => {
+                    offeredMessages.push(message);
+                  }),
+                setModel: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                applyFlagSettings: () => Effect.void,
+                stopTask: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-oversized-attachments");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-oversized-attachments",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+
+        // A phone screenshot taller than 2000px, with a transparent left half.
+        const screenshot = new PNG({ width: 1080, height: 2424 });
+        for (let i = 0; i < screenshot.data.length; i += 4) {
+          const x = (i / 4) % screenshot.width;
+          screenshot.data.set(x < 540 ? [0, 0, 0, 0] : [200, 40, 90, 255], i);
+        }
+        const screenshotAttachment = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make("thread-claude-oversized-12345678-1234-1234-1234-123456789abc"),
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 1,
+        });
+        const photo = JpegJs.encode(
+          { width: 3000, height: 1500, data: new Uint8Array(3000 * 1500 * 4).fill(128) },
+          90,
+        );
+        const photoAttachment = ChatImageAttachment.make({
+          type: "image",
+          id: ChatAttachmentId.make("thread-claude-oversized-abcdefab-1234-1234-1234-123456789abc"),
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          sizeBytes: 1,
+        });
+        yield* fileSystem.writeFile(
+          path.join(attachmentsDir, attachmentRelativePath(screenshotAttachment)!),
+          PNG.sync.write(screenshot),
+        );
+        yield* fileSystem.writeFile(
+          path.join(attachmentsDir, attachmentRelativePath(photoAttachment)!),
+          photo.data,
+        );
+        const imageBytes = (message: SDKUserMessage | undefined) => {
+          const content = message?.message.content;
+          if (!Array.isArray(content)) return assert.fail("expected content blocks");
+          return content.flatMap((block) =>
+            block.type === "image" && block.source.type === "base64"
+              ? [Buffer.from(block.source.data, "base64")]
+              : [],
+          );
+        };
+        const attemptId = RunAttemptId.make("attempt-claude-oversized-attachments");
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now: yield* DateTime.now,
+            attemptId,
+            text: "Compare these.",
+            attachments: [screenshotAttachment],
+          }),
+        );
+        // Claude Code scales the images of a message that starts a turn itself.
+        const [startedScreenshot] = imageBytes(offeredMessages[0]);
+        const decodedStarted = PNG.sync.read(startedScreenshot!);
+        assert.deepEqual([decodedStarted.width, decodedStarted.height], [1080, 2424]);
+
+        // Pasted while Claude is still working: the steer path.
+        yield* runtime.steerTurn({
+          threadId,
+          runId: RunId.make("run-claude-oversized-attachments"),
+          providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-claude-oversized-attachments-steer"),
+            text: "Also these.",
+            attachments: [screenshotAttachment, photoAttachment],
+          },
+        });
+        const [sentScreenshot, sentPhoto] = imageBytes(offeredMessages[1]);
+        const decodedScreenshot = PNG.sync.read(sentScreenshot!);
+        assert.deepEqual([decodedScreenshot.width, decodedScreenshot.height], [891, 2000]);
+        assert.deepEqual([...decodedScreenshot.data.subarray(0, 4)], [0, 0, 0, 0]);
+        const lastPixel = decodedScreenshot.data.length - 4;
+        assert.deepEqual(
+          [...decodedScreenshot.data.subarray(lastPixel, lastPixel + 4)],
+          [200, 40, 90, 255],
+        );
+        const decodedPhoto = JpegJs.decode(sentPhoto!, { useTArray: true });
+        assert.deepEqual([decodedPhoto.width, decodedPhoto.height], [2000, 1000]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
