@@ -181,4 +181,9 @@ keyboard repeat; if repeat is disabled, use two presses or the application menu.
 
 Change **Settings → General → Confirmations → Quit shortcut** to **Direct** for a
 single press or **Double press** for two presses only. Choosing **Quit** from the
-application menu always quits immediately.
+application menu skips this step.
+
+Closing or quitting the desktop app stops threads running on this computer. While any
+are running or waiting on background work, the shortcut, the application menu, and
+closing the window all ask before T3 Code quits. Threads on remote environments keep
+running and do not count.
