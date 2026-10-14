@@ -1292,15 +1292,33 @@ describe("ClaudeAdapterV2 resumeThread", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-claude-empty-session-",
+        });
+        const projectDir = path.join(configDir, "projects", "-workspace");
+        yield* fileSystem.makeDirectory(projectDir, { recursive: true });
+        // What a CLI stopped before it saved the first prompt leaves behind.
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, "native-thread-empty.jsonl"),
+          [
+            `{"type":"last-prompt","lastPrompt":"hello","sessionId":"native-thread-empty"}`,
+            `{"type":"atis-latch","atis":"","sessionId":"native-thread-empty"}`,
+            `{"type":"cost-state","sessionId":"native-thread-empty","totalCostUSD":0}`,
+            "",
+          ].join("\n"),
+        );
+        yield* fileSystem.writeFileString(
+          path.join(projectDir, "native-thread-saved.jsonl"),
+          `{"type":"user","message":{"role":"user","content":"hello"},"sessionId":"native-thread-saved"}\n`,
+        );
         const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
           instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
           settings: DEFAULT_CLAUDE_SETTINGS,
-          environment: {},
-          attachmentsDir: yield* fileSystem.makeTempDirectoryScoped({
-            prefix: "t3-claude-empty-session-",
-          }),
+          environment: { CLAUDE_CONFIG_DIR: configDir },
+          attachmentsDir: configDir,
           fileSystem,
-          path: yield* Path.Path,
+          path,
           crypto: yield* Crypto.Crypto,
           idAllocator: yield* IdAllocator.IdAllocatorV2,
           queryRunner: {
@@ -1308,7 +1326,6 @@ describe("ClaudeAdapterV2 resumeThread", () => {
             open: () => Effect.die("unused"),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
-            sessionIsEmpty: (input) => Effect.succeed(input.sessionId === "native-thread-empty"),
             assertComplete: Effect.void,
           },
         });
@@ -1339,6 +1356,18 @@ describe("ClaudeAdapterV2 resumeThread", () => {
           },
         });
         assert.equal(saved.nativeThreadRef?.nativeId, "native-thread-saved");
+
+        const missing = yield* runtime.resumeThread({
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+              nativeId: "native-thread-missing",
+              strength: "strong",
+            },
+          },
+        });
+        assert.equal(missing.nativeThreadRef?.nativeId, "native-thread-missing");
       }),
     ).pipe(
       Effect.provide(
