@@ -273,6 +273,83 @@ it.effect("uses indexed high-water lookups for populated history without OR scan
   ),
 );
 
+it.effect("reads one thread's events through the thread index, not the sequence range", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore.OrchestrationEventStore;
+    const sql = yield* SqlClient.SqlClient;
+    yield* runMigrations();
+    yield* sql`
+      WITH RECURSIVE history(n) AS (
+        SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000
+      )
+      INSERT INTO orchestration_events (
+        event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+        actor_kind, payload_json, metadata_json, application_event_version
+      )
+      SELECT 'history:' || n, 'thread',
+        CASE WHEN n IN (12, 24990) THEN 'target' ELSE 'other' END,
+        n, 'provider-session.detached', ${occurredAt}, 'server',
+        '{"providerSessionId":"session","detachedAt":"' || ${occurredAt} || '"}',
+        '{}', 2
+      FROM history
+    `;
+    const statements: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (endTime, exit) => {
+          end(endTime, exit);
+          const query = span.attributes.get("db.query.text");
+          if (typeof query === "string") statements.push(query);
+        };
+        return span;
+      },
+    });
+    const threadId = ThreadId.make("target");
+    const byThread = yield* store
+      .readAgentEvents({ threadId })
+      .pipe(Stream.runCollect, Effect.withTracer(tracer));
+    const byThreadAndType = yield* store
+      .readAgentEvents({ threadId, eventType: "provider-session.detached" })
+      .pipe(Stream.runCollect, Effect.withTracer(tracer));
+    const stats = yield* store
+      .getAgentReplayStats({ threadId, afterSequence: 0, throughSequence: 25_000, maxEvents: 10 })
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(
+      byThread.map((event) => event.sequence),
+      [12, 24990],
+    );
+    assert.deepEqual(
+      byThreadAndType.map((event) => event.sequence),
+      [12, 24990],
+    );
+    assert.equal(stats.eventCount, 2);
+    assert.equal(statements.length, 3);
+    const plans = yield* Effect.forEach(
+      [
+        [0, Number.MAX_SAFE_INTEGER, "target", 500],
+        [0, Number.MAX_SAFE_INTEGER, "target", "provider-session.detached", 500],
+        ["target", 0, 25_000, 11],
+      ],
+      (params, index) =>
+        sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${statements[index]}`, params),
+    );
+    for (const plan of plans) {
+      assert.match(
+        plan.map((row) => row.detail).join("\n"),
+        /SEARCH orchestration_events USING INDEX idx_orchestration_events_agent_stream_sequence \(stream_id=\? AND sequence>\? AND sequence<\?\)/,
+      );
+    }
+  }).pipe(
+    Effect.provide(
+      OrchestrationEventStore.layer.pipe(
+        Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
+      ),
+    ),
+  ),
+);
+
 it.effect("replays a command's events through the command index, not the sequence range", () =>
   Effect.gen(function* () {
     const store = yield* OrchestrationEventStore.OrchestrationEventStore;

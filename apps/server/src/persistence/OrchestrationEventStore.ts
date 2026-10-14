@@ -425,6 +425,21 @@ const makeEventStore = Effect.gen(function* () {
       ),
     );
 
+  const applicationRowsIndex = (input: {
+    readonly threadId?: ThreadId;
+    readonly commandId?: CommandId;
+    readonly onlyAgentEvents?: boolean;
+  }) => {
+    // The sequence range otherwise wins and a command lookup scans every
+    // V2 event, which blocks the server for seconds on large histories.
+    if (input.commandId !== undefined) return sql`INDEXED BY idx_orch_events_command_id`;
+    if (input.onlyAgentEvents !== true) {
+      return sql`INDEXED BY idx_orchestration_events_application_high_water`;
+    }
+    if (input.threadId === undefined) return sql``;
+    return sql`INDEXED BY idx_orchestration_events_agent_stream_sequence`;
+  };
+
   const readApplicationRows = (input: {
     readonly afterSequence: number;
     readonly throughSequence?: number;
@@ -449,15 +464,7 @@ const makeEventStore = Effect.gen(function* () {
         causation_event_id,
         correlation_id
       FROM orchestration_events
-      ${
-        // The sequence range otherwise wins and a command lookup scans every
-        // V2 event, which blocks the server for seconds on large histories.
-        input.commandId !== undefined
-          ? sql`INDEXED BY idx_orch_events_command_id`
-          : input.onlyAgentEvents === true
-            ? sql``
-            : sql`INDEXED BY idx_orchestration_events_application_high_water`
-      }
+      ${applicationRowsIndex(input)}
       WHERE sequence > ${input.afterSequence}
         AND sequence <= ${input.throughSequence ?? Number.MAX_SAFE_INTEGER}
         AND (
@@ -643,7 +650,7 @@ const makeEventStore = Effect.gen(function* () {
         COALESCE(MAX(event_type = 'thread.created'), 0) AS "hasCreateEvent"
       FROM (
         SELECT ${restoredPayloadJson} AS payload_json, event_type
-        FROM orchestration_events
+        FROM orchestration_events INDEXED BY idx_orchestration_events_agent_stream_sequence
         WHERE aggregate_kind = 'thread'
           AND stream_id = ${input.threadId}
           AND application_event_version = 2

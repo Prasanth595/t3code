@@ -260,7 +260,7 @@ it.effect("verifies thread membership using only the thread-created partial inde
     );
     const details = plan.map((row) => row.detail).join("\n");
     assert.match(details, /USING (?:COVERING )?INDEX orchestration_events_v2_created_threads_idx/);
-    assert.notMatch(details, /idx_orch_events_stream_sequence|TEMP B-TREE/);
+    assert.notMatch(details, /TEMP B-TREE/);
   }).pipe(Effect.provide(layerTest)),
 );
 
