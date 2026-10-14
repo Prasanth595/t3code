@@ -737,5 +737,86 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
         },
       ],
     );
+
+    const wakeRun = (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.find(
+      (run) => run.userMessageId === wakes[0]!.id,
+    )!;
+    assert.equal(wakeRun.status, "queued");
+    const resolved = {
+      ...question,
+      id: EventId.make("event:question-resolved"),
+      payload: { ...question.payload, status: "resolved" as const, resolvedAt: now },
+    };
+    yield* eventSink.write({ events: [resolved] });
+    yield* reactor.handle(resolved);
+    yield* reactor.handle(resolved);
+    assert.equal(
+      (yield* projections.getThreadRecords(parentThreadId, ["runs"])).runs.find(
+        (run) => run.id === wakeRun.id,
+      )?.status,
+      "cancelled",
+    );
+
+    const childRun = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs[0]!;
+    yield* eventSink.write({
+      commandId: CommandId.make("command:runtime-reconcile:question-followup"),
+      events: [
+        {
+          id: EventId.make("event:question-child-completed"),
+          type: "run.updated",
+          threadId: task.childThreadId!,
+          occurredAt: now,
+          payload: { ...childRun, status: "completed", completedAt: now },
+        },
+        {
+          id: EventId.make("event:question-task-completed"),
+          type: "subagent.updated",
+          threadId: parentThreadId,
+          occurredAt: now,
+          payload: {
+            ...task,
+            status: "completed",
+            result: "Sources researched.",
+            completedAt: now,
+          },
+        },
+      ],
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("question-followup"),
+      threadId: task.childThreadId!,
+      messageId: MessageId.make("message:question-followup"),
+      text: "Check the sources again",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const followup = (yield* projections.getThreadRecords(task.childThreadId!, ["runs"])).runs.find(
+      (run) => run.userMessageId === "message:question-followup",
+    )!;
+    assert.isDefined(followup.delegatedTaskId);
+    assert.notEqual(followup.delegatedTaskId, task.id);
+    const followupQuestion = {
+      ...requestEvent("event:followup-question", "request:followup-question"),
+      runId: followup.id,
+    };
+    yield* eventSink.write({ events: [followupQuestion] });
+    yield* reactor.handle(followupQuestion);
+    const followupWake = (yield* projections.getThreadRecords(parentThreadId, [
+      "messages",
+    ])).messages.find(
+      (message) =>
+        message.id ===
+        `message:delegated-task-question:${parentThreadId}:${followupQuestion.payload.id}`,
+    )!;
+    assert.include(followupWake.text, `Delegated task ${followup.delegatedTaskId}`);
+    assert.include(followupWake.text, `requestId ${followupQuestion.payload.id}`);
+    assert.deepEqual(followupWake.notification?.source, {
+      kind: "delegated_task",
+      taskIds: [followup.delegatedTaskId],
+      childThreadId: task.childThreadId!,
+    });
   }).pipe(Effect.provide(DelegatedTaskQuestionReactor.layer.pipe(Layer.provideMerge(layerTest)))),
 );

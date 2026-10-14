@@ -31,35 +31,60 @@ const make = Effect.gen(function* () {
 
   const handle: DelegatedTaskQuestionReactor["Service"]["handle"] = (event) =>
     Effect.gen(function* () {
-      if (
-        event.type !== "runtime-request.updated" ||
-        event.payload.kind !== "user_input" ||
-        event.payload.status !== "pending"
-      ) {
+      if (event.type !== "runtime-request.updated" || event.payload.kind !== "user_input") {
         return;
       }
       const child = yield* projections.getThread(event.threadId);
       const parentThreadId = child.lineage.parentThreadId;
       if (parentThreadId === null) return;
       const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
-      if (request?.status !== "pending") return;
-      const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
+      // Keyed by the request, so a request updated while still pending wakes the parent once.
+      const key = `${parentThreadId}:${event.payload.id}`;
+      const messageId = MessageId.make(`message:delegated-task-question:${key}`);
+      const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "runs"]);
+      if (event.payload.status !== "pending" || request?.status !== "pending") {
+        const queued = parent.runs.find(
+          (run) => run.status === "queued" && run.userMessageId === messageId,
+        );
+        if (queued !== undefined) {
+          yield* engine.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`server:delegated-task-question-cancel:${key}`),
+            threadId: parentThreadId,
+            runId: queued.id,
+          });
+        }
+        return;
+      }
+      const controls = yield* projections.getThreadRecords(child.id, [
+        "runs",
+        "nodes",
+        "providerTurns",
+      ]);
+      const turnNodeId = controls.providerTurns.find(
+        (turn) => turn.id === request.providerTurnId,
+      )?.nodeId;
+      const runId =
+        event.runId ??
+        controls.nodes.find((node) => node.id === request.nodeId)?.runId ??
+        controls.nodes.find((node) => node.id === turnNodeId)?.runId;
+      const run =
+        controls.runs.find((run) => run.id === runId) ??
+        controls.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+      const taskId =
+        run?.delegatedTaskId ??
+        (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined);
       const task = parent.subagents.find(
-        (candidate) => candidate.origin === "app_owned" && candidate.childThreadId === child.id,
+        (candidate) => candidate.origin === "app_owned" && candidate.id === taskId,
       );
       if (
         task === undefined ||
         parent.thread.archivedAt !== null ||
-        parent.thread.deletedAt !== null ||
-        parent.thread.settledOverride === "settled" ||
-        parent.thread.settledAt !== null
+        parent.thread.deletedAt !== null
       ) {
         return;
       }
-      const taskId = task.id;
       const label = reportLabel(task.title?.trim() || task.prompt);
-      // Keyed by the request, so a request updated while still pending wakes the parent once.
-      const key = `${parentThreadId}:${event.payload.id}`;
       const situation =
         event.payload.responseCapability.type === "message"
           ? `Delegated task ${taskId} asked a question and is still working.`
@@ -68,10 +93,10 @@ const make = Effect.gen(function* () {
         type: "message.dispatch",
         commandId: CommandId.make(`server:delegated-task-question:${key}`),
         threadId: parentThreadId,
-        messageId: MessageId.make(`message:delegated-task-question:${key}`),
-        text: `${situation} Read it with t3_pending_request_list and t3_pending_request_read using threadId ${child.id}. Answer it with t3_pending_request_respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
+        messageId,
+        text: `${situation} Read it with t3_pending_request_read using threadId ${child.id} and requestId ${event.payload.id}. Answer it with t3_pending_request_respond when the answer follows from the task or the user's instructions; otherwise ask the user, then answer it. If it is no longer pending, it was answered or dismissed.`,
         notification: {
-          source: { kind: "delegated_task", taskIds: [taskId], childThreadId: child.id },
+          source: { kind: "delegated_task", taskIds: [task.id], childThreadId: child.id },
           outcome: "updated",
           summary: `Delegated task${label === undefined ? "" : ` "${label}"`} has a question`,
         },
@@ -81,10 +106,10 @@ const make = Effect.gen(function* () {
         creationSource: "server",
       });
     }).pipe(
-      Effect.catch((error) =>
+      Effect.catchCause((cause) =>
         Effect.logWarning("waking the parent of a delegated task question failed", {
           threadId: event.threadId,
-          error,
+          cause,
         }),
       ),
     );
