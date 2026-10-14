@@ -162,19 +162,22 @@ export function kiroAuthFromWhoami(
 const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"];
 const CLAUDE_4_6_EFFORT_LEVELS = ["low", "medium", "high", "max"];
 const GPT_5_6_EFFORT_LEVELS = ["none", ...CLAUDE_EFFORT_LEVELS];
+const KIMI_EFFORT_LEVELS = ["low", "high", "max"];
 
 /**
  * Reasoning levels per Kiro model id, and the one Kiro runs it at by default.
  * `--list-models` names no levels, and a session advertises them (the `model`
  * option's `_meta.kiro.effortLevels` and `defaultEffortLevel`) only once it
  * runs, so the picker uses this copy of Kiro 2.27.0's choices
- * (fixtures/kiro_model_switch), which match kiro.dev/docs/models/effort.
+ * (fixtures/kiro_model_switch), which match kiro.dev/docs/models/effort, plus
+ * the models a Kiro 2.31.0 session added.
  * Models not listed take no effort. The adapter sends only a level the live
  * session offers, so a stale entry never reaches Kiro.
  */
 const KIRO_MODEL_EFFORT: Readonly<
   Record<string, { readonly levels: ReadonlyArray<string>; readonly defaultLevel: string }>
 > = {
+  "claude-fable-5.1": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "high" },
   "claude-opus-5.5": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "medium" },
   "claude-opus-5": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "high" },
   "claude-opus-4.8": { levels: CLAUDE_EFFORT_LEVELS, defaultLevel: "high" },
@@ -186,6 +189,7 @@ const KIRO_MODEL_EFFORT: Readonly<
   "gpt-5.6-sol": { levels: GPT_5_6_EFFORT_LEVELS, defaultLevel: "high" },
   "gpt-5.6-terra": { levels: GPT_5_6_EFFORT_LEVELS, defaultLevel: "high" },
   "gpt-5.6-luna": { levels: GPT_5_6_EFFORT_LEVELS, defaultLevel: "high" },
+  "kimi-k3": { levels: KIMI_EFFORT_LEVELS, defaultLevel: "max" },
 };
 const KIRO_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
