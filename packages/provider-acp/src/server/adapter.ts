@@ -648,11 +648,12 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  // Mirrors configureSession: a model config option, or ACP v1 session model
-  // state switched with session/set_model.
+  // Mirrors configureSession: a model select config option, or ACP v1 session
+  // model state switched with session/set_model.
   const canSwitchModel =
-    setup.configOptions?.some((option) => option.category === "model") === true ||
-    setup.models != null;
+    setup.configOptions?.some(
+      (option) => option.category === "model" && option.type === "select",
+    ) === true || setup.models != null;
   const canLoad = agent.loadSession === true;
   const canFork = session?.fork != null;
   return {
@@ -6308,14 +6309,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // "auto" and "default" stand for the agent's own choice unless the
             // agent advertises a model under that exact id.
             const isPlaceholder = requestedModel === "auto" || requestedModel === "default";
-            const hasModelConfig =
-              startResult.sessionSetupResult.configOptions?.some(
-                (option) => option.category === "model",
-              ) === true;
+            // Route by the live options, which the picker lists: agents can
+            // add or drop their model config option after setup.
+            const modelOption = (yield* runtime.getConfigOptions).find(
+              (option) => option.category === "model" && option.type === "select",
+            );
             const modelState = startResult.sessionSetupResult.models;
-            if (hasModelConfig) {
+            if (modelOption !== undefined) {
               if (!isPlaceholder) {
-                yield* runtime.setModel(requestedModel);
+                yield* runtime.setConfigOption(modelOption.id, requestedModel);
+                appliedModel = requestedModel;
               }
             } else if (
               modelState != null &&
