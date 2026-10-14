@@ -1,6 +1,9 @@
 {
   "name": "@t3tools/nofun-artifacts",
   "private": true,
+  "bin": {
+    "nofun-artifacts": "./src/cli.ts"
+  },
   "type": "module",
   "exports": {
     "./compiler": {
@@ -14,6 +17,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --test",
     "examples": "node examples/render.ts",
     "sync": "node scripts/sync.ts",
     "examples:live": "node examples/render-live.ts"

@@ -1,5 +1,6 @@
-// The No Fun artifact compiler. It compiles against the LIVE nofun-components checkout
-// (NOFUN_COMPONENTS_DIR, default ~/Documents/GitHub/nofun-components): esbuild bundles the real blocks,
+// The No Fun artifact compiler. It compiles against a clean pinned nofun-components checkout
+// (`NOFUN_COMPONENTS_DIR`, else ~/.nofun-t3/caches/nofun-components@<sha> from components.pin).
+// A dirty or unpinned checkout is refused unless NOFUN_COMPONENTS_ALLOW_DIRTY=1. esbuild bundles the real blocks,
 // Kobra primitives and their packages straight from the checkout, Tailwind v4 (the checkout's own)
 // compiles app/globals.css plus the page brand over exactly the sources the bundle used, and fonts and
 // imagery are inlined. The result is ONE self-contained HTML document. Three lanes:
@@ -27,7 +28,14 @@ import { pageCatalogGuide, pageSpecIssues } from "./live/page-catalog.ts";
 import { brandScheme, liveIndex, searchIndex, type IndexEntry } from "./live/registry.ts";
 import { probeAssets } from "./live/probe.ts";
 import { readCompileReport } from "./live/report.ts";
-import { assertComponentsDir, perStamp, perStampMap, sourceStamp } from "./live/source.ts";
+import {
+  assertComponentsDir,
+  componentsCommit,
+  perStamp,
+  perStampMap,
+  sourceStamp,
+} from "./live/source.ts";
+import { compilerVersion, formatStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
 import { DEFAULT_ARTIFACT_THEME, T3_THEME, isArtifactTheme, artifactThemeIds } from "./themes.ts";
 
 export {
@@ -39,6 +47,7 @@ export {
 export { artifactThemeGuide, artifactThemeIds, DEFAULT_ARTIFACT_THEME } from "./themes.ts";
 export { pageCatalogGuide } from "./live/page-catalog.ts";
 export { componentsDir, sourceStamp } from "./live/source.ts";
+export { readStamp, type ArtifactStamp } from "./stamp.ts";
 export type { IndexEntry } from "./live/registry.ts";
 export { USER_PACKAGES as ARTIFACT_ALLOWED_PACKAGES } from "./live/bundle.ts";
 
@@ -109,6 +118,16 @@ const ARTIFACT_FRAME_CSS = `${PAGE_FRAME_CSS}
 body[data-brand]{padding:16px;border-radius:14px;background:var(--nf-canvas,var(--background));color:var(--nf-ink,var(--foreground))}
 body[data-nf-theme="t3"]{--nf-canvas:var(--background);--nf-ink:var(--foreground);--nf-ink-muted:var(--muted-foreground);--nf-rule:var(--border);--nf-surface:var(--muted);--nf-surface-product:var(--card);--nf-primary:var(--primary);--nf-primary-foreground:var(--primary-foreground);--nf-display:var(--font-sans);--nf-body:var(--font-sans);--nf-mono:var(--font-mono);--error:var(--destructive)}`;
 
+function makeStamp(dir: string, lane: ArtifactStamp["lane"], theme: string): ArtifactStamp {
+  return {
+    components: componentsCommit(dir),
+    compiler: compilerVersion(),
+    lane,
+    theme,
+    at: stampInstant(),
+  };
+}
+
 function documentFor(input: {
   readonly title: string;
   readonly css: string;
@@ -117,10 +136,12 @@ function documentFor(input: {
   readonly data: string;
   readonly js: string;
   readonly assets: AssetMap;
+  readonly stamp: ArtifactStamp;
 }) {
   return [
     `<!doctype html><html lang="en"><head>`,
     `<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">`,
+    `<meta name="nofun-artifact" content="${escapeHtml(formatStamp(input.stamp))}">`,
     `<title>${escapeHtml(input.title)}</title>`,
     `<style id="nf-style">${input.css.replace(/<\/(style)/gi, "<\\/$1")}</style>`,
     `</head><body${input.bodyAttrs}>`,
@@ -288,6 +309,7 @@ export async function compileArtifact(input: ArtifactCompileInput): Promise<Comp
       data: `<script type="application/json" id="nf-spec">${escapeLocalPaths(specJson)}</script>`,
       js: built.js,
       assets,
+      stamp: makeStamp(dir, "spec", theme),
     });
     return finish(html, started, {
       title,
@@ -320,6 +342,7 @@ export async function compileArtifact(input: ArtifactCompileInput): Promise<Comp
     cssImports: built.cssImports,
     extraCss: ARTIFACT_FRAME_CSS,
   });
+  const stamp = makeStamp(dir, "tsx", theme);
   const page = (assets: AssetMap) =>
     documentFor({
       title,
@@ -329,6 +352,7 @@ export async function compileArtifact(input: ArtifactCompileInput): Promise<Comp
       data: "",
       js: built.js,
       assets,
+      stamp,
     });
   const { assets, warnings } = await resolveAssets(dir, page(EMPTY_ASSETS), [built.js], brand);
   const html = page(assets);
@@ -369,6 +393,7 @@ export async function compilePage(input: PageCompileInput): Promise<CompiledArti
   const source = await sourceStamp(dir);
   const [built, css] = await Promise.all([pageBundle(), pageCss(brand)]);
   const data = jsonScript({ spec, brand, scheme, schemes });
+  const stamp = makeStamp(dir, "page", brand);
   const page = (assets: AssetMap) =>
     documentFor({
       title,
@@ -378,6 +403,7 @@ export async function compilePage(input: PageCompileInput): Promise<CompiledArti
       data: `<script type="application/json" id="nf-page">${escapeLocalPaths(data)}</script>`,
       js: built.js,
       assets,
+      stamp,
     });
   const key = `${brand}:${createHash("sha256").update(data).digest("hex")}`;
   pendingDrafts.set(key, { draft: page(EMPTY_ASSETS), brand });
