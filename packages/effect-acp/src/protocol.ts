@@ -151,12 +151,14 @@ const parserFactory = RpcSerialization.ndJsonRpc();
 const makeStrictNdJsonRpcParser = () => {
   const codec = RpcSerialization.jsonRpc().makeUnsafe();
   const decoder = new TextDecoder();
-  let buffer = "";
+  let lineFragments: Array<string> = [];
   return {
     decode: (bytes: Uint8Array | string): ReadonlyArray<unknown> => {
-      buffer += typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
+      const chunk = typeof bytes === "string" ? bytes : decoder.decode(bytes, { stream: true });
+      lineFragments.push(chunk);
+      if (!chunk.includes("\n")) return [];
+      const lines = lineFragments.join("").split("\n");
+      lineFragments = [lines.pop() ?? ""];
       return lines.flatMap((line) => codec.decode(line));
     },
     encode: (response: Parameters<typeof codec.encode>[0]) => {

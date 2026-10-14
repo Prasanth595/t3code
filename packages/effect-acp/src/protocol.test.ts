@@ -183,6 +183,91 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("routes a large notification fragmented across thousands of input chunks", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const notifications: Array<AcpProtocol.AcpIncomingNotification> = [];
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Effect.sync(() => {
+            notifications.push(notification);
+          }),
+      });
+      const response = yield* transport.request("x/test", {}).pipe(Effect.forkScoped);
+      yield* Queue.take(output);
+
+      const notification = {
+        jsonrpc: "2.0",
+        method: "x/large",
+        params: { text: "x".repeat(4 * 1024 * 1024) },
+      };
+      const bytes = encoder.encode(
+        `${encodeUnknownJsonString(notification)}\n${encodeUnknownJsonString({ jsonrpc: "2.0", id: 1, result: { ok: true } })}\n`,
+      );
+      for (let offset = 0; offset < bytes.length; offset += 1024) {
+        yield* Queue.offer(input, bytes.subarray(offset, offset + 1024));
+      }
+
+      assert.deepEqual(yield* Fiber.join(response), { ok: true });
+      assert.deepEqual(
+        notifications.map(({ method, params }) => ({ method, params })),
+        [{ method: notification.method, params: notification.params }],
+      );
+    }),
+  );
+
+  it.effect.each([1, 7, 1024])(
+    "preserves NDJSON framing and UTF-8 across %i-byte input chunks",
+    (chunkSize) =>
+      Effect.gen(function* () {
+        const { stdio, input } = yield* makeInMemoryStdio();
+        const params: Array<unknown> = [];
+        const firstThree = yield* Deferred.make<void>();
+        const all = yield* Deferred.make<void>();
+        yield* AcpProtocol.makeAcpPatchedProtocol({
+          stdio,
+          serverRequestMethods: new Set(),
+          onNotification: (notification) =>
+            Effect.sync(() => params.push(notification.params)).pipe(
+              Effect.flatMap((count) =>
+                count === 3
+                  ? Deferred.succeed(firstThree, undefined)
+                  : count === 4
+                    ? Deferred.succeed(all, undefined)
+                    : Effect.succeed(false),
+              ),
+              Effect.asVoid,
+            ),
+        });
+
+        const offerInChunks = (bytes: Uint8Array) =>
+          Effect.gen(function* () {
+            for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+              yield* Queue.offer(input, bytes.subarray(offset, offset + chunkSize));
+            }
+          });
+
+        yield* offerInChunks(
+          encoder.encode(
+            [
+              '{"jsonrpc":"2.0","method":"x/first","params":{"text":"hé🙂"}}\r\n',
+              '{"jsonrpc":"2.0","method":"x/second","params":{"value":2}}\n',
+              '{"jsonrpc":"2.0","method":"x/third","params":{"text":"最後"}}\r\n',
+              '{"jsonrpc":"2.0","method":"x/partial","params":{"text":"🙂',
+            ].join(""),
+          ),
+        );
+        yield* Deferred.await(firstThree);
+        assert.deepEqual(params, [{ text: "hé🙂" }, { value: 2 }, { text: "最後" }]);
+
+        yield* offerInChunks(encoder.encode('done"}}\n'));
+        yield* Deferred.await(all);
+        assert.deepEqual(params.at(-1), { text: "🙂done" });
+      }),
+  );
+
   it.effect("decodes standard JSON-RPC errors into typed ACP request failures", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
