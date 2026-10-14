@@ -9122,13 +9122,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const configuredDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim() ?? "";
             const projectsDir = path.join(
               configuredDir.length > 0
-                ? path.resolve(configuredDir)
+                ? path.resolve(session.cwd, configuredDir)
                 : path.join(yield* HostProcess.HomeDirectory, ".claude"),
               "projects",
             );
+            // Empty only when every copy of the id is empty; any message means
+            // the CLI may still resume it.
+            let found = false;
             for (const project of yield* fileSystem.readDirectory(projectsDir)) {
               const transcriptPath = path.join(projectsDir, project, `${nativeThreadId}.jsonl`);
-              if (!(yield* fileSystem.exists(transcriptPath))) {
+              // Stray files beside the project dirs fail with ENOTDIR.
+              if (
+                !(yield* fileSystem.exists(transcriptPath).pipe(Effect.orElseSucceed(() => false)))
+              ) {
                 continue;
               }
               const conversationLine = yield* fileSystem
@@ -9139,9 +9145,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   Stream.filter(isClaudeConversationLine),
                   Stream.runHead,
                 );
-              return Option.isNone(conversationLine);
+              if (Option.isSome(conversationLine)) {
+                return false;
+              }
+              found = true;
             }
-            return false;
+            return found;
           },
         );
 
