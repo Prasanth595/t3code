@@ -63,7 +63,6 @@ async function renderPanel(
                 threadPanelOpen={false}
                 threadPanelPresentation="inline"
                 threadPanelShortcutLabel={null}
-                threadPanelHasAttention={false}
                 rightPanelAvailable
                 rightPanelOpen={open ?? true}
                 rightPanelShortcutLabel={null}
