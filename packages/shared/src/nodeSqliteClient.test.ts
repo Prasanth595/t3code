@@ -697,15 +697,22 @@ const withCheckpointClient = <A, E>(
     }).pipe(Effect.provide(SqliteClient.layer({ filename, checkpointWorker: true })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
-// The worker answers requests in order, so its next reply comes after it has
-// handled every request the writer sent before this one.
+// Resolves once the worker has handled a request sent now, after every
+// statement so far. Earlier requests from the writer reply with null.
 const checkpointWorkerReply = (worker: NodeWorkerThreads.Worker) =>
-  Effect.promise(() => {
-    const reply = new Promise((resolve) => worker.once("message", resolve));
-    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-    worker.postMessage(null);
-    return reply;
-  });
+  Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        const onReply = (reply: unknown) => {
+          if (reply !== "barrier") return;
+          worker.off("message", onReply);
+          resolve();
+        };
+        worker.on("message", onReply);
+        // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+        worker.postMessage("barrier");
+      }),
+  );
 
 it.effect("checkpoints the WAL on the worker instead of the writer", () =>
   withCheckpointClient((sql, filename) =>

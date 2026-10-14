@@ -493,7 +493,7 @@ const WRITER_BACKSTOP_FRAMES = 10 * CHECKPOINT_FRAMES;
 const CHECKPOINT_IDLE_MS = 100;
 
 // Each message asks the worker to checkpoint if CHECKPOINT_FRAMES frames are
-// waiting, and it replies when done. Once writes pause, it also checkpoints the
+// waiting, and it replies with the same message when done. Once writes pause, it also checkpoints the
 // frames that arrived during its last checkpoint, so the writer can restart the
 // WAL. NOOP only counts frames. SQLite before 3.51 reads NOOP as PASSIVE and
 // would checkpoint on every request, so the worker refuses to start there and
@@ -514,12 +514,12 @@ const finish = () => {
   if (log >= workerData.frames && checkpointed < log) checkpoint.get();
 };
 let idle;
-parentPort.on("message", () => {
+parentPort.on("message", (request) => {
   const { log, checkpointed } = frames.get();
   if (log - checkpointed >= workerData.frames) checkpoint.get();
   clearTimeout(idle);
   idle = setTimeout(finish, workerData.idleMs);
-  parentPort.postMessage(null);
+  parentPort.postMessage(request);
 });
 `;
 
@@ -543,8 +543,6 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
     // No worker threads here: the writer keeps checkpointing.
     return undefined;
   }
-  // A checkpoint in progress must not keep the process alive.
-  worker.unref();
   writer.exec(`PRAGMA wal_autocheckpoint = ${WRITER_BACKSTOP_FRAMES};`);
   let stopped = false;
   let checking = false;
@@ -581,6 +579,9 @@ const startCheckpointWorker = Effect.fnUntraced(function* (
       check();
     }
   });
+  // After the listeners: adding a "message" listener refs the worker again.
+  // A checkpoint in progress must not keep the process alive.
+  worker.unref();
   return check;
 });
 
