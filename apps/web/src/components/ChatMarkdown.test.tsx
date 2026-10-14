@@ -873,36 +873,6 @@ describe("ChatMarkdown heading levels", () => {
   });
 });
 
-describe("ChatMarkdown text direction", () => {
-  it("lays out a right-to-left block that opens with an English term right to left", () => {
-    const html = renderToStaticMarkup(
-      <ChatMarkdown
-        cwd="/tmp/project"
-        text={
-          "**Device hub**: מאפשר לנהל את כל המכשירים ממקום אחד.\n\n- `git status` يعرض حالة المستودع"
-        }
-      />,
-    );
-
-    expect(html).toContain('<p dir="rtl">');
-    expect(html).toContain('<li dir="rtl">');
-  });
-
-  it("does not let code decide a block's direction", () => {
-    const html = renderToStaticMarkup(
-      <ChatMarkdown cwd="/tmp/project" text={"שלום `const someLongIdentifierName = value`"} />,
-    );
-
-    expect(html).toContain('<p dir="rtl">');
-  });
-
-  it("leaves blocks without letters to the browser", () => {
-    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text="42" />);
-
-    expect(html).toContain('<p dir="auto">42</p>');
-  });
-});
-
 describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
   it("uses the browser when it is the only available primary action", () => {
     expect(

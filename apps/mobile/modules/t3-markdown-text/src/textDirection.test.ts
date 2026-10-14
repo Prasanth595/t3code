@@ -13,3 +13,17 @@ it("leaves text without letters to the direction it inherits", () => {
   expect(markdownTextDirection("")).toBeNull();
   expect(markdownTextDirection("123 — 456 ✓")).toBeNull();
 });
+
+it.each([
+  ["\u200eمرحبا", "ltr"],
+  ["\u200fHello", "rtl"],
+  ["\u061cHello", "rtl"],
+  ["123 \u200fHello", "rtl"],
+  ["\u200e", "ltr"],
+  ["\u200f", "rtl"],
+  ["\u061c", "rtl"],
+  ["Hello \u200f", "ltr"],
+  ["مرحبا \u200e", "rtl"],
+])("honors the first letter or direction mark in %s", (text, expected) => {
+  expect(markdownTextDirection(text)).toBe(expected);
+});

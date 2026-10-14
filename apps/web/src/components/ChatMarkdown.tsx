@@ -204,7 +204,7 @@ import {
   BrowserSettingsReadError,
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
-import { blockDirection } from "../lib/textDirection";
+import { hastBlockDirection } from "../lib/textDirection";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
@@ -1996,31 +1996,6 @@ function hastPlainTextDeep(node: unknown): string {
   }
   if (!("children" in node) || !Array.isArray(node.children)) return "";
   return node.children.map(hastPlainTextDeep).join("");
-}
-
-// Code reads left to right whatever it sits in, and a nested list takes its own direction, so
-// neither gets a say in the direction of the block around it.
-const DIRECTION_NEUTRAL_TAGS = new Set(["code", "pre", "kbd", "ol", "ul"]);
-
-/** The prose of a block, for picking its direction: its words, minus code and nested lists. */
-function hastProseText(node: unknown): string {
-  if (!node || typeof node !== "object") return "";
-  if ("type" in node && node.type === "text" && "value" in node && typeof node.value === "string") {
-    return node.value;
-  }
-  if ("tagName" in node && typeof node.tagName === "string") {
-    if (DIRECTION_NEUTRAL_TAGS.has(node.tagName)) return "";
-  }
-  if (!("children" in node) || !Array.isArray(node.children)) return "";
-  return node.children.map(hastProseText).join("");
-}
-
-/**
- * A block's `dir`: its dominant script, so a right-to-left sentence that opens with an English
- * term still reads right to left. `auto` when it has no letters to go by.
- */
-function hastBlockDirection(node: unknown): "ltr" | "rtl" | "auto" {
-  return blockDirection(hastProseText(node));
 }
 
 /**

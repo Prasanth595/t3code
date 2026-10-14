@@ -4,11 +4,13 @@ const RIGHT_TO_LEFT_LETTER = /[֐-ࣿיִ-﷿ﹰ-﻿\u{10800}-\u{10FFF}\u{1E800}-
 const LETTER = /\p{L}/u;
 
 /**
- * The direction of the first letter in `text`, the way HTML's `dir="auto"` picks it, or
- * null when the text has no letters and should keep the direction it inherits.
+ * The direction of the first letter or directional mark in `text`, or
+ * null when the text has no letters or directional marks and should keep the direction it inherits.
  */
 export function markdownTextDirection(text: string): "rtl" | "ltr" | null {
   for (const character of text) {
+    if (character === "\u200e") return "ltr";
+    if (character === "\u200f" || character === "\u061c") return "rtl";
     if (LETTER.test(character)) {
       return RIGHT_TO_LEFT_LETTER.test(character) ? "rtl" : "ltr";
     }

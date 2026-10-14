@@ -14,8 +14,8 @@ static inline BOOL T3MarkdownTextIsRightToLeftCharacter(UTF32Char character)
       (character >= 0x1E800 && character <= 0x1EFFF);
 }
 
-/// The direction of the first letter in `range`, the way HTML's `dir="auto"` picks it, or
-/// natural when the range has no letters.
+/// The direction of the first letter or directional mark in `range`, or
+/// natural when the range has no letters or directional marks.
 static inline NSWritingDirection T3MarkdownTextContentDirection(NSString *string, NSRange range)
 {
   NSCharacterSet *letters = NSCharacterSet.letterCharacterSet;
@@ -29,6 +29,8 @@ static inline NSWritingDirection T3MarkdownTextContentDirection(NSString *string
         index++;
       }
     }
+    if (character == 0x200E) return NSWritingDirectionLeftToRight;
+    if (character == 0x200F || character == 0x061C) return NSWritingDirectionRightToLeft;
     if ([letters longCharacterIsMember:character]) {
       return T3MarkdownTextIsRightToLeftCharacter(character) ? NSWritingDirectionRightToLeft
                                                              : NSWritingDirectionLeftToRight;
