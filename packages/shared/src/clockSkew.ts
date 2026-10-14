@@ -6,7 +6,7 @@
 
 // The relay accepts proofs issued up to 60 seconds in its future. Past that, a
 // skewed clock is enough on its own to explain a rejection.
-export const CLOCK_SKEW_LIMIT_SECONDS = 60;
+const CLOCK_SKEW_LIMIT_SECONDS = 60;
 
 /**
  * Seconds this machine's clock is ahead of (positive) or behind (negative) the

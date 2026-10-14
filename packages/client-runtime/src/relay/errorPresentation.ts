@@ -12,7 +12,7 @@ export const DPOP_UNKNOWN_HINT =
 export const DPOP_RETRY_HINT = "Hint: Try again. If the problem continues, copy the trace ID.";
 
 /** The relay reports a host clock outside its window as an expired or unverifiable link proof. */
-export const LINK_PROOF_CLOCK_HINT =
+const LINK_PROOF_CLOCK_HINT =
   "Hint: Check that the computer running T3 Code sets its date and time automatically, then try again.";
 
 function dpopFailureHint(reason: DpopFailureReason | undefined): string {
