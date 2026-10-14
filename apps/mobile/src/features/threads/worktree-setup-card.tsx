@@ -415,6 +415,7 @@ export function PreparationProgressSheet({
   return (
     <WorktreeSetupSheet title="Preparing task" height={bodyHeight} onClose={onClose}>
       <ScrollView
+        contentInsetAdjustmentBehavior="automatic"
         bounces={false}
         onContentSizeChange={(_width, height) => setBodyHeight(height)}
         contentContainerStyle={{
