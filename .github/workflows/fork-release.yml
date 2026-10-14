@@ -1,33 +1,17 @@
 name: Fork Release
 
-# Builds the desktop apps from fork main and publishes a nightly-channel release
-# that the in-app updater (electron-updater) follows. Linux also gets the
-# self-contained server archive (t3-<version>-linux-<arch>.tar.gz) for machines
-# without a display. It does not touch main:
-# .github/workflows/fork-sync.yml merges upstream. Server and web changes reach
-# the machines through the live server path, so a release is only needed when
-# the app shell changes. See docs/fork.md.
+# Builds the desktop apps and the headless server archives from fork main and
+# publishes a nightly-channel release. The desktop apps update from it with
+# electron-updater. Servers update from it with the upstream boot-service
+# updater (`t3 update`, "Update everything"), which reads the server archives
+# t3-<version>-linux-<arch>.tar.gz and SHA256SUMS. SHA256SUMS is uploaded
+# last, so a release without it is not ready for servers. It does not touch
+# main: .github/workflows/fork-sync.yml merges upstream. See docs/fork.md.
 
 on:
+  # Every push to main, so that servers get each change from a release.
   push:
     branches: [main]
-    # The app shell: Electron code, build config, icons and native dependencies.
-    paths:
-      - apps/desktop/**
-      - "!apps/desktop/**/*.test.ts"
-      - assets/**
-      # The app shell reads and writes client settings with its own copy of this schema, and
-      # drops keys it does not know. A new client setting needs a new shell.
-      - packages/contracts/src/settings.ts
-      - package.json
-      - pnpm-lock.yaml
-      - scripts/build-desktop-artifact.ts
-      - scripts/lib/**
-      - .github/workflows/fork-release.yml
-  # A daily release keeps new installs and Windows current. It stops early
-  # when main has no new commit.
-  schedule:
-    - cron: "47 3 * * *"
   workflow_dispatch:
     inputs:
       notify_agent:
@@ -35,7 +19,9 @@ on:
         type: boolean
         default: true
 
-# One run at a time. A newer push replaces a waiting run.
+# One run at a time, and a run is never cancelled, so a release is never half
+# published. GitHub keeps one waiting run: a newer push replaces it, so a
+# burst of pushes builds only the running commit and the newest one.
 concurrency:
   group: fork-release
   cancel-in-progress: false
@@ -323,7 +309,7 @@ jobs:
             --resource-monitor-dir "$monitor_dir" \
             --output-dir release-cli
           node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.prepare.outputs.version }}"
-          # The installer checks the download against this file.
+          # scripts/fork-install/install.sh checks the download against this file.
           (cd release-cli && for archive in t3-*.tar.gz; do sha256sum "$archive" > "$archive.sha256"; done)
 
       - name: Collect release assets
@@ -375,11 +361,69 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      # The checksums job writes SHA256SUMS from these exact bytes. This step
+      # runs after the publish step, so the archive is on the release.
+      - name: Upload server archive for the checksums
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-linux-${{ matrix.arch }}
+          path: release-cli/t3-*.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  # Writes SHA256SUMS for the server archives and uploads it last. The server
+  # updaters need it, so a release without it is not installable on servers.
+  # It runs only when every server archive exists, so it never marks a release
+  # with a missing archive as ready. A desktop failure does not stop it.
+  checksums:
+    name: Server checksums
+    needs: [prepare, build_bundle, desktop]
+    if: always() && needs.build_bundle.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          merge-multiple: true
+          path: release-cli
+
+      # Keep in step with the Linux rows of the desktop matrix.
+      - name: Write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd release-cli
+          version="${{ needs.prepare.outputs.version }}"
+          archives=("t3-${version}-linux-arm64.tar.gz" "t3-${version}-linux-x64.tar.gz")
+          for archive in "${archives[@]}"; do
+            test -s "$archive" || { echo "Missing server archive $archive." >&2; exit 1; }
+          done
+          sha256sum "${archives[@]}" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish SHA256SUMS
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+        run: gh release upload "${{ needs.prepare.outputs.tag }}" release-cli/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Upload SHA256SUMS of a branch run
+        if: github.ref != 'refs/heads/main'
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-checksums
+          path: release-cli/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 3
+
   # Starts a repair agent on a T3 server through a scheduled-task webhook.
   # Off until the T3_AGENT_WEBHOOK_URL secret is set.
   notify_agent:
     name: Notify repair agent
-    needs: [prepare, build_bundle, desktop]
+    needs: [prepare, build_bundle, desktop, checksums]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

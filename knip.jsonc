@@ -69,7 +69,12 @@
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
-      "ignoreIssues": { "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"] },
+      // Fork: src/state/forkRelease.ts replaces the npm check, but npmRelease.ts stays
+      // unchanged so that Fork Sync merges it without conflicts.
+      "ignoreIssues": {
+        "src/components/ui/*.tsx": ["exports", "nsExports", "duplicates"],
+        "src/state/npmRelease.ts": ["exports"],
+      },
     },
     "apps/machine-map": {
       // Wrangler bundles the Worker from `main` in wrangler.jsonc. Vite builds the page from index.html.
