@@ -21,7 +21,7 @@ const dir = mkdtempSync(join(tmpdir(), "cursor-sdk-stub-"));
 const stub = join(dir, "stub.cjs");
 writeFileSync(
   stub,
-  "module.exports = { Agent: {}, AuthenticationError: class {}, createAgentPlatform: () => ({}), Cursor: {}, CursorSdkError: class {}, InMemoryCredentialStore: class {} };",
+  "globalThis.cursorSdkLoaded = true; module.exports = { Agent: {}, AuthenticationError: class {}, createAgentPlatform: () => ({}), Cursor: {}, CursorSdkError: class {}, InMemoryCredentialStore: class {} };",
 );
 registerHooks({
   resolve(specifier, context, next) {
@@ -32,13 +32,14 @@ registerHooks({
   },
 });
 
-const { layer } = await import(${JSON.stringify(cursorSdkUrl)});
+const { CursorSdk, layer } = await import(${JSON.stringify(cursorSdkUrl)});
+const Context = await import("effect/Context");
 const Effect = await import("effect/Effect");
 const Layer = await import("effect/Layer");
 const Exit = await import("effect/Exit");
 const Scope = await import("effect/Scope");
 const scope = Scope.makeUnsafe();
-await Effect.runPromise(Layer.buildWithScope(layer, scope));
+const context = await Effect.runPromise(Layer.buildWithScope(layer, scope));
 const mode = process.argv[1];
 const missingCwd = join(tmpdir(), "t3-missing-cwd-" + process.pid);
 
@@ -73,6 +74,11 @@ if (mode === "cursor-shell") {
 } else if (mode === "other-rejection") {
   Promise.reject(new Error("boom"));
   setTimeout(() => process.exit(0), 500);
+} else if (mode === "lazy-load") {
+  const loadedWhenBuilt = globalThis.cursorSdkLoaded === true;
+  Context.get(context, CursorSdk).load();
+  console.log(JSON.stringify({ loadedWhenBuilt, loadedWhenUsed: globalThis.cursorSdkLoaded === true }));
+  process.exit(0);
 } else if (mode === "spawn-without-listener") {
   spawn(process.execPath, ["-e", "process.exit(0)"], { cwd: missingCwd });
   setTimeout(() => process.exit(0), 500);
@@ -144,6 +150,14 @@ describe("isCursorShellSpawnFailure", () => {
     ).toBe(false);
     expect(isCursorShellSpawnFailure(new Error("boom"))).toBe(false);
     expect(isCursorShellSpawnFailure("spawn ENOENT")).toBe(false);
+  });
+});
+
+describe("CursorSdk layer", () => {
+  it("loads @cursor/sdk on first use, not when the layer is built", async () => {
+    const result = await runProbe("lazy-load");
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ loadedWhenBuilt: false, loadedWhenUsed: true });
   });
 });
 

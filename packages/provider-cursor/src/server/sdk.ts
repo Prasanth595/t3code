@@ -4,11 +4,10 @@ import * as NodeModule from "node:module";
 // Cursor's Webpack chunks and local helpers must stay beside the SDK entry.
 // createRequire also loads that disk-backed package from a Node SEA executable.
 const requireCursorSdk = NodeModule.createRequire(import.meta.url);
-export const {
-  Agent,
-  AuthenticationError,
-  createAgentPlatform,
-  Cursor,
-  CursorSdkError,
-  InMemoryCredentialStore,
-} = requireCursorSdk("@cursor/sdk") as typeof import("@cursor/sdk");
+
+/**
+ * Loads the SDK on first call; `require` caches it after that. Loading it
+ * costs the server about 20 MB of heap, so servers that never run Cursor
+ * should never call this.
+ */
+export const loadCursorSdk = () => requireCursorSdk("@cursor/sdk") as typeof import("@cursor/sdk");
