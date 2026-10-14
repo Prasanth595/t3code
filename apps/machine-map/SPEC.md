@@ -11,6 +11,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **Owner:** the person who signs in to the portal with an allowed email through Cloudflare Access.
 - **Machine:** one T3 server (environment) that joined the map, for example Mac, VPS, Windows.
 - **Device:** a browser or phone that the owner signs in with. A device is the owner, not a machine.
+- **Client:** one signed-in session of a device or an agent: a portal sign-in or a T3 session on a machine.
 - **Machine token:** the Cloudflare Access service token of one machine. Cloudflare signs each request of a machine with the token's client id.
 - **Arrow:** what one machine can do on another machine: a level and options. An arrow has a direction: "from can use to".
 - **Level:** `none`, `read`, `standard` or `admin`. Each level maps to a fixed set of T3 auth scopes.
@@ -136,23 +137,23 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-805** The machine runs each agent tool through its portal connection with its own machine token. The portal checks the map role on every call.
 - **MM-806** Each agent change shows in the history with the machine, the thread title and a link to the thread.
 
-## 9. Devices
+## 9. Clients
 
-- **MM-901** The Devices view lists the owner sign-ins from Cloudflare Access: device, browser, place and last use.
-- **MM-902** The Devices view also lists the T3 client sessions on each machine, from the machine status.
+- **MM-901** The Clients view lists the owner sign-ins from Cloudflare Access: device, browser, place and last use.
+- **MM-902** The Clients view also lists the T3 client sessions on each machine, from the machine status.
 - **MM-903** "Sign out" on a T3 session sends "revoke client" to its machine. "Sign out everywhere" ends all owner sign-ins in Cloudflare Access and all owner T3 sessions on online machines. Offline machines get it as a queued command.
 
 ## 10. Presence and status
 
 - **MM-1001** Each machine reports its status on connection and on each change, at most once every 5 seconds. Liveness uses the text messages `ping` and `pong`. The Durable Object answers `ping` with its auto response, so a ping does not wake it.
-- **MM-1002** The status holds: T3 version, build, uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands. The build is `<kind> <commit>` with a 7-character commit, for example `live 5abed5f`. The kind is `live` (the Mac desktop live server), `deploy` (the VPS deploy in `/opt/t3code*`) or `dev` (another checkout). A packaged release reports `release` with no commit. The portal shows the build in one mono label, `<T3 version> · <kind> <commit>`, for example `0.0.45 · live 5abed5f`, on machine cards, in the Table, in the machine panel and in Devices. On a machine card, the label has its own line and never cuts off. The commit links to the fork commit on GitHub. With two or more online machines, a NEWEST sticker marks the machines that run the newest build and a BEHIND sticker marks the others. The portal cannot order commits, so the newest build has the highest T3 version, then the latest server start. The resource sample (MM-1501) is a separate message.
+- **MM-1002** The status holds: T3 version, build, uptime, running turns, threads that wait for the owner, scheduled tasks, waiting update, CPU and memory use, and supported commands. The build is `<kind> <commit>` with a 7-character commit, for example `live 5abed5f`. The kind is `live` (the Mac desktop live server), `deploy` (the VPS deploy in `/opt/t3code*`) or `dev` (another checkout). A packaged release reports `release` with no commit. The portal shows the build in one mono label, `<T3 version> · <kind> <commit>`, for example `0.0.45 · live 5abed5f`, on machine cards, in the Table, in the machine panel and in Clients. On a machine card, the label has its own line and never cuts off. The commit links to the fork commit on GitHub. With two or more online machines, a NEWEST sticker marks the machines that run the newest build and a BEHIND sticker marks the others. The portal cannot order commits, so the newest build has the highest T3 version, then the latest server start. The resource sample (MM-1501) is a separate message.
 - **MM-1003** A machine card shows online or offline, the build, and stickers for running agents, threads that wait for the owner, a waiting update, queued items and active health alerts (MM-1505), and the CPU and memory bars (MM-1506).
 - **MM-1004** "Open" on a machine opens its T3 web app at its tunnel hostname.
 
 ## 11. Portal UI
 
 - **MM-1101** The portal uses the tick3d style in light and dark mode, as in the `neo-brutalism` skill. It works on a phone and on a desktop.
-- **MM-1102** Views: Map, Table, Health, Settings, Queue, History, Inbox, Devices. The selected item opens in a side panel, or in a bottom sheet on a phone.
+- **MM-1102** Views: Map, Table, Health, Settings, Queue, History, Inbox, Clients. The selected item opens in a side panel, or in a bottom sheet on a phone.
 - **MM-1103** The Map view draws one line per pair of machines that has an arrow other than the default: a level above `none`, agent tools or an expiry. A pair with no access either way has no line and no card. The Table and the command palette still list its arrows. A card on each line shows both directions in words. Each row reads "<source> uses <target>" with the level, so the text says the direction in every layout. A small glyph after the target shows where the target sits on the map, rounded to the four directions. The table, the arrow panel, the history and the command palette use the same "uses" wording. Pair cards in their automatic place stay off machine cards and notes. Tapping a machine focuses it and fades the lines that do not touch it. Tapping it again, tapping the empty map, "Show all" or Escape ends the focus.
 - **MM-1104** Each machine card has a connection handle on each edge. The handles show on hover and focus, and always on a touch screen. Dragging from a handle draws a line that follows the pointer. A drop on another machine sets the arrow from the source to the target to `standard` as one revision when it is `none`, and opens the arrow. During a pause the drop only opens the arrow (MM-711). A drop on empty map cancels. A tap on a handle opens the machine. "Connect to" in the machine panel does the same without a pointer. Dragging a machine only moves it.
 - **MM-1105** The command palette, opened with Cmd+K or Ctrl+K, finds every action and every machine.

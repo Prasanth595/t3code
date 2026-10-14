@@ -1,4 +1,4 @@
-/** A short device and browser name from a User-Agent header, for history (MM-702) and Devices (MM-901). */
+/** A short device and browser name from a User-Agent header, for history (MM-702) and Clients (MM-901). */
 export function describeUserAgent(userAgent: string | null): { device: string; browser: string } {
   const ua = userAgent ?? "";
   const device = ua.includes("iPhone")

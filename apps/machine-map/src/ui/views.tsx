@@ -971,7 +971,7 @@ export function InboxView() {
 }
 
 /** MM-901 to MM-903. */
-export function DevicesView() {
+export function ClientsView() {
   const portal = usePortalContext();
   const { map, snapshot, now } = portal;
   const standings = buildStandings(snapshot.presence);
@@ -1023,7 +1023,7 @@ export function DevicesView() {
     <div className="card view stack">
       <div className="view-head">
         <div>
-          <h2>Devices</h2>
+          <h2>Clients</h2>
           <p className="small muted">Where you are signed in, to the portal and to each machine.</p>
         </div>
         <div className="actions">

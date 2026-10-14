@@ -30,7 +30,7 @@ The Worker refuses every owner and machine request while a value in `wrangler.js
 Set secrets with `wrangler secret put <NAME>` in this folder.
 
 - `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it with `openssl rand -base64 32`. A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
-- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with only "Access: Service Tokens Edit" and "Access: Apps and Policies Edit" on the account. With it, "Add machine" creates the machine token, "Rotate token" works, "Remove machine" deletes the token, and the Devices view lists Access sessions. Without it, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
+- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with only "Access: Service Tokens Edit" and "Access: Apps and Policies Edit" on the account. With it, "Add machine" creates the machine token, "Rotate token" works, "Remove machine" deletes the token, and the Clients view lists Access sessions. Without it, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
 
 ## Deploy
 
