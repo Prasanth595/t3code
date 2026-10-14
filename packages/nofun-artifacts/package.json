@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit",
     "examples": "node examples/render.ts",
     "sync": "node scripts/sync.ts",
-    "examples:live": "node examples/render-live.ts"
+    "examples:live": "node examples/render-live.ts",
+    "runtime:build": "node src/runtime-bundle/build.ts"
   },
   "dependencies": {
     "class-variance-authority": "0.7.1",
