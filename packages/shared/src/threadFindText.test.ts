@@ -1,6 +1,10 @@
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
-import { serializeAssistantCitation } from "./assistantCitations.ts";
+import {
+  joinLeadingAssistantCitations,
+  serializeAssistantCitation,
+  serializeAssistantCitationRef,
+} from "./assistantCitations.ts";
 import { searchableMessageSegments } from "./threadFindText.ts";
 
 it("excludes review attachments rendered as context chips", () => {
@@ -155,7 +159,33 @@ it("indexes the citation chip label instead of its link text", () => {
     "Please fix cited needle thanks",
   ]);
   const commented = serializeAssistantCitation({ ...citation, comment: "my note" });
-  expect(searchableMessageSegments({ role: "user", text: commented, streaming: false })).toEqual([
-    "my note",
+  expect(
+    searchableMessageSegments({ role: "user", text: `See ${commented}`, streaming: false }),
+  ).toEqual(["See my note"]);
+});
+
+it("indexes quote card comments but not their quotes or #n references", () => {
+  const citation = {
+    version: 1 as const,
+    environmentId: EnvironmentId.make("environment"),
+    threadId: ThreadId.make("thread"),
+    messageId: MessageId.make("message"),
+    text: "quoted needle",
+    start: 0,
+    end: 13,
+    prefix: "",
+    suffix: "",
+  };
+  const text = joinLeadingAssistantCitations(
+    [
+      serializeAssistantCitation({ ...citation, comment: " first\nnote " }),
+      serializeAssistantCitation(citation),
+    ],
+    `Drop ${serializeAssistantCitationRef(1)} now`,
+  );
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
+    "first note",
+    "Drop ",
+    " now",
   ]);
 });

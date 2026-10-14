@@ -201,9 +201,9 @@ describe("submitComposerDraft", () => {
 
   it("sends canonical citations when expanded input fits exactly after trimming", () => {
     const citation = serializeAssistantCitation(assistantCitation);
-    const draft = ` ${"x".repeat(
-      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - expandAssistantCitationsForProvider(citation).length,
-    )}${citation} \n`;
+    // The expanded prompt grows one character per "x", so this lands exactly on the limit.
+    const fixedLength = expandAssistantCitationsForProvider(`x${citation}`).length - 1;
+    const draft = ` ${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - fixedLength)}${citation} \n`;
     const dispatchedDrafts: string[] = [];
 
     const result = submitComposerDraft({
@@ -218,7 +218,7 @@ describe("submitComposerDraft", () => {
     expect(result).toEqual({ validationMessage: null, didDispatch: true });
     expect(dispatchedDrafts).toEqual([draft]);
     expect(dispatchedDrafts[0]).toContain(citation);
-    expect(dispatchedDrafts[0]).not.toContain("<assistant_citations>");
+    expect(dispatchedDrafts[0]).not.toContain("<quoted_replies>");
   });
 
   it("blocks a generated plan follow-up that exceeds the shared limit", () => {

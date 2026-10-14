@@ -111,18 +111,19 @@ Leaving reasoning level or service tier unset uses the provider's own configurat
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose
-**Cite in composer**. You can add a comment about the quote and write instructions
-around it.
+**Cite in composer**. The quote becomes a numbered card above your message, with a
+field for your comment on it. In that field, Enter returns to the message,
+Cmd/Ctrl+Enter sends, and Backspace on an empty comment removes the card; the ×
+button removes it too. Type `#` in the message to refer to a card by its number.
 
-Select the quote in a draft or sent message to return to its source. If the source
-is unavailable or has changed, the saved quote remains readable.
+Hover a card to highlight the quoted passage, and select its number or quote to
+return to the source. Sent messages show the same cards. If the source is
+unavailable or has changed, the saved quote remains readable.
 
-The chip shows your comment when it has one, or a short quote preview otherwise. Use the pencil
-button to add or change the comment. To remove the citation, place the caret beside its chip and
-delete it like other inline context. Copying, reloading, and restoring a
-[stashed prompt](#prompt-stash) keep each comment
-with its quote, and sending tells the agent which words were quoted and which comment you wrote.
-The quoted text and comment count toward the message limit.
+Copying, reloading, and restoring a [stashed prompt](#prompt-stash) keep each
+comment with its quote. The agent receives the quotes as a numbered list, each
+with your comment under it, followed by your message. The quoted text and
+comments count toward the message limit.
 
 Mobile displays saved quotes and comments, but does not create citations or
 navigate to their sources.

@@ -15,12 +15,11 @@ const CITATION_HIGHLIGHT_FADE_MS = 450;
 const CITATION_HIGHLIGHT_TOTAL_MS =
   1.5 * CITATION_PULSE_DURATION_MS + CITATION_HIGHLIGHT_HOLD_MS + CITATION_HIGHLIGHT_FADE_MS;
 const CITATION_HIGHLIGHT_OPACITY = "--assistant-citation-highlight-opacity";
-// Matches the comment-editing highlight strength in index.css.
 const CITATION_HIGHLIGHT_PEAK = 0.45;
-const COMMENT_HIGHLIGHT_NAME = "t3-assistant-citation-comment";
+const PENDING_HIGHLIGHT_NAME = "t3-assistant-citation-pending";
 
-/** Keep source text marked while its comment editor is open, without changing native selection. */
-export function observeAssistantCitationCommentSource({
+/** Keep source text marked while its quote card is pending, without changing native selection. */
+export function observePendingAssistantCitationSource({
   anchor,
   citation,
   onUnavailable,
@@ -44,8 +43,8 @@ export function observeAssistantCitationCommentSource({
     observer.disconnect();
     if (!highlight) return;
     highlight.delete(range);
-    if (highlight.size === 0 && registry?.get(COMMENT_HIGHLIGHT_NAME) === highlight) {
-      registry.delete(COMMENT_HIGHLIGHT_NAME);
+    if (highlight.size === 0 && registry?.get(PENDING_HIGHLIGHT_NAME) === highlight) {
+      registry.delete(PENDING_HIGHLIGHT_NAME);
     }
   };
   const unavailable = () => {
@@ -77,10 +76,10 @@ export function observeAssistantCitationCommentSource({
 
   if (!validate(false)) return dispose;
   if (typeof Highlight !== "undefined" && registry) {
-    const existing = registry.get(COMMENT_HIGHLIGHT_NAME);
+    const existing = registry.get(PENDING_HIGHLIGHT_NAME);
     highlight = existing ?? new Highlight();
     highlight.add(range);
-    if (!existing) registry.set(COMMENT_HIGHLIGHT_NAME, highlight);
+    if (!existing) registry.set(PENDING_HIGHLIGHT_NAME, highlight);
   }
   observer.observe(viewport, { childList: true, subtree: true, characterData: true });
   return dispose;

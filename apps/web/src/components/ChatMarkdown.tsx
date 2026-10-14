@@ -102,10 +102,14 @@ import ReactMarkdown from "react-markdown";
 import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
-import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
+import {
+  parseAssistantCitationHref,
+  parseAssistantCitationRefHref,
+} from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { AssistantCitationNumber } from "./chat/AssistantCitationCards";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 import {
@@ -2484,6 +2488,7 @@ function useChatMarkdownState({
   }, [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
     if (parseAssistantCitationHref(href)) return href;
+    if (parseAssistantCitationRefHref(href) !== null) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
@@ -2948,6 +2953,18 @@ const CHAT_MARKDOWN_COMPONENTS = {
     } = use(ChatMarkdownRendererContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     if (citation) return <AssistantCitationChip citation={citation} />;
+    // `#n` points at quote card n of the same message.
+    const quoteNumber = href ? parseAssistantCitationRefHref(href) : null;
+    if (quoteNumber !== null) {
+      return (
+        <AssistantCitationNumber
+          number={quoteNumber}
+          aria-label={`Quote ${quoteNumber}`}
+          data-thread-find-ignore
+          data-markdown-copy={`#${quoteNumber}`}
+        />
+      );
+    }
     // A thread link names a thread in this message's environment and opens it in the app.
     const linkedThreadId = href ? parseThreadLinkHref(href) : null;
     if (linkedThreadId) {

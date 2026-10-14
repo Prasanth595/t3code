@@ -3,7 +3,7 @@ import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
-  observeAssistantCitationCommentSource,
+  observePendingAssistantCitationSource,
   observeAssistantCitationSource,
   type AssistantCitationTarget,
 } from "./AssistantCitationSource";
@@ -260,7 +260,7 @@ function createSource({ reducedMotion = false } = {}) {
     range = new TestRange(text, () => rect(sourceTop - scrollNode.scrollTop, rangeHeight)),
   ) => {
     const onUnavailable = vi.fn();
-    const cleanup = observeAssistantCitationCommentSource({
+    const cleanup = observePendingAssistantCitationSource({
       anchor: {
         source: root as unknown as HTMLElement,
         range: range as unknown as Range,
@@ -312,7 +312,7 @@ function createSource({ reducedMotion = false } = {}) {
       sourceTop = value;
     },
     highlight: () => highlights.get("t3-assistant-citation")?.values().next().value,
-    commentHighlight: () => highlights.get("t3-assistant-citation-comment"),
+    commentHighlight: () => highlights.get("t3-assistant-citation-pending"),
     cleanup: () => {
       for (const cleanup of cleanups) cleanup();
     },
@@ -572,7 +572,7 @@ describe("assistant citation source lifecycle", () => {
   });
 });
 
-describe("assistant citation comment source lifecycle", () => {
+describe("pending assistant citation source lifecycle", () => {
   it("keeps the exact live range highlighted until cleanup without changing selection or navigation", () => {
     const source = createSource();
     const selection = new TestSelection();
@@ -715,7 +715,7 @@ describe("assistant citation comment source lifecycle", () => {
     const comment = source.mountComment();
     const original = source.commentHighlight();
     const replacement = new Set([new TestRange(source.text, () => rect(90))]);
-    source.highlights.set("t3-assistant-citation-comment", replacement);
+    source.highlights.set("t3-assistant-citation-pending", replacement);
 
     comment.cleanup();
 

@@ -103,6 +103,7 @@ import { WorkspaceEntryTooltip } from "./chat/WorkspaceEntryIcon";
 import { FileTagChipContent } from "./chat/FileTagChip";
 import { SkillChipIcon } from "./chat/SkillInlineText";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
+import { AssistantCitationNumber } from "./chat/AssistantCitationCards";
 import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
@@ -112,7 +113,6 @@ import {
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { ComposerCodeBlockNodeView } from "./chat/ComposerCodeBlockNodeView";
 import { resolveAssistantCitationCommentDismissal } from "./chat/assistantCitationCommentDismissal";
@@ -126,7 +126,6 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
-  requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -199,22 +198,7 @@ export interface ComposerPromptEditorProps {
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
 
-export type ComposerCitationCommentRequest = {
-  previousValue: string;
-  value: string;
-  citationStart: number;
-  sourceAnchor: AssistantCitationSourceAnchor;
-  insertedSpaces: CitationInsertedSpaces;
-};
-
-// Spaces added around a freshly inserted citation, removed with it if its comment is cancelled.
-type CitationInsertedSpaces = { before: boolean; after: boolean };
-
-type OpenCitationComment = {
-  key: string;
-  sourceAnchor?: AssistantCitationSourceAnchor;
-  removeOnCancel?: CitationInsertedSpaces;
-};
+type OpenCitationComment = { key: string };
 
 const ComposerCitationCommentContext = createContext<{
   openComment: OpenCitationComment | null;
@@ -431,21 +415,6 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
     [editor, nodePos],
   );
 
-  // Undo a fresh insertion: drop the chip and the spaces inserted with it.
-  const removeOnCancel = commentTarget?.removeOnCancel;
-  const onRemove = useCallback(() => {
-    if (!editor.isEditable || !removeOnCancel) return;
-    const pos = nodePos();
-    if (pos === null) return;
-    const { doc } = editor.state;
-    const current = doc.nodeAt(pos);
-    if (!current) return;
-    const end = pos + current.nodeSize;
-    const from = removeOnCancel.before && doc.textBetween(pos - 1, pos) === " " ? pos - 1 : pos;
-    const to = removeOnCancel.after && doc.textBetween(end, end + 1) === " " ? end + 1 : end;
-    editor.chain().focus().deleteRange({ from, to }).run();
-  }, [editor, nodePos, removeOnCancel]);
-
   // Put the caret right after the chip so Enter sends and typing continues the prompt.
   const onRestoreFocus = useCallback(() => {
     if (!editor.isEditable) return;
@@ -486,12 +455,10 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
         composer
         commentEditor={{
           open: commentTarget !== null,
-          sourceAnchor: commentTarget?.sourceAnchor,
           onOpenChange: (open) => {
             if (open && !editor.isEditable) return;
             commentContext.onOpenChange(citeKey, open);
           },
-          ...(removeOnCancel ? { onCancel: onRemove } : {}),
           onSave: onSaveComment,
           onDraftChange: (comment) => commentContext.onDraftChange(citeKey, comment),
           onSaveAndSend: (comment) => {
@@ -502,6 +469,41 @@ function ComposerCitationNodeView({ node, editor, getPos }: NodeViewProps) {
           onRestoreFocus,
         }}
       />
+    </NodeViewWrapper>
+  );
+}
+
+/** `#n` in the text: points at quote card n above it. */
+const ComposerCitationRefExtension = Node.create({
+  name: "composer-citation-ref",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return { index: { default: 0 }, source: { default: "" } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-composer-citation-ref]" }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", { "data-composer-citation-ref": "", ...HTMLAttributes }];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(ComposerCitationRefNodeView);
+  },
+});
+
+function ComposerCitationRefNodeView({ node }: NodeViewProps) {
+  const index = node.attrs.index as number;
+  return (
+    <NodeViewWrapper
+      as="span"
+      className={CHIP_NODE_SELECTION_CLASS_NAME}
+      contentEditable={false}
+      data-markdown-copy={node.attrs.source as string}
+    >
+      <AssistantCitationNumber number={index} aria-label={`Quote ${index}`} />
     </NodeViewWrapper>
   );
 }
@@ -949,7 +951,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
   const hasAppliedControlledSelectionRef = useRef(false);
-  const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
   // The open citation's unsaved comment, saved before a new value replaces the document.
   const citationDraftRef = useRef<{ key: string; comment: string } | null>(null);
@@ -1095,6 +1096,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         ComposerMentionExtension,
         ComposerSkillExtension,
         ComposerCitationExtension,
+        ComposerCitationRefExtension,
         ComposerContextReferenceExtension,
         ComposerMarkersExtension,
         ...(richText
@@ -1622,8 +1624,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     if (!initialSelection && previousSnapshot.value === value && !isFocused) return;
 
     isApplyingControlledUpdateRef.current = true;
-    const pendingCitation =
-      citationRequestRef.current?.value === value ? citationRequestRef.current : null;
     if (previousSnapshot.value !== value) {
       saveCitationDraft(editor, previousSnapshot.value);
       editor.commands.setContent(
@@ -1637,26 +1637,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
     const flat = collapsedToFlat(map, normalizedCursor);
     editor.commands.setTextSelection(flatToPm(map, flat));
     if (isFocused) scrollTiptapCaretIntoView(editor);
-    if (pendingCitation) {
-      citationRequestRef.current = null;
-      const target = map.runs.find(
-        (run) =>
-          run.kind === "token" &&
-          run.nodeName === "composer-citation" &&
-          run.mdStart === pendingCitation.citationStart,
-      );
-      if (target) {
-        const node = editor.state.doc.nodeAt(target.pmPos);
-        const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
-        if (citeKey) {
-          setOpenCitation({
-            key: citeKey,
-            sourceAnchor: pendingCitation.sourceAnchor,
-            removeOnCancel: pendingCitation.insertedSpaces,
-          });
-        }
-      }
-    }
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
@@ -1730,29 +1710,6 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
       readSelectionRange: () => {
         readSnapshot();
         return selectionRangeRef.current;
-      },
-      requestCitationComment: (request) => {
-        citationRequestRef.current = request;
-        if (!editor) return;
-        const map = serializeEditorDoc(editor.state.doc);
-        if (map.value !== request.value) return;
-        const target = map.runs.find(
-          (run) =>
-            run.kind === "token" &&
-            run.nodeName === "composer-citation" &&
-            run.mdStart === request.citationStart,
-        );
-        if (!target) return;
-        const node = editor.state.doc.nodeAt(target.pmPos);
-        const citeKey = (node?.attrs as { citeKey?: string } | undefined)?.citeKey;
-        if (citeKey) {
-          citationRequestRef.current = null;
-          setOpenCitation({
-            key: citeKey,
-            sourceAnchor: request.sourceAnchor,
-            removeOnCancel: request.insertedSpaces,
-          });
-        }
       },
       readSnapshot,
       isCaretOnVisualEdge: (edge) => {

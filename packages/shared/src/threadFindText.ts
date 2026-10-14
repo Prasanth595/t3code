@@ -22,7 +22,12 @@ import {
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import { parseComposerContextHref } from "./composerContextReferences.ts";
-import { assistantCitationLabel, parseAssistantCitationHref } from "./assistantCitations.ts";
+import {
+  assistantCitationLabel,
+  parseAssistantCitationHref,
+  parseAssistantCitationRefHref,
+  splitLeadingAssistantCitations,
+} from "./assistantCitations.ts";
 import type { OrchestrationV2ConversationMessage } from "@t3tools/contracts";
 import { proposedPlanTitle, stripDisplayedPlanMarkdown } from "./proposedPlanText.ts";
 import { unified } from "unified";
@@ -132,7 +137,11 @@ function markdownThreadFindText(
   };
   const visit = (node: TextTree, inPre = false, inlineSkills = false) => {
     const href = node.properties?.href ?? node.properties?.src;
-    if (userMessage && typeof href === "string" && parseComposerContextHref(href)) {
+    if (
+      userMessage &&
+      typeof href === "string" &&
+      (parseComposerContextHref(href) || parseAssistantCitationRefHref(href) !== null)
+    ) {
       flush();
       return;
     }
@@ -220,7 +229,14 @@ export function searchableMessageSegments(
 ): readonly string[] | null {
   if (message.role === "user") {
     const text = message.context ? message.text : upgradeLegacyContextMessage(message.text).text;
-    return markdownThreadFindText(text, true, cwd, skills);
+    // Leading quotes render as cards: only their comments are searchable, ahead of the body.
+    const { citations, body } = splitLeadingAssistantCitations(text);
+    return [
+      ...citations.flatMap(({ citation }) =>
+        citation.comment?.trim() ? [citation.comment.trim().replace(/\r?\n/g, " ")] : [],
+      ),
+      ...markdownThreadFindText(body, true, cwd, skills),
+    ];
   }
   if (message.role !== "assistant") return null;
   return markdownThreadFindText(

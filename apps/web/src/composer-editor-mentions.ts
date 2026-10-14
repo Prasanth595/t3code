@@ -1,5 +1,8 @@
 import type { AssistantCitation } from "@t3tools/contracts";
-import { collectAssistantCitations } from "@t3tools/shared/assistantCitations";
+import {
+  collectAssistantCitationRefs,
+  collectAssistantCitations,
+} from "@t3tools/shared/assistantCitations";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   collectComposerInlineTokens,
@@ -24,6 +27,12 @@ export type ComposerPromptSegment =
   | {
       type: "citation";
       citation: AssistantCitation;
+      source: string;
+    }
+  | {
+      /** `#n`: points at the nth quote card above the text. */
+      type: "citation-ref";
+      index: number;
       source: string;
     }
   | {
@@ -79,12 +88,16 @@ export function collectComposerPromptInlineTokens(text: string) {
   const tokens = collectComposerInlineTokens(text);
   const citations = collectAssistantCitations(text);
   const references = collectComposerContextReferences(text);
-  if (citations.length === 0 && references.length === 0) return tokens;
+  const citationRefs = collectAssistantCitationRefs(text);
+  if (citations.length === 0 && references.length === 0 && citationRefs.length === 0) {
+    return tokens;
+  }
 
   // An unfinished @ mention can otherwise consume the start of a link label.
   const links = [
     ...citations.map((match) => ({ ...match, type: "citation" as const })),
     ...references.map((match) => ({ ...match, type: "context-reference" as const })),
+    ...citationRefs.map((match) => ({ ...match, type: "citation-ref" as const })),
   ];
   return [
     ...tokens.filter(
@@ -113,6 +126,8 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
 
     if (match.type === "citation") {
       segments.push({ type: "citation", citation: match.citation, source: match.source });
+    } else if (match.type === "citation-ref") {
+      segments.push({ type: "citation-ref", index: match.index, source: match.source });
     } else if (match.type === "context-reference") {
       segments.push({
         type: "context-reference",

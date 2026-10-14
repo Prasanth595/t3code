@@ -1,7 +1,9 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import type { AssistantCitation, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
+  joinLeadingAssistantCitations,
   serializeAssistantCitation,
+  splitLeadingAssistantCitations,
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import {
@@ -22,8 +24,80 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {
-  return `${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `;
+/**
+ * The composer's quote cards are the leading citation block of the prompt (see
+ * `splitLeadingAssistantCitations`). The text editor shows only the body below them, so its
+ * cursors are shifted by the block's width: collapsed, each citation and each newline counts
+ * as one; expanded, the block counts its full source.
+ */
+export function splitComposerQuoteCards(prompt: string) {
+  const { citations, body } = splitLeadingAssistantCitations(prompt);
+  return { citations, body, ...quoteCardOffsets(citations, body) };
+}
+
+/** Inverse of {@link splitComposerQuoteCards} for a new body under the same cards. */
+export function joinComposerQuoteCards(sources: ReadonlyArray<string>, body: string) {
+  const prompt = joinLeadingAssistantCitations(sources, body);
+  return {
+    prompt,
+    ...quoteCardOffsets(
+      sources.map((source) => ({ source })),
+      body,
+    ),
+  };
+}
+
+function quoteCardOffsets(citations: ReadonlyArray<{ source: string }>, body: string) {
+  if (citations.length === 0) return { collapsedOffset: 0, expandedOffset: 0 };
+  const gap = body.length > 0 ? 2 : 0;
+  return {
+    collapsedOffset: 2 * citations.length - 1 + gap,
+    expandedOffset:
+      citations.reduce((length, { source }) => length + source.length, citations.length - 1) + gap,
+  };
+}
+
+/** Adds a quote card after the existing ones, leaving the text below untouched. */
+export function appendLeadingAssistantCitation(prompt: string, citation: AssistantCitation) {
+  const current = splitComposerQuoteCards(prompt);
+  const next = joinComposerQuoteCards(
+    [...current.citations.map(({ source }) => source), serializeAssistantCitation(citation)],
+    current.body,
+  );
+  return {
+    prompt: next.prompt,
+    number: current.citations.length + 1,
+    /** How far a collapsed cursor in the body moves. */
+    cursorShift: next.collapsedOffset - current.collapsedOffset,
+  };
+}
+
+/** Cards a `#` query can reference: all of them for `#`, else those whose number starts with it. */
+export function matchQuoteCardsForReference(prompt: string, query: string) {
+  if (!/^\d*$/u.test(query)) return [];
+  return splitLeadingAssistantCitations(prompt).citations.flatMap(({ citation }, index) =>
+    String(index + 1).startsWith(query) ? [{ number: index + 1, citation }] : [],
+  );
+}
+
+/** Rewrites one card's comment; spaces survive while the user is still typing. */
+export function setLeadingAssistantCitationComment(
+  prompt: string,
+  number: number,
+  comment: string,
+): string {
+  const { citations, body } = splitLeadingAssistantCitations(prompt);
+  if (!citations[number - 1]) return prompt;
+  return joinLeadingAssistantCitations(
+    citations.map(({ citation, source }, index) =>
+      index === number - 1
+        ? serializeAssistantCitation(
+            withAssistantCitationComment(citation, comment, { trim: false }),
+          )
+        : source,
+    ),
+    body,
+  );
 }
 
 function composerRequiresModifier(
@@ -108,6 +182,7 @@ export function expandCollapsedComposerCursor(
     if (
       segment.type === "mention" ||
       segment.type === "citation" ||
+      segment.type === "citation-ref" ||
       segment.type === "context-reference"
     ) {
       const expandedLength = segment.source.length;
@@ -191,6 +266,7 @@ export function collapseExpandedComposerCursor(
     if (
       segment.type === "mention" ||
       segment.type === "citation" ||
+      segment.type === "citation-ref" ||
       segment.type === "context-reference"
     ) {
       const expandedLength = segment.source.length;

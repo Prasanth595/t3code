@@ -169,7 +169,6 @@ import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
 import { isMacPlatform } from "../lib/utils";
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
 import {
   isAtomCommandInterrupted,
@@ -1857,8 +1856,8 @@ export default function ChatView(props: ChatViewProps) {
     useState<HTMLDivElement | null>(null);
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
   const citeAssistantText = useCallback(
-    (citation: AssistantCitation, sourceAnchor: AssistantCitationSourceAnchor) => {
-      const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
+    (citation: AssistantCitation) => {
+      const inserted = composerRef.current?.citeAssistantText(citation) ?? false;
       if (!inserted) {
         toastManager.add({
           type: "warning",

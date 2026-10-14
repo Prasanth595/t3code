@@ -11,6 +11,7 @@ import {
   composerPullRequestsFromLinks,
   filterComposerPullRequestMatches,
 } from "@t3tools/shared/composerPullRequestMatches";
+import { serializeAssistantCitationRef } from "@t3tools/shared/assistantCitations";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import { elementContextToPreviewAnnotation } from "../../lib/elementContext";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -86,7 +87,8 @@ import {
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  formatAssistantCitationForComposer,
+  appendLeadingAssistantCitation,
+  matchQuoteCardsForReference,
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
@@ -188,7 +190,6 @@ import {
 } from "../../lib/attachmentUploadState";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { getTerminalFocusOwner } from "../../lib/terminalFocus";
-import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../../keybindings";
 import {
   type TerminalContextDraft,
@@ -205,11 +206,7 @@ import {
   shouldUseRestingComposerLayout,
 } from "../composerFooterLayout";
 import { measureRestingComposerControls } from "./restingComposerControlsMeasurement";
-import {
-  type ComposerCitationCommentRequest,
-  type ComposerPromptEditorHandle,
-  ComposerPromptEditor,
-} from "../ComposerPromptEditor";
+import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import {
   ComposerContextActionsContext,
   composerContextRecordsFromDraft,
@@ -1469,10 +1466,8 @@ export interface ChatComposerHandle {
   ) => boolean;
   /** Apply large-paste folding for text redirected from a blurred composer. */
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
-  citeAssistantText: (
-    citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
-  ) => boolean;
+  /** Adds a quote card above the text and focuses its comment. */
+  citeAssistantText: (citation: AssistantCitation) => boolean;
   openModelPicker: () => void;
   toggleModelPicker: () => void;
   openControl: (command: KeybindingCommand) => void;
@@ -2805,6 +2800,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
       }));
     }
+    const quoteCardItems: ComposerCommandItem[] =
+      composerTrigger.kind === "pull-request"
+        ? matchQuoteCardsForReference(prompt, composerTrigger.query).map(({ number, citation }) => {
+            const quote = citation.text.replace(/\s+/g, " ").trim();
+            const comment = citation.comment?.replace(/\s+/g, " ").trim();
+            return {
+              id: `quote-card:${number}`,
+              type: "quote-card",
+              number,
+              label: comment || quote,
+              description: comment ? quote : "",
+            };
+          })
+        : [];
     if (
       composerTrigger.kind === "pull-request" &&
       pullRequestProjectId !== null &&
@@ -2841,27 +2850,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }),
             composerTrigger.query,
           ).slice(0, COMPOSER_PULL_REQUEST_RESULT_LIMIT);
-      return matches.map((pullRequest) => ({
-        id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
-        type: "pull-request",
-        pullRequest: {
-          number: pullRequest.number,
-          title: pullRequest.title,
-          url: pullRequest.url,
-          headBranch: pullRequest.headBranch,
-          baseBranch: pullRequest.baseBranch,
-          state: pullRequest.state,
-          isDraft: pullRequest.isDraft,
-        },
-        label: `#${pullRequest.number}`,
-        description:
-          pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
-            ? pullRequest.title
-            : `${pullRequest.repository} · ${pullRequest.title}`,
-      }));
+      return [
+        ...quoteCardItems,
+        ...matches.map((pullRequest) => ({
+          id: `pull-request:${pullRequest.projectId}:${pullRequest.repository}:${pullRequest.number}`,
+          type: "pull-request" as const,
+          pullRequest: {
+            number: pullRequest.number,
+            title: pullRequest.title,
+            url: pullRequest.url,
+            headBranch: pullRequest.headBranch,
+            baseBranch: pullRequest.baseBranch,
+            state: pullRequest.state,
+            isDraft: pullRequest.isDraft,
+          },
+          label: `#${pullRequest.number}`,
+          description:
+            pullRequest.repository.trim().toLowerCase() ===
+            pullRequestRepository.trim().toLowerCase()
+              ? pullRequest.title
+              : `${pullRequest.repository} · ${pullRequest.title}`,
+        })),
+      ];
     }
-    return [];
+    return quoteCardItems;
   }, [
+    prompt,
     activeThreadId,
     compactSlashCommandAvailable,
     composerTrigger,
@@ -3919,11 +3933,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         expectedText?: string;
         expandedCursorAfterReplace?: number;
         focusEditorAfterReplace?: boolean;
-        citationComment?: {
-          start: number;
-          sourceAnchor: AssistantCitationSourceAnchor;
-          insertedSpaces: ComposerCitationCommentRequest["insertedSpaces"];
-        };
       },
     ): boolean => {
       if (
@@ -3952,15 +3961,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         nextCursor,
         isLiteralPendingAnswer,
       );
-      if (options?.citationComment) {
-        composerEditorRef.current?.requestCitationComment({
-          previousValue: currentText,
-          value: next.text,
-          citationStart: options.citationComment.start,
-          sourceAnchor: options.citationComment.sourceAnchor,
-          insertedSpaces: options.citationComment.insertedSpaces,
-        });
-      }
       promptRef.current = next.text;
       const activePendingQuestion = activePendingProgress?.activeQuestion;
       if (activePendingQuestion && activePendingUserInput) {
@@ -4163,6 +4163,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           });
           setComposerHighlightedItemId(null);
         }
+        return;
+      }
+      if (item.type === "quote-card") {
+        if (trigger.kind !== "pull-request") return;
+        const replacement = `${serializeAssistantCitationRef(item.number)} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) setComposerHighlightedItemId(null);
         return;
       }
       if (item.type === "thread") {
@@ -6221,7 +6238,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       position: "cursor" | "end",
       options?: {
         ensureLeadingBoundary?: boolean;
-        citationCommentAnchor?: AssistantCitationSourceAnchor;
         clipboardData?: DataTransfer;
       },
     ): boolean => {
@@ -6230,8 +6246,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         isConnecting ||
         isComposerApprovalState ||
         pendingUserInputs.length > 0 ||
-        projectSelectionRequired ||
-        (options?.citationCommentAnchor && !composerEditorRef.current)
+        projectSelectionRequired
       ) {
         return false;
       }
@@ -6245,22 +6260,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         cursor > 0 &&
         !/\s/.test(prompt[cursor - 1] ?? "");
       const rangeEnd = extendReplacementRangeForTrailingSpace(prompt, cursor, text);
-      return applyPromptReplacement(
-        cursor,
-        rangeEnd,
-        needsLeadingSpace ? ` ${text}` : text,
-        options?.citationCommentAnchor
-          ? {
-              citationComment: {
-                start: cursor + (needsLeadingSpace ? 1 : 0),
-                sourceAnchor: options.citationCommentAnchor,
-                // An existing space after the cursor is consumed and re-emitted, so it stays.
-                insertedSpaces: { before: needsLeadingSpace, after: rangeEnd === cursor },
-              },
-              focusEditorAfterReplace: false,
-            }
-          : undefined,
-      );
+      return applyPromptReplacement(cursor, rangeEnd, needsLeadingSpace ? ` ${text}` : text);
     },
     [
       applyPromptReplacement,
@@ -6558,12 +6558,25 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
         return true;
       },
-      citeAssistantText: (citation, sourceAnchor) =>
-        insertComposerText(
-          formatAssistantCitationForComposer(citation, citation.comment),
-          "cursor",
-          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
-        ),
+      citeAssistantText: (citation) => {
+        if (
+          isConnecting ||
+          isComposerApprovalState ||
+          pendingUserInputs.length > 0 ||
+          projectSelectionRequired
+        ) {
+          return false;
+        }
+        const next = appendLeadingAssistantCitation(promptRef.current, citation);
+        promptRef.current = next.prompt;
+        setPrompt(next.prompt);
+        onTypingGuardDraftChange();
+        // The caret keeps its place in the text below the cards.
+        setComposerCursor((cursor) => cursor + next.cursorShift);
+        expandComposerForEditorChange();
+        composerEditorRef.current?.focusQuoteCard(next.number);
+        return true;
+      },
       openModelPicker,
       toggleModelPicker: () => {
         if (isComposerModelPickerOpen) {
@@ -6726,6 +6739,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       pendingUserInputs.length,
       projectSelectionRequired,
       applyPromptReplacement,
+      setPrompt,
+      onTypingGuardDraftChange,
+      expandComposerForEditorChange,
       isComposerModelPickerOpen,
       openModelPicker,
       readComposerSnapshot,
@@ -7625,6 +7641,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPageScrollRelease={onPageScrollRelease}
                     onCitationSubmitAndSend={submitCitationAndSend}
                     onCitationDraftSave={saveCitationDraftToPrompt}
+                    quoteCardsHidden={isComposerResting}
                     onPaste={onComposerPaste}
                     placeholder={
                       isComposerApprovalState

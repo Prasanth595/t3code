@@ -2,9 +2,9 @@ import { resolveComposerDispatchMode } from "@t3tools/client-runtime/state/compo
 import { filterComposerPullRequestMatches } from "@t3tools/shared/composerPullRequestMatches";
 import { EnvironmentId, MessageId, ThreadId, type AssistantCitation } from "@t3tools/contracts";
 import {
-  collectAssistantCitations,
-  expandAssistantCitationsForProvider,
+  joinLeadingAssistantCitations,
   serializeAssistantCitation,
+  splitLeadingAssistantCitations,
 } from "@t3tools/shared/assistantCitations";
 import {
   DEFAULT_RESOLVED_KEYBINDINGS,
@@ -14,16 +14,20 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  appendLeadingAssistantCitation,
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
-  formatAssistantCitationForComposer,
   isCollapsedCursorAdjacentToInlineToken,
+  joinComposerQuoteCards,
+  matchQuoteCardsForReference,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  setLeadingAssistantCitationComment,
+  splitComposerQuoteCards,
 } from "./composer-logic";
 import { carryDisplacedCustomAnswerIntoPrompt } from "./pendingUserInput";
 import { formatTerminalContextReference } from "./lib/terminalContext";
@@ -48,23 +52,83 @@ const citation: AssistantCitation = {
 };
 const citationSource = serializeAssistantCitation(citation).replaceAll("+", "%20");
 
-describe("formatAssistantCitationForComposer", () => {
-  it.each([undefined, "", " \n\t "])(
-    "keeps citation-only insertion for a blank comment %j",
-    (comment) => {
-      expect(formatAssistantCitationForComposer(citation, comment)).toBe(
-        `${serializeAssistantCitation(citation)} `,
+describe("composer quote cards", () => {
+  const second = { ...citation, text: "Second quote", messageId: MessageId.make("message-2") };
+
+  it("appends cards above the text and moves the body cursor past the new one", () => {
+    const first = appendLeadingAssistantCitation("", citation);
+    expect(first).toEqual({
+      prompt: serializeAssistantCitation(citation),
+      number: 1,
+      cursorShift: 1,
+    });
+    const withText = `${first.prompt}\n\nWhy @src/a.ts?`;
+    const next = appendLeadingAssistantCitation(withText, second);
+    expect(next.number).toBe(2);
+    expect(next.cursorShift).toBe(2);
+    expect(splitLeadingAssistantCitations(next.prompt)).toEqual({
+      citations: [
+        { citation, source: serializeAssistantCitation(citation) },
+        { citation: second, source: serializeAssistantCitation(second) },
+      ],
+      body: "Why @src/a.ts?",
+    });
+  });
+
+  it("starts the first card above text that was already typed", () => {
+    const next = appendLeadingAssistantCitation("Hello", citation);
+    expect(next.prompt).toBe(`${serializeAssistantCitation(citation)}\n\nHello`);
+    expect(next.cursorShift).toBe(3);
+  });
+
+  it.each(["", "Why @src/a.ts and $skill?\nSecond line", "\n"])(
+    "maps every body cursor to the same position in the full prompt (%j)",
+    (body) => {
+      const { prompt, collapsedOffset, expandedOffset } = joinComposerQuoteCards(
+        [serializeAssistantCitation(citation), serializeAssistantCitation(second)],
+        body,
       );
+      expect(splitComposerQuoteCards(prompt)).toMatchObject({
+        body,
+        collapsedOffset,
+        expandedOffset,
+      });
+      for (let expanded = 0; expanded <= body.length; expanded += 1) {
+        const collapsed = collapseExpandedComposerCursor(body, expanded);
+        expect(collapseExpandedComposerCursor(prompt, expandedOffset + expanded)).toBe(
+          collapsedOffset + collapsed,
+        );
+        expect(expandCollapsedComposerCursor(prompt, collapsedOffset + collapsed)).toBe(
+          expandedOffset + expandCollapsedComposerCursor(body, collapsed),
+        );
+      }
     },
   );
 
-  it("binds a multiline comment to its citation without adding standalone prompt text", () => {
-    const comment = 'What does "keep" mean? 👋\n  Please show an example.';
-    const text = formatAssistantCitationForComposer(citation, `  ${comment}\n`);
-    const boundCitation = { ...citation, comment };
-    expect(text).toBe(`${serializeAssistantCitation(boundCitation)} `);
-    expect(collectAssistantCitations(text).map((entry) => entry.citation)).toEqual([boundCitation]);
-    expect(expandAssistantCitationsForProvider(text)).toMatch(/^\[assistant-quote-1\] \n\n/);
+  it("offers cards to # by number", () => {
+    const sources = Array.from({ length: 12 }, (_, index) =>
+      serializeAssistantCitation({ ...citation, start: index, end: index + 1 }),
+    );
+    const prompt = joinLeadingAssistantCitations(sources, "Body #");
+    expect(matchQuoteCardsForReference(prompt, "").map(({ number }) => number)).toHaveLength(12);
+    expect(matchQuoteCardsForReference(prompt, "1").map(({ number }) => number)).toEqual([
+      1, 10, 11, 12,
+    ]);
+    expect(matchQuoteCardsForReference(prompt, "fix")).toEqual([]);
+    expect(matchQuoteCardsForReference("No cards #", "")).toEqual([]);
+  });
+
+  it("edits one card's comment, keeping spaces typed so far, and clears it when blank", () => {
+    const prompt = joinLeadingAssistantCitations(
+      [serializeAssistantCitation(citation), serializeAssistantCitation(second)],
+      "Body",
+    );
+    const typed = setLeadingAssistantCitationComment(prompt, 2, "Not this ");
+    const cards = splitLeadingAssistantCitations(typed);
+    expect(cards.citations.map((card) => card.citation.comment)).toEqual([undefined, "Not this "]);
+    expect(cards.body).toBe("Body");
+    expect(setLeadingAssistantCitationComment(typed, 2, "")).toBe(prompt);
+    expect(setLeadingAssistantCitationComment(prompt, 3, "x")).toBe(prompt);
   });
 });
 

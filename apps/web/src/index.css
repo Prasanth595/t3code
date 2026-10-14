@@ -643,7 +643,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       transparent
     );
   }
-  ::highlight(t3-assistant-citation-comment) {
+  ::highlight(t3-assistant-citation-pending) {
     background-color: color-mix(in oklab, var(--primary) 45%, transparent);
   }
   :root {

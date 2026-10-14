@@ -8,15 +8,11 @@ import { ArrowUpRightIcon, PencilIcon, QuoteIcon } from "lucide-react";
 import {
   useCallback,
   useEffect,
-  useEffectEvent,
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import {
-  findAssistantCitationSourceAnchor,
-  type AssistantCitationSourceAnchor,
-} from "~/lib/assistantTextSelection";
+import { findAssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import {
   assistantCitationHash,
   assistantCitationNavigation,
@@ -29,7 +25,7 @@ import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popov
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
-import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
+import { observePendingAssistantCitationSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { observeResize } from "~/lib/observeResize";
 
@@ -42,9 +38,7 @@ export function AssistantCitationChip({
   composer?: boolean;
   commentEditor?: {
     open: boolean;
-    sourceAnchor?: AssistantCitationSourceAnchor | undefined;
     onOpenChange: (open: boolean) => void;
-    onCancel?: () => void;
     onSave: (comment: string) => boolean;
     onSaveAndSend?: (comment: string) => boolean;
     /** Reports each keystroke of the unsaved comment. */
@@ -57,11 +51,7 @@ export function AssistantCitationChip({
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
-  const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
-    useState<AssistantCitationSourceAnchor | null>(null);
   const commentOpen = commentEditor?.open ?? false;
-  const sourceAnchor = commentEditor?.sourceAnchor;
-  const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
   }, [commentOpen]);
@@ -74,36 +64,13 @@ export function AssistantCitationChip({
     if (dismissal.kind === "commit") return commentEditor?.onSave(dismissal.comment) ?? true;
     return dismissal.kind !== "keep-open";
   };
-  const onSourceUnavailable = useEffectEvent(() => {
-    if (!sourceAnchor) return;
-    if (settleDraftOnClose("none")) {
-      commentEditor?.onOpenChange(false);
-    } else {
-      // Keep the draft mounted, positioned at the composer trigger instead of a detached range.
-      setUnavailableSourceAnchor(sourceAnchor);
-    }
-  });
+  // Mark the quoted passage while its comment is open (legacy inline chips only).
   useEffect(() => {
-    if (!commentOpen || sourceAnchor === unavailableSourceAnchor) return;
-    const anchor = sourceAnchor ?? findAssistantCitationSourceAnchor(document, citation);
+    if (!commentOpen) return;
+    const anchor = findAssistantCitationSourceAnchor(document, citation);
     if (!anchor) return;
-    return observeAssistantCitationCommentSource({
-      anchor,
-      citation,
-      onUnavailable: onSourceUnavailable,
-    });
-  }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  // A multi-line selection's bounding box spans the full message width; anchor
-  // the bubble to the selection's last line, where the pointer released.
-  const popupAnchor = activeSourceAnchor
-    ? {
-        contextElement: activeSourceAnchor.source,
-        getBoundingClientRect: () => {
-          const rects = activeSourceAnchor.range.getClientRects();
-          return rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
-        },
-      }
-    : undefined;
+    return observePendingAssistantCitationSource({ anchor, citation, onUnavailable: () => {} });
+  }, [citation, commentOpen]);
   const label = assistantCitationLabel(citation);
   const sourceLinkProps = {
     to: "/$environmentId/$threadId" as const,
@@ -179,9 +146,8 @@ export function AssistantCitationChip({
           {commentEditor.open ? (
             <PopoverPopup
               {...composerFloatingLayerProps}
-              side={activeSourceAnchor ? "bottom" : "top"}
+              side="top"
               align="end"
-              anchor={popupAnchor}
               initialFocus={() => {
                 commentInputRef.current?.focus({ preventScroll: true });
                 return false;
@@ -229,13 +195,7 @@ export function AssistantCitationChip({
                       },
                     }
                   : {})}
-                onCancel={() => {
-                  if (commentEditor.onCancel) {
-                    commentEditor.onCancel();
-                  } else {
-                    commentEditor.onOpenChange(false);
-                  }
-                }}
+                onCancel={() => commentEditor.onOpenChange(false)}
               />
             </PopoverPopup>
           ) : null}

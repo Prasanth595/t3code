@@ -7,6 +7,14 @@ disappears or changes. The [shared format](../../packages/shared/src/assistantCi
 stable environment IDs without a browser origin, so moving between local, remote,
 and tunnel connections does not change a citation's identity.
 
+Quote cards are the citations at the very start of a prompt, one link per line,
+followed by a blank line and the message (`splitLeadingAssistantCitations`). The
+draft and the sent message keep that layout, so the composer, the transcript and
+the provider formatter all find the cards the same way, and clients that predate
+cards still show ordinary citation links. `#n` references point at card n of the
+same message. A citation anywhere else in the text is an inline citation from
+before cards, and stays readable.
+
 Source navigation is best effort. [Text selectors](../../apps/web/src/lib/assistantTextSelection.ts)
 refer to rendered text after whitespace normalization, measured in UTF-16 units.
 They cannot be applied to raw Markdown. The original excerpt keeps its whitespace;
