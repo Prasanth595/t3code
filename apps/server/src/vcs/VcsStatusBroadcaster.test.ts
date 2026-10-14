@@ -645,6 +645,7 @@ describe("VcsStatusBroadcaster", () => {
     const releaseFirstFetch = Deferred.makeUnsafe<void>();
     let remoteReads = 0;
     const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(layerTestFileSystem),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
