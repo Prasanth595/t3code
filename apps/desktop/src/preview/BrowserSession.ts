@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { isLoopbackHost } from "@t3tools/shared/preview";
 
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 
@@ -79,6 +80,30 @@ const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null =>
 };
 
 const MAX_PROMPT_URL_LENGTH = 300;
+
+type MediaType = "video" | "audio";
+
+const isMediaType = (value: unknown): value is MediaType => value === "video" || value === "audio";
+
+/** Media grants belong to the requesting site and the page embedding it. */
+const mediaPermissionContext = (requester: WebContents | null, rawOrigin: string | undefined) => {
+  if (requester === null || requester.isDestroyed() || !rawOrigin) return null;
+  const trustworthyOrigin = (raw: string) => {
+    const url = new URL(raw);
+    return url.protocol === "https:" || (url.protocol === "http:" && isLoopbackHost(url.hostname))
+      ? url.origin
+      : null;
+  };
+  try {
+    const origin = trustworthyOrigin(rawOrigin);
+    const embeddingOrigin = trustworthyOrigin(requester.getURL());
+    return origin && embeddingOrigin
+      ? { origin, embeddingOrigin, key: JSON.stringify([embeddingOrigin, origin]) }
+      : null;
+  } catch {
+    return null;
+  }
+};
 
 export class BrowserSessionPartitionDerivationError extends Schema.TaggedError<BrowserSessionPartitionDerivationError>()(
   "BrowserSessionPartitionDerivationError",
@@ -218,6 +243,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
   // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
   let externalPromptOpen = false;
+  let mediaPromptOpen = false;
+  const resetMediaPermissions = new WeakMap<Session, () => void>();
   /**
    * Electron grants an external-protocol navigation through the `openExternal`
    * permission and then launches the OS handler itself. Ask first: previews run
@@ -297,6 +324,10 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       return Effect.try({
         try: () => {
           const browserSession = session.fromPartition(partition);
+          let mediaDecisions = new Map<string, Map<MediaType, boolean>>();
+          resetMediaPermissions.set(browserSession, () => {
+            mediaDecisions = new Map();
+          });
           // The guest keeps Electron's native User-Agent. Rewriting it in any
           // form — even variants that keep the Electron token — makes Cloudflare
           // Turnstile fail its integrity check with error 600010 and recreate
@@ -313,11 +344,85 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
+              if (permission === "media") {
+                const rawOrigin =
+                  "securityOrigin" in details
+                    ? (details.securityOrigin ?? details.requestingUrl)
+                    : details.requestingUrl;
+                const context = mediaPermissionContext(webContents, rawOrigin);
+                const types = "mediaTypes" in details ? details.mediaTypes : undefined;
+                if (!context || !types?.length || !types.every(isMediaType)) {
+                  callback(false);
+                  return;
+                }
+                const requested = [...new Set(types)];
+                const decisions = mediaDecisions.get(context.key) ?? new Map<MediaType, boolean>();
+                if (requested.some((type) => decisions.get(type) === false)) {
+                  callback(false);
+                  return;
+                }
+                const missing = requested.filter((type) => decisions.get(type) !== true);
+                if (missing.length === 0) {
+                  callback(true);
+                  return;
+                }
+                if (mediaPromptOpen) {
+                  callback(false);
+                  return;
+                }
+                mediaPromptOpen = true;
+                const pendingDecisions = mediaDecisions;
+                const devices = missing.map((type) => (type === "video" ? "camera" : "microphone"));
+                const settle = (granted: boolean) =>
+                  Effect.sync(() => {
+                    mediaPromptOpen = false;
+                    const current = mediaPermissionContext(webContents, rawOrigin);
+                    const valid =
+                      current?.key === context.key && mediaDecisions === pendingDecisions;
+                    if (valid) {
+                      for (const type of missing) decisions.set(type, granted);
+                      mediaDecisions.set(context.key, decisions);
+                    }
+                    callback(valid && granted);
+                  });
+                runFork(
+                  electronDialog
+                    .showMessageBox(
+                      {
+                        type: "question",
+                        buttons: ["Allow", "Deny"],
+                        defaultId: 1,
+                        cancelId: 1,
+                        message: `Allow ${context.origin} to use your ${devices.join(" and ")}?`,
+                        detail: `${context.origin === context.embeddingOrigin ? "" : `This site is embedded in ${context.embeddingOrigin}.\n\n`}Your choice lasts until T3 Code closes or you clear this browser profile's cookies and site data.`,
+                      },
+                      previewHostWindow(webContents),
+                    )
+                    .pipe(
+                      Effect.map(({ response }) => response === 0),
+                      Effect.orElseSucceed(() => false),
+                      Effect.flatMap(settle),
+                      Effect.onInterrupt(() => settle(false)),
+                    ),
+                );
+                return;
+              }
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission) =>
-            ALLOWED_PREVIEW_PERMISSIONS.has(permission),
+          browserSession.setPermissionCheckHandler(
+            (webContents, permission, requestingOrigin, details) => {
+              if (permission === "media") {
+                const context = mediaPermissionContext(
+                  webContents,
+                  details.securityOrigin ?? requestingOrigin,
+                );
+                return context !== null && isMediaType(details.mediaType)
+                  ? mediaDecisions.get(context.key)?.get(details.mediaType) === true
+                  : false;
+              }
+              return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+            },
           );
           const next = new Map(sessions);
           next.set(partition, browserSession);
@@ -345,10 +450,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
         selectSessions(sessions, partitions),
         ([partition, browserSession]) =>
           Effect.tryPromise({
-            try: () =>
-              browserSession.clearStorageData({
+            try: () => {
+              resetMediaPermissions.get(browserSession)?.();
+              return browserSession.clearStorageData({
                 storages: ["cookies", "localstorage", "indexdb", "serviceworkers"],
-              }),
+              });
+            },
             catch: (cause) =>
               new BrowserSessionStorageClearError({
                 partition,

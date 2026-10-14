@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import { beforeEach, vi } from "vite-plus/test";
@@ -51,9 +53,51 @@ const layer = BrowserSession.layer.pipe(
   Layer.provide(Layer.merge(NodeServices.layer, layerDialog)),
 );
 
+/** Exercise the native media callbacks with an embedded page and a controllable tab. */
+const mediaSession = (scope = "scope-a") =>
+  Effect.gen(function* () {
+    const browserSessions = yield* BrowserSession.BrowserSession;
+    const partition = yield* browserSessions.getPartition(scope);
+    yield* browserSessions.getSession(scope);
+    const browserSession = sessions.get(partition);
+    assert.isDefined(browserSession);
+    const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+    const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+    assert.isFunction(requestHandler);
+    assert.isFunction(checkHandler);
+    const host = { isDestroyed: () => false };
+    const guest = {
+      getURL: vi.fn(() => "https://portal.example/certification"),
+      isDestroyed: vi.fn(() => false),
+      hostWebContents: host,
+    };
+    const request = (
+      details: Omit<Electron.MediaAccessPermissionRequest, "mediaTypes"> & {
+        mediaTypes?: string[];
+      } = {
+        requestingUrl: "https://exam.example/camera-check",
+        isMainFrame: false,
+        mediaTypes: ["video"],
+      },
+    ) =>
+      Effect.callback<boolean>((resume) => {
+        requestHandler(
+          guest,
+          "media",
+          (granted: boolean) => resume(Effect.succeed(granted)),
+          details,
+        );
+      });
+    const check = (origin = "https://exam.example", mediaType = "video") =>
+      checkHandler(guest, "media", origin, { isMainFrame: false, mediaType });
+    return { browserSessions, partition, guest, request, check };
+  });
+
 describe("BrowserSession", () => {
   beforeEach(() => {
     sessions.clear();
+    showMessageBox.mockReset();
+    fromWebContents.mockReset();
     fromPartition.mockReset();
     fromPartition.mockImplementation((partition: string) => {
       const browserSession = {
@@ -240,6 +284,177 @@ describe("BrowserSession", () => {
       }
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("asks for camera access and grants only the approved device and origin pair", () =>
+    Effect.gen(function* () {
+      const media = yield* mediaSession();
+      const hostWindow = { id: 9 };
+      fromWebContents.mockImplementation((host) =>
+        host === media.guest.hostWebContents ? hostWindow : null,
+      );
+      showMessageBox.mockReturnValue(0);
+
+      assert.isFalse(media.check());
+      assert.isTrue(yield* media.request());
+      assert.isTrue(media.check());
+      assert.isFalse(media.check("https://exam.example", "audio"));
+      assert.isFalse(media.check("https://exam.example", "unknown"));
+      assert.isFalse(media.check("https://other.example"));
+      assert.isTrue(yield* media.request());
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      assert.deepInclude(showMessageBox.mock.calls[0]?.[0], {
+        message: "Allow https://exam.example to use your camera?",
+        defaultId: 1,
+        cancelId: 1,
+      });
+      assert.include(showMessageBox.mock.calls[0]?.[0].detail, "https://portal.example");
+      assert.strictEqual(showMessageBox.mock.calls[0]?.[1], hostWindow);
+
+      media.guest.getURL.mockReturnValue("https://other-portal.example");
+      assert.isFalse(media.check());
+      const otherProfile = yield* mediaSession("scope-b");
+      assert.isFalse(otherProfile.check());
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("remembers a denied microphone without revoking an approved camera", () =>
+    Effect.gen(function* () {
+      const media = yield* mediaSession();
+      showMessageBox.mockReturnValueOnce(0).mockReturnValueOnce(1);
+      assert.isTrue(yield* media.request());
+      const microphone: Electron.MediaAccessPermissionRequest = {
+        requestingUrl: "https://exam.example/microphone-check",
+        isMainFrame: false,
+        mediaTypes: ["audio", "video"],
+      };
+      assert.isFalse(yield* media.request(microphone));
+      assert.isFalse(yield* media.request(microphone));
+      assert.isTrue(media.check());
+      assert.isFalse(media.check("https://exam.example", "audio"));
+      assert.strictEqual(showMessageBox.mock.calls.length, 2);
+      assert.strictEqual(
+        showMessageBox.mock.calls[1]?.[0].message,
+        "Allow https://exam.example to use your microphone?",
+      );
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "allows a combined request and revokes its decisions when profile data is cleared",
+    () =>
+      Effect.gen(function* () {
+        const media = yield* mediaSession();
+        showMessageBox.mockReturnValue(0);
+        assert.isTrue(
+          yield* media.request({
+            requestingUrl: "https://exam.example/camera-check",
+            isMainFrame: false,
+            mediaTypes: ["video", "audio"],
+          }),
+        );
+        assert.isTrue(media.check());
+        assert.isTrue(media.check("https://exam.example", "audio"));
+        assert.include(showMessageBox.mock.calls[0]?.[0].message, "camera and microphone");
+        yield* media.browserSessions.clearCookies([media.partition]);
+        assert.isFalse(media.check());
+        assert.isFalse(media.check("https://exam.example", "audio"));
+        assert.isTrue(yield* media.request());
+        assert.strictEqual(showMessageBox.mock.calls.length, 2);
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("denies opaque, insecure and unknown media requests without prompting", () =>
+    Effect.gen(function* () {
+      const media = yield* mediaSession();
+      showMessageBox.mockReturnValue(0);
+      for (const requestingUrl of [
+        "file:///tmp/exam.html",
+        "http://exam.example",
+        "data:text/html,exam",
+        "null",
+      ]) {
+        assert.isFalse(
+          yield* media.request({ requestingUrl, isMainFrame: false, mediaTypes: ["video"] }),
+        );
+      }
+      for (const mediaTypes of [[], ["unknown"], ["video", "display"]]) {
+        assert.isFalse(
+          yield* media.request({
+            requestingUrl: "https://exam.example",
+            isMainFrame: false,
+            mediaTypes,
+          }),
+        );
+      }
+      assert.isFalse(
+        yield* media.request({
+          requestingUrl: "https://exam.example",
+          isMainFrame: false,
+          securityOrigin: "null",
+          mediaTypes: ["video"],
+        }),
+      );
+      assert.strictEqual(showMessageBox.mock.calls.length, 0);
+
+      media.guest.getURL.mockReturnValue("http://localhost:5173");
+      assert.isTrue(
+        yield* media.request({
+          requestingUrl: "http://localhost:5173/camera",
+          isMainFrame: true,
+          mediaTypes: ["video"],
+        }),
+      );
+      assert.isTrue(media.check("http://localhost:5173"));
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("ignores approval after the requesting tab changes origin or closes", () =>
+    Effect.gen(function* () {
+      const media = yield* mediaSession();
+      showMessageBox.mockImplementationOnce(() => {
+        media.guest.getURL.mockReturnValue("https://other-portal.example");
+        return 0;
+      });
+      assert.isFalse(yield* media.request());
+      assert.isFalse(media.check());
+      showMessageBox.mockImplementationOnce(() => {
+        media.guest.isDestroyed.mockReturnValue(true);
+        return 0;
+      });
+      assert.isFalse(yield* media.request());
+      assert.isFalse(media.check());
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("rejects overlapping prompts and ignores approvals after a profile reset", () =>
+    Effect.gen(function* () {
+      const shown = yield* Deferred.make<void>();
+      const answer = yield* Deferred.make<Electron.MessageBoxReturnValue>();
+      const heldDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+        pickFolder: () => Effect.die("unused"),
+        pickFiles: () => Effect.die("unused"),
+        showErrorBox: () => Effect.void,
+        showMessageBox: () =>
+          Deferred.succeed(shown, undefined).pipe(Effect.andThen(Deferred.await(answer))),
+      });
+      yield* Effect.gen(function* () {
+        const media = yield* mediaSession();
+        const pending = yield* media.request().pipe(Effect.forkChild);
+        yield* Deferred.await(shown);
+        assert.isFalse(yield* media.request());
+        yield* media.browserSessions.clearCookies([media.partition]);
+        yield* Deferred.succeed(answer, { response: 0, checkboxChecked: false });
+        assert.isFalse(yield* Fiber.join(pending));
+        assert.isFalse(media.check());
+        assert.isTrue(yield* media.request());
+        assert.isTrue(media.check());
+      }).pipe(
+        Effect.provide(
+          BrowserSession.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, heldDialog))),
+        ),
+      );
+    }),
   );
 
   // A prompt without an owner can open behind the app window, leaving the one

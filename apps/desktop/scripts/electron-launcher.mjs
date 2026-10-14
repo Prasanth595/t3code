@@ -272,6 +272,10 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     NSScreenCaptureUsageDescription:
       "T3 Code captures the active window when you use the snapshot shortcut.",
     NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",
+    NSCameraUsageDescription:
+      "T3 Code lets websites use your camera when you allow access in the browser.",
+    NSMicrophoneUsageDescription:
+      "T3 Code lets websites use your microphone when you allow access in the browser.",
   };
 }
 

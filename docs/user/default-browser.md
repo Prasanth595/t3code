@@ -12,3 +12,16 @@ HTML files you open from Finder open the same way. [Prompt links](prompt-links.m
 app.t3.codes open in the app as a draft.
 
 A link that launches T3 Code waits until the app has connected to its environment, then opens.
+
+## Use a camera or microphone
+
+The desktop browser asks before a website can use your camera or microphone. For an embedded
+page, the prompt names both the requesting site and the page containing it. Allow only the
+devices you want that site to use. Your choice lasts until you restart T3 Code or clear that
+browser profile's cookies and site data. Your operating system may also ask for permission.
+Close a tab using a device to stop its active capture. Clearing site data resets permission
+for future requests.
+
+Camera access uses devices on the desktop running the browser. A browser streamed from a
+remote environment does not forward your device's webcam. Use a local desktop browser for
+sites that require your camera.

@@ -727,6 +727,14 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       // macOS lists a default browser only when it also opens web pages as documents.
       const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
       assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
+      assert.strictEqual(
+        macInfo.NSCameraUsageDescription,
+        "T3 Code lets websites use your camera when you allow access in the browser.",
+      );
+      assert.strictEqual(
+        macInfo.NSMicrophoneUsageDescription,
+        "T3 Code lets websites use your microphone when you allow access in the browser.",
+      );
       assert.deepStrictEqual(macInfo.CFBundleDocumentTypes, [
         {
           CFBundleTypeName: "Web page",
@@ -1973,6 +1981,8 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
+    assert.match(entitlements, /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u);
+    assert.match(entitlements, /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u);
     assert.notInclude(entitlements, "keychain-access-groups");
     assert.notInclude(entitlements, "com.apple.developer.web-browser.public-key-credential");
   });
@@ -2138,6 +2148,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const mac = config.mac as Record<string, unknown>;
       assert.equal(config.appId, "com.t3tools.t3code");
       assert.equal(mac.entitlements, "/tmp/entitlements.mac.plist");
+      const fs = yield* FileSystem.FileSystem;
+      const helperEntitlements = yield* fs.readFileString(String(mac.entitlementsInherit));
+      assert.match(
+        helperEntitlements,
+        /<key>com\.apple\.security\.device\.camera<\/key>\s*<true\/>/u,
+      );
+      assert.match(
+        helperEntitlements,
+        /<key>com\.apple\.security\.device\.audio-input<\/key>\s*<true\/>/u,
+      );
+      assert.notInclude(helperEntitlements, "com.apple.application-identifier");
+      assert.notInclude(helperEntitlements, "keychain-access-groups");
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
