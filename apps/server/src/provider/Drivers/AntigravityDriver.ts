@@ -71,28 +71,23 @@ const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
-const MAX_AGENT_DETAILS_LENGTH = 300;
+const REFRESH_FAILED =
+  "Could not refresh Antigravity models. The previous model list is unchanged.";
+// The websockets ImportError Antigravity's runtime puts in `data.details` of its
+// "Internal error" when a system SOCKS proxy applies to its local harness (#16911).
+const PYTHON_SOCKS_REQUIRED = "python-socks is required to use a SOCKS proxy";
 
 /**
- * Appends the reason Antigravity sent with a JSON-RPC error, bounded to one
- * line. Its runtime answers "Internal error" and explains only in
- * `data.details`, for example "python-socks is required to use a SOCKS proxy".
- * Local and transport failures keep the given detail.
+ * Fixed refresh failure text for an error Antigravity sent. Recognized reasons
+ * get canonical text; the agent's own text is never copied and stays in `cause`.
  */
-function withAgentDetails(detail: string, cause: unknown) {
-  if (
-    !isAcpRequestError(cause) ||
-    cause.operation !== "receive-response" ||
-    !isAcpErrorDetails(cause.data)
-  )
-    return detail;
-  const details = cause.data.details.replace(/\s+/gu, " ").trim();
-  if (!details) return detail;
-  const bounded =
-    details.length > MAX_AGENT_DETAILS_LENGTH
-      ? `${details.slice(0, MAX_AGENT_DETAILS_LENGTH - 1)}…`
-      : details;
-  return `${detail} Antigravity reported: ${bounded}`;
+function refreshFailureDetail(cause: unknown) {
+  return isAcpRequestError(cause) &&
+    cause.operation === "receive-response" &&
+    isAcpErrorDetails(cause.data) &&
+    cause.data.details.includes(PYTHON_SOCKS_REQUIRED)
+    ? `${REFRESH_FAILED} Antigravity reported: ${PYTHON_SOCKS_REQUIRED}`
+    : REFRESH_FAILED;
 }
 
 export type AntigravityDriverEnv =
@@ -521,10 +516,7 @@ export const AntigravityDriver: ProviderDriver<
                   : cause._tag === "ProviderSetupError" &&
                       (cause.operation === "configure" || cause.operation === "start")
                     ? cause.detail
-                    : withAgentDetails(
-                        "Could not refresh Antigravity models. The previous model list is unchanged.",
-                        cause,
-                      ),
+                    : refreshFailureDetail(cause),
                 cause,
               }),
         ),

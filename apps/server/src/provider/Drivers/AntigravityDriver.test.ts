@@ -493,7 +493,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "shows the agent's error details when session creation fails and keeps the catalog",
+    "reports the missing SOCKS dependency when session creation fails and keeps the catalog",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
@@ -514,32 +514,38 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
   );
 
   it.effect.skipIf(windowsHost)(
-    "bounds agent error details to one line and ignores details that are not text",
+    "never copies unrecognized agent error details into the refresh error",
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
+        yield* h.refresh();
+        const before = yield* h.instance.snapshot.getSnapshot;
         const generic =
           "Could not refresh Antigravity models. The previous model list is unchanged.";
-        h.controls.selected = yield* h.makeExecutable("runtime traceback", {
+        const secret = "https://accounts.example.test/o/oauth2?code=sk-secret-123";
+        h.controls.selected = yield* h.makeExecutable("runtime socks with extra", {
           newSessionErrorData: {
-            details: `Traceback (most recent call last):\n  File "agent.py"\n${"x".repeat(2_000)}`,
+            details: `Traceback (most recent call last):\n  proxy ${secret}\npython-socks is required to use a SOCKS proxy`,
           },
         });
-        const bounded = yield* h.refresh().pipe(Effect.flip);
-        expect(bounded.detail.startsWith(`${generic} Antigravity reported: Traceback`)).toBe(true);
-        expect(bounded.detail).not.toContain("\n");
-        expect(bounded.detail.length).toBeLessThanOrEqual(generic.length + 330);
-        expect(bounded.detail.endsWith("…")).toBe(true);
+        const known = yield* h.refresh().pipe(Effect.flip);
+        expect(known.detail).toBe(
+          `${generic} Antigravity reported: python-socks is required to use a SOCKS proxy`,
+        );
 
         for (const [name, data] of [
+          ["runtime unknown details", { details: `Token refresh failed for ${secret}` }],
           ["runtime object details", { details: { stack: "secret frame", env: { HOME: "/" } } }],
-          ["runtime blank details", { details: "  \n " }],
-          ["runtime no details", ["python-socks"]],
+          ["runtime no details", ["python-socks is required to use a SOCKS proxy"]],
         ] as const) {
           h.controls.selected = yield* h.makeExecutable(name, { newSessionErrorData: data });
           const error = yield* h.refresh().pipe(Effect.flip);
           expect(error.detail).toBe(generic);
         }
+        const after = yield* h.instance.snapshot.getSnapshot;
+        expect(after.models).toEqual(before.models);
+        expect(after.auth).toEqual(before.auth);
+        expect(JSON.stringify(after)).not.toContain("sk-secret-123");
         yield* h.assertClosed;
       }).pipe(Effect.scoped),
   );
