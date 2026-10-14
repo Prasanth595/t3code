@@ -42,7 +42,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as EventStore from "../persistence/OrchestrationEventStore.ts";
 import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
-import { MissionAuthority } from "./MissionService.ts";
+import { MissionAuthority, MissionTransactionGuard } from "./MissionService.ts";
 import {
   computeRetroReportHash,
   MissionRetroReportReconciliationError,
@@ -118,7 +118,7 @@ export class MissionRetroReportRejection extends Schema.TaggedError<MissionRetro
   }
 }
 
-const ReceiveCommand = Schema.Struct({
+export const MissionRetroReportReceiveCommand = Schema.Struct({
   commandId: CommandId,
   missionId: RetroId,
   checkpointId: RetroId,
@@ -128,7 +128,7 @@ const ReceiveCommand = Schema.Struct({
   originalArtifactSha: Sha256Hex,
   claimedSourceReportHash: Sha256Hex,
 });
-export type MissionRetroReportReceiveCommand = typeof ReceiveCommand.Type;
+export type MissionRetroReportReceiveCommand = typeof MissionRetroReportReceiveCommand.Type;
 
 /**
  * Trusted original resolved by the authorized artifact port from the exact
@@ -237,7 +237,9 @@ const decodeReceiptRecord = Schema.decodeUnknownEffect(ReceiptSchema);
 const decodeReportValue = Schema.decodeUnknownEffect(MissionRetroReport, {
   onExcessProperty: "error",
 });
-const decodeCommand = Schema.decodeUnknownEffect(ReceiveCommand, { onExcessProperty: "error" });
+const decodeCommand = Schema.decodeUnknownEffect(MissionRetroReportReceiveCommand, {
+  onExcessProperty: "error",
+});
 const isStoreError = Schema.is(MissionRetroReportStoreError);
 
 const sha256 = (text: string): string =>
@@ -268,6 +270,44 @@ const make = Effect.gen(function* () {
     isStoreError(cause)
       ? cause
       : new MissionRetroReportStoreError({ operation: "receive", category: "persistence", cause });
+
+  const checkAuthority = (command: MissionRetroReportReceiveCommand, expectedMission?: Mission) =>
+    authority.transactionGuard === undefined
+      ? Effect.void
+      : MissionTransactionGuard.check({
+          sql,
+          authority,
+          request: {
+            operation: "retro-report-receive",
+            missionId: MissionId.make(command.missionId),
+            command,
+          },
+          expectedMission,
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new MissionRetroReportStoreError({ operation: "receive", category: "scope_denied" }),
+          ),
+        );
+
+  // Every successful SQL exit (including durable rejection and replay) runs
+  // the same final liveness check. Only our own CAS may supply an expected
+  // updated snapshot; arbitrary current rows can never bless their own drift.
+  const guardedTransaction = <A, E, R>(
+    command: MissionRetroReportReceiveCommand,
+    body: (committed: (mission: Mission) => void) => Effect.Effect<A, E, R>,
+  ) =>
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* checkAuthority(command);
+        let expectedMission: Mission | undefined;
+        const result = yield* body((mission) => {
+          expectedMission = mission;
+        });
+        yield* checkAuthority(command, expectedMission);
+        return result;
+      }),
+    );
 
   const load = Effect.fn("MissionRetroReportStore.load")(function* (
     command: MissionRetroReportReceiveCommand,
@@ -448,6 +488,7 @@ const make = Effect.gen(function* () {
     canonical: Mission,
     nextReceipts: ReadonlyArray<ReceiptRecord>,
     eventSourceHash: string,
+    committed: (mission: Mission) => void,
   ) {
     const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
     const execution = canonical.execution ?? emptyMissionExecution();
@@ -499,6 +540,7 @@ const make = Effect.gen(function* () {
         operation: "receive",
         category: "request_conflict",
       });
+    committed(updated);
     return { receipt, sequence: stored.sequence };
   });
 
@@ -526,6 +568,7 @@ const make = Effect.gen(function* () {
     command: MissionRetroReportReceiveCommand,
     requestHash: string,
     prepared: Prepared | null,
+    committed: (mission: Mission) => void,
   ) {
     // Canonical reread and current retro-role check precede every receipt
     // lookup inside the owning transaction, including replay.
@@ -673,7 +716,10 @@ const make = Effect.gen(function* () {
         return Result.succeed({ ...outcome, receipt: aliasReceipt });
       }
       if (prepared.normalized === null)
-        return yield* new MissionRetroReportStoreError({ operation: "receive", category: "persistence" });
+        return yield* new MissionRetroReportStoreError({
+          operation: "receive",
+          category: "persistence",
+        });
       if (command.expectedRevision !== canonical.revision)
         return yield* new MissionRetroReportStoreError({
           operation: "receive",
@@ -706,13 +752,20 @@ const make = Effect.gen(function* () {
       };
       yield* decodeReceiptRecord(updatedPrior);
       const next = records.map((record) => (record === prior ? updatedPrior : record));
-      const committed = yield* commitSnapshot(command, requestHash, canonical, next, actualSourceHash);
+      const saved = yield* commitSnapshot(
+        command,
+        requestHash,
+        canonical,
+        next,
+        actualSourceHash,
+        committed,
+      );
       return Result.succeed({
         receiptRecord: updatedPrior,
-        receipt: committed.receipt,
+        receipt: saved.receipt,
         committed: true,
         recovered: false,
-        eventSequence: committed.sequence,
+        eventSequence: saved.sequence,
         disposition: "held_conflict" as const,
         verdict: "partial_coverage" as const,
         sourceReportHash: actualSourceHash,
@@ -722,7 +775,10 @@ const make = Effect.gen(function* () {
     }
 
     if (prepared.normalized === null)
-      return yield* new MissionRetroReportStoreError({ operation: "receive", category: "persistence" });
+      return yield* new MissionRetroReportStoreError({
+        operation: "receive",
+        category: "persistence",
+      });
     if (command.expectedRevision !== canonical.revision)
       return yield* new MissionRetroReportStoreError({
         operation: "receive",
@@ -784,19 +840,20 @@ const make = Effect.gen(function* () {
       receivedAt: now,
       quarantine: [],
     });
-    const committed = yield* commitSnapshot(
+    const saved = yield* commitSnapshot(
       command,
       requestHash,
       canonical,
       [...records, record],
       actualSourceHash,
+      committed,
     );
     return Result.succeed({
       receiptRecord: record,
-      receipt: committed.receipt,
+      receipt: saved.receipt,
       committed: true,
       recovered: false,
-      eventSequence: committed.sequence,
+      eventSequence: saved.sequence,
       disposition,
       verdict,
       sourceReportHash: decision.sourceReportHash,
@@ -857,6 +914,7 @@ const make = Effect.gen(function* () {
         operation: "receive",
         category: "persistence",
       });
+    yield* checkAuthority(command);
     // Authenticated retro scope precedes ANY receipt lookup or artifact read.
     const pre = yield* load(command);
     const requestHash = sha256(
@@ -887,58 +945,48 @@ const make = Effect.gen(function* () {
         (cp) => cp.checkpointId === command.checkpointId,
       );
       if (checkpoint === undefined)
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "checkpoint_missing" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "checkpoint_missing" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       const analysis = (pre.execution?.retroAnalyses ?? []).find(
         (record) => record.checkpointId === command.checkpointId,
       );
       if (analysis === undefined)
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "analysis_missing" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "analysis_missing" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       if (analysis.lease === null)
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "lease_missing" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "lease_missing" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       if (analysis.managerEpoch !== command.retroEpoch)
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "epoch_mismatch" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "epoch_mismatch" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       if (!leaseAcceptable(analysis))
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "terminal_denied" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "terminal_denied" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       const lease = analysis.lease;
       // Immutable source bytes come from the authorized port OUTSIDE SQL.
       const trustedRaw = yield* port.readOriginal(
@@ -955,44 +1003,38 @@ const make = Effect.gen(function* () {
         trusted.originalArtifactRef !== command.originalArtifactRef ||
         !sameSource(checkpoint, trusted)
       )
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "scope_mismatch" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "scope_mismatch" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       if (sha256(trusted.descriptorBytes) !== command.originalArtifactSha)
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportRejection({ operation: "receive", code: "artifact_mismatch" }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportRejection({ operation: "receive", code: "artifact_mismatch" }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       let parsed: unknown;
       try {
         if (Buffer.byteLength(trusted.descriptorBytes, "utf8") > MAX_MISSION_RETRO_REPORT_DESCRIPTOR_BYTES)
           throw new Error("descriptor too large");
         parsed = decodeJson(trusted.descriptorBytes);
       } catch {
-        return yield* sql
-          .withTransaction(
-            rejectRechecked(
-              command,
-              requestHash,
-              new MissionRetroReportReconciliationError({
-                operation: "reconcile",
-                category: "malformed",
-                detail: "Original descriptor bytes are not bounded JSON.",
-              }),
-            ),
-          )
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(
+            command,
+            requestHash,
+            new MissionRetroReportReconciliationError({
+              operation: "reconcile",
+              category: "malformed",
+              detail: "Original descriptor bytes are not bounded JSON.",
+            }),
+          ),
+        ).pipe(Effect.mapError(mapError));
       }
       const decoded = yield* decodeReportValue(parsed).pipe(
         Effect.mapError(
@@ -1006,9 +1048,9 @@ const make = Effect.gen(function* () {
         Effect.result,
       );
       if (Result.isFailure(decoded))
-        return yield* sql
-          .withTransaction(rejectRechecked(command, requestHash, decoded.failure))
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(command, requestHash, decoded.failure),
+        ).pipe(Effect.mapError(mapError));
       const report = decoded.success;
       const actualSourceHash = computeRetroReportHash(report);
       const records = pre.execution?.retroReportReceipts ?? [];
@@ -1054,9 +1096,9 @@ const make = Effect.gen(function* () {
       };
       const decided = reconcileRetroReport({ context, report: parsed });
       if (Result.isFailure(decided))
-        return yield* sql
-          .withTransaction(rejectRechecked(command, requestHash, decided.failure))
-          .pipe(Effect.mapError(mapError));
+        return yield* guardedTransaction(command, () =>
+          rejectRechecked(command, requestHash, decided.failure),
+        ).pipe(Effect.mapError(mapError));
       const decision = decided.success;
       const duplicate = prior !== undefined &&
         (prior.sourceReportHash === actualSourceHash ||
@@ -1064,7 +1106,8 @@ const make = Effect.gen(function* () {
       if (duplicate) {
         prepared = { trusted, decision, actualSourceHash, normalized: null,
           claimedMismatch: command.claimedSourceReportHash !== actualSourceHash,
-          leaseTupleJson: stableStringify(leaseTuple(analysis)) };
+          leaseTupleJson: stableStringify(leaseTuple(analysis)),
+        };
       } else {
       // The port-returned object is never trusted: bytes were decoded above.
       const coverageEvidence: MissionRetroReportCoverageEvidence = {
@@ -1105,9 +1148,8 @@ const make = Effect.gen(function* () {
           );
         }),
       );
-      if (Result.isFailure(normalizedOk) || !normalizedOk.success)
-        return yield* sql
-          .withTransaction(
+        if (Result.isFailure(normalizedOk) || !normalizedOk.success)
+          return yield* guardedTransaction(command, () =>
             rejectRechecked(
               command,
               requestHash,
@@ -1126,15 +1168,17 @@ const make = Effect.gen(function* () {
       }
     }
     const run = () =>
-      sql
-        .withTransaction(transaction(command, requestHash, prepared))
-        .pipe(Effect.mapError(mapError));
+      guardedTransaction(command, (committed) =>
+        transaction(command, requestHash, prepared, committed),
+      ).pipe(Effect.mapError(mapError));
     const first = yield* run().pipe(Effect.result);
     if (Result.isSuccess(first)) return first.success;
     if (first.failure.category !== "request_conflict") return yield* first.failure;
     return yield* run();
   });
 
-  return MissionRetroReportStore.of({ receive: (command) => receive(command).pipe(Effect.mapError(mapError)) });
+  return MissionRetroReportStore.of({
+    receive: (command) => receive(command).pipe(Effect.mapError(mapError)),
+  });
 });
 export const layer = Layer.effect(MissionRetroReportStore, make);

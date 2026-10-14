@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CommandId,
   MissionCommand,
   EnvironmentId,
   EventId,
@@ -1127,4 +1128,48 @@ it.effect(
         assert.deepStrictEqual(yield* foreignSql`SELECT * FROM orchestration_command_receipts`, []);
       }).pipe(Effect.provide(memory)),
     ),
+);
+
+it.effect(
+  "internal report receive requires the canonical current RETRO epoch and never grants DELIVERY reads or bootstrap reports",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* setup();
+      const command = {
+        commandId: "retro-command",
+        missionId,
+        checkpointId: "checkpoint",
+        expectedRevision: 0,
+        retroEpoch: 7,
+        originalArtifactRef: `retro-original:${"a".repeat(64)}`,
+        originalArtifactSha: "a".repeat(64),
+        claimedSourceReportHash: "b".repeat(64),
+      };
+      const receive = (body = command) =>
+        h.authority.resolve({
+          scope: h.scope,
+          operation: "retro-report-receive",
+          missionId,
+          command: { ...body, commandId: CommandId.make(body.commandId) },
+          requestKey: {},
+        });
+      yield* denied(receive());
+      yield* saveMission();
+      yield* denied(receive());
+      const snapshot = {
+        ...mission(),
+        managers: {
+          delivery: { threadId: ThreadId.make("delivery-other"), epoch: 1 },
+          retro: { threadId, epoch: 7 },
+        },
+      };
+      yield* saveMission(snapshot);
+      const facts = yield* receive();
+      assert.strictEqual(facts.controllerThreadId, threadId);
+      assert.isDefined(facts.transactionGuard);
+      assert.deepStrictEqual(Object.keys(facts.transactionGuard!), []);
+      yield* denied(h.resolve());
+      yield* denied(receive({ ...command, retroEpoch: 6 }));
+      yield* denied(receive({ ...command, missionId: MissionId.make("foreign") }));
+    }).pipe(Effect.provide(memory)),
 );

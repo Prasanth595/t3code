@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   Mission,
   MissionCommand,
+  MissionId,
   ProjectId,
   TeamId,
   ThreadId,
@@ -17,6 +18,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as MissionService from "../orchestration-v2/MissionService.ts";
+import { MissionRetroReportReceiveCommand } from "../orchestration-v2/MissionRetroReportStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as MissionMcpService from "./MissionMcpService.ts";
@@ -62,6 +64,9 @@ const decodeCurrentPolicy = Schema.decodeUnknownSync(TrustedNoFunMissionPolicy, 
   onExcessProperty: "error",
 });
 const decodeCommandSnapshot = Schema.decodeUnknownSync(Schema.fromJsonString(MissionCommand));
+const decodeReportCommand = Schema.decodeUnknownSync(MissionRetroReportReceiveCommand, {
+  onExcessProperty: "error",
+});
 const decodeMission = Schema.decodeUnknownEffect(Schema.fromJsonString(Mission));
 
 /**
@@ -155,11 +160,37 @@ const make = Effect.gen(function* () {
     const missionId = request.missionId;
     const operation = request.operation;
     const requestKey = request.requestKey;
-    const command = snapshotCommand(request.command);
+    const reportCommand =
+      operation === "retro-report-receive"
+        ? (() => {
+            try {
+              return decodeReportCommand(structuredClone(request.command));
+            } catch {
+              return undefined;
+            }
+          })()
+        : undefined;
+    const command =
+      operation === "retro-report-receive" ? undefined : snapshotCommand(request.command);
     const deny = new MissionMcpService.MissionMcpFailure({
       code: "scope_denied",
       message: "The current credential, project, or mission controller binding is not authorized.",
     });
+    if (
+      operation === "retro-report-receive" &&
+      (reportCommand === undefined ||
+        reportCommand.missionId !== missionId ||
+        requestKey === undefined)
+    )
+      return yield* deny;
+    const guardRequest: MissionService.MissionTransactionRequest =
+      operation === "retro-report-receive"
+        ? {
+            operation,
+            missionId: MissionId.make(missionId),
+            command: reportCommand as MissionRetroReportReceiveCommand,
+          }
+        : { operation, missionId, command };
     // Snapshot the proposed commit body before any I/O: the caller's object
     // stays mutable while policy, projection, and session reads yield.
     const proposedMission =
@@ -186,9 +217,10 @@ const make = Effect.gen(function* () {
       });
     }
     const authenticatedScope = { ...scope, thread: scope.thread };
+    const actualEnvironmentId = yield* environment.getEnvironmentId;
     const assertLive = Effect.gen(function* () {
       if (
-        scope.environmentId !== (yield* environment.getEnvironmentId) ||
+        scope.environmentId !== actualEnvironmentId ||
         registry.isActiveScope === undefined ||
         !(yield* registry.isActiveScope(authenticatedScope))
       ) {
@@ -265,6 +297,7 @@ const make = Effect.gen(function* () {
       `;
         const row = rows[0];
         if (row === undefined) {
+          if (operation === "retro-report-receive") return yield* deny;
           // Missing reads and creates share the explicitly authorized bootstrap
           // root gate; knowledge of a missing id is not an authority grant.
           if (
@@ -280,7 +313,10 @@ const make = Effect.gen(function* () {
           )
             return yield* deny;
           const mission = yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
-          const manager = mission.managers.delivery;
+          const manager =
+            operation === "retro-report-receive"
+              ? mission.managers.retro
+              : mission.managers.delivery;
           if (
             mission.id !== missionId ||
             mission.teamId !== policy.teamId ||
@@ -288,6 +324,7 @@ const make = Effect.gen(function* () {
             mission.revision !== row.revision ||
             manager?.threadId !== thread.id ||
             manager.epoch === undefined ||
+            (operation === "retro-report-receive" && manager.epoch !== reportCommand?.retroEpoch) ||
             !mission.bindings.some((binding) => binding.projectId === thread.projectId) ||
             !mission.bindings.every(
               (binding) =>
@@ -309,7 +346,45 @@ const make = Effect.gen(function* () {
               : yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
           if (stableStringify(actual) !== stableStringify(expectedMission)) return yield* deny;
         }
+        let lineage;
+        if (operation === "retro-report-receive") {
+          // Historical ancestors remain lineage evidence after archival. The
+          // current caller must stay active; deleted ancestors still deny.
+          const root = yield* projections
+            .getThread(thread.lineage.rootThreadId)
+            .pipe(Effect.mapError(() => deny));
+          const parent =
+            thread.lineage.parentThreadId === null
+              ? null
+              : yield* projections
+                  .getThread(thread.lineage.parentThreadId)
+                  .pipe(Effect.mapError(() => deny));
+          if (
+            root.deletedAt !== null ||
+            root.lineage.rootThreadId !== root.id ||
+            root.lineage.parentThreadId !== null ||
+            !policy.allowedProjectIds.includes(root.projectId) ||
+            (parent === null
+              ? thread.id !== root.id || thread.lineage.relationshipToParent !== null
+              : parent.deletedAt !== null ||
+                parent.id === thread.id ||
+                thread.id === root.id ||
+                parent.lineage.rootThreadId !== root.id ||
+                !policy.allowedProjectIds.includes(parent.projectId) ||
+                thread.lineage.relationshipToParent === null)
+          )
+            return yield* deny;
+          lineage = {
+            caller: thread.lineage,
+            root: { id: root.id, projectId: root.projectId, lineage: root.lineage },
+            parent:
+              parent === null
+                ? null
+                : { id: parent.id, projectId: parent.projectId, lineage: parent.lineage },
+          };
+        }
         return {
+          ...(lineage === undefined ? {} : { lineage }),
           threadId: thread.id,
           projectId: thread.projectId,
           providerInstanceId: thread.providerInstanceId,
@@ -359,7 +434,7 @@ const make = Effect.gen(function* () {
               : MissionService.MissionTransactionGuard.make({
                   sql,
                   requestKey,
-                  request: { operation, missionId, command },
+                  request: guardRequest,
                   authority: facts,
                   check: (expectedMission) =>
                     Effect.gen(function* () {

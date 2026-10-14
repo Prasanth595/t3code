@@ -23,12 +23,19 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as EventStore from "../persistence/OrchestrationEventStore.ts";
 import * as MissionCommands from "./MissionCommands.ts";
+import type { MissionRetroReportReceiveCommand } from "./MissionRetroReportStore.ts";
 
-export interface MissionTransactionRequest {
-  readonly operation: "read" | "commit";
-  readonly missionId: MissionId;
-  readonly command?: MissionCommand | undefined;
-}
+export type MissionTransactionRequest =
+  | {
+      readonly operation: "read" | "commit";
+      readonly missionId: MissionId;
+      readonly command?: MissionCommand | undefined;
+    }
+  | {
+      readonly operation: "retro-report-receive";
+      readonly missionId: MissionId;
+      readonly command: MissionRetroReportReceiveCommand;
+    };
 
 // A server-only handle: no enumerable authority, callbacks, policy, or credential
 // can be encoded or persisted. Only the trusted MCP port supplies these handles.
@@ -53,6 +60,38 @@ export class MissionTransactionGuard {
       authorityIdentity: stableStringify(input.authority),
     });
     return handle;
+  }
+
+  /** Server-only owner check over the original opaque handles, on the owning SQL client. */
+  static check(input: {
+    readonly sql: SqlClient.SqlClient;
+    readonly authority: MissionAuthority["Service"];
+    readonly request: MissionTransactionRequest;
+    readonly expectedMission?: Mission | null | undefined;
+  }): Effect.Effect<void, MissionServiceError> {
+    return Effect.suspend(() => {
+      const { sql, authority, request, expectedMission } = input;
+      const guard =
+        authority.transactionGuard === undefined
+          ? undefined
+          : guards.get(authority.transactionGuard);
+      if (
+        guard === undefined ||
+        guard.sql !== sql ||
+        guard.requestKey !== authority.requestKey ||
+        guard.identity !== stableStringify(request) ||
+        guard.authorityIdentity !==
+          stableStringify({
+            teamId: authority.teamId,
+            environmentId: authority.environmentId,
+            controllerThreadId: authority.controllerThreadId,
+          })
+      )
+        return Effect.fail(
+          new MissionServiceError({ operation: request.operation, category: "scope_denied" }),
+        );
+      return guard.check(expectedMission);
+    });
   }
 }
 
@@ -82,7 +121,7 @@ export class MissionAuthority extends Context.Service<
 export class MissionServiceError extends Schema.TaggedError<MissionServiceError>()(
   "MissionServiceError",
   {
-    operation: Schema.Literals(["read", "commit"]),
+    operation: Schema.Literals(["read", "commit", "retro-report-receive"]),
     category: Schema.Literals(["scope_denied", "request_conflict", "persistence"]),
     cause: Schema.optional(Schema.Defect()),
   },
@@ -129,28 +168,10 @@ const make = Effect.gen(function* () {
     request: MissionTransactionRequest,
     expectedMission?: Mission | null,
   ): Effect.Effect<void, MissionServiceError> =>
-    Effect.suspend(() => {
-      // Legacy internal callers retain their existing authority contract. MCP
-      // checks for a required handle before constructing this service.
-      if (authority.transactionGuard === undefined) return Effect.void;
-      const guard = guards.get(authority.transactionGuard);
-      if (
-        guard === undefined ||
-        guard.sql !== sql ||
-        guard.requestKey !== authority.requestKey ||
-        guard.identity !== stableStringify(request) ||
-        guard.authorityIdentity !==
-          stableStringify({
-            teamId: authority.teamId,
-            environmentId: authority.environmentId,
-            controllerThreadId: authority.controllerThreadId,
-          })
-      )
-        return Effect.fail(
-          new MissionServiceError({ operation: request.operation, category: "scope_denied" }),
-        );
-      return guard.check(expectedMission);
-    });
+    // Internal callers retain their existing trusted authority contract.
+    authority.transactionGuard === undefined
+      ? Effect.void
+      : MissionTransactionGuard.check({ sql, authority, request, expectedMission });
 
   const read = Effect.fn("MissionService.get")(function* (id: MissionId) {
     // Check scope in SQL before decoding or returning any retained content.

@@ -115,11 +115,9 @@ const authorityTestLayer = Layer.effect(
           transactionGuard: MissionService.MissionTransactionGuard.make({
             sql,
             requestKey: request.requestKey!,
-            request: {
-              operation: request.operation,
-              missionId: request.missionId,
-              command: request.command,
-            },
+            request: request.operation === "retro-report-receive"
+              ? { operation: request.operation, missionId: request.missionId, command: request.command }
+              : { operation: request.operation, missionId: request.missionId, command: request.command },
             authority: {
               teamId: facts.teamId,
               environmentId: facts.environmentId,

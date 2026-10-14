@@ -23,6 +23,7 @@ import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as MissionCommands from "../orchestration-v2/MissionCommands.ts";
 import * as MissionService from "../orchestration-v2/MissionService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import type { MissionRetroReportReceiveCommand } from "../orchestration-v2/MissionRetroReportStore.ts";
 
 /**
  * Thin typed MCP get/execute adapter for the existing MissionService. The
@@ -52,23 +53,32 @@ export class MissionMcpFailure extends Schema.TaggedError<MissionMcpFailure>()(
 
 export type MissionMcpOperation = "read" | "commit";
 
-export interface MissionMcpAuthorityRequest {
-  /** The actual caller scope: never a caller-supplied team, env, or controller. */
-  readonly scope: McpInvocationContext.McpThreadInvocationScope;
-  readonly operation: MissionMcpOperation;
-  readonly missionId: MissionId;
-  /**
-   * Strictly decoded proposed mission for commit only. Optional so existing
-   * custom resolvers keep compiling; the real resolver fails closed without
-   * it on commit, and reads never carry it. The proposed team, environment,
-   * and controller are never authority evidence: the resolver compares them
-   * against trusted policy and current project rows instead.
-   */
-  readonly proposedMission?: Mission | undefined;
-  /** Entire detached command and invocation identity, supplied by the adapter. */
-  readonly command?: MissionCommand | undefined;
-  readonly requestKey?: object | undefined;
-}
+export type MissionMcpAuthorityRequest =
+  | {
+      /** The actual caller scope: never a caller-supplied team, env, or controller. */
+      readonly scope: McpInvocationContext.McpThreadInvocationScope;
+      readonly operation: MissionMcpOperation;
+      readonly missionId: MissionId;
+      /**
+       * Strictly decoded proposed mission for commit only. Optional so existing
+       * custom resolvers keep compiling; the real resolver fails closed without
+       * it on commit, and reads never carry it. The proposed team, environment,
+       * and controller are never authority evidence: the resolver compares them
+       * against trusted policy and current project rows instead.
+       */
+      readonly proposedMission?: Mission | undefined;
+      /** Entire detached command and invocation identity, supplied by the adapter. */
+      readonly command?: MissionCommand | undefined;
+      readonly requestKey?: object | undefined;
+    }
+  | {
+      readonly scope: McpInvocationContext.McpThreadInvocationScope;
+      readonly operation: "retro-report-receive";
+      readonly missionId: MissionId;
+      readonly command: MissionRetroReportReceiveCommand;
+      readonly requestKey: object;
+      readonly proposedMission?: never;
+    };
 
 /**
  * Authenticated facts the trusted server resolver derives from the caller

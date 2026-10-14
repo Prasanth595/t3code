@@ -1197,3 +1197,42 @@ it.effect("coverage reasons beyond the bounded snapshot stay linked in immutable
     }).pipe(Effect.provide(memory(h)));
   }),
 );
+
+it.effect(
+  "a forged opaque MCP handle denies before artifact or receipt work while trusted internal root calls remain supported",
+  () =>
+    Effect.gen(function* () {
+      const h = harness();
+      return yield* Effect.gen(function* () {
+        const seeded = yield* seedClaim();
+        const staged = stage(h, reportFor("mission", seeded));
+        const command = cmdFor("mission", seeded.checkpointId, staged);
+        const before = yield* current();
+        const guarded = yield* ReportStore.MissionRetroReportStore.pipe(
+          Effect.provide(Layer.fresh(ReportStore.layer)),
+          Effect.provideService(MissionService.MissionAuthority, {
+            ...retro,
+            transactionGuard: {},
+            requestKey: {},
+          }),
+          Effect.provideService(ReportStore.MissionRetroReportArtifactPort, {
+            readOriginal: () => Effect.die("forged guard reached artifact read"),
+            prepareNormalized: () => Effect.die("forged guard reached artifact preparation"),
+          }),
+        );
+        const error = yield* guarded.receive(command).pipe(Effect.flip);
+        assert.strictEqual(error.category, "scope_denied");
+        assert.deepStrictEqual(yield* current(), before);
+        assert.deepStrictEqual(yield* reportEvents(), []);
+        assert.isTrue(
+          Option.isNone(
+            yield* (yield* Receipts.OrchestrationCommandReceiptRepository).getByCommandId({
+              commandId: command.commandId,
+            }),
+          ),
+        );
+        const internal = yield* ReportStore.MissionRetroReportStore;
+        assert.isTrue(ok(yield* internal.receive(command)).committed);
+      }).pipe(Effect.provide(memory(h)));
+    }),
+);
