@@ -79,10 +79,11 @@ describe("model price entry", () => {
       expect(isUsagePriceEdit("", next)).toBe(false);
   });
 
-  it("never blocks deleting part of a price, but blocks replacing it with letters", () => {
+  it("never blocks deleting part of a price, but blocks replacing it with a non-number", () => {
     expect(isUsagePriceEdit("1e-7", "e-7")).toBe(true);
     expect(isUsagePriceEdit("1e-7", "1-7")).toBe(true);
     expect(isUsagePriceEdit("1e-7", "a7")).toBe(false);
     expect(isUsagePriceEdit("2.5", "x")).toBe(false);
+    expect(isUsagePriceEdit("123456", "1.2.3")).toBe(false);
   });
 });
