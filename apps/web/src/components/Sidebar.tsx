@@ -379,8 +379,9 @@ function JumpHintBadge(props: { label: string }) {
   );
 }
 
-// Rendered only while the environment filter menu is open, so the sidebar
-// itself keeps its label-only environment subscription.
+// Rendered only while the environment filter menu is open, and only for
+// environments whose label collides with another, so the sidebar itself keeps
+// its label-only environment subscription.
 function SidebarEnvironmentFilterUrl(props: { environmentId: EnvironmentId }) {
   const displayUrl = useEnvironment(props.environmentId)?.displayUrl;
   return displayUrl ? (
@@ -2689,6 +2690,15 @@ export default function Sidebar() {
     },
     [environments],
   );
+  const duplicateEnvironmentLabels = useMemo(() => {
+    const seen = new Set<string>();
+    const duplicates = new Set<string>();
+    for (const environment of environments) {
+      if (seen.has(environment.label)) duplicates.add(environment.label);
+      seen.add(environment.label);
+    }
+    return duplicates;
+  }, [environments]);
   const handleEnableAllEnvironments = useCallback(() => {
     setConfiguredDisabledEnvironmentIds((current) => (current.size === 0 ? current : new Set()));
   }, []);
@@ -5379,9 +5389,11 @@ export default function Sidebar() {
                           >
                             <span className="flex min-w-0 flex-col">
                               <span className="truncate">{environment.label}</span>
-                              <SidebarEnvironmentFilterUrl
-                                environmentId={environment.environmentId}
-                              />
+                              {duplicateEnvironmentLabels.has(environment.label) ? (
+                                <SidebarEnvironmentFilterUrl
+                                  environmentId={environment.environmentId}
+                                />
+                              ) : null}
                             </span>
                           </MenuCheckboxItem>
                         );
