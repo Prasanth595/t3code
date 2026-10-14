@@ -1,5 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - the allowance is per-process Node state, so each case runs in a real Node process.
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import { assert, it } from "@effect/vitest";
 
 const printAttemptTimeout =
@@ -18,6 +21,7 @@ interface ConnectionPolicy {
 const runServerProcess = (options: {
   readonly nodeOptions?: string;
   readonly execArgv?: ReadonlyArray<string>;
+  readonly cwd?: string;
 }): ConnectionPolicy => {
   const child = NodeChildProcess.spawnSync(
     process.execPath,
@@ -36,7 +40,11 @@ process.stdout.write(JSON.stringify({
   nodeOptions: process.env.NODE_OPTIONS ?? null,
 }));`,
     ],
-    { encoding: "utf8", env: { ...process.env, NODE_OPTIONS: options.nodeOptions } },
+    {
+      encoding: "utf8",
+      cwd: options.cwd,
+      env: { ...process.env, NODE_OPTIONS: options.nodeOptions },
+    },
   );
   assert.equal(child.error, undefined);
   assert.equal(child.stderr, "");
@@ -76,4 +84,30 @@ it("keeps an explicit Node attempt timeout from the command line", () => {
 
   assert.equal(policy.server, 300);
   assert.equal(policy.spawnedChild, nodeDefaultAttemptTimeout());
+});
+
+// Node 24 still marks config files experimental and warns about it on stderr.
+it.each([
+  [
+    "a path",
+    (dir: string) => [`--experimental-config-file=${NodePath.join(dir, "node.config.json")}`],
+  ],
+  ["the default file", () => ["--experimental-default-config-file"]],
+] as const)("keeps an explicit Node attempt timeout from a config file given %s", (_, flags) => {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-outbound-connections-"));
+  try {
+    NodeFS.writeFileSync(
+      NodePath.join(dir, "node.config.json"),
+      JSON.stringify({ nodeOptions: { "network-family-autoselection-attempt-timeout": 300 } }),
+    );
+    const policy = runServerProcess({
+      execArgv: ["--disable-warning=ExperimentalWarning", ...flags(dir)],
+      cwd: dir,
+    });
+
+    assert.equal(policy.server, 300);
+    assert.equal(policy.spawnedChild, nodeDefaultAttemptTimeout());
+  } finally {
+    NodeFS.rmSync(dir, { recursive: true, force: true });
+  }
 });
