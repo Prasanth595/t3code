@@ -1214,6 +1214,8 @@ const make = Effect.gen(function* () {
         }
         yield* secrets.set(CLOUD_ENDPOINT_RUNTIME_CONFIG, stringToBytes(encoded));
         yield* secrets.remove(CLOUD_ENDPOINT_CONFIRMED_ORIGIN);
+        // The relay accepted this link, so an earlier rejection no longer holds.
+        yield* secrets.remove(CLOUD_LINK_REVOKED);
         return true;
       }),
     );

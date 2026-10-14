@@ -1054,7 +1054,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
-  it.effect("recovers a web-linked tunnel with its environment credential", () => {
+  it.effect("recovers a web-linked tunnel and clears its revoked mark", () => {
     const oldConfig =
       '{"providerKind":"cloudflare_tunnel","connectorToken":"old-token","tunnelId":"old-tunnel"}';
     const nextConfig = {
@@ -1067,6 +1067,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
       [RELAY_URL_SECRET, "https://relay.example.test"],
       [CLOUD_LINKED_USER_ID, "user-123"],
       [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "environment-credential"],
+      [CLOUD_LINK_REVOKED, "true"],
     ]);
     const applyConfigCalls: Array<unknown> = [];
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
@@ -1084,6 +1085,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           decodeRuntimeConfig(new TextDecoder().decode(values.get(CLOUD_ENDPOINT_RUNTIME_CONFIG))),
         ),
       ).toEqual(nextConfig);
+      expect(values.has(CLOUD_LINK_REVOKED)).toBe(false);
     }).pipe(
       provideReleaseHarness({
         store,
