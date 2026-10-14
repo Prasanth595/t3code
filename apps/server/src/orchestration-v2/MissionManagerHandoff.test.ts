@@ -549,6 +549,143 @@ describe("repaired handoff boundaries", () => {
     const m = missionFixture({ intent: { ...missionFixture().intent, scope: ["é".repeat(2500)] } });
     mustReject(buildManagerHandoffSnapshot(inputFixture({ mission: m })), "string_overflow");
   });
+describe("opaque T3 delegated thread/run identity", () => {
+  // Source provenance: actual app-owned opaque IDs observed from the parent
+  // T3 delegate_task backing thread/run (not manufactured bootstrap facts).
+  const OPAQUE_THREAD =
+    "thread:delegated-task:command%3Amcp%3A10f3a13b-97f3-4514-b43e-76fb9efb77d8%3Adelegate-task%3Acombined-v3-20261014-p3-handoff-artifacts-repair-01";
+  const OPAQUE_RUN =
+    "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253A10f3a13b-97f3-4514-b43e-76fb9efb77d8%253Adelegate-task%253Acombined-v3-20261014-p3-handoff-artifacts-repair-01:ordinal:1";
+  const OPAQUE_EARLIER_THREAD =
+    "thread:delegated-task:command%3Amcp%3A10f3a13b-97f3-4514-b43e-76fb9efb77d8%3Adelegate-task%3Acombined-v3-20261014-p3-handoff-earlier-01";
+  const ORDINARY_UUID_THREAD = "525c7aa8-bf39-4c3b-a8cf-e95b45edded6";
+
+  const opaqueMission = (threadId: string) => missionFixture({ managers: { delivery: { threadId, epoch: 3 } } });
+  const opaqueIntent = (threadId: string) => intentFixture({ currentThreadId: threadId });
+
+  it("accepts the actual opaque manager thread and ownership thread/run pointers", () => {
+    const result = mustOk(
+      buildManagerHandoffSnapshot({
+        mission: opaqueMission(OPAQUE_THREAD),
+        intent: opaqueIntent(OPAQUE_THREAD),
+        ownership: [{ taskId: "task-a", threadId: OPAQUE_THREAD, runId: OPAQUE_RUN, attemptNumber: 1 }],
+      }),
+    );
+    expect(result.snapshot.manager.threadId).toBe(OPAQUE_THREAD);
+    expect(result.snapshot.ownership).toEqual({
+      state: "known",
+      items: [{ taskId: "task-a", threadId: OPAQUE_THREAD, runId: OPAQUE_RUN, attemptNumber: 1 }],
+    });
+    const serialized = new TextDecoder().decode(result.bytes);
+    expect(serialized).toContain(OPAQUE_THREAD);
+    expect(serialized).toContain(OPAQUE_RUN);
+  });
+
+  it("accepts an opaque predecessor manager distinct from the current manager", () => {
+    const result = mustOk(
+      buildManagerHandoffSnapshot({
+        mission: opaqueMission(OPAQUE_THREAD),
+        intent: opaqueIntent(OPAQUE_THREAD),
+        predecessor: {
+          missionId: "mission-1",
+          teamId: "team-1",
+          environmentId: "env-1",
+          role: "delivery",
+          managerThreadId: OPAQUE_EARLIER_THREAD,
+          epoch: 2,
+        },
+      }),
+    );
+    expect(result.snapshot.predecessor).toEqual({
+      state: "known",
+      value: {
+        missionId: "mission-1",
+        teamId: "team-1",
+        environmentId: "env-1",
+        role: "delivery",
+        managerThreadId: OPAQUE_EARLIER_THREAD,
+        epoch: 2,
+      },
+    });
+  });
+
+  it("preserves an ordinary UUID top-level manager thread", () => {
+    const result = mustOk(
+      buildManagerHandoffSnapshot({
+        mission: opaqueMission(ORDINARY_UUID_THREAD),
+        intent: opaqueIntent(ORDINARY_UUID_THREAD),
+      }),
+    );
+    expect(result.snapshot.manager.threadId).toBe(ORDINARY_UUID_THREAD);
+  });
+
+  it("rejects a stale mismatch between intent manager ID and canonical assignment", () => {
+    const result = buildManagerHandoffSnapshot({
+      mission: opaqueMission(OPAQUE_THREAD),
+      intent: opaqueIntent(OPAQUE_EARLIER_THREAD),
+    });
+    mustReject(result, "intent_mismatch");
+  });
+
+  it("denies malformed percent, oversize, control, URL, and traversal thread/run IDs", () => {
+    const badThreads = [
+      "thread:command%3Ax%25252Fsecret",
+      "thread:command%3Ax%3Dsecret",
+      "thread:command%3A☃",
+      "thread:delegated-task:command%3Amcp%3A10f3a13b%3Gdelegate-task%3Ax",
+      "thread:delegated-task:command%3Amcp%3A10f3a13b%3",
+      "thread:delegated-task:command%3Amcp%3A10f3a13b%",
+      `thread:delegated-task:command%3A${"t".repeat(500)}`,
+      "thread:delegated-task:command%3Amcp%3A10f3a13b%0A%3Adelegate-task%3Ax",
+      "thread:delegated-task:command%3Amcp%3A10f3a13b\n%3Adelegate-task%3Ax",
+      "https://x.test/thread%3Adelegated-task",
+      "thread:delegated-task%3Fcommand%3Ax",
+      "thread:delegated-task%23command%3Ax",
+      "thread:delegated-task:command%2F..%2Fsecret",
+      "thread:delegated-task:command%252F..%252Fsecret",
+      "thread:delegated-task:command%2E%2E%2Fsecret",
+      "../thread%3Adelegated-task%3Ax",
+      "worker%3A1",
+    ];
+    for (const threadId of badThreads) {
+      const mission = missionFixture({ managers: { delivery: { threadId, epoch: 3 } } });
+      const r = buildManagerHandoffSnapshot({ mission, intent: intentFixture({ currentThreadId: threadId }) });
+      assert(r.ok === false, `expected rejection for ${JSON.stringify(threadId).slice(0, 80)}`);
+      expect(r.reason).toBe("invalid_mission");
+    }
+    const badRunOwnership = buildManagerHandoffSnapshot(
+      inputFixture({
+        ownership: [{ taskId: "task-a", threadId: "worker-1", runId: "run:thread:command%2F..%2Fx:ordinal:1" }],
+      }),
+    );
+    mustReject(badRunOwnership, "invalid_pointer");
+    const badPredecessor = buildManagerHandoffSnapshot(
+      inputFixture({
+        predecessor: {
+          missionId: "mission-1",
+          teamId: "team-1",
+          environmentId: "env-1",
+          role: "delivery",
+          managerThreadId: "thread:delegated-task:command%3Ax%2Fy",
+          epoch: 2,
+        },
+      }),
+    );
+    mustReject(badPredecessor, "invalid_predecessor");
+  });
+
+  it("keeps ordinary compact ID bounds unchanged", () => {
+    const longMission = missionFixture({ managers: { delivery: { threadId: "t".repeat(129), epoch: 3 } } });
+    mustReject(
+      buildManagerHandoffSnapshot({ mission: longMission, intent: intentFixture({ currentThreadId: "t".repeat(129) }) }),
+      "invalid_mission",
+    );
+    mustReject(
+      buildManagerHandoffSnapshot(inputFixture({ ownership: [{ taskId: "task-a", threadId: "t".repeat(129) }] })),
+      "invalid_pointer",
+    );
+  });
+
   it("maximal snapshot under all caps stays within 64KiB (byte_overflow unreachable under caps)", () => {
     const maxRef = `ref:${"x".repeat(223)}`;
     const result = mustOk(buildManagerHandoffSnapshot(inputFixture({
@@ -564,4 +701,5 @@ describe("repaired handoff boundaries", () => {
     })));
     expect(result.bytes.length).toBeLessThanOrEqual(HANDOFF_MAX_SERIALIZED_BYTES);
   });
+});
 });

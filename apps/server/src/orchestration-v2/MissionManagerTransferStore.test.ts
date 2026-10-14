@@ -192,7 +192,7 @@ const refreshedFacts = (base: Facts, canonical: Mission): Facts => ({
 const harness = (
   world: World,
   authorityRole: "delivery" | "retro" = "delivery",
-  opts: { readonly authorityTeam?: string; readonly authorityThread?: string } = {},
+  opts: { readonly authorityTeam?: string; readonly authorityThread?: string; readonly serviceThread?: string } = {},
 ) => {
   const authorityThread = opts.authorityThread ?? (authorityRole === "retro" ? "thread-retro" : "thread-1");
   const reservationAuthority = Layer.succeed(TransferStore.MissionManagerReservationAuthority, {
@@ -222,7 +222,7 @@ const harness = (
   const serviceAuthority = Layer.succeed(MissionService.MissionAuthority, {
     teamId: TeamId.make("team-1"),
     environmentId: EnvironmentId.make("env-1"),
-    controllerThreadId: ThreadId.make("thread-1"),
+    controllerThreadId: ThreadId.make(opts.serviceThread ?? "thread-1"),
   });
   const base = Layer.mergeAll(
     TransferStore.layer.pipe(
@@ -1024,4 +1024,34 @@ it.effect("recovers the original identity after unrelated canonical intent updat
     assert.strictEqual(replay.eventSequence, first.eventSequence);
     assert.strictEqual(yield* eventCount("mission-1"), 3);
   }).pipe(Effect.provide(harness(world)));
+});
+
+
+it.effect("reserves and replays a genuine snapshot with actual opaque manager, ownership and predecessor identities", () => {
+  const world = makeWorld();
+  const thread = "thread:delegated-task:command%3Amcp%3A10f3a13b-97f3-4514-b43e-76fb9efb77d8%3Adelegate-task%3Acombined-v3-20261014-p3-handoff-artifacts-repair-01";
+  const run = "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253A10f3a13b-97f3-4514-b43e-76fb9efb77d8%253Adelegate-task%253Acombined-v3-20261014-p3-handoff-artifacts-repair-01:ordinal:1";
+  return Effect.gen(function* () {
+    const service = yield* MissionService.MissionService;
+    const store = yield* TransferStore.MissionManagerTransferStore;
+    const original = missionFixture("opaque-reservation");
+    const mission = decodeMission({ ...original, managers: { ...original.managers, delivery: { threadId: thread, epoch: 3 } }, tasks: [{ id: "task-a", projectId: "project-1", title: "Owned task", specHash: "hash-a", dependencyHashes: [], dependencies: [], acceptanceIds: ["ac-1"], updatedAt: original.updatedAt }] });
+    yield* service.execute({ type: "mission.create", commandId: CommandId.make("seed-opaque"), mission });
+    const canonical = yield* currentMission("opaque-reservation");
+    const p = prepare(canonical);
+    const built = buildManagerHandoffSnapshot({ mission: canonical, intent: { missionId: canonical.id, observedRevision: canonical.revision, role: "delivery", currentThreadId: thread, currentEpoch: 3, timezone: TIMEZONE, localDate: p.command.localDate, ordinal: p.command.ordinal, reason: p.command.reason }, ownership: [{ taskId: "task-a", threadId: thread, runId: run, attemptNumber: 1 }], predecessor: { missionId: canonical.id, teamId: canonical.teamId, environmentId: canonical.authorityEnvironmentId, role: "delivery", managerThreadId: thread.replace("repair-01", "earlier-01"), epoch: 2 } });
+    assert.isTrue(built.ok);
+    if (!built.ok) return assert.fail("genuine snapshot expected");
+    const artifactRef = `manager-handoff:${built.sha256Hex}`;
+    artifacts.set(artifactRef, built.bytes);
+    world.facts = p.facts;
+    const command = { ...p.command, artifactRef };
+    const reserved = ok(yield* store.reserve(command));
+    assert.isTrue(reserved.committed);
+    assert.strictEqual(reserved.reservation.currentThreadId, thread);
+    world.facts = refreshedFacts(p.facts, yield* currentMission("opaque-reservation"));
+    const replay = ok(yield* store.reserve(command));
+    assert.deepStrictEqual(replay.reservation, reserved.reservation);
+    assert.strictEqual(yield* eventCount("opaque-reservation"), 2);
+  }).pipe(Effect.provide(harness(world, "delivery", { authorityThread: thread, serviceThread: thread })));
 });

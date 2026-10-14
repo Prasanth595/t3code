@@ -49,6 +49,8 @@ import {
   HANDOFF_MAX_ARRAY_ITEMS,
   HANDOFF_SNAPSHOT_SCHEMA_VERSION,
   isHandoffSafeId,
+  isHandoffOpaqueThreadId,
+  isHandoffOpaqueRunId,
   isHandoffSafeRef,
 } from "./MissionManagerHandoff.ts";
 
@@ -378,8 +380,8 @@ const validListField = (value: unknown, kind: "ownership" | "results" | "holds" 
     if (!isRecord(item)) return false;
     if (kind === "ownership") {
       if (!keysWithin(item, ["taskId", "threadId", "runId", "attemptNumber"]) || !isHandoffSafeId(item.taskId) || !taskIds.has(item.taskId as string)) return false;
-      if (item.threadId !== undefined && !isHandoffSafeId(item.threadId)) return false;
-      if (item.runId !== undefined && !isHandoffSafeId(item.runId)) return false;
+      if (item.threadId !== undefined && !isHandoffSafeId(item.threadId) && !isHandoffOpaqueThreadId(item.threadId)) return false;
+      if (item.runId !== undefined && !isHandoffSafeId(item.runId) && !isHandoffOpaqueRunId(item.runId)) return false;
       if (item.attemptNumber !== undefined && !isSafeCount(item.attemptNumber)) return false;
     } else if (kind === "results") {
       if (!keysWithin(item, ["taskId", "dispatchKey", "resultRevision", "commandId", "disposition"]) || !isHandoffSafeId(item.taskId) || !taskIds.has(item.taskId as string)) return false;
@@ -436,7 +438,7 @@ const validValueField = (value: unknown, kind: "integration" | "coverage" | "rou
   // predecessor
   if (!keysWithin(v, ["missionId", "teamId", "environmentId", "role", "managerThreadId", "epoch", "localDate", "ordinal"])) return false;
   if (v.missionId !== ctx.missionId || v.teamId !== ctx.teamId || v.environmentId !== ctx.environmentId || v.role !== ctx.role) return false;
-  if (!isHandoffSafeId(v.managerThreadId) || v.managerThreadId === ctx.currentThreadId) return false;
+  if ((!isHandoffSafeId(v.managerThreadId) && !isHandoffOpaqueThreadId(v.managerThreadId)) || v.managerThreadId === ctx.currentThreadId) return false;
   if (!isSafeCount(v.epoch) || (v.epoch as number) >= ctx.currentEpoch) return false;
   if (v.localDate !== undefined && !(typeof v.localDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.localDate))) return false;
   if (v.ordinal !== undefined && (!isSafeCount(v.ordinal) || (v.ordinal as number) > 8)) return false;

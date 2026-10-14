@@ -270,6 +270,28 @@ export const isHandoffSafeId = (value: unknown): value is string =>
   value.length <= HANDOFF_MAX_ID_LENGTH &&
   ID_PATTERN.test(value) &&
   !hasControlChar(value);
+/** Exact opaque app-owned identities stay separate from compact metadata IDs. */
+export const HANDOFF_MAX_OPAQUE_ID_LENGTH = 512;
+const OPAQUE_ID_PATTERN = /^(?:[A-Za-z0-9_.:-]|%(?:25|3[aA]))+$/;
+const isOpaqueT3Identity = (value: unknown, prefix: string): value is string => {
+  if (typeof value !== "string" || value.length > HANDOFF_MAX_OPAQUE_ID_LENGTH ||
+      !value.startsWith(prefix) || !/%(?:3a|25)/i.test(value)) return false;
+  // Decode only for bounded inspection. Nested T3 IDs encode colons and
+  // percent signs; every layer must retain that alphabet, never a path or URL.
+  // The original bytes remain the identity used for binding and serialization.
+  let inspected = value;
+  for (let depth = 0; depth <= HANDOFF_MAX_OPAQUE_ID_LENGTH; depth += 1) {
+    if (!OPAQUE_ID_PATTERN.test(inspected) || inspected.includes("..")) return false;
+    if (!inspected.includes("%")) return true;
+    inspected = inspected.replace(/%(25|3a)/gi, (_, code: string) =>
+      code === "25" ? "%" : ":");
+  }
+  return false;
+};
+export const isHandoffOpaqueThreadId = (value: unknown): value is string =>
+  isOpaqueT3Identity(value, "thread:");
+export const isHandoffOpaqueRunId = (value: unknown): value is string =>
+  isOpaqueT3Identity(value, "run:");
 const isForbiddenRefShape = (value: unknown): boolean =>
   typeof value === "string" &&
   (value.includes("/") ||
@@ -391,7 +413,11 @@ export const buildManagerHandoffSnapshot = (
     return reject("invalid_intent", "Intent role is not a canonical manager role.");
   const managers: unknown = mission.managers;
   const assignment: unknown = isRecord(managers) ? managers[role] : undefined;
-  if (!isRecord(assignment) || !isHandoffSafeId(assignment.threadId) || !isSafeCount(assignment.epoch))
+  if (
+    !isRecord(assignment) ||
+    (!isHandoffSafeId(assignment.threadId) && !isHandoffOpaqueThreadId(assignment.threadId)) ||
+    !isSafeCount(assignment.epoch)
+  )
     return reject("invalid_mission", "Canonical mission has no bound manager for the role.");
   const currentThreadId = assignment.threadId;
   const currentEpoch = assignment.epoch;
@@ -485,11 +511,13 @@ export const buildManagerHandoffSnapshot = (
         return failed("unknown_task_ref", "Ownership task is not canonical.");
       const p: { taskId: string; threadId?: string; runId?: string; attemptNumber?: number } = { taskId: entry.taskId };
       if (entry.threadId !== undefined) {
-        if (!isHandoffSafeId(entry.threadId)) return failed("invalid_pointer", "Ownership thread invalid.");
+        if (!isHandoffSafeId(entry.threadId) && !isHandoffOpaqueThreadId(entry.threadId))
+          return failed("invalid_pointer", "Ownership thread invalid.");
         p.threadId = entry.threadId;
       }
       if (entry.runId !== undefined) {
-        if (!isHandoffSafeId(entry.runId)) return failed("invalid_pointer", "Ownership run invalid.");
+        if (!isHandoffSafeId(entry.runId) && !isHandoffOpaqueRunId(entry.runId))
+          return failed("invalid_pointer", "Ownership run invalid.");
         p.runId = entry.runId;
       }
       if (entry.attemptNumber !== undefined) {
@@ -638,7 +666,10 @@ export const buildManagerHandoffSnapshot = (
     if (facts.missionId !== missionId || facts.teamId !== mission.teamId ||
       facts.environmentId !== mission.authorityEnvironmentId || facts.role !== role)
       return failed("predecessor_scope_mismatch", "Predecessor scope diverges.");
-    if (!isHandoffSafeId(facts.managerThreadId) || facts.managerThreadId === currentThreadId)
+    if (
+      (!isHandoffSafeId(facts.managerThreadId) && !isHandoffOpaqueThreadId(facts.managerThreadId)) ||
+      facts.managerThreadId === currentThreadId
+    )
       return failed("invalid_predecessor", "Predecessor manager must be distinct.");
     if (!isSafeCount(facts.epoch)) return failed("invalid_predecessor", "Predecessor epoch invalid.");
     if (facts.epoch >= currentEpoch)
