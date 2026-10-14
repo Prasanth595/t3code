@@ -1481,10 +1481,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     };
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
-      // Background automation must not edit whichever other renderer has focus.
+      // An unfocused window's input must not edit whichever renderer has focus.
+      // Not getFocusedWebContents(): every guest of a focused window reports focus.
       contents.setIgnoreMenuShortcuts(
-        !isPreviewEditingShortcut(input, hostPlatform) ||
-          webContents.getFocusedWebContents() !== contents,
+        !isPreviewEditingShortcut(input, hostPlatform) || !contents.isFocused(),
       );
     };
     // A popup opens with Electron's default handler, so the page inside it could
@@ -1505,7 +1505,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         !input.isComposing &&
         host &&
         !host.isDestroyed() &&
-        webContents.getFocusedWebContents() === wc &&
+        wc.isFocused() &&
         !(
           hostPlatform !== "darwin" &&
           input.control &&
