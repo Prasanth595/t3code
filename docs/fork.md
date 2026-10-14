@@ -196,7 +196,7 @@ sudo dpkg -i /tmp/cloudflared.deb
 sudo cloudflared service install <tunnel-token>
 ```
 
-Give the server its tunnel hostname and the Cloudflare Access login. The machine reports this hostname to the map (MM-209). Copy the Access values from the server environment of the VPS. The installer replaces only the unit file, so this drop-in file stays after an update.
+Give the server its tunnel hostname and the Cloudflare Access login. The machine reports this hostname to the map (MM-209). Copy the Access values from the server environment of the VPS. The subjects list holds the owner email and the client id of the service token that the desktop app uses for remote machines. Without that client id, the desktop app cannot open this machine. The installer replaces only the unit file, so this drop-in file stays after an update.
 
 ```sh
 mkdir -p ~/.config/systemd/user/t3code-fork.service.d
@@ -205,7 +205,7 @@ cat > ~/.config/systemd/user/t3code-fork.service.d/tunnel.conf <<'EOF'
 Environment=T3CODE_TUNNEL_PAIRING_URL=https://t3-oracle.yarden-zamir.com
 Environment=T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
 Environment=T3CODE_CLOUDFLARE_ACCESS_AUD=<audience tag of the Access app>
-Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>
+Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>,<client id of the desktop service token>
 EOF
 systemctl --user daemon-reload && systemctl --user restart t3code-fork.service
 ```
