@@ -38,7 +38,7 @@ import {
 import { HealthView } from "./resources.tsx";
 import { usePortal, type Connection } from "./store.ts";
 import {
-  DevicesView,
+  ClientsView,
   HistoryView,
   InboxView,
   QueueView,
@@ -358,8 +358,8 @@ export function App() {
         return <HistoryView />;
       case "inbox":
         return <InboxView />;
-      case "devices":
-        return <DevicesView />;
+      case "clients":
+        return <ClientsView />;
     }
   })();
 
