@@ -7463,7 +7463,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         const replies: string[] = [];
         for (const question of approvalTurnItem.questions) {
-          const answer = command.answers?.[question.id];
+          const rawAnswer = command.answers?.[question.id];
+          // Multi-select questions answer with every selected option.
+          const answer = Array.isArray(rawAnswer)
+            ? rawAnswer.filter((value) => typeof value === "string").join(", ")
+            : rawAnswer;
           if (typeof answer !== "string" || answer.trim().length === 0) {
             if (question.required === false) continue;
             return yield* new OrchestratorDispatchError({
@@ -7515,21 +7519,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
         // The resolution and normal message dispatch share one event transaction.
-        return yield* dispatchMessage(
-          {
-            type: "message.dispatch",
-            commandId: command.commandId,
-            threadId: command.threadId,
-            messageId: MessageId.make(`async-answer:${command.requestId}`),
-            text: replies.join("\n\n"),
-            attachments: [],
-            createdBy: "user",
-            creationSource: "server",
-            dispatchMode,
-          },
-          events,
-          effects,
-        );
+        const answer = {
+          type: "message.dispatch" as const,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          messageId: MessageId.make(`async-answer:${command.requestId}`),
+          text: replies.join("\n\n"),
+          attachments: [],
+          createdBy: "user" as const,
+          creationSource: "server" as const,
+          dispatchMode,
+        };
+        yield* dispatchMessage(answer, events, effects);
+        // An answer in a delegated child is a follow-up the parent waits on.
+        return yield* recordSubagentFollowup(answer, events).pipe(mapDispatchError(answer));
       }
       if (providerSessionId === null) return;
       yield* Ref.update(effects, (existing) => [
