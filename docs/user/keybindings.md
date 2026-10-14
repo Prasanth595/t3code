@@ -181,7 +181,7 @@ keyboard repeat; if repeat is disabled, use two presses or the application menu.
 
 Change **Settings → General → Confirmations → Quit shortcut** to **Direct** for a
 single press or **Double press** for two presses only. Choosing **Quit** from the
-application menu skips this step.
+application menu does not need a hold or double press.
 
 Closing or quitting the desktop app stops threads running on this computer. While any
 are running or waiting on background work, the shortcut, the application menu, and
