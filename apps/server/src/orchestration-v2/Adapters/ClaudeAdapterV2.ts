@@ -9237,8 +9237,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               if (
                 nativeThreadId !== undefined &&
                 nativeThreadId !== null &&
+                // A live process holds the conversation even before saving it.
                 (yield* Ref.get(queryContext))?.nativeThreadId !== nativeThreadId &&
-                !(yield* Ref.get(openedNativeThreads)).has(nativeThreadId) &&
                 // An unreadable transcript leaves the resume to the CLI, as before.
                 (yield* hasEmptyClaudeTranscript(nativeThreadId).pipe(
                   Effect.orElseSucceed(() => false),
