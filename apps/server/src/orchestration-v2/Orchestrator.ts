@@ -136,6 +136,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ServerSettings from "../serverSettings.ts";
+import { subagentLifecycleCascadeEffect } from "./SubagentLifecycleCascade.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -3338,6 +3339,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      const operation = command.type === "thread.archive" ? "archive" : "unarchive";
+      const children = yield* projectionStore
+        .getSubagentChildThreads(command.threadId)
+        .pipe(mapDispatchError(command));
+      if (children.length > 0) {
+        yield* Ref.update(effects, (existing) => [
+          ...existing,
+          subagentLifecycleCascadeEffect({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            operation,
+          }),
+        ]);
+      }
+    }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
@@ -6617,6 +6635,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      // Archive and delete reach only the children that exist when they
+      // cascade, so a parent still winding down must not start new ones.
+      if (
+        parentProjection.thread.archivedAt !== null ||
+        parentProjection.thread.deletedAt !== null
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `Parent thread ${command.parentThreadId} is ${
+            parentProjection.thread.deletedAt !== null ? "deleted" : "archived"
+          }.`,
+        });
+      }
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
@@ -10808,6 +10840,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           planThreadDeletion({
             command,
             projection,
+            cascadeToSubagents:
+              (yield* projectionStore
+                .getSubagentChildThreads(command.threadId, { includeDeleted: true })
+                .pipe(mapDispatchError(command))).length > 0,
             attachmentIds: yield* projectionStore
               .getThreadAttachmentIds(command.threadId)
               .pipe(mapDispatchError(command)),

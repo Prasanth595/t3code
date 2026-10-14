@@ -3441,9 +3441,19 @@ export function ArchivedThreadsPanel() {
           ),
       ),
     );
-    const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
-      snapshot.threads.map((thread) => presentThreadShell(environmentId, thread)),
-    );
+    // A subagent archived with its parent comes back with it, so only the
+    // parent is listed. One archived on its own stays listed to be restored.
+    const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) => {
+      const archivedIds = new Set(snapshot.threads.map((thread) => thread.id));
+      return snapshot.threads
+        .filter(
+          (thread) =>
+            thread.lineage.relationshipToParent !== "subagent" ||
+            thread.lineage.parentThreadId === null ||
+            !archivedIds.has(thread.lineage.parentThreadId),
+        )
+        .map((thread) => presentThreadShell(environmentId, thread));
+    });
 
     const archivedProjects = Array.from(projectsByEnvironmentAndId.values());
     const groups: Array<{

@@ -1,6 +1,7 @@
 import {
   NodeId,
   CommandId,
+  type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
@@ -533,6 +534,29 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    const subagentParentThreadId = (thread: OrchestrationV2AppThread) =>
+      thread.lineage.relationshipToParent === "subagent"
+        ? (thread.lineage.parentThreadId ?? undefined)
+        : undefined;
+
+    /**
+     * A provider can still report a new subagent after its parent was archived
+     * or deleted, before the parent's session detach lands. The child starts in
+     * the parent's persisted state, so the finished cascade does not miss it.
+     */
+    const inheritParentLifecycle = (thread: OrchestrationV2AppThread) => {
+      const parentThreadId = subagentParentThreadId(thread);
+      if (parentThreadId === undefined) return Effect.succeed(thread);
+      return projections.getThread(parentThreadId).pipe(
+        Effect.map((parent) => ({
+          ...thread,
+          archivedAt: parent.archivedAt,
+          deletedAt: thread.deletedAt ?? parent.deletedAt,
+        })),
+        Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(thread) }),
+      );
+    };
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
       Effect.gen(function* () {
         switch (input.event.type) {
@@ -556,7 +580,7 @@ export const layer: Layer.Layer<
                 threadId: offered.id,
                 payload:
                   existing === null
-                    ? offered
+                    ? yield* inheritParentLifecycle(offered)
                     : {
                         ...existing,
                         title: offered.title,
@@ -828,6 +852,20 @@ export const layer: Layer.Layer<
             input.event.type === "app_thread.created"
               ? threadCommands.withLock(input.event.appThread.id, effect)
               : effect,
+          // Under the parent's lock, a new subagent is either committed before
+          // the parent's archive or delete, whose cascade then finds it, or
+          // reads the parent's new state.
+          // Acquire parent before child to match cascades and orchestration on the
+          // non-reentrant executor.
+          (write) => {
+            const parentThreadId =
+              input.event.type === "app_thread.created"
+                ? subagentParentThreadId(input.event.appThread)
+                : undefined;
+            return parentThreadId === undefined
+              ? write
+              : threadCommands.withLock(parentThreadId, write);
+          },
         ),
     });
   }),

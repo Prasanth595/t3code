@@ -221,6 +221,8 @@ Subagent threads started by the agent can't take messages; message the parent
 thread instead. When such a subagent needs an approval or an answer, the parent
 thread asks for it.
 
+Archiving a thread also archives its subagents and stops any work they still have running, the same way it stops the thread's own work. Unarchiving the thread restores them, and deleting it deletes them. Forks are separate threads and keep their own archive state.
+
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.

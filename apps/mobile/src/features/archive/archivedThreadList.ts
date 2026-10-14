@@ -45,8 +45,21 @@ export function buildArchivedThreadGroups(input: {
 
     const environmentLabel = input.environmentLabels[entry.environmentId] ?? null;
     const threadsByProjectId = new Map<string, EnvironmentThreadShell[]>();
+    const archivedIds = new Set(
+      entry.snapshot.threads
+        .filter((thread) => thread.archivedAt !== null)
+        .map((thread) => thread.id),
+    );
     for (const thread of entry.snapshot.threads) {
-      if (thread.archivedAt === null) {
+      // A subagent archived with its parent comes back with it, so only the
+      // parent is listed. One archived on its own stays listed to be restored.
+      const parentThreadId = thread.lineage.parentThreadId;
+      if (
+        thread.archivedAt === null ||
+        (thread.lineage.relationshipToParent === "subagent" &&
+          parentThreadId !== null &&
+          archivedIds.has(parentThreadId))
+      ) {
         continue;
       }
       const threads = threadsByProjectId.get(thread.projectId) ?? [];

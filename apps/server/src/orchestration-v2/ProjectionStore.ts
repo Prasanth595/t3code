@@ -399,6 +399,11 @@ export interface ProjectionStoreV2Shape {
   readonly getThread: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2AppThread, ProjectionStoreV2Error>;
+  /** Direct subagents, archived included. Deletion may include tombstones to reach live descendants. */
+  readonly getSubagentChildThreads: (
+    threadId: ThreadId,
+    options?: { readonly includeDeleted?: boolean },
+  ) => Effect.Effect<ReadonlyArray<OrchestrationV2AppThread>, ProjectionStoreV2Error>;
   readonly getLimitRecoveryCandidates: (options: {
     readonly now: DateTime.Utc;
     readonly autoResume: boolean;
@@ -4377,6 +4382,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    // A subagent inherits its parent's immutable project, so the project index
+    // bounds the lineage scan to one project's threads.
+    const getSubagentChildThreads: ProjectionStoreV2Shape["getSubagentChildThreads"] = (
+      threadId,
+      options,
+    ) =>
+      sql<PayloadRow>`
+        SELECT child.payload_json FROM orchestration_v2_projection_threads AS child
+        JOIN orchestration_v2_projection_threads AS parent
+          ON parent.thread_id = ${threadId} AND child.project_id = parent.project_id
+        WHERE (${options?.includeDeleted === true ? 1 : 0} = 1 OR child.deleted_at IS NULL)
+          AND CASE WHEN json_valid(child.payload_json) THEN
+            json_extract(child.payload_json, '$.lineage.parentThreadId') = ${threadId}
+            AND json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            ELSE 0 END
+        ORDER BY child.created_at ASC, child.thread_id ASC
+      `.pipe(
+        Effect.mapError((cause) => new ProjectionStoreReadError({ threadId, cause })),
+        Effect.flatMap(decodeRows(decodeThreadPayload, threadId)),
+      );
+
     const requireThread = (threadId: ThreadId) =>
       Effect.gen(function* () {
         const rows = yield* sql<{ readonly thread_id: string }>`
@@ -6059,6 +6085,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       readShellSnapshot,
       getThreadShell,
       getThread,
+      getSubagentChildThreads,
       getSettlementCandidates,
       getThreadsWithPullRequests,
       getThreadWorktreePaths,
@@ -6182,6 +6209,24 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
           }
           return projection.thread;
         }),
+      getSubagentChildThreads: (threadId, options) =>
+        Ref.get(replayState).pipe(
+          Effect.map((state) =>
+            [...state.projections.values()]
+              .map(({ thread }) => thread)
+              .filter(
+                (thread) =>
+                  (options?.includeDeleted === true || thread.deletedAt === null) &&
+                  thread.lineage.parentThreadId === threadId &&
+                  thread.lineage.relationshipToParent === "subagent",
+              )
+              .toSorted(
+                (left, right) =>
+                  DateTime.toEpochMillis(left.createdAt) -
+                    DateTime.toEpochMillis(right.createdAt) || left.id.localeCompare(right.id),
+              ),
+          ),
+        ),
       getSettlementCandidates: (threadId) =>
         Effect.gen(function* () {
           const projections = (yield* Ref.get(replayState)).projections;

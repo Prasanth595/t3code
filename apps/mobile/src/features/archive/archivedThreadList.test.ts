@@ -78,6 +78,61 @@ describe("buildArchivedThreadGroups", () => {
     expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-newer", "thread-older"]);
   });
 
+  it("lists an archived parent without its archived subagents", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const parent = makeThread({
+      id: ThreadId.make("thread-parent"),
+      projectId: project.id,
+      title: "Parent",
+    });
+    const subagent = {
+      ...makeThread({ id: ThreadId.make("thread-subagent"), projectId: project.id, title: "Sub" }),
+      lineage: {
+        parentThreadId: parent.id,
+        relationshipToParent: "subagent" as const,
+        rootThreadId: parent.id,
+      },
+    };
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([project], [parent, subagent])],
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery: "",
+      sortOrder: "newest",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-parent"]);
+  });
+
+  it("lists a subagent archived on its own while its parent is active", () => {
+    const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
+    const parent = makeThread({
+      archivedAt: null,
+      id: ThreadId.make("thread-parent"),
+      projectId: project.id,
+      title: "Parent",
+    });
+    const subagent = {
+      ...makeThread({ id: ThreadId.make("thread-subagent"), projectId: project.id, title: "Sub" }),
+      lineage: {
+        parentThreadId: parent.id,
+        relationshipToParent: "subagent" as const,
+        rootThreadId: parent.id,
+      },
+    };
+
+    const result = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([project], [parent, subagent])],
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery: "",
+      sortOrder: "newest",
+    });
+
+    expect(result[0]?.threads.map((thread) => thread.id)).toEqual(["thread-subagent"]);
+  });
+
   it("filters by environment and matches project, thread, and branch text", () => {
     const secondEnvironmentId = EnvironmentId.make("environment-2");
     const firstProject = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });

@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 
 import type { PendingOrchestrationEffectV2 } from "./EffectOutbox.ts";
 import type * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import { subagentLifecycleCascadeEffect } from "./SubagentLifecycleCascade.ts";
 
 export interface ThreadDeletionPlan {
   readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -22,12 +23,23 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     "thread" | "runs" | "attempts" | "nodes" | "runtimeRequests" | "subagents" | "providerSessions"
   >;
   readonly attachmentIds: ReadonlyArray<string>;
+  /** Delete the thread's subagent threads after this commit; project removal deletes them itself. */
+  readonly cascadeToSubagents?: boolean;
   readonly now: DateTime.Utc;
   readonly idAllocator: IdAllocator.IdAllocatorV2["Service"];
 }): Effect.fn.Return<ThreadDeletionPlan, IdAllocator.IdAllocatorV2Error> {
   const { command, projection, now, idAllocator } = input;
   const events: Array<OrchestrationV2DomainEvent> = [];
-  const effects: Array<PendingOrchestrationEffectV2> = [];
+  const effects: Array<PendingOrchestrationEffectV2> =
+    input.cascadeToSubagents === true
+      ? [
+          subagentLifecycleCascadeEffect({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            operation: "delete",
+          }),
+        ]
+      : [];
   let current = projection;
   const emitEvent = Effect.fn("ThreadDeletion.emitEvent")(function* <
     Event extends OrchestrationV2DomainEvent,

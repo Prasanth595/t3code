@@ -23,6 +23,8 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
+import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
@@ -30,6 +32,8 @@ import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as SubagentLifecycleCascade from "./SubagentLifecycleCascade.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
 const threadId = ThreadId.make("thread:effect-worker-restart");
@@ -148,11 +152,18 @@ function layerExecutorFor(input: {
       }),
     ),
   );
+  const layerCascadeDependencies = Layer.mergeAll(
+    ThreadCommandExecutor.layer,
+    Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({}),
+    Layer.mock(CommandReceiptStore.CommandReceiptStoreV2)({}),
+  );
   return EffectWorker.layerExecutor.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerDependencies,
-        Layer.mock(ThreadManagementService.ThreadManagementService)(input.threads ?? {}),
+        layerCascadeDependencies,
+        SubagentLifecycleCascade.layer.pipe(Layer.provide(layerCascadeDependencies)),
         ServerSettings.layerTest(
           input.continueAfterRestart === true ? { continueThreadsAfterServerUpdate: true } : {},
         ),

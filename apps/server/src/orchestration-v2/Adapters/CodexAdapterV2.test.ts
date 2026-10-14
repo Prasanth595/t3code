@@ -2083,6 +2083,100 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       };
     });
 
+  it.effect("makes an approval ready for an immediate response", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "immediate-approval-thread";
+      const nativeTurnId = "immediate-approval-turn";
+      const prompt = "Run a command.";
+      const transcript = makeCodexReplayTranscript({
+        scenario: "immediate-approval-response",
+        entries: [
+          ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+          {
+            type: "emit_inbound",
+            label: "approval",
+            frame: {
+              id: 100,
+              method: "item/commandExecution/requestApproval",
+              params: {
+                threadId: nativeThreadId,
+                turnId: nativeTurnId,
+                itemId: "command",
+                command: "echo approved",
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "approval-response",
+            frame: { id: 100, result: { decision: "accept" } },
+          },
+          {
+            type: "emit_inbound",
+            label: "turn/completed",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+        ],
+      });
+      const pendingRequest =
+        yield* Deferred.make<
+          Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "runtime_request.updated" }>
+        >();
+      const responseApplied = yield* Deferred.make<void>();
+      const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+        event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending"
+          ? Deferred.succeed(pendingRequest, event).pipe(
+              // Stop the consumer at the first answerable request, before any later artifacts.
+              Effect.andThen(Deferred.await(responseApplied)),
+            )
+          : Effect.void,
+      );
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("immediate-approval-attempt"),
+          text: prompt,
+        }),
+      );
+      const { runtimeRequest } = yield* Deferred.await(pendingRequest);
+      assert.isTrue(
+        harness.events.some(
+          (event) => event.type === "node.updated" && event.node.id === runtimeRequest.nodeId,
+        ),
+        "an answerable approval must have its node",
+      );
+      assert.isTrue(
+        harness.events.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "approval_request" &&
+            event.turnItem.requestId === runtimeRequest.id,
+        ),
+        "an answerable approval must have its item so responding can settle it",
+      );
+      yield* harness.runtime.respondToRuntimeRequest({
+        requestId: runtimeRequest.id,
+        decision: "accept",
+      });
+      yield* Deferred.succeed(responseApplied, undefined);
+      yield* harness.firstTerminal;
+      assert.equal(harness.terminalEvents()[0]?.status, "completed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect.each(["supported", "unsupported", "invalid"] as const)(
     "delivers native history with %s app-server protocol",
     (response) =>

@@ -1813,6 +1813,167 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("starts a native subagent reported after its parent was archived as archived", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") {
+        throw new Error("Expected a thread.created fixture event");
+      }
+      const archivedParent = { ...rootEvent, payload: { ...rootEvent.payload, archivedAt: now } };
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "native-late-archived-subagent",
+      });
+      yield* eventSink.write({ events: [archivedParent] });
+      yield* ingestor.ingestNormalized({
+        providerSessionId: yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+        }),
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+        event: {
+          type: "app_thread.created",
+          driver: CODEX_DRIVER,
+          // The adapter's copy of the parent predates the archive.
+          appThread: {
+            ...rootEvent.payload,
+            id: childThreadId,
+            title: "late explorer",
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: rootEvent.threadId,
+              relationshipToParent: "subagent",
+              rootThreadId: rootEvent.threadId,
+            },
+          },
+        },
+      });
+
+      const childThread = yield* projectionStore.getThread(childThreadId);
+      assert.deepEqual(childThread.archivedAt, now);
+      assert.isNull(childThread.deletedAt);
+    }),
+  );
+
+  it.effect("inherits deletion for a late native subagent while leaving forks independent", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") {
+        throw new Error("Expected a thread.created fixture event");
+      }
+      yield* eventSink.write({
+        events: [{ ...rootEvent, payload: { ...rootEvent.payload, deletedAt: now } }],
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      for (const relationshipToParent of ["subagent", "fork"] as const) {
+        const childThreadId = idAllocator.derive.threadFromProviderThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: `native-late-deleted-${relationshipToParent}`,
+        });
+        yield* ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: {
+            type: "app_thread.created",
+            driver: CODEX_DRIVER,
+            // The adapter's copy of the parent predates the deletion.
+            appThread: {
+              ...rootEvent.payload,
+              id: childThreadId,
+              activeProviderThreadId: null,
+              lineage: {
+                parentThreadId: rootEvent.threadId,
+                relationshipToParent,
+                rootThreadId: rootEvent.threadId,
+              },
+            },
+          },
+        });
+        const childThread = yield* projectionStore.getThread(childThreadId);
+        assert.deepEqual(childThread.deletedAt, relationshipToParent === "subagent" ? now : null);
+      }
+    }),
+  );
+
+  it.effect(
+    "restores stale native subagent archive state from its parent while leaving forks independent",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const rootEvent = yield* threadCreatedEvent(now);
+        if (rootEvent.type !== "thread.created") {
+          throw new Error("Expected a thread.created fixture event");
+        }
+        yield* eventSink.write({
+          events: [
+            { ...rootEvent, payload: { ...rootEvent.payload, archivedAt: now } },
+            {
+              id: yield* idAllocator.allocate.event({ threadId: rootEvent.threadId }),
+              type: "thread.unarchived",
+              threadId: rootEvent.threadId,
+              occurredAt: now,
+              payload: rootEvent.payload,
+            },
+          ],
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+        });
+        for (const relationshipToParent of ["subagent", "fork"] as const) {
+          const childThreadId = idAllocator.derive.threadFromProviderThread({
+            driver: CODEX_DRIVER,
+            nativeThreadId: `native-stale-archive-${relationshipToParent}`,
+          });
+          yield* ingestor.ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: rootEvent.threadId,
+            event: {
+              type: "app_thread.created",
+              driver: CODEX_DRIVER,
+              appThread: {
+                ...rootEvent.payload,
+                id: childThreadId,
+                archivedAt: now,
+                activeProviderThreadId: null,
+                lineage: {
+                  parentThreadId: rootEvent.threadId,
+                  relationshipToParent,
+                  rootThreadId: rootEvent.threadId,
+                },
+              },
+            },
+          });
+          const childThread = yield* projectionStore.getThread(childThreadId);
+          assert.deepEqual(
+            childThread.archivedAt,
+            relationshipToParent === "subagent" ? null : now,
+          );
+          assert.isNull(childThread.deletedAt);
+        }
+      }),
+  );
+
   it.effect("moves a native subagent's thread to the model its provider reports later", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;

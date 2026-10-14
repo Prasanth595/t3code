@@ -5108,6 +5108,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               driver: CODEX_PROVIDER,
               turnItem: artifacts.turnItem,
             });
+            // A response can arrive as soon as the request is persisted; its item must exist.
             yield* emitProviderEvent({
               type: "runtime_request.updated",
               driver: CODEX_PROVIDER,
