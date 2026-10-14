@@ -1823,11 +1823,9 @@ const make = Effect.gen(function* () {
             "No recording is active for this thread.",
           );
         }
-        return tab.control.agent(
-          request.agentSessionId ?? "",
-          () => stopRecording(tab),
-          deadlineMs,
-        );
+        // A stop cannot act twice (a retry finds no recording);
+        // dropping a late one would leave capture running.
+        return tab.control.agent(request.agentSessionId ?? "", () => stopRecording(tab));
       }
     }
     const tab = await requireTab(request);

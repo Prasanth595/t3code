@@ -28,6 +28,7 @@ import * as Broker from "../mcp/PreviewAutomationBroker.ts";
 import * as DesktopChannel from "./DesktopBrowserChannel.ts";
 import * as Manager from "./Manager.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
+import * as ServerBrowserContexts from "./ServerBrowserContexts.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 
 // Keep the manager, broker, ownership, refs, and viewer paths real; replace Chromium I/O only.
@@ -555,6 +556,105 @@ it.live("a caller timeout keeps the in-flight capture reserved until Chromium an
       expect(page.setViewportSize).toHaveBeenCalledOnce();
     }),
   ).pipe(Effect.provide(layer)),
+);
+
+it.live(
+  "a queued recording stop still runs after its deadline when a snapshot caller times out",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { broker, tabId } = yield* ready;
+        const manager = yield* Manager.PreviewManager;
+        const page = contexts[0]!.page;
+        const encoder = {
+          evaluate: vi
+            .fn()
+            .mockResolvedValueOnce(undefined)
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce({ mimeType: "video/webm", count: 1, bytes: 5 })
+            .mockResolvedValueOnce("ZnJhbWU="),
+          close: vi.fn(async () => {}),
+        };
+        const scratchPage = vi
+          .spyOn(ServerBrowserContexts.ServerBrowserContexts.prototype, "scratchPage")
+          .mockResolvedValue(encoder as unknown as Page);
+        yield* Effect.addFinalizer(() => Effect.sync(() => scratchPage.mockRestore()));
+        const recording = yield* broker.invoke({
+          scope,
+          tabId,
+          operation: "recordingStart",
+          input: {},
+        });
+        expect(recording).toMatchObject({ recording: true });
+        const session = contexts[0]!.sessions.at(-1)!;
+        expect(session.send).toHaveBeenCalledWith("Page.startScreencast", expect.anything());
+
+        const started = Promise.withResolvers<void>();
+        const release = Promise.withResolvers<Awaited<ReturnType<typeof page.evaluate>>>();
+        const drained = Promise.withResolvers<void>();
+        const metadata = {
+          url: "about:blank",
+          title: "test page",
+          loading: false,
+          visibleText: "",
+          interactiveElements: [],
+        };
+        yield* Effect.addFinalizer(() => Effect.sync(() => release.resolve(metadata)));
+        page.evaluate.mockImplementationOnce(async () => {
+          started.resolve();
+          return release.promise;
+        });
+        page.setViewportSize.mockImplementationOnce(async () => {
+          drained.resolve();
+        });
+        let now = performance.now();
+        const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+        yield* Effect.addFinalizer(() => Effect.sync(() => clock.mockRestore()));
+        const snapshot = yield* broker
+          .invoke<PreviewAutomationSnapshot>({
+            scope,
+            tabId,
+            operation: "snapshot",
+            input: {},
+            timeoutMs: 150,
+            updateCurrentTab: false,
+          })
+          .pipe(Effect.flip, Effect.forkScoped);
+        yield* Effect.promise(() => started.promise);
+        const stop = yield* broker
+          .invoke<void>({
+            scope,
+            tabId,
+            operation: "recordingStop",
+            input: {},
+            timeoutMs: 1000,
+          })
+          .pipe(Effect.exit, Effect.forkScoped);
+        // The status reply marks delivery while the snapshot still holds the tab queue.
+        yield* broker.invoke({ scope, tabId, operation: "status", input: {} });
+        expect(yield* Fiber.join(snapshot)).toMatchObject({
+          _tag: "PreviewAutomationTimeoutError",
+        });
+        now += 1000;
+        release.resolve(metadata);
+        // A system resize runs after the queued stop without changing control ownership.
+        yield* manager.resize({
+          threadId: scope.thread.threadId,
+          tabId,
+          viewport: { _tag: "freeform", width: 900, height: 700 },
+        });
+        yield* Effect.promise(() => drained.promise);
+        expect(session.detach).toHaveBeenCalledOnce();
+        yield* yield* Fiber.join(stop);
+        const stopped = yield* broker
+          .invoke<void>({ scope, tabId, operation: "recordingStop", input: {} })
+          .pipe(Effect.flip);
+        expect(stopped).toMatchObject({
+          _tag: "PreviewAutomationExecutionError",
+          cause: { _tag: "PreviewAutomationRecordingNotActiveError" },
+        });
+      }),
+    ).pipe(Effect.provide(layer)),
 );
 
 it.live("enforces provider ownership and explicit targets when a session has multiple tabs", () =>
