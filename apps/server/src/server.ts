@@ -165,6 +165,7 @@ import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain"
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
+import * as ForkUpdates from "./fork/ForkUpdates.ts";
 import * as MachineHost from "./fork/machineMap/MachineHost.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
@@ -466,8 +467,13 @@ const layerMachineMapState = MachineMapState.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
 );
 
+// One instance for the update RPC and the fork updates, so both share the in-flight guard.
+const layerServerSelfUpdate = ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate));
+
 const layerMachineMap = MachineMap.layer.pipe(
   Layer.provideMerge(MachineHost.layer),
+  // Fork: updates from the fork releases. It runs also when the machine map is off.
+  Layer.provide(ForkUpdates.layer.pipe(Layer.provide(layerServerSelfUpdate))),
   Layer.provideMerge(MachinePeers.layer),
   Layer.provide(MachineResources.layer),
   Layer.provide(MachineTunnel.layer.pipe(Layer.provide(ServerSecretStore.layer))),
@@ -773,7 +779,7 @@ const layerMakeRoutes = Layer.mergeAll(
   // Server browser tabs and HTML render previews install and run the same headless browser.
   Layer.provide(PreviewBrowser.layer),
   Layer.provide(PreviewAutomationBroker.layer),
-  Layer.provide(ServerSelfUpdate.layer.pipe(Layer.provide(layerDesktopAppUpdate))),
+  Layer.provide(layerServerSelfUpdate),
   Layer.provide(layerCommandReadiness),
   // Fork: one instance, so every client shares its GitHub caches.
   Layer.provide(ForkChangelog.layer),

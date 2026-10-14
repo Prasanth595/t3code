@@ -1298,6 +1298,11 @@ export const ServerSettings = Schema.Struct({
     ),
   ),
   /**
+   * Fork: a server that runs as the background service installs each newer
+   * fork release when no agent turn runs. See docs/fork.md "Server updates".
+   */
+  forkAutoUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
    * Whether agents may drive the in-app preview browser. Turning this off
    * withholds the MCP credential, so the `t3-code` server (and with it every
    * `preview_*` tool) is never attached to a provider session, and the prompt
@@ -1745,6 +1750,7 @@ export const ServerSettingsPatch = Schema.Struct({
   recoverInterruptedTurns: Schema.optionalKey(Schema.Boolean),
   recoverInterruptedTurnsMessage: Schema.optionalKey(TrimmedNonEmptyString),
   recoverInterruptedTurnsSubagentMessage: Schema.optionalKey(TrimmedNonEmptyString),
+  forkAutoUpdate: Schema.optionalKey(Schema.Boolean),
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   projectAgentBrowserAccessOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
