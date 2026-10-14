@@ -363,13 +363,12 @@ function ArrowPanel({ from, to }: { from: string; to: string }) {
   );
 }
 
-/** Commands without input, in the order of the panel. */
+/** Commands without input, in the order of the panel. Resources has "Collect diagnostics" with its result. */
 const SIMPLE_COMMANDS: ReadonlyArray<
   Extract<
     MachineCommandInput,
     {
       _tag:
-        | "collectDiagnostics"
         | "reloadWindows"
         | "pauseScheduledTasks"
         | "resumeScheduledTasks"
@@ -378,13 +377,14 @@ const SIMPLE_COMMANDS: ReadonlyArray<
     }
   >
 > = [
-  { _tag: "collectDiagnostics" },
   { _tag: "reloadWindows" },
   { _tag: "pauseScheduledTasks" },
   { _tag: "resumeScheduledTasks" },
   { _tag: "stopAllAgents" },
   { _tag: "restartServer" },
 ];
+
+const MACHINE_KINDS: ReadonlyArray<MachineKind> = ["laptop", "desktop", "server"];
 
 const KIND_LABEL: Record<MachineKind, string> = {
   laptop: "Laptop",
@@ -471,40 +471,36 @@ function ConnectForm({ machine }: { machine: MachineRecord }) {
   );
 }
 
-/** MM-206, MM-207, MM-208, MM-5xx, MM-1003, MM-1004. */
+type MachineTab = "overview" | "access" | "settings" | "manage";
+
+const MACHINE_TAB_LABEL: Record<MachineTab, string> = {
+  overview: "Overview",
+  access: "Access",
+  settings: "Settings",
+  manage: "Manage",
+};
+
+/** MM-206, MM-207, MM-208, MM-5xx, MM-1003, MM-1004, MM-1112. */
 function MachinePanel({ id }: { id: string }) {
   const portal = usePortalContext();
   const { map, snapshot, now } = portal;
-  const [delivery, setDelivery] = useState<CommandDelivery>("online");
-  const [expiresInMinutes, setExpiry] = useState(DEFAULT_COMMAND_MINUTES);
-  const [thread, setThread] = useState({ projectId: "", title: "", message: "" });
-  const [renaming, setRenaming] = useState(false);
+  // The tab stays when the owner opens another machine, to compare the same part.
+  const [tab, setTab] = useState<MachineTab>("overview");
   const machine = map.machines.find((m) => m.id === id);
   if (!machine) return <Missing what="machine" />;
   const presence = snapshot.presence[machine.id];
   const state = presenceState(presence);
   const status = presence?.status ?? null;
-  const supported = new Set(status?.commands ?? []);
-  const options: CommandOptions = { delivery, expiresInMinutes };
   const queue = machineQueue(snapshot, portal.rotations, machine);
-  const put = (summary: string, next: MachineRecord) =>
-    portal.submit(summary, [{ _tag: "putMachine", machine: next }]);
-
-  const settings = effectiveSettings(map, machine.id);
-  const own = map.settings.overrides[machine.id];
 
   return (
     <>
-      {renaming ? (
-        <RenameForm machine={machine} done={() => setRenaming(false)} />
-      ) : (
-        <h2 className="with-icon">
-          <span className="icon">
-            <KindIcon kind={machine.kind} />
-          </span>
-          {machine.name}
-        </h2>
-      )}
+      <h2 className="with-icon">
+        <span className="icon">
+          <KindIcon kind={machine.kind} />
+        </span>
+        {machine.name}
+      </h2>
       <p className="desc">
         {presenceText(presence, now)} · applied rev {presence?.appliedRevision ?? "none"} of{" "}
         {map.revision}
@@ -536,32 +532,49 @@ function MachinePanel({ id }: { id: string }) {
             Open T3
           </a>
         ) : (
-          // The machine reports its hostname when it joins. The Status section says so.
+          // The machine reports its hostname when it joins. The Overview tab says so.
           <button type="button" className="btn" disabled>
             Open T3
           </button>
         )}
-        <button type="button" className="btn" onClick={() => setRenaming(true)} disabled={renaming}>
-          Rename
-        </button>
-        <select
-          aria-label="Kind"
-          value={machine.kind}
-          onChange={(e) => {
-            const kind = e.target.value;
-            if (kind === "laptop" || kind === "desktop" || kind === "server") {
-              put(`${machine.name} is a ${kind}`, { ...machine, kind });
-            }
-          }}
-        >
-          {(["laptop", "desktop", "server"] as const).map((kind) => (
-            <option key={kind} value={kind}>
-              {KIND_LABEL[kind]}
-            </option>
-          ))}
-        </select>
       </div>
+      <div className="seg wide machine-tabs" role="tablist" aria-label="Machine">
+        {(Object.keys(MACHINE_TAB_LABEL) as MachineTab[]).map((key) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+          >
+            {MACHINE_TAB_LABEL[key]}
+          </button>
+        ))}
+      </div>
+      <div role="tabpanel" aria-label={MACHINE_TAB_LABEL[tab]}>
+        {tab === "overview" && <MachineOverview machine={machine} />}
+        {tab === "access" && <MachineAccess machine={machine} />}
+        {tab === "settings" && <MachineSettings machine={machine} />}
+        {tab === "manage" && <MachineManage machine={machine} />}
+      </div>
+    </>
+  );
+}
 
+/** MM-1002, MM-5xx, MM-1506: what the machine does now, its commands and its resources. */
+function MachineOverview({ machine }: { machine: MachineRecord }) {
+  const portal = usePortalContext();
+  const { snapshot } = portal;
+  const [delivery, setDelivery] = useState<CommandDelivery>("online");
+  const [expiresInMinutes, setExpiry] = useState(DEFAULT_COMMAND_MINUTES);
+  const [thread, setThread] = useState({ projectId: "", title: "", message: "" });
+  const presence = snapshot.presence[machine.id];
+  const status = presence?.status ?? null;
+  const supported = new Set(status?.commands ?? []);
+  const options: CommandOptions = { delivery, expiresInMinutes };
+
+  return (
+    <>
       <Section>Status</Section>
       {status ? (
         <dl className="facts small">
@@ -594,35 +607,8 @@ function MachinePanel({ id }: { id: string }) {
         <p className="small muted">No status yet. It shows here after the first connection.</p>
       )}
 
-      <Section>Resources</Section>
-      <ResourcesSection machine={machine} />
-
-      <Section>Connect</Section>
-      <p className="hint">
-        {machine.name} gets Standard access to the machine you pick. The arrow opens, so you can
-        pick another level.
-      </p>
-      <ConnectForm machine={machine} />
-
-      <Section>Map role</Section>
-      {portal.pause && <PausedNote />}
-      <div className="seg wide" role="group" aria-label="Map role">
-        {MAP_ROLES.map((role: MachineMapRole) => (
-          <button
-            key={role}
-            type="button"
-            aria-pressed={machine.mapRole === role}
-            disabled={portal.pause !== null && roleRank(role) > roleRank(machine.mapRole)}
-            onClick={() => put(`${machine.name} map role ${role}`, { ...machine, mapRole: role })}
-          >
-            {role}
-          </button>
-        ))}
-      </div>
-      <p className="desc">{ROLE_TEXT[machine.mapRole]}</p>
-
       <Section>Commands</Section>
-      {state !== "online" && status !== null && (
+      {presenceState(presence) !== "online" && status !== null && (
         <p className="hint">
           {machine.name} is offline. Commands wait in its queue and run when it connects.
         </p>
@@ -749,9 +735,122 @@ function MachinePanel({ id }: { id: string }) {
         </details>
       )}
 
-      {map.settings.managed.length > 0 && <Section>Settings</Section>}
-      {map.settings.managed.map(({ scope, key }) => {
-        const mine = own !== undefined && Object.hasOwn(own[scope], key);
+      <Section>Resources</Section>
+      <ResourcesSection machine={machine} />
+    </>
+  );
+}
+
+/** MM-1103, MM-1104, MM-5xx: the arrows of the machine, a new arrow and its map role. */
+function MachineAccess({ machine }: { machine: MachineRecord }) {
+  const portal = usePortalContext();
+  const { map } = portal;
+  const put = (summary: string, next: MachineRecord) =>
+    portal.submit(summary, [{ _tag: "putMachine", machine: next }]);
+  const rows = map.machines.flatMap((other) =>
+    other.id !== machine.id && pairShows(map, machine.id, other.id)
+      ? [
+          { from: machine, to: other },
+          { from: other, to: machine },
+        ]
+      : [],
+  );
+
+  return (
+    <>
+      <Section>Arrows</Section>
+      {rows.length === 0 ? (
+        <p className="hint">
+          {machine.name} has no access to other machines, and none has access to it.
+        </p>
+      ) : (
+        rows.map(({ from, to }) => {
+          const arrow = findArrow(map, from.id, to.id);
+          return (
+            <div className="row" key={`${from.id}>${to.id}`}>
+              <button
+                type="button"
+                className="link grow left"
+                onClick={() => portal.select({ _tag: "arrow", from: from.id, to: to.id })}
+              >
+                <span className="t">{usesText(from.name, to.name)}</span>
+                {arrow.expiresAt && <span className="v">Until {shortTime(arrow.expiresAt)}</span>}
+              </button>
+              {arrow.agentTools && <span className="sticker accent flat">tools</span>}
+              <span className={`sticker lvl-${arrow.level}`}>{LEVEL_LABEL[arrow.level]}</span>
+            </div>
+          );
+        })
+      )}
+
+      <Section>Connect</Section>
+      <p className="hint">
+        {machine.name} gets Standard access to the machine you pick. The arrow opens, so you can
+        pick another level.
+      </p>
+      <ConnectForm machine={machine} />
+
+      <Section>Map role</Section>
+      {portal.pause && <PausedNote />}
+      <div className="seg wide" role="group" aria-label="Map role">
+        {MAP_ROLES.map((role: MachineMapRole) => (
+          <button
+            key={role}
+            type="button"
+            aria-pressed={machine.mapRole === role}
+            disabled={portal.pause !== null && roleRank(role) > roleRank(machine.mapRole)}
+            onClick={() => put(`${machine.name} map role ${role}`, { ...machine, mapRole: role })}
+          >
+            {role}
+          </button>
+        ))}
+      </div>
+      <p className="desc">{ROLE_TEXT[machine.mapRole]}</p>
+    </>
+  );
+}
+
+/** MM-4xx: each managed setting follows the shared value or keeps its own value. */
+function MachineSettings({ machine }: { machine: MachineRecord }) {
+  const portal = usePortalContext();
+  const { map } = portal;
+  const [query, setQuery] = useState("");
+  const settings = effectiveSettings(map, machine.id);
+  const own = map.settings.overrides[machine.id];
+  const isOwn = (scope: SettingScope, key: string) =>
+    own !== undefined && Object.hasOwn(own[scope], key);
+  const ownCount = map.settings.managed.filter(({ scope, key }) => isOwn(scope, key)).length;
+  const needle = query.trim().toLowerCase();
+  // Own values first: they are the ones that make this machine different.
+  const shown = map.settings.managed
+    .filter(({ key }) => key.toLowerCase().includes(needle))
+    .toSorted((a, b) => Number(isOwn(b.scope, b.key)) - Number(isOwn(a.scope, a.key)));
+
+  if (map.settings.managed.length === 0) {
+    return (
+      <p className="hint">
+        The map manages no settings yet. Pick settings to share in the Settings view.
+      </p>
+    );
+  }
+  return (
+    <>
+      <p className="desc">
+        {ownCount === 0
+          ? `${machine.name} follows all ${map.settings.managed.length} shared settings.`
+          : `${machine.name} keeps its own value for ${ownCount} of ${map.settings.managed.length} settings.`}
+      </p>
+      <input
+        type="search"
+        className="full"
+        aria-label="Find a setting"
+        placeholder="Find a setting"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {shown.length === 0 && <p className="small muted">No setting matches.</p>}
+      {shown.map(({ scope, key }) => {
+        const mine = isOwn(scope, key);
         const follow = (keepOwn: boolean) => {
           if (keepOwn === mine) return;
           portal.submit(
@@ -791,6 +890,49 @@ function MachinePanel({ id }: { id: string }) {
           </div>
         );
       })}
+    </>
+  );
+}
+
+/** MM-206, MM-207, MM-208: name, kind, token and removal. */
+function MachineManage({ machine }: { machine: MachineRecord }) {
+  const portal = usePortalContext();
+  const { snapshot, now } = portal;
+  const [renaming, setRenaming] = useState(false);
+  const queue = machineQueue(snapshot, portal.rotations, machine);
+  const put = (summary: string, next: MachineRecord) =>
+    portal.submit(summary, [{ _tag: "putMachine", machine: next }]);
+
+  return (
+    <>
+      <Section>Name</Section>
+      {renaming ? (
+        <RenameForm machine={machine} done={() => setRenaming(false)} />
+      ) : (
+        <div className="row">
+          <span className="t grow">{machine.name}</span>
+          <button type="button" className="btn small" onClick={() => setRenaming(true)}>
+            Rename
+          </button>
+        </div>
+      )}
+
+      <Section>Kind</Section>
+      <div className="seg kinds" role="group" aria-label="Kind">
+        {MACHINE_KINDS.map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            aria-pressed={machine.kind === kind}
+            onClick={() =>
+              kind !== machine.kind && put(`${machine.name} is a ${kind}`, { ...machine, kind })
+            }
+          >
+            <KindIcon kind={kind} />
+            {KIND_LABEL[kind]}
+          </button>
+        ))}
+      </div>
 
       <Section>Token</Section>
       <p className="small">
