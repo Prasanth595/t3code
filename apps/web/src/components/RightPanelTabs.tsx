@@ -25,11 +25,20 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, ChevronLeft, ChevronRight, Files, Plus } from "lucide-react";
+import {
+  Smartphone,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  FileDiff,
+  Files,
+  Globe2,
+  Plus,
+  TerminalSquare,
+} from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
   type ComponentProps,
-  type ComponentType,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -43,7 +52,6 @@ import {
 } from "react";
 
 import { isElectron } from "~/env";
-import { getSidePanelMetadata, type SidePanelId } from "~/panels/bundledPanels";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
@@ -122,11 +130,26 @@ interface RightPanelTabsProps {
   /** Tabs are draggable only when the owner can persist the new order. */
   onMoveSurface?: (surfaceId: string, toIndex: number) => void;
   onCopyFilePath: (relativePath: string) => void;
-  /** Whether each registered panel can open here, and how; titles and icons come from its definition. */
-  panels: Readonly<Record<SidePanelId, SidePanelLauncher>>;
+  onAddBrowser: () => void;
+  /**
+   * Separate from `onAddBrowser` on purpose: that one is passed directly as a
+   * DOM click handler, and a `(profileId?: string)` signature would silently
+   * accept the MouseEvent as a profile id.
+   */
   onAddBrowserInProfile: (profileId: string) => void;
+  onAddTerminal: () => void;
+  onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddPullRequest: () => void;
+  onAddPullRequests: () => void;
+  onAddDevice: () => void;
+  browserAvailable: boolean;
+  terminalAvailable: boolean;
+  diffAvailable: boolean;
   filesAvailable: boolean;
+  pullRequestAvailable: boolean;
+  pullRequestsAvailable: boolean;
+  deviceAvailable: boolean;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
   children: ReactNode;
 }
@@ -147,6 +170,16 @@ export function shouldOpenDefaultBrowserProfileFromMenuClick(
   return pointerType !== "touch";
 }
 
+const SURFACE_DISABLED_REASONS = {
+  browser: "Browser previews are only available in the T3 Code desktop app.",
+  terminal: "Terminal surfaces are only available from a project thread.",
+  files: "Files are only available when a project is open.",
+  diff: "Diff is only available for server threads in Git repositories.",
+  pullRequest: "This thread's branch has no pull request yet.",
+  pullRequests: "No linked pull requests are available for this thread.",
+  device: "Devices are only available from a thread.",
+} as const;
+
 /** Overlays that must win over the launcher's letter shortcuts. */
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="dialog-popup"]',
@@ -159,66 +192,16 @@ const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
-interface SidePanelLauncher {
-  available: boolean;
-  onOpen: () => void;
-}
-
-interface SurfaceAction {
-  id: string;
-  label: string;
-  icon: ComponentType<{ className?: string }>;
-  shortcut: string;
-  available: boolean;
-  /** One-line reason for the empty launcher rows. */
-  unavailableHint: string;
-  /** Full reason for the add menu tooltip. */
-  unavailableReason: string;
-  onClick: () => void;
-}
-
-type SurfaceActionInputs = Pick<RightPanelTabsProps, "panels" | "onAddFiles" | "filesAvailable">;
-
-/**
- * The surfaces the empty launcher and the add menu offer, in launcher order.
- * Registered panels describe themselves; the rest are listed here until they
- * move onto the panel registry.
- */
-export function rightPanelSurfaceActions(props: SurfaceActionInputs): SurfaceAction[] {
-  const registered = (id: SidePanelId): SurfaceAction => {
-    const panel = getSidePanelMetadata(id);
-    const launcher = props.panels[id];
-    return {
-      id,
-      label: panel.title,
-      icon: panel.icon,
-      shortcut: panel.launcherKey,
-      available: (panel.isSupported?.() ?? true) && launcher.available,
-      unavailableHint: panel.unavailableHint,
-      unavailableReason: panel.unavailableReason,
-      // Never forward the click event as an argument.
-      onClick: () => launcher.onOpen(),
-    };
-  };
-  return [
-    registered("preview"),
-    registered("terminal"),
-    {
-      id: "files",
-      label: "Files",
-      icon: Files,
-      shortcut: "F",
-      available: props.filesAvailable,
-      unavailableHint: "Available when a project is open.",
-      unavailableReason: "Files are only available when a project is open.",
-      onClick: props.onAddFiles,
-    },
-    registered("diff"),
-    registered("pull-request"),
-    registered("pull-requests"),
-    registered("device"),
-  ];
-}
+/** One-line unavailability hints for the empty-state rows. */
+const SURFACE_UNAVAILABLE_HINTS = {
+  browser: "Only available in the desktop app.",
+  terminal: "Available when a project is open.",
+  files: "Available when a project is open.",
+  diff: "Available for Git repositories.",
+  pullRequest: "No pull request on this branch yet.",
+  pullRequests: "No linked pull requests available.",
+  device: "Available from a thread.",
+} as const;
 
 type TabContextMenuAction =
   | "rename"
@@ -349,13 +332,87 @@ function SurfaceMenuItem(props: {
  * surfaces stay visible with a one-line reason.
  */
 function RightPanelEmptyState(props: {
-  actions: readonly SurfaceAction[];
+  onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
+  onAddTerminal: () => void;
+  onAddDiff: () => void;
+  onAddFiles: () => void;
+  onAddPullRequest: () => void;
+  onAddPullRequests: () => void;
+  onAddDevice: () => void;
+  browserAvailable: boolean;
+  terminalAvailable: boolean;
+  diffAvailable: boolean;
+  filesAvailable: boolean;
+  pullRequestAvailable: boolean;
+  pullRequestsAvailable: boolean;
+  deviceAvailable: boolean;
 }) {
   // -1 means no highlight: it only appears on hover or arrow use.
   const [highlight, setHighlight] = useState(-1);
-  const actions = props.actions;
+
+  const actions = [
+    {
+      label: "Browser",
+      icon: Globe2,
+      shortcut: "B",
+      available: props.browserAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.browser,
+      onClick: props.onAddBrowser,
+    },
+    {
+      label: "Terminal",
+      icon: TerminalSquare,
+      shortcut: "T",
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.terminal,
+      onClick: props.onAddTerminal,
+    },
+    {
+      label: "Files",
+      icon: Files,
+      shortcut: "F",
+      available: props.filesAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
+      onClick: props.onAddFiles,
+    },
+    {
+      label: "Diff",
+      icon: FileDiff,
+      shortcut: "D",
+      available: props.diffAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
+      onClick: props.onAddDiff,
+    },
+    {
+      label: "Pull request",
+      icon: PullRequestGlyph.pullRequest,
+      shortcut: "P",
+      available: props.pullRequestAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequest,
+      onClick: props.onAddPullRequest,
+    },
+    {
+      label: "Linked pull requests",
+      icon: PullRequestGlyph.link,
+      shortcut: "L",
+      available: props.pullRequestsAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.pullRequests,
+      onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Device",
+      description: "Watch an iOS Simulator or Android Emulator.",
+      icon: Smartphone,
+      shortcut: "M",
+      available: props.deviceAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.device,
+      onClick: props.onAddDevice,
+    },
+  ] as const;
+
+  type SurfaceAction = (typeof actions)[number];
 
   const availableActions = actions.filter((action) => action.available);
   const highlightIndex =
@@ -454,7 +511,7 @@ function RightPanelEmptyState(props: {
               // wrapper: the chooser overlays the row, and a pointer moving
               // onto it must not read as leaving the row.
               <div
-                key={action.id}
+                key={action.label}
                 className="group relative"
                 onMouseEnter={() => setHighlight(availableActions.indexOf(action))}
                 onMouseLeave={() =>
@@ -475,7 +532,7 @@ function RightPanelEmptyState(props: {
                   <span
                     className={cn(
                       "min-w-0 flex-1 truncate",
-                      action.id === "preview" && props.browserProfiles.length > 1 && "pr-7",
+                      action.label === "Browser" && props.browserProfiles.length > 1 && "pr-7",
                     )}
                   >
                     {action.label}
@@ -487,7 +544,7 @@ function RightPanelEmptyState(props: {
                   default profile, the chevron picks another. Only worth showing
                   once there is something to choose between.
                 */}
-                {action.id === "preview" && props.browserProfiles.length > 1 ? (
+                {action.label === "Browser" && props.browserProfiles.length > 1 ? (
                   <Menu>
                     <MenuTrigger
                       render={
@@ -516,8 +573,8 @@ function RightPanelEmptyState(props: {
               </div>
             ) : (
               <DisabledReasonTooltip
-                key={action.id}
-                reason={action.unavailableHint}
+                key={action.label}
+                reason={action.disabledReason}
                 trigger={
                   <div
                     tabIndex={0}
@@ -545,7 +602,7 @@ function surfaceTitle(
 ): string {
   switch (surface.kind) {
     case "diff":
-      return getSidePanelMetadata("diff").title;
+      return "Diff";
     case "files":
       return "Files";
     case "file":
@@ -562,16 +619,15 @@ function surfaceTitle(
     case "pull-requests":
       return "Pull requests";
     case "device":
-      return surface.title ?? surface.target?.name ?? getSidePanelMetadata("device").title;
+      return surface.title ?? surface.target?.name ?? "Device";
     case "preview": {
-      const fallback = getSidePanelMetadata("preview").title;
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
-      if (!snapshot || snapshot.navStatus._tag === "Idle") return fallback;
+      if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
       if (snapshot.navStatus.title.trim().length > 0) return snapshot.navStatus.title;
       try {
-        return new URL(snapshot.navStatus.url).host || fallback;
+        return new URL(snapshot.navStatus.url).host || "Browser";
       } catch {
-        return fallback;
+        return "Browser";
       }
     }
   }
@@ -579,11 +635,10 @@ function surfaceTitle(
 
 function PreviewFavicon({ capturedUrl, url }: { capturedUrl: string | null; url: string | null }) {
   const publicProviderUrl = faviconUrlForOrigin(url, 32);
-  const Icon = getSidePanelMetadata("preview").icon;
   return (
     <FaviconImage
       sources={[capturedUrl, publicProviderUrl]}
-      fallback={<Icon className="size-3 shrink-0" />}
+      fallback={<Globe2 className="size-3 shrink-0" />}
       className="size-3 shrink-0 rounded-sm object-contain"
     />
   );
@@ -621,10 +676,8 @@ function SurfaceIcon({
         favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
       return <PreviewFavicon capturedUrl={capturedUrl} url={url} />;
     }
-    case "diff": {
-      const Icon = getSidePanelMetadata("diff").icon;
-      return <Icon className="size-3 shrink-0" />;
-    }
+    case "diff":
+      return <FileDiff className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -636,10 +689,8 @@ function SurfaceIcon({
           className="size-3"
         />
       );
-    case "terminal": {
-      const Icon = getSidePanelMetadata("terminal").icon;
-      return <Icon className="size-3 shrink-0" />;
-    }
+    case "terminal":
+      return <TerminalSquare className="size-3 shrink-0" />;
     case "pull-request":
       return (
         <PullRequestSurfaceIcon
@@ -648,20 +699,16 @@ function SurfaceIcon({
           seed={pullRequestStatusSeeds?.[surface.id]}
         />
       );
-    case "pull-requests": {
-      const Icon = getSidePanelMetadata("pull-requests").icon;
-      return <Icon className="size-3 shrink-0" />;
-    }
-    case "device": {
-      const DeviceIcon = getSidePanelMetadata("device").icon;
+    case "pull-requests":
+      return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3 shrink-0" />
       ) : surface.target?.platform === "android" ? (
         <AndroidIcon className="size-3 shrink-0" />
       ) : (
-        <DeviceIcon className="size-3 shrink-0" />
+        <Smartphone className="size-3 shrink-0" />
       );
-    }
   }
 }
 
@@ -887,7 +934,64 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     });
   }, []);
 
-  const addSurfaceActions = rightPanelSurfaceActions(props);
+  const addSurfaceActions = [
+    {
+      label: "Browser",
+      icon: Globe2,
+      shortcut: "B",
+      available: props.browserAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.browser,
+      onClick: props.onAddBrowser,
+    },
+    {
+      label: "Terminal",
+      icon: TerminalSquare,
+      shortcut: "T",
+      available: props.terminalAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.terminal,
+      onClick: props.onAddTerminal,
+    },
+    {
+      label: "Files",
+      icon: Files,
+      shortcut: "F",
+      available: props.filesAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.files,
+      onClick: props.onAddFiles,
+    },
+    {
+      label: "Diff",
+      icon: FileDiff,
+      shortcut: "D",
+      available: props.diffAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.diff,
+      onClick: props.onAddDiff,
+    },
+    {
+      label: "Pull request",
+      icon: PullRequestGlyph.pullRequest,
+      shortcut: "P",
+      available: props.pullRequestAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequest,
+      onClick: props.onAddPullRequest,
+    },
+    {
+      label: "Linked pull requests",
+      icon: PullRequestGlyph.link,
+      shortcut: "L",
+      available: props.pullRequestsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.pullRequests,
+      onClick: props.onAddPullRequests,
+    },
+    {
+      label: "Device",
+      icon: Smartphone,
+      shortcut: "M",
+      available: props.deviceAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.device,
+      onClick: props.onAddDevice,
+    },
+  ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1249,9 +1353,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     // while hover or arrow reveals the profiles. The choice
                     // lives at open time because a tab's profile is fixed then —
                     // Electron only honours a partition before attach.
-                    if (action.id === "preview" && action.available) {
+                    if (action.label === "Browser" && action.available) {
                       return (
-                        <MenuSub key={action.id}>
+                        <MenuSub key={action.label}>
                           <MenuSubTrigger
                             className="[&>svg:last-child]:ms-0"
                             aria-keyshortcuts={action.shortcut}
@@ -1295,9 +1399,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                     }
                     return (
                       <SurfaceMenuItem
-                        key={action.id}
+                        key={action.label}
                         available={action.available}
-                        disabledReason={action.unavailableReason}
+                        disabledReason={action.disabledReason}
                         shortcut={action.shortcut}
                         onClick={action.onClick}
                       >
@@ -1370,9 +1474,22 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
-            actions={addSurfaceActions}
+            onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}
+            onAddTerminal={props.onAddTerminal}
+            onAddDiff={props.onAddDiff}
+            onAddFiles={props.onAddFiles}
+            onAddPullRequest={props.onAddPullRequest}
+            onAddPullRequests={props.onAddPullRequests}
+            onAddDevice={props.onAddDevice}
+            browserAvailable={props.browserAvailable}
+            terminalAvailable={props.terminalAvailable}
+            diffAvailable={props.diffAvailable}
+            filesAvailable={props.filesAvailable}
+            pullRequestAvailable={props.pullRequestAvailable}
+            pullRequestsAvailable={props.pullRequestsAvailable}
+            deviceAvailable={props.deviceAvailable}
           />
         ) : (
           props.children
