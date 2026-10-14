@@ -26,10 +26,11 @@ const threadRef = {
 const threadKey = scopedThreadKey(threadRef);
 let root: Root;
 let container: HTMLDivElement;
-function Fixture({ maximized = false }: { maximized?: boolean }) {
+function Fixture() {
   useWorkspacePanelFocus(threadRef);
-  useWorkspaceFocusRecovery('[data-workspace-area="composer"]', maximized, "panel");
   const state = useRightPanelStore((value) => value.byThreadKey[threadKey]);
+  const maximized = state?.isOpen === true && state.maximized === true;
+  useWorkspaceFocusRecovery('[data-workspace-area="composer"]', maximized, "panel");
   const composer = useWorkspaceArea("composer", 2, "Message input");
   const panel = useWorkspaceArea("panel", 4, "Workspace panel");
   return (
@@ -122,13 +123,20 @@ it("does not focus automatic openings, background reconciliation, or another thr
   expect(document.activeElement).toBe(composer);
 });
 
-it("moves focus out of a maximized-away chat column", async () => {
+it("recovers focus when persisted panel maximization hides the chat column and when the panel closes", async () => {
   await act(async () => useRightPanelStore.getState().open(threadRef, "files"));
   await frame();
+  container.querySelector<HTMLButtonElement>('[aria-label="Refresh files"]')!.focus();
   container.querySelector("textarea")!.focus();
-  await act(async () => root.render(<Fixture maximized />));
+  await act(async () => useRightPanelStore.getState().setMaximized(threadRef, true));
   await frame();
-  expect(focusedLabel()).toBe("Search files");
+  expect(focusedLabel()).toBe("Refresh files");
+  await act(async () => useRightPanelStore.getState().close(threadRef));
+  await frame();
+  expect(focusedLabel()).toBe("Message input");
+  await act(async () => useRightPanelStore.getState().show(threadRef));
+  await frame();
+  expect(focusedLabel()).toBe("Refresh files");
 });
 
 it("waits for the destination to mount, but cancels a delayed request after subsequent typing", async () => {

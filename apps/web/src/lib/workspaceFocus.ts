@@ -113,7 +113,10 @@ export function createWorkspaceFocusController(doc: Document) {
     const area =
       name === "content"
         ? (areas.find((element) => element.dataset.workspaceArea === "composer") ??
-          areas.find((element) => element.matches("main")) ??
+          areas.find(
+            (element) =>
+              element.dataset.workspaceArea === "pull-requests" || element.matches("main"),
+          ) ??
           areas.find((element) => element.dataset.workspaceArea === "conversation") ??
           areas.find((element) => element.dataset.workspaceArea === "panel"))
         : areas.find((element) => element.dataset.workspaceArea === name);
@@ -143,6 +146,12 @@ export function createWorkspaceFocusController(doc: Document) {
       boundaries.some(
         (boundary) =>
           !(closingPalette && boundary.closest("[data-command-palette]")) &&
+          // Base UI names notifications as non-modal dialogs, including anchored
+          // toast popups. Their presence must not block navigation elsewhere.
+          !(
+            boundary.matches('[aria-modal="false"]:is([role="dialog"], [role="alertdialog"])') &&
+            boundary.closest('[data-slot^="toast-viewport"]')
+          ) &&
           isWorkspaceElementVisible(boundary),
       )
     )

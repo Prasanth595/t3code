@@ -1302,7 +1302,7 @@ export function shouldRefocusComposerOnWindowFocus(
   }
   return (
     activeElement.closest(
-      '[data-workspace-area], [role="dialog"], [role="alertdialog"], [data-slot$="-popup"], [data-terminal-owner]',
+      '[data-workspace-area], [role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner]',
     ) === null
   );
 }

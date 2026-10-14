@@ -5,6 +5,8 @@ import {
   isContextMenuOpen,
   showContextMenuFallback,
 } from "./contextMenuFallback";
+import { shouldRefocusComposerOnWindowFocus } from "./components/ChatView.logic";
+import { installSidebarTree } from "./lib/sidebarTree";
 
 let origin: HTMLButtonElement;
 const items = [
@@ -116,4 +118,41 @@ it("blocks forward Tab, allows Shift+Tab, and dismisses on focus leaving without
   destination.focus();
   await expect(result).resolves.toBeNull();
   expect(document.activeElement).toBe(destination);
+});
+
+it("keeps a keyboard-opened thread menu focused when composer window-focus recovery runs", () => {
+  const tree = document.createElement("div");
+  tree.dataset.workspaceArea = "sidebar";
+  origin.dataset.sidebarRow = "selected-thread";
+  origin.setAttribute("role", "treeitem");
+  tree.append(origin);
+  const composer = document.createElement("textarea");
+  document.body.append(tree, composer);
+  const disposeTree = installSidebarTree(tree);
+  origin.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    void showContextMenuFallback(items);
+  });
+  const recoverComposer = () => {
+    if (shouldRefocusComposerOnWindowFocus(document.activeElement)) composer.focus();
+  };
+  try {
+    origin.focus();
+    press("F10", true);
+    origin.dispatchEvent(new KeyboardEvent("keyup", { key: "F10", shiftKey: true, bubbles: true }));
+    expect(document.activeElement?.getAttribute("role")).toBe("menu");
+    recoverComposer();
+    expect(isContextMenuOpen()).toBe(true);
+    expect(document.activeElement?.getAttribute("role")).toBe("menu");
+    press("End");
+    press("ArrowRight");
+    recoverComposer();
+    expect(label()).toBe("Path");
+    expect(isContextMenuOpen()).toBe(true);
+    press("Escape");
+    press("Escape");
+    expect(document.activeElement).toBe(origin);
+  } finally {
+    disposeTree();
+  }
 });

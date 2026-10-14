@@ -113,21 +113,47 @@ describe("workspace area focus", () => {
     expect(controller.move(1)).toBe(true);
     expect(document.activeElement).toBe(panel.button);
   });
-  it("keeps focus in dialogs, including when invoked from a preview", () => {
-    area("sidebar", 0);
-    area("panel", 3);
-    const dialog = document.createElement("div");
-    dialog.setAttribute("role", "dialog");
-    dialog.tabIndex = -1;
-    document.body.append(dialog);
-    dialog.focus();
-    expect(controller.move(1, "panel")).toBe(false);
-    expect(document.activeElement).toBe(dialog);
-  });
+  it.each([undefined, "true", "false"])(
+    "keeps focus in dialogs (aria-modal=%s), including when invoked from a preview",
+    (modal) => {
+      area("sidebar", 0);
+      area("panel", 3);
+      const dialog = document.createElement("div");
+      dialog.setAttribute("role", "dialog");
+      if (modal !== undefined) dialog.setAttribute("aria-modal", modal);
+      dialog.tabIndex = -1;
+      document.body.append(dialog);
+      dialog.focus();
+      expect(controller.move(1, "panel")).toBe(false);
+      expect(document.activeElement).toBe(dialog);
+    },
+  );
+  it.each([
+    ["toast-viewport", 'role="dialog"'],
+    ["toast-viewport", 'role="alertdialog"'],
+    ["toast-viewport-anchored", 'role="dialog" data-slot="toast-popup"'],
+  ])(
+    "continues area navigation while a non-modal notification remains visible (%s, %s)",
+    (viewport, attributes) => {
+      const composer = area("composer", 2);
+      const panel = area("panel", 4);
+      const notification = document.createElement("div");
+      notification.dataset.slot = viewport;
+      notification.innerHTML = `<div ${attributes} aria-modal="false" tabindex="0">Provider update available<button>View update</button></div>`;
+      document.body.append(notification);
+      composer.button.focus();
+      expect(controller.move(1)).toBe(true);
+      expect(document.activeElement).toBe(panel.button);
+      expect(controller.move(-1)).toBe(true);
+      expect(document.activeElement).toBe(composer.button);
+      expect(notification.isConnected).toBe(true);
+    },
+  );
   it.each([
     ['role="listbox" data-slot="select-popup"', 'role="option"'],
     ['role="menu" data-slot="menu-popup"', 'role="menuitemcheckbox"'],
     ['data-slot="popover-popup"', ""],
+    ['role="dialog" aria-modal="false" data-slot="popover-popup"', ""],
     ['role="listbox"', 'role="option"'],
   ])("retains focus in an open popup (%s), then moves after it closes", (popup, item) => {
     const sidebar = area("sidebar", 0);
@@ -187,6 +213,19 @@ describe("workspace area focus", () => {
     expect(document.activeElement).toBe(input);
     controller.move(-1);
     expect(document.activeElement).toBe(composer.button);
+  });
+  it("returns to the Pull Requests list when its focused panel closes", () => {
+    area("sidebar", 0);
+    const list = area("pull-requests", 1);
+    const panel = area("panel", 4);
+    const search = document.createElement("input");
+    search.setAttribute("aria-label", "Search pull requests");
+    list.element.append(search);
+    search.focus();
+    panel.button.focus();
+    panel.element.setAttribute("inert", "");
+    expect(controller.focus("content")).toBe(true);
+    expect(document.activeElement).toBe(search);
   });
   it("uses the preview area when Electron retains a stale renderer focus", () => {
     const sidebar = area("sidebar", 0);
