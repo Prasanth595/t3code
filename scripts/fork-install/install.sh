@@ -19,6 +19,8 @@ readonly SERVICE=t3code-fork.service
 readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
 readonly SERVER_DIR="$DATA_DIR/t3code-fork-server"
 readonly LINUX_APP="$HOME/Applications/T3-Code.AppImage"
+# Minimal server images can lack these packages.
+readonly APT_HINT="sudo apt-get update && sudo apt-get install -y curl tar ca-certificates"
 
 dir="$DATA_DIR/t3code-fork"
 # The program and first arguments that run the server CLI. Each install path sets it.
@@ -72,7 +74,10 @@ need() {
 # has one. The API lists releases newest first and includes pre-releases. A plain text search
 # keeps the script free of a JSON tool; each URL sits on its own line of the API response.
 newest_asset_url() {
-  curl -fsSL -H "Accept: application/vnd.github+json" "$RELEASES_API" |
+  local releases
+  releases="$(curl -fsSL -H "Accept: application/vnd.github+json" "$RELEASES_API")" ||
+    die "cannot read $RELEASES_API. Check the network and the CA certificates, for example: $APT_HINT"
+  printf '%s\n' "$releases" |
     tr ',' '\n' |
     grep -F '"browser_download_url"' |
     grep -F -- "$1\"" |
@@ -173,7 +178,8 @@ EOF
 # Installs the newest server archive into $SERVER_DIR/<version> and points $SERVER_DIR/current at
 # it. The archive holds the `t3` single-executable, so the machine needs no Node.
 install_linux_server() {
-  need curl "Install it with your package manager, for example: sudo apt install curl"
+  need curl "Install it with your package manager, for example: $APT_HINT"
+  need tar "Install it with your package manager, for example: $APT_HINT"
   need sha256sum "Install coreutils with your package manager."
   local arch url archive version
   arch="$(linux_arch)"
@@ -293,7 +299,8 @@ EOF
 
 install_service() {
   if ! systemctl --user show-environment >/dev/null 2>&1; then
-    log "no systemd user session; start the server yourself: t3 --mode web --host 127.0.0.1 --port $port --no-browser"
+    log "no systemd user session. Log in as this user over SSH, not with sudo or su, and run the installer again."
+    log "or start the server yourself: t3 --mode web --host 127.0.0.1 --port $port --no-browser"
     return 1
   fi
   local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
@@ -321,7 +328,20 @@ EOF
   # A restart stops running agent turns of this server.
   systemctl --user restart "$SERVICE"
   log "the server runs as the systemd user service $SERVICE on http://127.0.0.1:$port"
-  log "to keep it running after you log out, run: loginctl enable-linger $(id -un)"
+  enable_linger
+}
+
+# Without lingering, systemd stops the user service when the last session of the user ends.
+# Same steps as upstream `t3 service install`: try without sudo, else print the admin command.
+enable_linger() {
+  local user
+  user="$(id -un)"
+  [[ "$(loginctl show-user "$user" --property=Linger --value 2>/dev/null)" == yes ]] && return 0
+  if loginctl enable-linger "$user" 2>/dev/null; then
+    log "turned on lingering for $user, so the server keeps running after you log out"
+  else
+    log "the server stops when you log out. To keep it running, run: sudo loginctl enable-linger $user"
+  fi
 }
 
 wait_for_server() {
