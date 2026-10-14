@@ -3183,7 +3183,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
       }
       const records: ComposerContextRecord[] = [
-        ...composerThreadContexts.filter((record) => wanted.has(record.contextId)),
         ...composerTerminalContexts
           .filter((c) => wanted.has(terminalContextReference(c).contextId))
           .map(terminalContextRecord),
