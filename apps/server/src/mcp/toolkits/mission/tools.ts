@@ -22,6 +22,7 @@ export const MissionGetTool = Tool.make("mission_get", {
   failureMode: "return",
   dependencies,
 })
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Title, "Read a mission")
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
@@ -36,6 +37,7 @@ export const MissionExecuteTool = Tool.make("mission_execute", {
   failureMode: "return",
   dependencies,
 })
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Title, "Execute a mission command")
   .annotate(Tool.Destructive, true);
 
