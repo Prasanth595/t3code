@@ -846,13 +846,22 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         }
         const source = path.join(quarantine, entry);
         const target = path.join(objectDirectory, entry);
-        // Objects are content-addressed, so an existing file already holds these bytes.
+        // Objects are content-addressed, so an existing file already holds these bytes. Without
+        // hard links, Git renames instead, unless the object already exists.
         const created = yield* fileSystem.link(source, target).pipe(
           Effect.as(true),
           Effect.catch((error) =>
             error.reason._tag === "AlreadyExists"
               ? Effect.succeed(false)
-              : fileSystem.rename(source, target).pipe(Effect.as(true)),
+              : fileSystem
+                  .exists(target)
+                  .pipe(
+                    Effect.flatMap((exists) =>
+                      exists
+                        ? Effect.succeed(false)
+                        : fileSystem.rename(source, target).pipe(Effect.as(true)),
+                    ),
+                  ),
           ),
         );
         if (directory === "pack") {

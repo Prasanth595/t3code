@@ -586,6 +586,43 @@ it.effect.skipIf(windowsHost)(
     }).pipe(Effect.scoped, Effect.provide(layerGitCaptureContract)),
 );
 
+it.effect.skipIf(windowsHost)("checkpoint publication works without hard links", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-no-links-" });
+    const { git, checkpointRef, listObjectStore } = yield* makeLargeFileFixture(
+      yield* GitVcsDriver.makeVcsDriverShape(),
+      cwd,
+    );
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fs,
+        link: (_source, target) =>
+          Effect.fail(
+            PlatformError.systemError({
+              _tag: "PermissionDenied",
+              module: "FileSystem",
+              method: "link",
+              pathOrDescriptor: target,
+              description: "EPERM",
+            }),
+          ),
+      }),
+    );
+
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const expected = (yield* git(["hash-object", "a-large.bin"])).stdout;
+    assert.strictEqual(
+      (yield* git(["rev-parse", `${checkpointRef}:a-large.bin`])).stdout,
+      expected,
+    );
+    assert.isTrue((yield* listObjectStore).some((entry) => entry.endsWith(".idx")));
+    assert.isFalse((yield* listObjectStore).some((entry) => entry.includes("tmp_")));
+    yield* git(["fsck", "--strict", "--no-dangling"]);
+  }).pipe(Effect.scoped, Effect.provide(layerGitCaptureContract)),
+);
+
 for (const failing of ["index", "loose object"] as const) {
   it.effect.skipIf(windowsHost)(
     `a checkpoint publication that fails on its ${failing} keeps every pack Git can read`,
