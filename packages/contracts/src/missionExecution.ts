@@ -7,6 +7,10 @@ import {
   MissionRetroReportReceipts,
   type MissionRetroReportReceipt,
 } from "./missionRetroReportReceipt.ts";
+import {
+  MissionManagerReservations,
+  type MissionManagerReservation,
+} from "./missionManagerTransfer.ts";
 import { MissionResultRecord } from "./missionResult.ts";
 
 /**
@@ -15,10 +19,11 @@ import { MissionResultRecord } from "./missionResult.ts";
  * Holds admission/reservation receipts, normalized writer scope claims,
  * consumed one-use exception IDs, and dedicated per-task result records.
  * Only the dedicated admission-reserved event may append admissions,
- * only the dedicated result-reconciled event may append results, and only
+ * only the dedicated result-reconciled event may append results, only
  * the dedicated retro-checkpoint-captured event may append retro
- * checkpoints. The analysis-updated event changes retro ownership; generic
- * create/replace cannot forge or erase any of them.
+ * checkpoints, and only the dedicated manager-handoff-reserved event may
+ * append manager reservations. The analysis-updated event changes retro
+ * ownership; generic create/replace cannot forge or erase any of them.
  * Arrays stay small (no transcripts); when a bound is reached the owning
  * store denies further writes rather than dropping history.
  */
@@ -152,6 +157,12 @@ export const MissionExecution = Schema.Struct({
   retroAnalyses: Schema.optional(MissionRetroAnalyses),
   /** Only the retro-report store may append; generic replacements preserve it. */
   retroReportReceipts: Schema.optional(MissionRetroReportReceipts),
+  /**
+   * Optional bounded manager successor-intent reservations. Omitted on
+   * older snapshots and decoded as empty; same forge/preserve rules as
+   * results. Only the manager-handoff-reserved event appends here.
+   */
+  managerReservations: Schema.optional(MissionManagerReservations),
 });
 export type MissionExecution = typeof MissionExecution.Type;
 
@@ -164,9 +175,10 @@ export const emptyMissionExecution = (): MissionExecution => ({
   retroCheckpoints: [],
   retroAnalyses: [],
   retroReportReceipts: [],
+  managerReservations: [],
 });
 
-/** True when no admission, claim, consumption, result, checkpoint, analysis, or report is recorded. */
+/** True when no admission, claim, consumption, result, checkpoint, analysis, report, or reservation is recorded. */
 export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   execution.admissions.length === 0 &&
   execution.writerClaims.length === 0 &&
@@ -174,7 +186,8 @@ export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   (execution.results ?? []).length === 0 &&
   (execution.retroCheckpoints ?? []).length === 0 &&
   (execution.retroAnalyses ?? []).length === 0 &&
-  (execution.retroReportReceipts ?? []).length === 0;
+  (execution.retroReportReceipts ?? []).length === 0 &&
+  (execution.managerReservations ?? []).length === 0;
 
 /** Dedicated retro report receipts, treating an omitted array as empty. */
 export const missionRetroReportReceipts = (
@@ -190,3 +203,8 @@ export const missionExecutionResults = (
 export const missionRetroCheckpoints = (
   execution: MissionExecution,
 ): ReadonlyArray<MissionRetroCheckpoint> => execution.retroCheckpoints ?? [];
+
+/** Dedicated manager reservations, treating an omitted array as empty. */
+export const missionManagerReservations = (
+  execution: MissionExecution,
+): ReadonlyArray<MissionManagerReservation> => execution.managerReservations ?? [];

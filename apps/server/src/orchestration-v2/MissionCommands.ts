@@ -423,6 +423,7 @@ const planReplace = (
   // dedicated admission-reserved event appends here.
   const committed: Mission = {
     ...command.mission,
+    projectTimezone: command.mission.projectTimezone ?? current.projectTimezone,
     managers: current.managers,
     execution: current.execution,
     tasks: committedTasks,

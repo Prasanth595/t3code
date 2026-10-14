@@ -1,3 +1,4 @@
+import { ManagerProjectTimezone } from "./missionManagerTransfer.ts";
 import * as Schema from "effect/Schema";
 
 import { ApplicationEventMetadata } from "./applicationEvent.ts";
@@ -163,6 +164,14 @@ export const Mission = Schema.Struct({
   revision: NonNegativeInt,
   teamId: TeamId,
   authorityEnvironmentId: EnvironmentId,
+  /**
+   * Explicit configurable project IANA timezone. Optional for backwards
+   * compatibility; omitted on older snapshots. Required and validated as a
+   * true IANA zone for manager successor-intent reservation, never
+   * defaulted from the host. Generic revisions carry it; no dedicated
+   * config endpoint exists.
+   */
+  projectTimezone: Schema.optional(ManagerProjectTimezone),
   bindings: MissionRepositoryBindings,
   intent: MissionIntent,
   integrationTarget: MissionIntegrationTarget,
@@ -297,6 +306,18 @@ export const MissionResultReconciledEvent = Schema.Struct({
 });
 export type MissionResultReconciledEvent = typeof MissionResultReconciledEvent.Type;
 
+export const MissionManagerHandoffReservedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.manager-handoff-reserved"),
+  payload: Schema.Struct({
+    /** Full updated mission snapshot, bounded reservation included. */
+    mission: Mission,
+    /** Stable reservation id committed by this event. */
+    reservationId: TrimmedNonEmptyString,
+  }),
+});
+export type MissionManagerHandoffReservedEvent = typeof MissionManagerHandoffReservedEvent.Type;
+
 export const MissionEvent = Schema.Union([
   MissionCreatedEvent,
   MissionRevisedEvent,
@@ -305,5 +326,6 @@ export const MissionEvent = Schema.Union([
   MissionRetroCheckpointCapturedEvent,
   MissionRetroAnalysisUpdatedEvent,
   MissionRetroReportReceivedEvent,
+  MissionManagerHandoffReservedEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;

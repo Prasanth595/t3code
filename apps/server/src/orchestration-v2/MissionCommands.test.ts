@@ -533,3 +533,24 @@ describe("planMissionCommand", () => {
     );
   });
 });
+
+
+describe("canonical manager reservation preservation", () => {
+  const reservation = { reservationId: "reserve-1", successorThreadId: "successor-1", role: "delivery", currentThreadId: "thread-1", currentEpoch: 3, observedRevision: 0, timezone: "America/Denver", localDate: "2026-10-14", ordinal: 0, reason: "first_slot", artifactRef: `manager-handoff:${"a".repeat(64)}`, artifactSha256: "a".repeat(64), commandId: "reserve-cmd", requestDigest: "b".repeat(64), reservedAt: OCCURRED_AT };
+  const execution = { admissions: [], writerClaims: [], consumedExceptionIds: [], managerReservations: [reservation] };
+  it("denies generic create with forged reservation state", () => {
+    const fixture = missionFixture();
+    const proposed = { ...fixture, tasks: fixture.tasks.map(({ attempt: _attempt, ...task }) => task), execution };
+    assert.equal(code(planMissionCommand(decodeCreate({ type: "mission.create", commandId: "forge-reservation", mission: proposed }), null, ctx)), "forged_execution_state");
+  });
+  it("preserves canonical reservations against replacement omission", () => {
+    const current = decodeMission({ ...missionFixture(), execution });
+    const revised = ok(planMissionCommand(replace({ ...missionFixture(), revision: 1 }), current, ctx));
+    assert.deepEqual(revised.mission.execution, current.execution);
+  });
+  it("preserves the configured timezone when an older replacement omits it", () => {
+    const current = decodeMission({ ...missionFixture(), projectTimezone: "America/Denver" });
+    const revised = ok(planMissionCommand(replace({ ...missionFixture(), revision: 1 }), current, ctx));
+    assert.equal(revised.mission.projectTimezone, "America/Denver");
+  });
+});

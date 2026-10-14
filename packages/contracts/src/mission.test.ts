@@ -9,6 +9,7 @@ import {
   emptyMissionExecution,
   isEmptyMissionExecution,
   missionExecutionResults,
+  missionManagerReservations,
   missionRetroCheckpoints,
 } from "./missionExecution.ts";
 import {
@@ -19,6 +20,10 @@ import {
 } from "./missionRetro.ts";
 import { MAX_QUARANTINE_ENTRIES } from "./missionResult.ts";
 import { MissionRetroReportReceipt } from "./missionRetroReportReceipt.ts";
+import {
+  MAX_MANAGER_TRANSFER_RESERVATIONS,
+  MissionManagerReservation,
+} from "./missionManagerTransfer.ts";
 
 const decodeCommand = Schema.decodeUnknownSync(MissionCommand);
 
@@ -654,4 +659,113 @@ it("round-trips the full retro analysis update event", () => {
     },
   });
   expect(event.type).toBe("mission.retro-analysis-updated");
+});
+
+const reservationFixture = () => ({
+  reservationId: "mgr-reserve-0123456789abcdef0123456789abcdef",
+  successorThreadId: "thread-successor-1",
+  role: "delivery",
+  currentThreadId: "thread-1",
+  currentEpoch: 3,
+  observedRevision: 0,
+  timezone: "America/Denver",
+  localDate: "2026-10-13",
+  ordinal: 0,
+  reason: "first_slot",
+  artifactRef: `manager-handoff:${"a".repeat(64)}`,
+  artifactSha256: "a".repeat(64),
+  commandId: "reserve-cmd-1",
+  requestDigest: "b".repeat(64),
+  reservedAt: OCCURRED_AT,
+});
+
+const decodeReservation = Schema.decodeUnknownSync(MissionManagerReservation);
+
+it("decodes an omitted projectTimezone as backwards compatible", () => {
+  const decoded = decodeMission(missionFixture());
+  expect(decoded.projectTimezone).toBeUndefined();
+  const zoned = decodeMission({ ...missionFixture(), projectTimezone: "America/Denver" });
+  expect(zoned.projectTimezone).toBe("America/Denver");
+  expect(encodeMission(zoned).projectTimezone).toBe("America/Denver");
+});
+
+it("decodes omitted manager reservations as empty", () => {
+  const decoded = decodeExecution({
+    admissions: [],
+    writerClaims: [],
+    consumedExceptionIds: [],
+  });
+  expect(missionManagerReservations(decoded)).toEqual([]);
+  expect(isEmptyMissionExecution(decoded)).toBe(true);
+  expect(missionManagerReservations(decodeExecution(emptyMissionExecution()))).toEqual([]);
+});
+
+it("round-trips a bounded manager reservation as execution state", () => {
+  const reservation = decodeReservation(reservationFixture());
+  const withReservation = decodeExecution({
+    ...emptyMissionExecution(),
+    managerReservations: [reservationFixture()],
+  });
+  expect(missionManagerReservations(withReservation)).toEqual([reservation]);
+  expect(isEmptyMissionExecution(withReservation)).toBe(false);
+  expect(encodeExecution(withReservation).managerReservations).toEqual([reservation]);
+});
+
+it("rejects manager reservations beyond the bound at decode", () => {
+  expect(MAX_MANAGER_TRANSFER_RESERVATIONS).toBe(64);
+  expect(() =>
+    decodeExecution({
+      ...emptyMissionExecution(),
+      managerReservations: Array.from({ length: MAX_MANAGER_TRANSFER_RESERVATIONS + 1 }, (_, i) => ({
+        ...reservationFixture(),
+        reservationId: `mgr-reserve-${String(i).padStart(32, "0")}`,
+      })),
+    }),
+  ).toThrow();
+});
+
+it("rejects a reservation with a malformed artifact ref at decode", () => {
+  expect(() =>
+    decodeReservation({ ...reservationFixture(), artifactRef: "/tmp/artifact.json" }),
+  ).toThrow();
+  expect(() =>
+    decodeReservation({ ...reservationFixture(), artifactSha256: "not-a-hash" }),
+  ).toThrow();
+});
+
+it("round-trips a mission.manager-handoff-reserved event", () => {
+  const event = decodeEvent({
+    sequence: 3,
+    eventId: "event-3",
+    aggregateKind: "mission",
+    aggregateId: "mission-1",
+    occurredAt: OCCURRED_AT,
+    commandId: "reserve-cmd-1",
+    metadata: {},
+    type: "mission.manager-handoff-reserved",
+    payload: {
+      mission: {
+        ...missionFixture(),
+        revision: 1,
+        execution: { ...emptyMissionExecution(), managerReservations: [reservationFixture()] },
+      },
+      reservationId: "mgr-reserve-0123456789abcdef0123456789abcdef",
+    },
+  });
+  expect(event.type).toBe("mission.manager-handoff-reserved");
+  if (event.type === "mission.manager-handoff-reserved") {
+    expect(event.payload.reservationId).toBe("mgr-reserve-0123456789abcdef0123456789abcdef");
+    expect(event.payload.mission.revision).toBe(1);
+  }
+});
+
+
+it("rejects malformed calendar days and mismatched handoff SHA bindings", () => {
+  for (const localDate of ["2026-02-30", "2026-13-01", "0000-01-01"]) expect(() => decodeReservation({ ...reservationFixture(), localDate })).toThrow();
+  expect(() => decodeReservation({ ...reservationFixture(), artifactSha256: "b".repeat(64) })).toThrow();
+});
+it("bounds reservation identities, counters, and configured timezone", () => {
+  expect(() => decodeReservation({ ...reservationFixture(), currentEpoch: Number.MAX_SAFE_INTEGER + 1 })).toThrow();
+  expect(() => decodeReservation({ ...reservationFixture(), reservationId: "x".repeat(513) })).toThrow();
+  expect(() => decodeMission({ ...missionFixture(), projectTimezone: "x".repeat(129) })).toThrow();
 });
