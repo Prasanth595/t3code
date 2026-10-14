@@ -335,7 +335,7 @@ export function ThemeAppearanceSection() {
       const asset = result.assets[0];
       if (!asset) return;
       const text = await new File(asset.uri).text();
-      importCustomTheme(JSON.parse(text));
+      await importCustomTheme(JSON.parse(text));
     } catch (error) {
       Alert.alert(
         "Could not import theme",

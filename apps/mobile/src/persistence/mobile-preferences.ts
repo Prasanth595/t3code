@@ -211,11 +211,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.themeMode = parsed.themeMode;
   }
   if (Array.isArray(parsed.customThemes)) {
-    // Stored themes are re-parsed here, so an entry written by a different build
-    // is skipped instead of failing the whole preferences load.
-    preferences.customThemes = parseStoredCustomThemes(parsed.customThemes).map(
-      themeDefinitionToFile,
-    );
+    // Entries written by a different build were skipped while parsing above,
+    // instead of failing the whole preferences load.
+    preferences.customThemes = storedCustomThemes.map(themeDefinitionToFile);
   }
   if (typeof parsed.baseFontSize === "number") preferences.baseFontSize = parsed.baseFontSize;
   if (typeof parsed.terminalFontSize === "number" || parsed.terminalFontSize === null) {

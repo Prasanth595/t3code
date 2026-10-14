@@ -74,8 +74,11 @@ interface AppearancePreferencesContextValue {
   ) => void;
   readonly setThemeIdForBothAppearances: (value: MobileThemeId) => void;
   readonly setThemeMode: (value: MobileThemeMode) => void;
-  /** Parses a theme file, installs it, and returns its id. Throws with a user-facing message. */
-  readonly importCustomTheme: (file: unknown) => MobileThemeId;
+  /**
+   * Parses a theme file and resolves with its id once it is saved. Rejects with a
+   * user-facing message when the file is invalid or the save fails.
+   */
+  readonly importCustomTheme: (file: unknown) => Promise<MobileThemeId>;
   /** Removes an installed custom theme and clears any appearance that selected it. */
   readonly removeCustomTheme: (themeId: MobileThemeId) => void;
   readonly setBaseFontSize: (value: number) => void;
@@ -91,6 +94,7 @@ const AppearancePreferencesContext = createContext<AppearancePreferencesContextV
 export function AppearancePreferencesProvider(props: { readonly children: ReactNode }) {
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferencesAndWait = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
   const systemColorScheme = useColorScheme() === "dark" ? "dark" : "light";
   const storedPreferences = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value
@@ -234,7 +238,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
 
   const importCustomTheme = useCallback(
-    (file: unknown): MobileThemeId => {
+    async (file: unknown): Promise<MobileThemeId> => {
       const theme = parseThemeFile(file);
       if (isBuiltInThemeId(theme.id)) {
         throw new Error(`A built-in theme already uses the id "${theme.id}".`);
@@ -244,10 +248,16 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
       }
       const nextThemes = [...customThemes, theme];
       const nextFiles: ReadonlyArray<ThemeFile> = nextThemes.map(themeDefinitionToFile);
-      updateThemePreferences({ customThemes: nextFiles });
+      // Wait for the save so a failed write reaches the caller instead of the
+      // optimistic theme silently disappearing.
+      try {
+        await savePreferencesAndWait({ customThemes: nextFiles });
+      } catch {
+        throw new Error("The theme could not be saved on this device.");
+      }
       return theme.id;
     },
-    [customThemes, updateThemePreferences],
+    [customThemes, savePreferencesAndWait],
   );
 
   const removeCustomTheme = useCallback(
