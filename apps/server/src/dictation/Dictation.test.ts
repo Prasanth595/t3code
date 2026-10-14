@@ -28,6 +28,7 @@ const testLayer = (
     language?: string;
     install?: DictationArtifacts.DictationArtifacts["Service"]["install"];
     remove?: DictationArtifacts.DictationArtifacts["Service"]["remove"];
+    inspectFails?: boolean;
     load?: DictationRecognizer.DictationRecognizer["Service"]["load"];
   } = {},
 ) =>
@@ -55,7 +56,11 @@ const testLayer = (
         return {
           supported: options.supported ?? true,
           paths: () => ({ runtime: "/unused", model: "/unused" }),
-          inspect: Effect.sync(() => ({ runtime, models: new Map(disk) })),
+          inspect: options.inspectFails
+            ? Effect.fail(
+                new DictationError({ reason: "install-failed", message: "Unreadable state." }),
+              )
+            : Effect.sync(() => ({ runtime, models: new Map(disk) })),
           install: (model, progress) =>
             (options.install ?? complete)(model, (artifact, value) =>
               Effect.gen(function* () {
@@ -881,4 +886,13 @@ it.effect("warm never installs a model while its removal is still deleting files
       Effect.scoped,
     );
   }),
+);
+
+it.effect("an unreadable install directory leaves dictation not installed instead of failing", () =>
+  Effect.gen(function* () {
+    const service = yield* Dictation.Dictation;
+    const state = yield* service.state;
+    assert.strictEqual(state.runtime._tag, "not-installed");
+    assert.strictEqual(state.ready, false);
+  }).pipe(Effect.provide(testLayer({ engine: "off", inspectFails: true })), Effect.scoped),
 );

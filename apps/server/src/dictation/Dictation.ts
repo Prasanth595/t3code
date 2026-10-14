@@ -4,6 +4,7 @@ import {
   DICTATION_SAMPLE_RATE,
   DictationError,
   DictationSessionId,
+  type DictationInstallState,
   type DictationModelId,
   type DictationAppendInput,
   type DictationCancelInput,
@@ -100,7 +101,13 @@ const make = Effect.gen(function* () {
     ),
   );
   const initialSettings = yield* readSettings;
-  const installed = yield* artifacts.inspect;
+  // An unreadable state directory must not stop the server from starting; it reads as not installed.
+  const installed = yield* artifacts.inspect.pipe(
+    Effect.orElseSucceed(() => ({
+      runtime: { _tag: "not-installed" } satisfies DictationInstallState,
+      models: new Map<DictationModelId, DictationInstallState>(),
+    })),
+  );
   const state = yield* SubscriptionRef.make<DictationState>({
     supported: artifacts.supported,
     settings: initialSettings.dictation,
