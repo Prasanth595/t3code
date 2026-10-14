@@ -484,6 +484,36 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(savedInstance(3)).not.toHaveProperty("accentColor");
   });
 
+  it("starts an edit made right after a reset from the default", async () => {
+    atoms.providers = [provider()];
+    settingsState.value = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerInstances: {
+        [codexId]: { driver: ProviderDriverKind.make("codex"), accentColor: "#ff0000" },
+      },
+    };
+    const panel = renderPanel();
+    const reset = visitElements(
+      panel,
+      (element) =>
+        typeof element.props.label === "string" &&
+        element.props.label.endsWith("provider settings") &&
+        typeof element.props.onClick === "function",
+    );
+    (reset?.props.onClick as () => void)();
+    // Before the server sends the reset back, the card still shows the color.
+    codexCardUpdate(panel)(setField("icon", "openai"));
+    await flushPromises();
+
+    const afterReset = settingsState.mutateProviderInstance.mock.calls.at(-1)?.[0] as {
+      readonly instance: ProviderInstanceConfig;
+    };
+    expect(afterReset.instance).toEqual({
+      driver: ProviderDriverKind.make("codex"),
+      icon: "openai",
+    });
+  });
+
   it("keeps a clear whose echo arrives after the next edit", async () => {
     atoms.providers = [provider()];
     const onUpdate = codexCardUpdate(renderPanel());

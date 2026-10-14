@@ -553,6 +553,15 @@ function AccessGatedProviderSettings({
   );
 }
 
+/** The edits a providers page has made to one instance, in order. */
+interface InstanceEdits {
+  readonly updates: Array<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
+  /** How many leading edits a successful save carried. */
+  confirmed: number;
+  /** Saves in flight. */
+  saving: number;
+}
+
 export function EnvironmentProviderSettings({
   environmentId,
   environmentLabel,
@@ -619,18 +628,10 @@ export function EnvironmentProviderSettings({
   // has sent back so far, and a change from elsewhere to a field not edited
   // here survives. Saves run in order and each carries every edit before it,
   // so a successful one confirms them all; edits after the last confirmed one
-  // are dropped once every save has failed past it. Deleting or resetting the
-  // instance discards them; leaving the page does too.
-  const instanceEditsRef = useRef(
-    new Map<
-      ProviderInstanceId,
-      {
-        updates: Array<(current: ProviderInstanceConfig) => ProviderInstanceConfig>;
-        confirmed: number;
-        saving: number;
-      }
-    >(),
-  );
+  // are dropped once every save has failed past it. A reset starts a new list
+  // with itself as the first edit; deleting the instance or leaving the page
+  // discards the list.
+  const instanceEditsRef = useRef(new Map<ProviderInstanceId, InstanceEdits>());
 
   const acceptUrlAuthentication = useCallback(
     (instanceId: ProviderInstanceId, action: AcpRegistryUrlAuthAction) => {
@@ -845,6 +846,20 @@ export function EnvironmentProviderSettings({
     rows.find((row) => row.instanceId === selectedInstanceId) ??
     (targetInstanceMissing ? null : (rows[0] ?? null));
 
+  const settleInstanceEdits = (
+    instanceId: ProviderInstanceId,
+    edits: InstanceEdits,
+    carried: number,
+    succeeded: boolean,
+  ) => {
+    // Reset or deleted meanwhile: these edits were discarded.
+    if (instanceEditsRef.current.get(instanceId) !== edits) return;
+    edits.saving -= 1;
+    if (succeeded) edits.confirmed = Math.max(edits.confirmed, carried);
+    // Nothing left in flight could still carry them: the server kept its own state.
+    else if (edits.saving === 0) edits.updates.length = edits.confirmed;
+  };
+
   const updateProviderInstance = async (
     row: InstanceRow,
     update: (current: ProviderInstanceConfig) => ProviderInstanceConfig,
@@ -873,13 +888,7 @@ export function EnvironmentProviderSettings({
       { operation: "upsert", instanceId: row.instanceId, instance },
       patch,
     );
-    // Reset or deleted meanwhile: these edits were discarded.
-    if (instanceEditsRef.current.get(row.instanceId) === edits) {
-      edits.saving -= 1;
-      if (result._tag === "Success") edits.confirmed = Math.max(edits.confirmed, carried);
-      // Nothing left in flight could still carry them: the server kept its own state.
-      else if (edits.saving === 0) edits.updates.length = edits.confirmed;
-    }
+    settleInstanceEdits(row.instanceId, edits, carried, result._tag === "Success");
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -929,11 +938,16 @@ export function EnvironmentProviderSettings({
   };
 
   const resetDefaultInstance = async (driverKind: ProviderDriverKind) => {
-    instanceEditsRef.current.delete(defaultInstanceIdForDriver(driverKind));
-    const result = await persistProviderInstance({
-      operation: "remove",
-      instanceId: defaultInstanceIdForDriver(driverKind),
-    });
+    const instanceId = defaultInstanceIdForDriver(driverKind);
+    // An edit made before the server sends the reset back still starts from the default.
+    const edits: InstanceEdits = {
+      updates: [(current) => ({ driver: current.driver })],
+      confirmed: 0,
+      saving: 1,
+    };
+    instanceEditsRef.current.set(instanceId, edits);
+    const result = await persistProviderInstance({ operation: "remove", instanceId });
+    settleInstanceEdits(instanceId, edits, 1, result._tag === "Success");
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
