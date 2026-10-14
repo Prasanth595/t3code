@@ -65,6 +65,9 @@ export interface MissionMcpAuthorityRequest {
    * against trusted policy and current project rows instead.
    */
   readonly proposedMission?: Mission | undefined;
+  /** Entire detached command and invocation identity, supplied by the adapter. */
+  readonly command?: MissionCommand | undefined;
+  readonly requestKey?: object | undefined;
 }
 
 /**
@@ -82,14 +85,15 @@ export interface MissionMcpAuthorityFacts {
   readonly teamId: TeamId;
   readonly environmentId: EnvironmentId;
   readonly controllerThreadId: ThreadId;
+  /** Required by the MCP adapter at runtime; plain facts never authorize I/O. */
+  readonly transactionGuard?: MissionService.MissionTransactionGuard | undefined;
 }
 
 /**
  * Trusted server resolver port. Deliberately has no default layer: a missing
- * resolver stays fail-closed (authority_unavailable), never an installed
- * capability claim. The request carries only scope, operation, and mission
- * id; arbitrary caller callbacks and MissionService instances are not
- * accepted as authority.
+ * resolver stays fail-closed (authority_unavailable). Its opaque guard is
+ * server-only: public tool parameters cannot supply a callback or authority
+ * handle, and the owning service checks its SQL and request binding.
  */
 export class MissionMcpAuthorityPort extends Context.Service<
   MissionMcpAuthorityPort,
@@ -155,6 +159,9 @@ const decodeCommand = Schema.decodeUnknownEffect(MissionCommand, {
   onExcessProperty: "error",
 });
 
+const encodeCommandSnapshot = Schema.encodeEffect(Schema.fromJsonString(MissionCommand));
+const decodeCommandSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(MissionCommand));
+
 const invalidRequest = () =>
   new MissionMcpFailure({
     code: "invalid_request",
@@ -170,10 +177,11 @@ const invalidRequest = () =>
 const encodeMission = Schema.encodeEffect(Mission);
 const decodeMissionSnapshot = Schema.decodeUnknownEffect(Mission);
 
-const snapshotProposedMission = (
-  mission: Mission,
-): Effect.Effect<Mission, MissionMcpFailure> =>
-  encodeMission(mission).pipe(Effect.flatMap(decodeMissionSnapshot), Effect.mapError(invalidRequest));
+const snapshotProposedMission = (mission: Mission): Effect.Effect<Mission, MissionMcpFailure> =>
+  encodeMission(mission).pipe(
+    Effect.flatMap(decodeMissionSnapshot),
+    Effect.mapError(invalidRequest),
+  );
 
 const unavailable = () =>
   new MissionMcpFailure({
@@ -209,13 +217,6 @@ const mapServiceFailure = (
       return unavailable();
   }
 };
-
-interface CanonicalBinding {
-  readonly team_id: string;
-  readonly authority_environment_id: string;
-  readonly manager_thread: string | null;
-  readonly manager_epoch: number | null;
-}
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -256,7 +257,9 @@ const make = Effect.gen(function* () {
     scope: McpInvocationContext.McpThreadInvocationScope,
     operation: MissionMcpOperation,
     missionId: MissionId,
+    requestKey: object,
     proposedMission?: Mission,
+    command?: MissionCommand,
   ): Effect.fn.Return<MissionMcpAuthorityFacts, MissionMcpFailure> {
     const port = yield* Effect.serviceOption(MissionMcpAuthorityPort);
     if (Option.isNone(port)) {
@@ -265,12 +268,17 @@ const make = Effect.gen(function* () {
         message: "No mission authority resolver is installed, so the request stays denied.",
       });
     }
-    const facts = yield* port.value.resolve({ scope, operation, missionId, proposedMission }).pipe(
-      Effect.mapError((error) => new MissionMcpFailure({
-        code: error.code,
-        message: "The mission authority resolver denied the request.",
-      })),
-    );
+    const facts = yield* port.value
+      .resolve({ scope, operation, missionId, proposedMission, command, requestKey })
+      .pipe(
+        Effect.mapError(
+          (error) =>
+            new MissionMcpFailure({
+              code: error.code,
+              message: "The mission authority resolver denied the request.",
+            }),
+        ),
+      );
     // Bind resolver output to the actual caller and to verified NoFun facts:
     // a resolver may not move a request to another environment, hand it
     // another thread's control, or claim an unverified company/binding.
@@ -283,44 +291,21 @@ const make = Effect.gen(function* () {
     ) {
       return yield* scopeDenied();
     }
-    return facts;
-  });
-
-  /**
-   * Current role and canonical mission checked BEFORE get/replay: team and
-   * environment come from the durable row (never the proposed command), and
-   * the delivery manager must be the authenticated caller thread. A stale
-   * caller is denied before any mission content is decoded or disclosed.
-   */
-  const assertCurrentRole = Effect.fn("MissionMcpService.assertCurrentRole")(function* (
-    facts: MissionMcpAuthorityFacts,
-    missionId: MissionId,
-  ): Effect.fn.Return<void, MissionMcpFailure> {
-    const rows = yield* sql<CanonicalBinding>`
-      SELECT team_id, authority_environment_id,
-        json_extract(snapshot_json, '$.managers.delivery.threadId') AS manager_thread,
-        json_extract(snapshot_json, '$.managers.delivery.epoch') AS manager_epoch
-      FROM projection_missions
-      WHERE mission_id = ${missionId}
-    `.pipe(Effect.mapError(() => unavailable()));
-    const row = rows[0];
-    if (row === undefined) return;
-    if (row.team_id !== facts.teamId || row.authority_environment_id !== facts.environmentId) {
-      return yield* scopeDenied();
-    }
-    if (row.manager_thread !== facts.controllerThreadId || row.manager_epoch === null) {
+    if (facts.transactionGuard === undefined) {
       return yield* new MissionMcpFailure({
-        code: "scope_denied",
-        message: "Only the mission's current delivery manager thread may read or change it.",
+        code: "authority_unavailable",
+        message: "A current transaction authority guard is required.",
       });
     }
+    return { ...facts };
   });
 
   /** One MissionService per request under this request's authority: never shared across callers. */
   const innerService = Effect.fn("MissionMcpService.innerService")(function* (
     facts: MissionMcpAuthorityFacts,
+    requestKey: object,
   ): Effect.fn.Return<MissionService.MissionService["Service"], MissionMcpFailure> {
-    const innerLayer = MissionService.layer.pipe(
+    const innerLayer = Layer.fresh(MissionService.layer).pipe(
       Layer.provide(
         Layer.mergeAll(
           innerBase,
@@ -328,6 +313,8 @@ const make = Effect.gen(function* () {
             teamId: facts.teamId,
             environmentId: facts.environmentId,
             controllerThreadId: facts.controllerThreadId,
+            transactionGuard: facts.transactionGuard,
+            requestKey,
           }),
         ),
       ),
@@ -341,40 +328,53 @@ const make = Effect.gen(function* () {
     scope: McpInvocationContext.McpInvocationScope,
     input: unknown,
   ): Effect.fn.Return<MissionMcpGetResult, MissionMcpFailure> {
-    const threadScope = yield* readScope(scope);
+    const caller = {
+      ...scope,
+      thread: scope.thread === undefined ? undefined : { ...scope.thread },
+      capabilities: new Set(scope.capabilities),
+    };
+    const requestKey = {};
+    const threadScope = yield* readScope(caller);
     const decoded = yield* decodeGetInput(input).pipe(Effect.mapError(invalidRequest));
-    const facts = yield* resolveFacts(threadScope, "read", decoded.id);
-    // Role check, content read, and role recheck run in one transaction on
-    // the same SQL handle, so a manager rotation that commits in between
-    // cannot disclose content to the retired manager.
-    return yield* sql
-      .withTransaction(
-        Effect.gen(function* () {
-          yield* assertCurrentRole(facts, decoded.id);
-          const inner = yield* innerService(facts);
-          const found = yield* inner.get(decoded.id).pipe(Effect.mapError(mapServiceFailure));
-          yield* assertCurrentRole(facts, decoded.id);
-          return Option.isSome(found)
-            ? { status: "found" as const, mission: found.value }
-            : { status: "missing" as const, mission: null };
-        }),
-      )
-      .pipe(Effect.mapError((error) => (error._tag === "MissionMcpFailure" ? error : unavailable())));
+    const facts = yield* resolveFacts(threadScope, "read", decoded.id, requestKey);
+    const inner = yield* innerService(facts, requestKey);
+    const found = yield* inner.get(decoded.id).pipe(Effect.mapError(mapServiceFailure));
+    return Option.isSome(found)
+      ? { status: "found" as const, mission: found.value }
+      : { status: "missing" as const, mission: null };
   });
 
   const execute = Effect.fn("MissionMcpService.execute")(function* (
     scope: McpInvocationContext.McpInvocationScope,
     input: unknown,
   ): Effect.fn.Return<MissionMcpExecuteResult, MissionMcpFailure> {
-    const threadScope = yield* readScope(scope);
-    const command = yield* decodeCommand(input).pipe(Effect.mapError(invalidRequest));
+    const caller = {
+      ...scope,
+      thread: scope.thread === undefined ? undefined : { ...scope.thread },
+      capabilities: new Set(scope.capabilities),
+    };
+    const requestKey = {};
+    const threadScope = yield* readScope(caller);
+    const decoded = yield* decodeCommand(input).pipe(Effect.mapError(invalidRequest));
+    // Decode strictly before serialization so even excess undefined fields
+    // remain invalid; detach all accepted fields before the first I/O.
+    const command = yield* encodeCommandSnapshot(decoded).pipe(
+      Effect.flatMap(decodeCommandSnapshot),
+      Effect.mapError(invalidRequest),
+    );
     // Snapshot the decoded proposal before the first I/O below, then resolve
     // and commit with that same snapshot: the caller's object stays mutable.
     const proposedMission = yield* snapshotProposedMission(command.mission);
     const committedCommand = { ...command, mission: proposedMission };
-    const facts = yield* resolveFacts(threadScope, "commit", proposedMission.id, proposedMission);
-    yield* assertCurrentRole(facts, proposedMission.id);
-    const inner = yield* innerService(facts);
+    const facts = yield* resolveFacts(
+      threadScope,
+      "commit",
+      proposedMission.id,
+      requestKey,
+      proposedMission,
+      committedCommand,
+    );
+    const inner = yield* innerService(facts, requestKey);
     // MissionService.execute already unwraps its transaction Result into the
     // error channel; capture it explicitly so plan failures map to one fixed
     // bounded failure instead of leaking through.

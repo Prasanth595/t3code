@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   Mission,
+  MissionCommand,
   ProjectId,
   TeamId,
   ThreadId,
@@ -15,6 +16,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as MissionService from "../orchestration-v2/MissionService.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as MissionMcpService from "./MissionMcpService.ts";
@@ -37,30 +39,49 @@ export type TrustedNoFunMissionPolicy = typeof TrustedNoFunMissionPolicy.Type;
 /**
  * Root composition must provide a current trusted configuration reader. There
  * is deliberately no producer/default layer here. Revisions must change on
- * every policy edit, including disablement and revocation.
+ * every policy edit, including disablement and revocation, and must never be
+ * reused (including disable/re-enable). The local snapshot is published in
+ * the same JavaScript runtime as the registry. This makes the equal revision
+ * checks bracketing a synchronized registry read proof of policy at that point.
  */
 export class MissionMcpTrustedPolicy extends Context.Service<
   MissionMcpTrustedPolicy,
   {
     readonly read: Effect.Effect<unknown, MissionMcpService.MissionMcpFailure>;
+    /** Local, synchronous current snapshot, published atomically with revision
+     * changes. No network, filesystem, promises, or yielding Effect inside SQL.
+     * Missing this seam denies MCP; root owns its producer and activation. */
+    readonly current?: (() => unknown) | undefined;
   }
 >()("t3/mcp/MissionMcpAuthority/MissionMcpTrustedPolicy") {}
 
 const decodePolicy = Schema.decodeUnknownEffect(TrustedNoFunMissionPolicy, {
   onExcessProperty: "error",
 });
+const decodeCurrentPolicy = Schema.decodeUnknownSync(TrustedNoFunMissionPolicy, {
+  onExcessProperty: "error",
+});
+const decodeCommandSnapshot = Schema.decodeUnknownSync(Schema.fromJsonString(MissionCommand));
 const decodeMission = Schema.decodeUnknownEffect(Schema.fromJsonString(Mission));
 
 /**
  * Detach a proposed commit body from caller-mutable memory. Returns undefined
  * for a missing or malformed proposal so commit resolution can fail closed.
  */
-const decodeProposedSnapshot = Schema.decodeUnknownSync(Mission);
+const decodeProposedSnapshot = Schema.decodeUnknownSync(Schema.fromJsonString(Mission));
 
 const snapshotProposedMission = (input: unknown): Mission | undefined => {
   try {
     if (input === undefined) return undefined;
-    return decodeProposedSnapshot(JSON.parse(stableStringify(input)));
+    return decodeProposedSnapshot(stableStringify(input));
+  } catch {
+    return undefined;
+  }
+};
+
+const snapshotCommand = (input: unknown): MissionCommand | undefined => {
+  try {
+    return input === undefined ? undefined : decodeCommandSnapshot(stableStringify(input));
   } catch {
     return undefined;
   }
@@ -91,6 +112,12 @@ const make = Effect.gen(function* () {
       return yield* new MissionMcpService.MissionMcpFailure({
         code: "authority_unavailable",
         message: "A trusted NoFun mission policy is required.",
+      });
+    }
+    if (policyReader.value.current === undefined) {
+      return yield* new MissionMcpService.MissionMcpFailure({
+        code: "authority_unavailable",
+        message: "A local current NoFun mission policy snapshot is required.",
       });
     }
     const raw = yield* policyReader.value.read.pipe(
@@ -126,6 +153,9 @@ const make = Effect.gen(function* () {
       capabilities: new Set(request.scope.capabilities),
     };
     const missionId = request.missionId;
+    const operation = request.operation;
+    const requestKey = request.requestKey;
+    const command = snapshotCommand(request.command);
     const deny = new MissionMcpService.MissionMcpFailure({
       code: "scope_denied",
       message: "The current credential, project, or mission controller binding is not authorized.",
@@ -133,8 +163,14 @@ const make = Effect.gen(function* () {
     // Snapshot the proposed commit body before any I/O: the caller's object
     // stays mutable while policy, projection, and session reads yield.
     const proposedMission =
-      request.operation === "commit" ? snapshotProposedMission(request.proposedMission) : undefined;
-    if (request.operation === "commit" && proposedMission === undefined) {
+      operation === "commit" ? snapshotProposedMission(request.proposedMission) : undefined;
+    if (
+      operation === "commit" &&
+      (proposedMission === undefined ||
+        (requestKey !== undefined &&
+          (command === undefined ||
+            stableStringify(command.mission) !== stableStringify(proposedMission))))
+    ) {
       return yield* deny;
     }
     if (!scope.capabilities.has("orchestration")) {
@@ -171,107 +207,118 @@ const make = Effect.gen(function* () {
     const policyIdentity = stableStringify(policy);
     if (policy.environmentId !== scope.environmentId) return yield* deny;
 
-    const readBinding = Effect.gen(function* () {
-      const thread = yield* projections.getThread(authenticatedScope.thread.threadId).pipe(
-        Effect.mapError((error) =>
-          error._tag === "ProjectionStoreThreadNotFoundError"
-            ? deny
-            : new MissionMcpService.MissionMcpFailure({
-                code: "unavailable",
-                message: "Mission authority records are unavailable.",
-              }),
-        ),
-      );
-      if (
-        thread.id !== authenticatedScope.thread.threadId ||
-        thread.deletedAt !== null ||
-        thread.archivedAt !== null ||
-        thread.providerInstanceId !== authenticatedScope.thread.providerInstanceId ||
-        thread.modelSelection.instanceId !== authenticatedScope.thread.providerInstanceId ||
-        !policy.allowedProjectIds.includes(thread.projectId)
-      )
-        return yield* deny;
+    const readBinding = (expectedMission?: Mission | null) =>
+      Effect.gen(function* () {
+        const thread = yield* projections.getThread(authenticatedScope.thread.threadId).pipe(
+          Effect.mapError((error) =>
+            error._tag === "ProjectionStoreThreadNotFoundError"
+              ? deny
+              : new MissionMcpService.MissionMcpFailure({
+                  code: "unavailable",
+                  message: "Mission authority records are unavailable.",
+                }),
+          ),
+        );
+        if (
+          thread.id !== authenticatedScope.thread.threadId ||
+          thread.deletedAt !== null ||
+          thread.archivedAt !== null ||
+          thread.providerInstanceId !== authenticatedScope.thread.providerInstanceId ||
+          thread.modelSelection.instanceId !== authenticatedScope.thread.providerInstanceId ||
+          !policy.allowedProjectIds.includes(thread.projectId)
+        )
+          return yield* deny;
 
-      const projects = yield* sql<ProjectRow>`
+        const projects = yield* sql<ProjectRow>`
         SELECT project_id, workspace_root, deleted_at FROM projection_projects
         WHERE ${sql.in("project_id", policy.allowedProjectIds)}
       `;
-      const currentProject = projects.find((project) => project.project_id === thread.projectId);
-      if (currentProject === undefined || currentProject.deleted_at !== null) return yield* deny;
-      if (request.operation === "commit") {
-        // Verify the proposed create/replace bindings against trusted policy
-        // and current project rows. Proposed team, environment, and
-        // controller values are never authority evidence: they are compared
-        // here, never blessed, and the canonical manager checks below stay.
-        if (
-          proposedMission === undefined ||
-          proposedMission.id !== missionId ||
-          proposedMission.teamId !== policy.teamId ||
-          proposedMission.authorityEnvironmentId !== policy.environmentId ||
-          !proposedMission.bindings.some((binding) => binding.projectId === thread.projectId) ||
-          !proposedMission.bindings.every(
-            (binding) =>
-              policy.allowedProjectIds.includes(binding.projectId) &&
-              projects.some(
-                (project) =>
-                  project.project_id === binding.projectId &&
-                  project.deleted_at === null &&
-                  project.workspace_root === binding.workspaceRoot,
-              ),
+        const currentProject = projects.find((project) => project.project_id === thread.projectId);
+        if (currentProject === undefined || currentProject.deleted_at !== null) return yield* deny;
+        if (operation === "commit") {
+          // Verify the proposed create/replace bindings against trusted policy
+          // and current project rows. Proposed team, environment, and
+          // controller values are never authority evidence: they are compared
+          // here, never blessed, and the canonical manager checks below stay.
+          if (
+            proposedMission === undefined ||
+            proposedMission.id !== missionId ||
+            proposedMission.teamId !== policy.teamId ||
+            proposedMission.authorityEnvironmentId !== policy.environmentId ||
+            !proposedMission.bindings.some((binding) => binding.projectId === thread.projectId) ||
+            !proposedMission.bindings.every(
+              (binding) =>
+                policy.allowedProjectIds.includes(binding.projectId) &&
+                projects.some(
+                  (project) =>
+                    project.project_id === binding.projectId &&
+                    project.deleted_at === null &&
+                    project.workspace_root === binding.workspaceRoot,
+                ),
+            )
           )
-        )
-          return yield* deny;
-      }
-      const rows = yield* sql<MissionRow>`
+            return yield* deny;
+        }
+        const rows = yield* sql<MissionRow>`
         SELECT team_id, authority_environment_id, revision, snapshot_json
         FROM projection_missions WHERE mission_id = ${missionId}
       `;
-      const row = rows[0];
-      if (row === undefined) {
-        // Missing reads and creates share the explicitly authorized bootstrap
-        // root gate; knowledge of a missing id is not an authority grant.
-        if (
-          !policy.bootstrapControllerThreadIds.includes(thread.id) ||
-          thread.lineage.rootThreadId !== thread.id ||
-          thread.lineage.parentThreadId !== null
-        )
-          return yield* deny;
-      } else {
-        if (row.team_id !== policy.teamId || row.authority_environment_id !== policy.environmentId)
-          return yield* deny;
-        const mission = yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
-        const manager = mission.managers.delivery;
-        if (
-          mission.id !== missionId ||
-          mission.teamId !== policy.teamId ||
-          mission.authorityEnvironmentId !== policy.environmentId ||
-          mission.revision !== row.revision ||
-          manager?.threadId !== thread.id ||
-          manager.epoch === undefined ||
-          !mission.bindings.some((binding) => binding.projectId === thread.projectId) ||
-          !mission.bindings.every(
-            (binding) =>
-              policy.allowedProjectIds.includes(binding.projectId) &&
-              projects.some(
-                (project) =>
-                  project.project_id === binding.projectId &&
-                  project.deleted_at === null &&
-                  project.workspace_root === binding.workspaceRoot,
-              ),
+        const row = rows[0];
+        if (row === undefined) {
+          // Missing reads and creates share the explicitly authorized bootstrap
+          // root gate; knowledge of a missing id is not an authority grant.
+          if (
+            !policy.bootstrapControllerThreadIds.includes(thread.id) ||
+            thread.lineage.rootThreadId !== thread.id ||
+            thread.lineage.parentThreadId !== null
           )
-        )
-          return yield* deny;
-      }
-      return stableStringify({
-        threadId: thread.id,
-        projectId: thread.projectId,
-        providerInstanceId: thread.providerInstanceId,
-        projectRoot: currentProject.workspace_root,
-        mission: row ?? null,
-        projects: projects.slice().sort((a, b) => a.project_id.localeCompare(b.project_id)),
+            return yield* deny;
+        } else {
+          if (
+            row.team_id !== policy.teamId ||
+            row.authority_environment_id !== policy.environmentId
+          )
+            return yield* deny;
+          const mission = yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
+          const manager = mission.managers.delivery;
+          if (
+            mission.id !== missionId ||
+            mission.teamId !== policy.teamId ||
+            mission.authorityEnvironmentId !== policy.environmentId ||
+            mission.revision !== row.revision ||
+            manager?.threadId !== thread.id ||
+            manager.epoch === undefined ||
+            !mission.bindings.some((binding) => binding.projectId === thread.projectId) ||
+            !mission.bindings.every(
+              (binding) =>
+                policy.allowedProjectIds.includes(binding.projectId) &&
+                projects.some(
+                  (project) =>
+                    project.project_id === binding.projectId &&
+                    project.deleted_at === null &&
+                    project.workspace_root === binding.workspaceRoot,
+                ),
+            )
+          )
+            return yield* deny;
+        }
+        if (expectedMission !== undefined) {
+          const actual =
+            row === undefined
+              ? null
+              : yield* decodeMission(row.snapshot_json).pipe(Effect.mapError(() => deny));
+          if (stableStringify(actual) !== stableStringify(expectedMission)) return yield* deny;
+        }
+        return {
+          threadId: thread.id,
+          projectId: thread.projectId,
+          providerInstanceId: thread.providerInstanceId,
+          projectRoot: currentProject.workspace_root,
+          mission: row ?? null,
+          projects: projects.slice().sort((a, b) => a.project_id.localeCompare(b.project_id)),
+        };
       });
-    });
-    const binding = yield* readBinding.pipe(
+    const binding = yield* readBinding().pipe(
       Effect.mapError((error) =>
         error._tag === "MissionMcpFailure"
           ? error
@@ -282,15 +329,71 @@ const make = Effect.gen(function* () {
       ),
     );
     if (stableStringify(yield* readPolicy) !== policyIdentity) return yield* deny;
+    const checkLocalPolicy = Effect.try({
+      try: () => {
+        if (Option.isNone(policyReader) || policyReader.value.current === undefined) throw deny;
+        return stableStringify(decodeCurrentPolicy(policyReader.value.current()));
+      },
+      catch: () => deny,
+    }).pipe(
+      Effect.flatMap((identity) => (identity === policyIdentity ? Effect.void : Effect.fail(deny))),
+    );
     // I/O can yield while sessions, policy, or controller epochs are changed.
-    // Recheck durable bindings under a transaction while re-reading current
-    // policy and registry liveness. No reads renew credentials or write authority.
+    // Recheck durable bindings under a transaction with current local policy
+    // and registry liveness. No reads renew credentials or write authority.
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
-          if ((yield* readBinding) !== binding) return yield* deny;
-          if (stableStringify(yield* readPolicy) !== policyIdentity) return yield* deny;
+          if (stableStringify(yield* readBinding()) !== stableStringify(binding))
+            return yield* deny;
           yield* assertLive;
+          yield* checkLocalPolicy;
+          const facts = {
+            teamId: policy.teamId,
+            environmentId: policy.environmentId,
+            controllerThreadId: authenticatedScope.thread.threadId,
+          };
+          const transactionGuard =
+            requestKey === undefined
+              ? undefined
+              : MissionService.MissionTransactionGuard.make({
+                  sql,
+                  requestKey,
+                  request: { operation, missionId, command },
+                  authority: facts,
+                  check: (expectedMission) =>
+                    Effect.gen(function* () {
+                      yield* assertLive;
+                      yield* checkLocalPolicy;
+                      const current = yield* readBinding(expectedMission);
+                      // The owning transaction may create/replace its mission. Compare
+                      // external bindings separately from its explicitly expected result.
+                      const external = { ...current, mission: null };
+                      const originalExternal = { ...binding, mission: null };
+                      if (
+                        stableStringify(external) !== stableStringify(originalExternal) ||
+                        (expectedMission === undefined &&
+                          stableStringify(current) !== stableStringify(binding))
+                      )
+                        return yield* deny;
+                      yield* checkLocalPolicy;
+                      yield* assertLive;
+                      // Registry check is synchronized with revocation. The local
+                      // non-yielding policy snapshot brackets that read with an equal,
+                      // never-reused revision. Authorization linearizes at the final
+                      // registry read, before any later revocation/expiry. SQL
+                      // authority rows remain locked until this transaction finishes.
+                      yield* checkLocalPolicy;
+                    }).pipe(
+                      Effect.mapError(
+                        () =>
+                          new MissionService.MissionServiceError({
+                            operation,
+                            category: "scope_denied",
+                          }),
+                      ),
+                    ),
+                });
           return {
             company: "nofun" as const,
             companyVerified: true as const,
@@ -298,6 +401,7 @@ const make = Effect.gen(function* () {
             teamId: policy.teamId,
             environmentId: policy.environmentId,
             controllerThreadId: authenticatedScope.thread.threadId,
+            ...(transactionGuard === undefined ? {} : { transactionGuard }),
           };
         }),
       )

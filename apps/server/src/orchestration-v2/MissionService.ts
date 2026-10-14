@@ -24,6 +24,49 @@ import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as EventStore from "../persistence/OrchestrationEventStore.ts";
 import * as MissionCommands from "./MissionCommands.ts";
 
+export interface MissionTransactionRequest {
+  readonly operation: "read" | "commit";
+  readonly missionId: MissionId;
+  readonly command?: MissionCommand | undefined;
+}
+
+// A server-only handle: no enumerable authority, callbacks, policy, or credential
+// can be encoded or persisted. Only the trusted MCP port supplies these handles.
+export class MissionTransactionGuard {
+  private constructor() {}
+
+  static make(input: {
+    readonly sql: SqlClient.SqlClient;
+    readonly requestKey: object;
+    readonly request: MissionTransactionRequest;
+    readonly authority: {
+      readonly teamId: TeamId;
+      readonly environmentId: EnvironmentId;
+      readonly controllerThreadId: ThreadId;
+    };
+    readonly check: (expectedMission?: Mission | null) => Effect.Effect<void, MissionServiceError>;
+  }): MissionTransactionGuard {
+    const handle = new MissionTransactionGuard();
+    guards.set(handle, {
+      ...input,
+      identity: stableStringify(input.request),
+      authorityIdentity: stableStringify(input.authority),
+    });
+    return handle;
+  }
+}
+
+const guards = new WeakMap<
+  MissionTransactionGuard,
+  {
+    readonly sql: SqlClient.SqlClient;
+    readonly requestKey: object;
+    readonly identity: string;
+    readonly authorityIdentity: string;
+    readonly check: (expectedMission?: Mission | null) => Effect.Effect<void, MissionServiceError>;
+  }
+>();
+
 /** The authenticated runtime supplies this scope; request payloads cannot replace it. */
 export class MissionAuthority extends Context.Service<
   MissionAuthority,
@@ -31,6 +74,8 @@ export class MissionAuthority extends Context.Service<
     readonly teamId: TeamId;
     readonly environmentId: EnvironmentId;
     readonly controllerThreadId: ThreadId;
+    readonly transactionGuard?: MissionTransactionGuard | undefined;
+    readonly requestKey?: object | undefined;
   }
 >()("t3/orchestration-v2/MissionService/MissionAuthority") {}
 
@@ -63,6 +108,7 @@ export class MissionService extends Context.Service<
 
 const decodeMission = Schema.decodeUnknownEffect(Schema.fromJsonString(Mission));
 const encodeMission = Schema.encodeEffect(Schema.fromJsonString(Mission));
+const decodeCommandSnapshot = Schema.decodeUnknownEffect(Schema.fromJsonString(MissionCommand));
 const encodeCommand = Schema.encodeEffect(MissionCommand);
 const decodeRejection = Schema.decodeUnknownEffect(
   Schema.fromJsonString(MissionCommands.MissionPlanError),
@@ -79,6 +125,33 @@ const make = Effect.gen(function* () {
   const events = yield* EventStore.OrchestrationEventStore;
   const receipts = yield* Receipts.OrchestrationCommandReceiptRepository;
 
+  const checkAuthority = (
+    request: MissionTransactionRequest,
+    expectedMission?: Mission | null,
+  ): Effect.Effect<void, MissionServiceError> =>
+    Effect.suspend(() => {
+      // Legacy internal callers retain their existing authority contract. MCP
+      // checks for a required handle before constructing this service.
+      if (authority.transactionGuard === undefined) return Effect.void;
+      const guard = guards.get(authority.transactionGuard);
+      if (
+        guard === undefined ||
+        guard.sql !== sql ||
+        guard.requestKey !== authority.requestKey ||
+        guard.identity !== stableStringify(request) ||
+        guard.authorityIdentity !==
+          stableStringify({
+            teamId: authority.teamId,
+            environmentId: authority.environmentId,
+            controllerThreadId: authority.controllerThreadId,
+          })
+      )
+        return Effect.fail(
+          new MissionServiceError({ operation: request.operation, category: "scope_denied" }),
+        );
+      return guard.check(expectedMission);
+    });
+
   const read = Effect.fn("MissionService.get")(function* (id: MissionId) {
     // Check scope in SQL before decoding or returning any retained content.
     const rows = yield* sql<{ snapshot_json: string }>`
@@ -91,7 +164,10 @@ const make = Effect.gen(function* () {
       : Option.some(yield* decodeMission(rows[0].snapshot_json));
   });
 
-  const execute = Effect.fn("MissionService.execute")(function* (command: MissionCommand) {
+  const execute = Effect.fn("MissionService.execute")(function* (input: MissionCommand) {
+    // Detach every command field before I/O, not only the proposal.
+    const command = yield* decodeCommandSnapshot(stableStringify(input));
+    const request = { operation: "commit" as const, missionId: command.mission.id, command };
     if (
       command.mission.teamId !== authority.teamId ||
       command.mission.authorityEnvironmentId !== authority.environmentId
@@ -105,6 +181,7 @@ const make = Effect.gen(function* () {
     const now = DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis));
     const outcome = yield* sql.withTransaction(
       Effect.gen(function* () {
+        yield* checkAuthority(request);
         // Scope checks precede receipt lookups, including replay of completed work.
         const owner = yield* sql<{ team_id: string; authority_environment_id: string }>`
         SELECT team_id, authority_environment_id FROM projection_missions
@@ -124,7 +201,18 @@ const make = Effect.gen(function* () {
         if (manager?.threadId !== authority.controllerThreadId || manager.epoch === undefined) {
           return yield* new MissionServiceError({ operation: "commit", category: "scope_denied" });
         }
+        yield* checkAuthority(request);
         const prior = yield* receipts.getByCommandId({ commandId: command.commandId });
+        // Receipt I/O may yield. Revalidate the original canonical role and
+        // snapshot before planning, replay, rejection, or any mutation.
+        yield* checkAuthority(request);
+        const fresh = yield* read(command.mission.id);
+        if (
+          stableStringify(Option.getOrNull(fresh)) !== stableStringify(Option.getOrNull(current))
+        ) {
+          return yield* new MissionServiceError({ operation: "commit", category: "scope_denied" });
+        }
+        yield* checkAuthority(request);
         if (Option.isSome(prior)) {
           if (
             prior.value.aggregateKind !== "mission" ||
@@ -136,6 +224,7 @@ const make = Effect.gen(function* () {
               category: "request_conflict",
             });
           }
+          yield* checkAuthority(request, Option.getOrNull(current));
           return prior.value.status === "rejected"
             ? Result.fail(yield* decodeRejection(prior.value.error))
             : Result.succeed({ receipt: prior.value, committed: false });
@@ -162,6 +251,7 @@ const make = Effect.gen(function* () {
               operation: "commit",
               category: "request_conflict",
             });
+          yield* checkAuthority(request, Option.getOrNull(current));
           return Result.fail(planned.failure);
         }
         const event = yield* events.appendMissionEvent(planned.success.event);
@@ -193,6 +283,11 @@ const make = Effect.gen(function* () {
             category: "request_conflict",
           });
         }
+        // The guard linearizes authorization at its final synchronized live
+        // credential check, bracketed by the same local policy revision. SQL
+        // still owns the transaction, including event/projection/receipt writes.
+        // Failure or interruption here rolls them all back.
+        yield* checkAuthority(request, planned.success.mission);
         return Result.succeed({ receipt, committed: true });
       }),
     );
@@ -202,11 +297,23 @@ const make = Effect.gen(function* () {
   });
   return MissionService.of({
     get: (id) =>
-      read(id).pipe(
-        Effect.mapError(
-          (cause) => new MissionServiceError({ operation: "read", category: "persistence", cause }),
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const request = { operation: "read" as const, missionId: id };
+            yield* checkAuthority(request);
+            const found = yield* read(id);
+            yield* checkAuthority(request, Option.getOrNull(found));
+            return found;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isServiceError(cause)
+              ? cause
+              : new MissionServiceError({ operation: "read", category: "persistence", cause }),
+          ),
         ),
-      ),
     execute: (command) =>
       execute(command).pipe(
         Effect.mapError((cause) =>

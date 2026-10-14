@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  MissionCommand,
   EnvironmentId,
   EventId,
   Mission,
@@ -9,11 +10,14 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TeamId,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Result from "effect/Result";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -24,9 +28,12 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import * as EventStore from "../persistence/OrchestrationEventStore.ts";
+import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import type * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as MissionMcpAuthority from "./MissionMcpAuthority.ts";
+import * as MissionService from "../orchestration-v2/MissionService.ts";
 import * as MissionMcpService from "./MissionMcpService.ts";
 
 const environmentId = EnvironmentId.make("authority-env");
@@ -44,7 +51,7 @@ const policy = () => ({
   bindingVerified: true,
   policyRef: "server-policy:explicit-owner-binding",
   revision: "1",
-  teamId: "explicit-nofun-team",
+  teamId: TeamId.make("explicit-nofun-team"),
   environmentId,
   allowedProjectIds: [projectId],
   bootstrapControllerThreadIds: [threadId],
@@ -54,7 +61,7 @@ const mission = () => ({
   schemaVersion: 1,
   id: missionId,
   revision: 0,
-  teamId: "explicit-nofun-team",
+  teamId: TeamId.make("explicit-nofun-team"),
   authorityEnvironmentId: environmentId,
   bindings: [
     { projectId, workspaceRoot: "/tmp/authority-fixture", baseCommit: "base", ancestry: ["base"] },
@@ -105,7 +112,9 @@ const saveMission = (snapshot: ReturnType<typeof mission> = mission()) =>
 const setup = (
   options: {
     readonly readPolicy?: Effect.Effect<unknown, MissionMcpService.MissionMcpFailure>;
+    readonly currentPolicy?: () => unknown;
     readonly missingPolicy?: boolean;
+    readonly missingCurrentPolicy?: boolean;
     readonly legacyRegistry?: boolean;
     readonly projections?: (
       actual: ProjectionStore.ProjectionStoreV2["Service"],
@@ -196,11 +205,21 @@ const setup = (
         options.projections?.(actualProjections) ?? actualProjections,
       ),
     );
+    let lastPolicy: unknown = policy();
     const authority = yield* options.missingPolicy
       ? build
       : build.pipe(
           Effect.provideService(MissionMcpAuthority.MissionMcpTrustedPolicy, {
-            read: options.readPolicy ?? Effect.sync(policy),
+            read: (options.readPolicy ?? Effect.sync(policy)).pipe(
+              Effect.tap((value) =>
+                Effect.sync(() => {
+                  lastPolicy = value;
+                }),
+              ),
+            ),
+            ...(options.missingCurrentPolicy
+              ? {}
+              : { current: options.currentPolicy ?? (() => lastPolicy) }),
           }),
         );
     const resolve = (
@@ -209,6 +228,7 @@ const setup = (
       proposedMission?: MissionMcpService.MissionMcpAuthorityRequest["proposedMission"],
     ) => authority.resolve({ scope: caller, operation, missionId, proposedMission });
     return {
+      authority,
       registry,
       scope,
       issue,
@@ -255,7 +275,7 @@ it.effect(
           company: "nofun",
           companyVerified: true,
           bindingVerified: true,
-          teamId: "explicit-nofun-team",
+          teamId: TeamId.make("explicit-nofun-team"),
           environmentId,
           controllerThreadId: threadId,
         });
@@ -512,7 +532,7 @@ it.effect("rechecks policy disablement immediately before returning verified fac
     let reads = 0;
     const h = yield* setup({
       readPolicy: Effect.gen(function* () {
-        if (++reads === 3) {
+        if (++reads === 2) {
           yield* Deferred.succeed(entered, undefined);
           yield* Deferred.await(resume);
         }
@@ -642,7 +662,8 @@ it.effect("rejects commit proposals with id, team, or environment mismatch", () 
       { ...mission(), teamId: "foreign-team" },
       { ...mission(), authorityEnvironmentId: EnvironmentId.make("foreign-env") },
     ];
-    for (const snapshot of variants) yield* denied(h.resolve(h.scope, "commit", proposed(snapshot)));
+    for (const snapshot of variants)
+      yield* denied(h.resolve(h.scope, "commit", proposed(snapshot)));
   }).pipe(Effect.provide(memory)),
 );
 
@@ -685,4 +706,425 @@ it.effect("uses the snapshotted proposal when the caller mutates it during I/O",
     yield* Deferred.succeed(resume, undefined);
     assert.strictEqual((yield* Fiber.join(fiber)).controllerThreadId, threadId);
   }).pipe(Effect.provide(memory)),
+);
+
+it.effect.each(["credential", "policy", "project"] as const)(
+  "denies %s changed after resolution before owning read transaction",
+  (change) =>
+    Effect.gen(function* () {
+      let current: unknown = policy();
+      const h = yield* setup({
+        readPolicy: Effect.sync(() => current),
+        currentPolicy: () => current,
+      });
+      yield* saveMission();
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const port = MissionMcpService.MissionMcpAuthorityPort.of({
+        resolve: (request) =>
+          h.authority.resolve(request).pipe(
+            Effect.tap(() => Deferred.succeed(entered, undefined)),
+            Effect.tap(() => Deferred.await(resume)),
+          ),
+      });
+      const service = yield* MissionMcpService.MissionMcpService.pipe(
+        Effect.provide(
+          MissionMcpService.layer.pipe(
+            Layer.provide(Layer.mergeAll(EventStore.layer, Receipts.layer)),
+          ),
+        ),
+      );
+      const before = yield* counts;
+      const fiber = yield* Effect.forkChild(
+        Effect.result(
+          service
+            .get(h.scope, { id: missionId })
+            .pipe(Effect.provideService(MissionMcpService.MissionMcpAuthorityPort, port)),
+        ),
+      );
+      yield* Deferred.await(entered);
+      if (change === "credential") yield* h.registry.revokeThread(threadId);
+      if (change === "policy") current = { ...policy(), enabled: false, revision: "2" };
+      if (change === "project") {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE projection_projects SET workspace_root = '/tmp/changed' WHERE project_id = ${projectId}`;
+      }
+      yield* Deferred.succeed(resume, undefined);
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result._tag, "Failure");
+      assert.deepStrictEqual(yield* counts, before);
+    }).pipe(Effect.provide(memory)),
+);
+
+const decodeCommand = Schema.decodeUnknownSync(MissionCommand);
+const decodeCommandEffect = Schema.decodeUnknownEffect(MissionCommand);
+const command = (id = "authority-create") =>
+  decodeCommand({
+    type: "mission.create",
+    commandId: id,
+    mission: mission(),
+  });
+
+const durableState = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return {
+    counts: yield* counts,
+    missions: yield* sql`SELECT * FROM projection_missions ORDER BY mission_id`,
+    receipts: yield* sql`SELECT * FROM orchestration_command_receipts ORDER BY command_id`,
+  };
+});
+
+const composed = (
+  h: Effect.Success<ReturnType<typeof setup>>,
+  options: {
+    readonly afterResolve?: Effect.Effect<void>;
+    readonly receiptRead?: Effect.Effect<void, never, SqlClient.SqlClient>;
+    readonly receiptInsert?: Effect.Effect<void, never, SqlClient.SqlClient>;
+    readonly port?: MissionMcpService.MissionMcpAuthorityPort["Service"];
+  } = {},
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const events = yield* EventStore.OrchestrationEventStore.pipe(Effect.provide(EventStore.layer));
+    const actual = yield* Receipts.OrchestrationCommandReceiptRepository.pipe(
+      Effect.provide(Receipts.layer),
+    );
+    let receiptReads = 0;
+    const port =
+      options.port ??
+      MissionMcpService.MissionMcpAuthorityPort.of({
+        resolve: (request) =>
+          h.authority.resolve(request).pipe(Effect.tap(() => options.afterResolve ?? Effect.void)),
+      });
+    const receipts = Receipts.OrchestrationCommandReceiptRepository.of({
+      ...actual,
+      getByCommandId: (input) =>
+        Effect.gen(function* () {
+          receiptReads++;
+          const prior = yield* actual.getByCommandId(input);
+          yield* (options.receiptRead ?? Effect.void).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          return prior;
+        }),
+      insertIfAbsent: (input) =>
+        Effect.gen(function* () {
+          const inserted = yield* actual.insertIfAbsent(input);
+          yield* (options.receiptInsert ?? Effect.void).pipe(
+            Effect.provideService(SqlClient.SqlClient, sql),
+          );
+          return inserted;
+        }),
+    });
+    const service = yield* MissionMcpService.MissionMcpService.pipe(
+      Effect.provide(MissionMcpService.layer),
+      Effect.provideService(EventStore.OrchestrationEventStore, events),
+      Effect.provideService(Receipts.OrchestrationCommandReceiptRepository, receipts),
+    );
+    return {
+      get: (id = missionId) =>
+        service
+          .get(h.scope, { id })
+          .pipe(Effect.provideService(MissionMcpService.MissionMcpAuthorityPort, port)),
+      execute: (input = command()) =>
+        service
+          .execute(h.scope, input)
+          .pipe(Effect.provideService(MissionMcpService.MissionMcpAuthorityPort, port)),
+      receiptReads: () => receiptReads,
+    };
+  });
+
+it.effect.each([
+  ["expired credential", "create"],
+  ["replaced credential", "replay"],
+  ["deleted project", "create"],
+  ["manager epoch", "replay"],
+  ["policy membership", "create"],
+] as const)(
+  "denies %s after resolver returns before owning %s transaction",
+  ([change, operation]) =>
+    Effect.gen(function* () {
+      let current: unknown = policy();
+      const h = yield* setup({
+        readPolicy: Effect.sync(() => current),
+        currentPolicy: () => current,
+      });
+      const normal = yield* composed(h);
+      if (operation === "replay") yield* normal.execute();
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const service = yield* composed(h, {
+        afterResolve: Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Deferred.await(resume)),
+        ),
+      });
+      const before = yield* durableState;
+      const fiber = yield* Effect.forkChild(Effect.result(service.execute()));
+      yield* Deferred.await(entered);
+      const sql = yield* SqlClient.SqlClient;
+      switch (change) {
+        case "expired credential":
+          h.expire();
+          break;
+        case "replaced credential":
+          yield* h.registry.revokeThread(threadId);
+          yield* h.issue;
+          break;
+        case "deleted project":
+          yield* sql`UPDATE projection_projects SET deleted_at = ${now} WHERE project_id = ${projectId}`;
+          break;
+        case "manager epoch":
+          yield* saveMission({ ...mission(), managers: { delivery: { threadId, epoch: 1 } } });
+          break;
+        case "policy membership":
+          current = { ...policy(), allowedProjectIds: [], revision: "2" };
+          break;
+      }
+      const afterChange = yield* durableState;
+      yield* Deferred.succeed(resume, undefined);
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result._tag, "Failure");
+      if (Result.isFailure(result)) assert.strictEqual(result.failure.code, "scope_denied");
+      assert.strictEqual(service.receiptReads(), 0);
+      assert.deepStrictEqual(yield* durableState, afterChange);
+      assert.deepStrictEqual(afterChange.counts, before.counts);
+    }).pipe(Effect.provide(memory)),
+);
+
+it.effect.each(["credential", "manager"] as const)(
+  "denies %s changed while receipt lookup is suspended and retains original canonical state",
+  (change) =>
+    Effect.gen(function* () {
+      const h = yield* setup();
+      const normal = yield* composed(h);
+      yield* normal.execute();
+      const before = yield* durableState;
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const service = yield* composed(h, {
+        receiptRead: Effect.gen(function* () {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(resume);
+          // A record hook runs in the owning fiber/SQL transaction. Its rotation
+          // must be observed after awaited I/O and rolled back with the denial.
+          if (change === "manager") {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`UPDATE projection_missions SET snapshot_json = json_set(snapshot_json, '$.managers.delivery.threadId', 'retired-controller') WHERE mission_id = ${missionId}`.pipe(
+              Effect.orDie,
+            );
+          }
+        }),
+      });
+      const fiber = yield* Effect.forkChild(Effect.result(service.execute()));
+      yield* Deferred.await(entered);
+      if (change === "credential") yield* h.registry.revokeThread(threadId);
+      yield* Deferred.succeed(resume, undefined);
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result._tag, "Failure");
+      if (Result.isFailure(result)) assert.strictEqual(result.failure.code, "scope_denied");
+      assert.deepStrictEqual(yield* durableState, before);
+    }).pipe(Effect.provide(memory)),
+);
+
+it.effect.each(["policy", "project"] as const)(
+  "rolls back events, projection, and receipt when %s changes before commit publication",
+  (change) =>
+    Effect.gen(function* () {
+      let current: unknown = policy();
+      const h = yield* setup({
+        readPolicy: Effect.sync(() => current),
+        currentPolicy: () => current,
+      });
+      const before = yield* durableState;
+      const entered = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      const service = yield* composed(h, {
+        receiptInsert: Effect.gen(function* () {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(resume);
+          if (change === "project") {
+            const sql = yield* SqlClient.SqlClient;
+            yield* sql`UPDATE projection_projects SET workspace_root = '/tmp/changed-in-owning-transaction' WHERE project_id = ${projectId}`.pipe(
+              Effect.orDie,
+            );
+          }
+        }),
+      });
+      const fiber = yield* Effect.forkChild(Effect.result(service.execute()));
+      yield* Deferred.await(entered);
+      if (change === "policy") current = { ...policy(), enabled: false, revision: "2" };
+      yield* Deferred.succeed(resume, undefined);
+      const result = yield* Fiber.join(fiber);
+      assert.strictEqual(result._tag, "Failure");
+      if (Result.isFailure(result)) assert.strictEqual(result.failure.code, "scope_denied");
+      assert.deepStrictEqual(yield* durableState, before);
+      const sql = yield* SqlClient.SqlClient;
+      const root = yield* sql<{
+        workspace_root: string;
+      }>`SELECT workspace_root FROM projection_projects WHERE project_id = ${projectId}`;
+      assert.strictEqual(root[0]!.workspace_root, "/tmp/authority-fixture");
+    }).pipe(Effect.provide(memory)),
+);
+
+it.effect("denies credential revocation during the final owning read projection I/O", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    let reads = 0;
+    const h = yield* setup({
+      projections: (actual) => ({
+        ...actual,
+        getThread: (id) =>
+          Effect.gen(function* () {
+            const thread = yield* actual.getThread(id);
+            if (++reads === 4) {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+            }
+            return thread;
+          }),
+      }),
+    });
+    yield* saveMission();
+    const service = yield* composed(h);
+    const before = yield* durableState;
+    const fiber = yield* Effect.forkChild(Effect.result(service.get()));
+    yield* Deferred.await(entered);
+    yield* h.registry.revokeThread(threadId);
+    yield* Deferred.succeed(resume, undefined);
+    const result = yield* Fiber.join(fiber);
+    assert.strictEqual(result._tag, "Failure");
+    if (Result.isFailure(result)) assert.strictEqual(result.failure.code, "scope_denied");
+    assert.deepStrictEqual(yield* durableState, before);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("creates, replaces, reads, and exactly replays with live trusted authority", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const service = yield* composed(h);
+    const first = yield* service.execute();
+    assert.strictEqual(first.committed, true);
+    const noChange = yield* service.execute();
+    assert.strictEqual(noChange.committed, false);
+    assert.strictEqual(noChange.resultSequence, first.resultSequence);
+    const replace = yield* decodeCommandEffect({
+      type: "mission.replace",
+      commandId: "authority-replace",
+      expectedRevision: 0,
+      epoch: 0,
+      authority: { source: "user", ref: "test-source" },
+      mission: { ...mission(), revision: 1 },
+    });
+    const replaced = yield* service.execute(replace);
+    assert.strictEqual(replaced.committed, true);
+    assert.strictEqual((yield* service.get()).mission?.revision, 1);
+    assert.strictEqual((yield* service.execute(replace)).committed, false);
+    const after = yield* durableState;
+    assert.strictEqual(after.counts.find((row) => row.source === "events")!.count, 2);
+    assert.strictEqual(after.receipts.length, 2);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect(
+  "rejects missing local authority and guard reuse for another invocation or SQL handle",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const missing = yield* setup({ missingCurrentPolicy: true });
+        const unavailable = yield* composed(missing);
+        assert.strictEqual(
+          (yield* Effect.flip(unavailable.execute())).code,
+          "authority_unavailable",
+        );
+        const plain = yield* composed(missing, {
+          port: {
+            resolve: () =>
+              Effect.succeed({
+                company: "nofun",
+                companyVerified: true,
+                bindingVerified: true,
+                teamId: TeamId.make("explicit-nofun-team"),
+                environmentId,
+                controllerThreadId: threadId,
+              }),
+          },
+        });
+        assert.strictEqual((yield* Effect.flip(plain.execute())).code, "authority_unavailable");
+        assert.strictEqual(plain.receiptReads(), 0);
+        const h = yield* setup();
+        const request = {
+          scope: h.scope,
+          operation: "commit" as const,
+          missionId,
+          proposedMission: proposed(),
+          command: command(),
+          requestKey: {},
+        };
+        const facts = yield* h.authority.resolve(request);
+        const service = yield* composed(h, { port: { resolve: () => Effect.succeed(facts) } });
+        const before = yield* durableState;
+        assert.strictEqual((yield* Effect.flip(service.execute())).code, "scope_denied");
+        assert.strictEqual(service.receiptReads(), 0);
+        const matchingKey = yield* MissionService.MissionService.pipe(
+          Effect.provide(
+            Layer.fresh(
+              MissionService.layer.pipe(
+                Layer.provide(Layer.mergeAll(EventStore.layer, Receipts.layer)),
+              ),
+            ),
+          ),
+          Effect.provideService(MissionService.MissionAuthority, {
+            teamId: facts.teamId,
+            environmentId: facts.environmentId,
+            controllerThreadId: facts.controllerThreadId,
+            transactionGuard: facts.transactionGuard,
+            requestKey: request.requestKey,
+          }),
+        );
+        // Even with the original invocation key, the whole command identity is
+        // fixed: a handle cannot bless a different command id, body, or mission.
+        for (const changed of [
+          command("foreign-command"),
+          decodeCommand({ ...command(), mission: { ...mission(), id: "foreign-mission" } }),
+          decodeCommand({
+            ...command(),
+            mission: { ...mission(), intent: { ...mission().intent, outcome: "foreign body" } },
+          }),
+        ]) {
+          const failure = yield* Effect.flip(matchingKey.execute(changed));
+          assert.strictEqual(failure._tag, "MissionServiceError");
+          if (failure._tag === "MissionServiceError")
+            assert.strictEqual(failure.category, "scope_denied");
+        }
+        assert.strictEqual(
+          (yield* Effect.flip(matchingKey.get(missionId))).category,
+          "scope_denied",
+        );
+        const foreignContext = yield* Layer.build(Layer.fresh(Sqlite.layerMemory));
+        const foreignSql = Context.get(foreignContext, SqlClient.SqlClient);
+        const foreignInner = yield* MissionService.MissionService.pipe(
+          Effect.provide(
+            Layer.fresh(
+              MissionService.layer.pipe(
+                Layer.provide(Layer.mergeAll(EventStore.layer, Receipts.layer)),
+              ),
+            ),
+          ),
+          Effect.provideService(MissionService.MissionAuthority, {
+            teamId: facts.teamId,
+            environmentId: facts.environmentId,
+            controllerThreadId: facts.controllerThreadId,
+            transactionGuard: facts.transactionGuard,
+            requestKey: request.requestKey,
+          }),
+          Effect.provideService(SqlClient.SqlClient, foreignSql),
+        );
+        const denied = yield* Effect.flip(foreignInner.execute(command()));
+        assert.strictEqual(denied._tag, "MissionServiceError");
+        assert.deepStrictEqual(yield* durableState, before);
+        assert.deepStrictEqual(yield* foreignSql`SELECT * FROM projection_missions`, []);
+        assert.deepStrictEqual(yield* foreignSql`SELECT * FROM orchestration_command_receipts`, []);
+      }).pipe(Effect.provide(memory)),
+    ),
 );

@@ -18,6 +18,7 @@ import * as EventStore from "../persistence/OrchestrationEventStore.ts";
 import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as MissionService from "../orchestration-v2/MissionService.ts";
 import * as MissionMcpService from "./MissionMcpService.ts";
 
 const decodeMission = Schema.decodeUnknownSync(Mission);
@@ -85,31 +86,94 @@ const scopeFor = (
 });
 
 const verifiedFacts = (
-  scope: McpInvocationContext.McpThreadInvocationScope,
+  request: MissionMcpService.MissionMcpAuthorityRequest,
+  sql: SqlClient.SqlClient,
   team = "nofun",
-): MissionMcpService.MissionMcpAuthorityFacts => ({
-  company: "nofun",
-  companyVerified: true,
-  bindingVerified: true,
-  teamId: TeamId.make(team),
-  environmentId: scope.environmentId,
-  controllerThreadId: scope.thread.threadId,
-});
+): MissionMcpService.MissionMcpAuthorityFacts => {
+  const scope = request.scope;
+  const facts = {
+    company: "nofun" as const,
+    companyVerified: true as const,
+    bindingVerified: true as const,
+    teamId: TeamId.make(team),
+    environmentId: scope.environmentId,
+    controllerThreadId: scope.thread.threadId,
+  };
+  return {
+    ...facts,
+    transactionGuard: MissionService.MissionTransactionGuard.make({
+      sql,
+      requestKey: request.requestKey!,
+      request: {
+        operation: request.operation,
+        missionId: request.missionId,
+        command: request.command,
+      },
+      authority: {
+        teamId: facts.teamId,
+        environmentId: facts.environmentId,
+        controllerThreadId: facts.controllerThreadId,
+      },
+      check: () =>
+        Effect.gen(function* () {
+          const rows = yield* sql<{
+            team_id: string;
+            authority_environment_id: string;
+            manager: string | null;
+          }>`
+          SELECT team_id, authority_environment_id, json_extract(snapshot_json, '$.managers.delivery.threadId') AS manager
+          FROM projection_missions WHERE mission_id = ${request.missionId}`;
+          const row = rows[0];
+          if (
+            row !== undefined &&
+            (row.team_id !== facts.teamId ||
+              row.authority_environment_id !== facts.environmentId ||
+              row.manager !== facts.controllerThreadId)
+          ) {
+            return yield* new MissionService.MissionServiceError({
+              operation: request.operation,
+              category: "scope_denied",
+            });
+          }
+        }).pipe(
+          Effect.mapError(
+            () =>
+              new MissionService.MissionServiceError({
+                operation: request.operation,
+                category: "scope_denied",
+              }),
+          ),
+        ),
+    }),
+  };
+};
 
-/** Test authority: team varies per caller thread, binding always follows the actual scope. */
+const withSqlAuthority = (
+  resolve: (
+    request: MissionMcpService.MissionMcpAuthorityRequest,
+    sql: SqlClient.SqlClient,
+  ) => Effect.Effect<
+    MissionMcpService.MissionMcpAuthorityFacts,
+    MissionMcpService.MissionMcpFailure
+  >,
+) =>
+  Layer.effect(
+    MissionMcpService.MissionMcpAuthorityPort,
+    Effect.map(SqlClient.SqlClient, (sql) =>
+      MissionMcpService.MissionMcpAuthorityPort.of({ resolve: (request) => resolve(request, sql) }),
+    ),
+  );
+
+/** Explicit test guard on real SQL; production has no default success guard. */
 const authorityFor = (teamFor: (thread: string) => string = () => "nofun") =>
-  Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-    resolve: ({ scope }: MissionMcpService.MissionMcpAuthorityRequest) =>
-      Effect.succeed(verifiedFacts(scope, teamFor(scope.thread.threadId))),
-  });
+  withSqlAuthority((request, sql) =>
+    Effect.succeed(verifiedFacts(request, sql, teamFor(request.scope.thread.threadId))),
+  );
 
 const memory = Layer.mergeAll(
-  MissionMcpService.layer.pipe(
-    Layer.provide(EventStore.layer),
-    Layer.provide(Receipts.layer),
-  ),
+  MissionMcpService.layer.pipe(Layer.provide(EventStore.layer), Layer.provide(Receipts.layer)),
   EventStore.layer,
-).pipe(Layer.provideMerge(Sqlite.layerMemory));
+);
 
 const provideTest = <A, E>(
   effect: Effect.Effect<
@@ -117,8 +181,15 @@ const provideTest = <A, E>(
     E,
     MissionMcpService.MissionMcpService | EventStore.OrchestrationEventStore | SqlClient.SqlClient
   >,
-  authority: Layer.Layer<MissionMcpService.MissionMcpAuthorityPort> = authorityFor(),
-) => effect.pipe(Effect.provide(Layer.mergeAll(memory, authority)));
+  authority: Layer.Layer<
+    MissionMcpService.MissionMcpAuthorityPort,
+    never,
+    SqlClient.SqlClient
+  > = authorityFor(),
+) =>
+  effect.pipe(
+    Effect.provide(Layer.mergeAll(memory, authority).pipe(Layer.provideMerge(Sqlite.layerMemory))),
+  );
 
 it.effect("creates and reads back the durable mission", () =>
   provideTest(
@@ -234,7 +305,7 @@ it.effect("stays fail-closed without an installed authority resolver", () =>
     const denied = yield* Effect.flip(service.get(scopeFor("test-root"), { id: fixture().id }));
     assert.strictEqual(denied._tag, "MissionMcpFailure");
     assert.strictEqual(denied.code, "authority_unavailable");
-  }).pipe(Effect.provide(memory)),
+  }).pipe(Effect.provide(memory.pipe(Layer.provideMerge(Sqlite.layerMemory)))),
 );
 
 it.effect("rejects excess properties without touching storage", () =>
@@ -308,41 +379,42 @@ it.effect("never lets a second caller inherit the first caller's authority", () 
       const deniedExecute = yield* Effect.flip(service.execute(intruder, create()));
       assert.strictEqual(deniedExecute.code, "scope_denied");
     }),
-    Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-      resolve: () =>
-        Effect.succeed({
-          company: "nofun",
-          companyVerified: true,
-          bindingVerified: true,
-          teamId: TeamId.make("nofun"),
-          environmentId: EnvironmentId.make("test-env"),
-          controllerThreadId: ThreadId.make("test-root"),
-        }),
-    }),
+    withSqlAuthority((request, sql) =>
+      Effect.succeed(
+        verifiedFacts(
+          {
+            ...request,
+            scope: scopeFor("test-root") as McpInvocationContext.McpThreadInvocationScope,
+          },
+          sql,
+        ),
+      ),
+    ),
   ),
 );
 
 it.effect("denies unverified company facts before any content or receipt lookup", () => {
   let verified = true;
-  const flippingAuthority = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-    resolve: ({ scope }: MissionMcpService.MissionMcpAuthorityRequest) =>
-      Effect.succeed(
-        verified
-          ? verifiedFacts(scope)
-          : ({
-              ...verifiedFacts(scope),
-              company: "acme",
-              companyVerified: false,
-              bindingVerified: false,
-            } as unknown as MissionMcpService.MissionMcpAuthorityFacts),
-      ),
-  });
+  const flippingAuthority = withSqlAuthority((request, sql) =>
+    Effect.succeed(
+      verified
+        ? verifiedFacts(request, sql)
+        : ({
+            ...verifiedFacts(request, sql),
+            company: "acme",
+            companyVerified: false,
+            bindingVerified: false,
+          } as unknown as MissionMcpService.MissionMcpAuthorityFacts),
+    ),
+  );
   return provideTest(
     Effect.gen(function* () {
       const service = yield* MissionMcpService.MissionMcpService;
       yield* service.execute(scopeFor("test-root"), create());
       verified = false;
-      const deniedGet = yield* Effect.flip(service.get(scopeFor("test-root"), { id: fixture().id }));
+      const deniedGet = yield* Effect.flip(
+        service.get(scopeFor("test-root"), { id: fixture().id }),
+      );
       assert.strictEqual(deniedGet.code, "scope_denied");
       const deniedMissing = yield* Effect.flip(
         service.get(scopeFor("test-root"), { id: "no-such-mission" }),
@@ -357,25 +429,31 @@ it.effect("denies unverified company facts before any content or receipt lookup"
 
 it.effect("sanitizes authority resolver diagnostics at the service boundary", () => {
   const authority = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-    resolve: () => Effect.fail(new MissionMcpService.MissionMcpFailure({
-      code: "scope_denied",
-      message: "SELECT private_diagnostic_fixture " + "x".repeat(4096),
-    })),
+    resolve: () =>
+      Effect.fail(
+        new MissionMcpService.MissionMcpFailure({
+          code: "scope_denied",
+          message: "SELECT private_diagnostic_fixture " + "x".repeat(4096),
+        }),
+      ),
   });
-  return provideTest(Effect.gen(function* () {
-    const service = yield* MissionMcpService.MissionMcpService;
-    for (const operation of [
-      service.get(scopeFor("test-root"), { id: fixture().id }).pipe(Effect.asVoid),
-      service.execute(scopeFor("test-root"), create()).pipe(Effect.asVoid),
-    ]) {
-      const failure = yield* operation.pipe(Effect.flip);
-      assert.strictEqual(failure.code, "scope_denied");
-      assert.notInclude(failure.message, "private_diagnostic_fixture");
-      assert.isBelow(failure.message.length, 256);
-    }
-    const events = yield* EventStore.OrchestrationEventStore;
-    assert.strictEqual((yield* events.readMissionEvents(fixture().id)).length, 0);
-  }), authority);
+  return provideTest(
+    Effect.gen(function* () {
+      const service = yield* MissionMcpService.MissionMcpService;
+      for (const operation of [
+        service.get(scopeFor("test-root"), { id: fixture().id }).pipe(Effect.asVoid),
+        service.execute(scopeFor("test-root"), create()).pipe(Effect.asVoid),
+      ]) {
+        const failure = yield* operation.pipe(Effect.flip);
+        assert.strictEqual(failure.code, "scope_denied");
+        assert.notInclude(failure.message, "private_diagnostic_fixture");
+        assert.isBelow(failure.message.length, 256);
+      }
+      const events = yield* EventStore.OrchestrationEventStore;
+      assert.strictEqual((yield* events.readMissionEvents(fixture().id)).length, 0);
+    }),
+    authority,
+  );
 });
 
 const rotateDeliveryManager = (threadId: string) =>
@@ -420,36 +498,33 @@ it.effect("denies the retired manager on replay after a committed rotation", () 
 );
 
 /** Strict fake: commits only when the service supplies the matching decoded proposal. */
-const strictProposalAuthority = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-  resolve: (request: MissionMcpService.MissionMcpAuthorityRequest) => {
-    if (request.operation !== "commit") return Effect.succeed(verifiedFacts(request.scope));
-    const proposed = request.proposedMission;
-    if (
-      proposed === undefined ||
-      proposed.id !== request.missionId ||
-      proposed.teamId !== "nofun" ||
-      !proposed.bindings.some((binding) => binding.projectId === "test-project")
-    ) {
-      return Effect.fail(
-        new MissionMcpService.MissionMcpFailure({
-          code: "scope_denied",
-          message: "The proposed mission bindings are not authorized.",
-        }),
-      );
-    }
-    return Effect.succeed(verifiedFacts(request.scope));
-  },
+const strictProposalAuthority = withSqlAuthority((request, sql) => {
+  if (request.operation !== "commit") return Effect.succeed(verifiedFacts(request, sql));
+  const proposed = request.proposedMission;
+  if (
+    proposed === undefined ||
+    proposed.id !== request.missionId ||
+    proposed.teamId !== "nofun" ||
+    !proposed.bindings.some((binding) => binding.projectId === "test-project")
+  ) {
+    return Effect.fail(
+      new MissionMcpService.MissionMcpFailure({
+        code: "scope_denied",
+        message: "The proposed mission bindings are not authorized.",
+      }),
+    );
+  }
+  return Effect.succeed(verifiedFacts(request, sql));
 });
 
 it.effect("supplies the strictly decoded proposed mission on execute but not on get", () => {
   const seen: Array<MissionMcpService.MissionMcpAuthorityRequest> = [];
-  const capture = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-    resolve: (request: MissionMcpService.MissionMcpAuthorityRequest) =>
-      Effect.sync(() => {
-        seen.push(request);
-        return verifiedFacts(request.scope);
-      }),
-  });
+  const capture = withSqlAuthority((request, sql) =>
+    Effect.sync(() => {
+      seen.push(request);
+      return verifiedFacts(request, sql);
+    }),
+  );
   return provideTest(
     Effect.gen(function* () {
       const service = yield* MissionMcpService.MissionMcpService;
@@ -522,15 +597,14 @@ it.effect("commits the snapshotted bindings when the caller mutates input mid-fl
   const entered = Deferred.makeUnsafe<void>();
   const resume = Deferred.makeUnsafe<void>();
   const seen: Array<unknown> = [];
-  const gate = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-    resolve: (request: MissionMcpService.MissionMcpAuthorityRequest) =>
-      Effect.gen(function* () {
-        seen.push(request.proposedMission);
-        yield* Deferred.succeed(entered, undefined);
-        yield* Deferred.await(resume);
-        return verifiedFacts(request.scope);
-      }),
-  });
+  const gate = withSqlAuthority((request, sql) =>
+    Effect.gen(function* () {
+      seen.push(request.proposedMission);
+      yield* Deferred.succeed(entered, undefined);
+      yield* Deferred.await(resume);
+      return verifiedFacts(request, sql);
+    }),
+  );
   return provideTest(
     Effect.gen(function* () {
       const service = yield* MissionMcpService.MissionMcpService;
@@ -544,11 +618,16 @@ it.effect("commits the snapshotted bindings when the caller mutates input mid-fl
         baseCommit: "base",
         ancestry: ["base"],
       });
+      (input as unknown as { commandId: string }).commandId = "mutated-command-id";
+      (input as unknown as { type: string }).type = "mission.replace";
+      (scope.thread as unknown as { threadId: string }).threadId = "mutated-caller";
+      (scope.capabilities as Set<McpInvocationContext.McpCapability>).clear();
       yield* Deferred.succeed(resume, undefined);
       const executed = yield* Fiber.join(fiber);
       assert.strictEqual(executed.committed, true);
+      assert.strictEqual(executed.commandId, "create-mission");
       assert.deepStrictEqual(seen[0], fixture());
-      const result = yield* service.get(scope, { id: fixture().id });
+      const result = yield* service.get(scopeFor("test-root"), { id: fixture().id });
       assert.strictEqual(result.mission?.bindings.length, 1);
       assert.strictEqual(result.mission?.bindings[0]?.projectId, "test-project");
     }),

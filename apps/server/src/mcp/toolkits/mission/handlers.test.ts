@@ -16,6 +16,8 @@ import * as EventStore from "../../../persistence/OrchestrationEventStore.ts";
 import * as Receipts from "../../../persistence/OrchestrationCommandReceipts.ts";
 import * as Sqlite from "../../../persistence/Sqlite.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as MissionService from "../../../orchestration-v2/MissionService.ts";
 import * as MissionMcpService from "../../MissionMcpService.ts";
 import * as MissionHandlers from "./handlers.ts";
 import { MissionToolkit } from "./tools.ts";
@@ -95,27 +97,48 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
   return result.isError === true && text?.type === "text" ? decodeJsonText(text.text) : undefined;
 };
 
-const authorityTestLayer = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
-  resolve: ({ scope }: MissionMcpService.MissionMcpAuthorityRequest) =>
-    Effect.succeed({
-      company: "nofun",
-      companyVerified: true,
-      bindingVerified: true,
-      teamId: TeamId.make("nofun"),
-      environmentId: scope.environmentId,
-      controllerThreadId: scope.thread.threadId,
+const authorityTestLayer = Layer.effect(
+  MissionMcpService.MissionMcpAuthorityPort,
+  Effect.map(SqlClient.SqlClient, (sql) =>
+    MissionMcpService.MissionMcpAuthorityPort.of({
+      resolve: (request) => {
+        const facts = {
+          company: "nofun" as const,
+          companyVerified: true as const,
+          bindingVerified: true as const,
+          teamId: TeamId.make("nofun"),
+          environmentId: request.scope.environmentId,
+          controllerThreadId: request.scope.thread.threadId,
+        };
+        return Effect.succeed({
+          ...facts,
+          transactionGuard: MissionService.MissionTransactionGuard.make({
+            sql,
+            requestKey: request.requestKey!,
+            request: {
+              operation: request.operation,
+              missionId: request.missionId,
+              command: request.command,
+            },
+            authority: {
+              teamId: facts.teamId,
+              environmentId: facts.environmentId,
+              controllerThreadId: facts.controllerThreadId,
+            },
+            check: () => Effect.void,
+          }),
+        });
+      },
     }),
-});
+  ),
+);
 
 // Layer.provide feeds each dependent layer its dependencies; Layer.mergeAll
 // alone would build siblings in parallel and satisfy none of them.
 const registration = McpServer.toolkit(MissionToolkit).pipe(
   Layer.provide(MissionHandlers.layer),
   Layer.provide(
-    MissionMcpService.layer.pipe(
-      Layer.provide(EventStore.layer),
-      Layer.provide(Receipts.layer),
-    ),
+    MissionMcpService.layer.pipe(Layer.provide(EventStore.layer), Layer.provide(Receipts.layer)),
   ),
 );
 

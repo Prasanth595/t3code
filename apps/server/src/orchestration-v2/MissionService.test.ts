@@ -8,6 +8,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -214,4 +216,38 @@ it.effect("reopens file-backed state and recovers the same durable command recei
       assert.strictEqual(first.receipt.requestHash, second.receipt.requestHash);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("cancellation during receipt reservation rolls back the single owning transaction", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const events = yield* EventStore.OrchestrationEventStore.pipe(Effect.provide(EventStore.layer));
+    const actual = yield* Receipts.OrchestrationCommandReceiptRepository.pipe(
+      Effect.provide(Receipts.layer),
+    );
+    const entered = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    const receipts = {
+      ...actual,
+      insertIfAbsent: (input: Receipts.OrchestrationCommandReceipt) =>
+        Effect.gen(function* () {
+          const reserved = yield* actual.insertIfAbsent(input);
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(resume);
+          return reserved;
+        }),
+    };
+    const service = yield* MissionService.MissionService.pipe(
+      Effect.provide(Layer.fresh(MissionService.layer)),
+      Effect.provideService(MissionService.MissionAuthority, scope),
+      Effect.provideService(EventStore.OrchestrationEventStore, events),
+      Effect.provideService(Receipts.OrchestrationCommandReceiptRepository, receipts),
+    );
+    const fiber = yield* Effect.forkChild(service.execute(create()));
+    yield* Deferred.await(entered);
+    yield* Fiber.interrupt(fiber);
+    assert.deepStrictEqual(yield* events.readMissionEvents(fixture().id), []);
+    assert.deepStrictEqual(yield* sql`SELECT * FROM projection_missions`, []);
+    assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_command_receipts`, []);
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
