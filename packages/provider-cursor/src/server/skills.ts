@@ -247,7 +247,7 @@ const decodeCursorPluginManifest = Schema.decodeUnknownOption(
  * enabled, so this also lists plugins the user disabled.
  */
 const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkillDirectories")(
-  function* (userHome: string) {
+  function* (userHome: string, budget: CursorSkillScanBudget) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const fileType = (file: string) =>
@@ -255,9 +255,15 @@ const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkil
     const subdirectories = Effect.fn("listCursorPluginSubdirectories")(function* (
       directory: string,
     ) {
-      const entries = (yield* orUndefined(fileSystem.readDirectory(directory))) ?? [];
       const children: string[] = [];
+      if (budget.exhausted) return children;
+      const entries = (yield* orUndefined(fileSystem.readDirectory(directory))) ?? [];
       for (const entry of [...entries].sort()) {
+        if (budget.remainingEntries === 0) {
+          budget.exhausted = true;
+          break;
+        }
+        budget.remainingEntries -= 1;
         const child = path.join(directory, entry);
         if ((yield* fileType(child)) === "Directory") children.push(child);
       }
@@ -266,10 +272,13 @@ const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkil
     const readManifest = Effect.fn("readCursorPluginManifest")(function* (root: string) {
       for (const candidate of CURSOR_PLUGIN_MANIFESTS) {
         const manifestPath = path.join(root, candidate);
-        if ((yield* fileType(manifestPath)) !== "File") continue;
-        const manifest = decodeCursorPluginManifest(
-          yield* orUndefined(fileSystem.readFileString(manifestPath)),
-        );
+        const info = yield* orUndefined(fileSystem.stat(manifestPath));
+        if (info?.type !== "File" || info.size > MAX_SKILL_BYTES) continue;
+        if (info.size > budget.remainingBytes) continue;
+        const contents = yield* orUndefined(fileSystem.readFileString(manifestPath));
+        if (contents === undefined) continue;
+        budget.remainingBytes -= info.size;
+        const manifest = decodeCursorPluginManifest(contents);
         if (Option.isSome(manifest)) return manifest.value;
       }
       return undefined;
@@ -297,6 +306,7 @@ const discoverCursorPluginSkillDirectories = Effect.fn("discoverCursorPluginSkil
 
     const directories: string[] = [];
     for (const root of pluginRoots) {
+      if (budget.exhausted) break;
       const realRoot = yield* orUndefined(fileSystem.realPath(root));
       if (!realRoot) continue;
       const skills = (yield* readManifest(root))?.skills ?? "skills";
@@ -346,6 +356,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     incomplete: false,
   });
   const budget = newBudget();
+  // Plugin limits stop only the plugin scan. A failed probe would hide every skill.
   const pluginBudget = newBudget();
   for (const root of roots) {
     if (budget.exhausted) break;
@@ -354,7 +365,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
       if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
     }
   }
-  for (const directory of yield* discoverCursorPluginSkillDirectories(userHome)) {
+  for (const directory of yield* discoverCursorPluginSkillDirectories(userHome, pluginBudget)) {
     const skill = yield* readSkill({ directory, scope: "user", budget: pluginBudget });
     if (skill && !skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
   }
