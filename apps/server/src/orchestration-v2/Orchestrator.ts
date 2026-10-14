@@ -10436,16 +10436,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const childControls = yield* projectionStore.getThreadRecords(
         childThreadId,
-        [
-          "runs",
-          "messages",
-          "subagents",
-          "providerThreads",
-          "providerTurns",
-          "attempts",
-          "runtimeRequests",
-          "nodes",
-        ],
+        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
         { messageRoles: ["user"] },
       );
       const parentThreadId = childControls.thread.lineage.parentThreadId;
@@ -10492,15 +10483,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         )
       )
         return;
-      // Completed or failed tasks keep async questions: answering resumes the child.
+      // Cancelled or interrupted tasks must not leave async questions that resume the child.
       // Callers hold the parent lock; dismiss takes the child lock, as follow-up intake does.
-      for (const request of childControls.runtimeRequests) {
-        if (
+      const { runtimeRequests } = yield* projectionStore.getThreadRecords(childThreadId, [
+        "runtimeRequests",
+      ]);
+      const pendingQuestions = runtimeRequests.filter(
+        (request) =>
           request.status === "pending" &&
           request.kind === "user_input" &&
-          request.responseCapability.type === "message" &&
-          childControls.nodes.some(
-            (node) => node.id === request.nodeId && node.runId === resultRun.id,
+          request.responseCapability.type === "message",
+      );
+      if (pendingQuestions.length === 0) return;
+      const { nodes } = yield* projectionStore.getThreadRecords(childThreadId, ["nodes"]);
+      const resultRunIds = new Set<RunId>();
+      let run: OrchestrationV2Run | undefined = resultRun;
+      while (run !== undefined && !resultRunIds.has(run.id)) {
+        resultRunIds.add(run.id);
+        const previousRunId: RunId | undefined = run.restartContinuationOfRunId;
+        run =
+          previousRunId === undefined
+            ? undefined
+            : childControls.runs.find((candidate) => candidate.id === previousRunId);
+      }
+      for (const request of pendingQuestions) {
+        if (
+          nodes.some(
+            (node) =>
+              node.id === request.nodeId && node.runId !== null && resultRunIds.has(node.runId),
           )
         ) {
           yield* dispatchWithReceipt({
