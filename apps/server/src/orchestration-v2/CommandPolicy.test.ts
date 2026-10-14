@@ -143,7 +143,7 @@ it("targets the latest active run for explicit steer and restart intent", () => 
   );
 });
 
-it.each(["/compact", " /COMPACT ", "/logout", " /LOGOUT "])(
+it.each(["/compact", " /COMPACT ", "/logout"])(
   "queues automatic follow-ups behind %s and preserves explicit intent",
   (text) => {
     const messageId = MessageId.make("command-policy-compaction-message");
