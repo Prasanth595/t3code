@@ -15,5 +15,10 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
   }
+  # Swift 6.4 also ships with the 27.0 SDK, which lacks the 27.1 hinge APIs.
+  sdk_version = `xcrun --sdk iphoneos --show-sdk-version`.strip
+  if $?.success? && Gem::Version.new(sdk_version) >= Gem::Version.new('27.1')
+    s.pod_target_xcconfig['SWIFT_ACTIVE_COMPILATION_CONDITIONS'] = '$(inherited) T3_HAS_HINGE_API'
+  end
   s.source_files = '**/*.{h,m,mm,swift,hpp,cpp}'
 end
