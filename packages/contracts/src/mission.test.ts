@@ -18,6 +18,7 @@ import {
   MissionRetroSourceRef,
 } from "./missionRetro.ts";
 import { MAX_QUARANTINE_ENTRIES } from "./missionResult.ts";
+import { MissionRetroReportReceipt } from "./missionRetroReportReceipt.ts";
 
 const decodeCommand = Schema.decodeUnknownSync(MissionCommand);
 
@@ -26,6 +27,7 @@ const decodeEvent = Schema.decodeUnknownSync(MissionEvent);
 const encodeMission = Schema.encodeSync(Mission);
 
 const decodeExecution = Schema.decodeUnknownSync(MissionExecution);
+const decodeReceipt = Schema.decodeUnknownSync(MissionRetroReportReceipt);
 const decodeMission = Schema.decodeUnknownSync(Mission);
 
 const decodeRetroCheckpoint = Schema.decodeUnknownSync(MissionRetroCheckpoint);
@@ -557,6 +559,82 @@ it("retains analysis state as execution evidence and bounds its leaf array", () 
       })),
     }),
   ).toThrow();
+});
+
+it("round-trips bounded retro report receipts and the received event", () => {
+  const receipt = decodeReceipt({
+    checkpointId: "retro-one",
+    teamId: "team-1",
+    environmentId: "env-1",
+    missionId: "mission-1",
+    sourceThreadId: "origin",
+    sourceRoot: "thread://origin",
+    snapshotFingerprint: "a".repeat(64),
+    coveredFromInclusive: 1,
+    coveredToExclusive: 2,
+    reporterChildThreadId: "child-1",
+    reporterRunId: "run-1",
+    assignmentToken: "b".repeat(64),
+    fence: 1,
+    attemptNumber: 1,
+    reportRevision: 1,
+    accountId: "account",
+    providerInstanceId: "muse-personal",
+    modelId: "muse-spark-1.3-contributor",
+    profile: "muse-review",
+    company: "No Fun",
+    originalArtifactRef: "retro-original:abc",
+    originalArtifactSha: "c".repeat(64),
+    claimedSourceReportHash: "d".repeat(64),
+    sourceReportHash: "d".repeat(64),
+    normalizedArtifactRef: "retro-normalized:" + "e".repeat(64),
+    normalizedArtifactSha: "f".repeat(64),
+    coverageEvidenceRef: "retro-coverage:fixture",
+    coverageEvidenceSha: "a".repeat(64),
+    normalizedReportHash: "e".repeat(64),
+    verdict: "no_change",
+    disposition: "queued_for_triage",
+    coverageFull: true,
+    coverageReasonRefs: [],
+    incidentCount: 0,
+    shortlistCount: 0,
+    incidentArtifactRef: "retro-normalized:" + "e".repeat(64),
+    receivedAt: OCCURRED_AT,
+    quarantine: [],
+  });
+  expect(receipt.sourceReportHash).not.toBe(receipt.normalizedReportHash);
+  const withReceipts = decodeExecution({
+    ...emptyMissionExecution(),
+    retroReportReceipts: [receipt],
+  });
+  expect(isEmptyMissionExecution(withReceipts)).toBe(false);
+  expect(() =>
+    decodeExecution({
+      ...emptyMissionExecution(),
+      retroReportReceipts: Array.from({ length: 65 }, (_, i) => ({
+        ...receipt,
+        checkpointId: `retro-${i}`,
+        sourceReportHash: String(i).padStart(64, "0"),
+      })),
+    }),
+  ).toThrow();
+  const event = decodeEvent({
+    sequence: 21,
+    eventId: "report-event",
+    aggregateKind: "mission",
+    aggregateId: "mission-1",
+    occurredAt: OCCURRED_AT,
+    commandId: "report-cmd",
+    metadata: {},
+    type: "mission.retro-report-received",
+    payload: {
+      mission: { ...missionFixture(), execution: withReceipts },
+      checkpointId: "retro-one",
+      sourceReportHash: "d".repeat(64),
+      operation: "receive",
+    },
+  });
+  expect(event.type).toBe("mission.retro-report-received");
 });
 
 it("round-trips the full retro analysis update event", () => {

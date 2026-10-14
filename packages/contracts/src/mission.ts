@@ -265,6 +265,18 @@ export const MissionRetroAnalysisUpdatedEvent = Schema.Struct({
 });
 export type MissionRetroAnalysisUpdatedEvent = typeof MissionRetroAnalysisUpdatedEvent.Type;
 
+export const MissionRetroReportReceivedEvent = Schema.Struct({
+  ...MissionEventBaseFields,
+  type: Schema.Literal("mission.retro-report-received"),
+  payload: Schema.Struct({
+    mission: Mission,
+    checkpointId: TrimmedNonEmptyString,
+    sourceReportHash: TrimmedNonEmptyString,
+    operation: Schema.Literal("receive"),
+  }),
+});
+export type MissionRetroReportReceivedEvent = typeof MissionRetroReportReceivedEvent.Type;
+
 export const MissionResultReconciledEvent = Schema.Struct({
   ...MissionEventBaseFields,
   type: Schema.Literal("mission.result-reconciled"),
@@ -292,5 +304,6 @@ export const MissionEvent = Schema.Union([
   MissionResultReconciledEvent,
   MissionRetroCheckpointCapturedEvent,
   MissionRetroAnalysisUpdatedEvent,
+  MissionRetroReportReceivedEvent,
 ]);
 export type MissionEvent = typeof MissionEvent.Type;

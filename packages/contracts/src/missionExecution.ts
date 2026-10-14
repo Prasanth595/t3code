@@ -3,6 +3,10 @@ import * as Schema from "effect/Schema";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { MissionRetroCheckpoints, type MissionRetroCheckpoint } from "./missionRetro.ts";
 import { MissionRetroAnalyses } from "./missionRetroAnalysis.ts";
+import {
+  MissionRetroReportReceipts,
+  type MissionRetroReportReceipt,
+} from "./missionRetroReportReceipt.ts";
 import { MissionResultRecord } from "./missionResult.ts";
 
 /**
@@ -146,6 +150,8 @@ export const MissionExecution = Schema.Struct({
   retroCheckpoints: Schema.optional(MissionRetroCheckpoints),
   /** Only the analysis store may change ownership; generic replacements preserve it. */
   retroAnalyses: Schema.optional(MissionRetroAnalyses),
+  /** Only the retro-report store may append; generic replacements preserve it. */
+  retroReportReceipts: Schema.optional(MissionRetroReportReceipts),
 });
 export type MissionExecution = typeof MissionExecution.Type;
 
@@ -157,16 +163,23 @@ export const emptyMissionExecution = (): MissionExecution => ({
   results: [],
   retroCheckpoints: [],
   retroAnalyses: [],
+  retroReportReceipts: [],
 });
 
-/** True when no admission, claim, consumption, result, checkpoint, or analysis is recorded. */
+/** True when no admission, claim, consumption, result, checkpoint, analysis, or report is recorded. */
 export const isEmptyMissionExecution = (execution: MissionExecution): boolean =>
   execution.admissions.length === 0 &&
   execution.writerClaims.length === 0 &&
   execution.consumedExceptionIds.length === 0 &&
   (execution.results ?? []).length === 0 &&
   (execution.retroCheckpoints ?? []).length === 0 &&
-  (execution.retroAnalyses ?? []).length === 0;
+  (execution.retroAnalyses ?? []).length === 0 &&
+  (execution.retroReportReceipts ?? []).length === 0;
+
+/** Dedicated retro report receipts, treating an omitted array as empty. */
+export const missionRetroReportReceipts = (
+  execution: MissionExecution,
+): ReadonlyArray<MissionRetroReportReceipt> => execution.retroReportReceipts ?? [];
 
 /** Dedicated result records, treating an omitted array as empty. */
 export const missionExecutionResults = (
