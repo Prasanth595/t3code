@@ -7,13 +7,14 @@ import { pathToFileURL } from "node:url";
 import { parseCanvasBackground, parseCanvasSize, writeCanvasBundle } from "./canvas-bundle.ts";
 import { compileArtifact, compilePage } from "./compiler.ts";
 import { compileLinked } from "./linked.ts";
+import { inlineStageAssets, stageAssets } from "./live/assets.ts";
 import { closeProbe } from "./live/probe.ts";
 import { componentsCommit } from "./live/source.ts";
 import { canvasPreset, withPresetCss, withPresetDefaults } from "./presets.ts";
 import { compilerVersion, readStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
 
 const USAGE =
-  "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) (--preset <id> | --theme <id> --size WxH) [--background transparent|match|#rrggbb] [--name <name>] [--linked --runtime-sha <sha>] --out <dir>";
+  "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) (--preset <id> | --theme <id> --size WxH) [--background transparent|match|#rrggbb] [--name <name>] [--asset-dir <dir>] [--linked --runtime-sha <sha>] --out <dir>";
 
 interface Flags {
   preset?: string;
@@ -24,6 +25,7 @@ interface Flags {
   size?: string;
   background?: string;
   name?: string;
+  assetDir?: string;
   out?: string;
   linked?: boolean;
   runtimeSha?: string;
@@ -76,6 +78,9 @@ function parseFlags(argv: readonly string[]): Flags {
       case "--name":
         take("name");
         break;
+      case "--asset-dir":
+        take("assetDir");
+        break;
       case "--out":
         take("out");
         break;
@@ -115,6 +120,8 @@ async function compile(argv: readonly string[]): Promise<void> {
   }
   const bytes = NodeFs.readFileSync(file);
   const text = bytes.toString("utf8");
+  const staged = flags.assetDir ? stageAssets(flags.assetDir, text) : undefined;
+  const sourceText = staged?.text ?? text;
   const theme = flags.theme;
   const title = flags.name?.trim() || (lane === "spec" ? specTitle(text) : undefined);
   const size = parseCanvasSize(flags.size);
@@ -122,7 +129,7 @@ async function compile(argv: readonly string[]): Promise<void> {
   const compiled = flags.linked
     ? await compileLinked({
         lane: lane === "tsx" ? "tsx" : "spec",
-        source: text,
+        source: sourceText,
         theme,
         size,
         runtimeSHA: flags.runtimeSha!,
@@ -131,15 +138,15 @@ async function compile(argv: readonly string[]): Promise<void> {
       })
     : lane === "page"
       ? await compilePage({
-          spec: text,
+          spec: sourceText,
           brand: theme,
           ...(title ? { title } : {}),
           ...(preset ? { scheme: preset.scheme } : {}),
         })
       : await compileArtifact(
           lane === "tsx"
-            ? { tsx: text, theme, ...(title ? { title } : {}) }
-            : { spec: text, theme, ...(title ? { title } : {}) },
+            ? { tsx: sourceText, theme, ...(title ? { title } : {}) }
+            : { spec: sourceText, theme, ...(title ? { title } : {}) },
         );
   const stamp: ArtifactStamp | undefined = flags.linked
     ? {
@@ -151,14 +158,17 @@ async function compile(argv: readonly string[]): Promise<void> {
       }
     : readStamp(compiled.html);
   if (!stamp) throw new Error("Compiled HTML is missing the nofun-artifact stamp.");
+  let html = preset ? withPresetCss(compiled.html, preset) : compiled.html;
+  if (staged) html = inlineStageAssets(html, staged.files);
   const manifest = writeCanvasBundle({
     outDir: flags.out,
-    html: preset ? withPresetCss(compiled.html, preset) : compiled.html,
+    html,
     name: "title" in compiled ? compiled.title : title || "No Fun artifact",
     size,
     background,
     stamp,
     ...(flags.runtimeSha ? { linked: flags.runtimeSha } : {}),
+    ...(staged && staged.files.length > 0 ? { assets: staged.files } : {}),
     sourceFile: { name: NodePath.basename(file), bytes },
   });
   console.log(
@@ -166,6 +176,11 @@ async function compile(argv: readonly string[]): Promise<void> {
   );
   if ("skippedAssets" in compiled && compiled.skippedAssets.length > 0) {
     console.warn(`left out ${compiled.skippedAssets.length} images over the page cap`);
+  }
+  if (staged && staged.skippedInline.length > 0) {
+    console.warn(
+      `left ${staged.skippedInline.length} stage images as files; they did not fit in #nf-assets`,
+    );
   }
   await closeProbe();
 }

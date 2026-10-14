@@ -75,6 +75,9 @@ const CHART_TONES = [
 ] as const;
 const CELL_FORMATS = ["text", "number", "currency", "percent", "compact", "status"] as const;
 
+/** A WebP `data:` thumbnail is 8–32 KB. 4096 characters rejected those. */
+const GALLERY_SRC_MAX = 65_536;
+
 const cellRow: PropType = { kind: "record", values: { kind: "cell" } };
 
 export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
@@ -264,7 +267,7 @@ export const ARTIFACT_CATALOG: Record<string, ComponentSpec> = {
           items: {
             kind: "object",
             fields: {
-              src: str("https URL, data: URI or absolute local image path.", 4096, true),
+              src: str("https URL, data: URI or absolute local image path.", GALLERY_SRC_MAX, true),
               alt: str("Alt text.", 200, true),
               caption: str("Caption tile text.", 80),
               href: str("Link target (https).", 2048),

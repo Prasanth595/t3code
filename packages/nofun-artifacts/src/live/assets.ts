@@ -145,6 +145,169 @@ export function inlineAssets(
 
 export const EMPTY_ASSETS: AssetMap = { map: {}, bytes: 0, skipped: [] };
 
+const STAGE_IMAGE = /\.(?:png|jpe?g|gif|webp|avif|svg|bmp|ico)$/i;
+
+export interface StageAssetFile {
+  /** Posix path in the bundle, always under `assets/`. */
+  readonly bundlePath: string;
+  readonly bytes: Buffer;
+  /** `#nf-assets` key. The runtime strips a leading slash, so this has none. */
+  readonly mapKey: string;
+  /** Set when the data URI still fits in the inline budget. The file is copied either way. */
+  readonly dataUri: string | undefined;
+}
+
+export interface StagedAssets {
+  readonly text: string;
+  readonly files: readonly StageAssetFile[];
+  /** Copied, but left out of `#nf-assets` because the inline budget was full. */
+  readonly skippedInline: readonly string[];
+}
+
+function assertAssetDir(dir: string): string {
+  const resolved = NodePath.resolve(dir);
+  let stat: NodeFs.Stats;
+  try {
+    stat = NodeFs.lstatSync(resolved);
+  } catch {
+    throw new Error(`--asset-dir ${resolved} does not exist.`);
+  }
+  if (stat.isSymbolicLink()) throw new Error(`--asset-dir ${resolved} is a symlink.`);
+  if (!stat.isDirectory()) throw new Error(`--asset-dir ${resolved} is not a directory.`);
+  return resolved;
+}
+
+function containedFile(root: string, file: string): string | undefined {
+  let stat: NodeFs.Stats;
+  try {
+    stat = NodeFs.lstatSync(file);
+  } catch {
+    return undefined;
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) return undefined;
+  const realRoot = NodeFs.realpathSync(root);
+  const realFile = NodeFs.realpathSync(file);
+  const prefix = realRoot.endsWith(NodePath.sep) ? realRoot : realRoot + NodePath.sep;
+  if (!realFile.startsWith(prefix)) return undefined;
+  return realFile;
+}
+
+function toBundlePath(relFromRoot: string): string {
+  const rel = relFromRoot.split(NodePath.sep).join("/");
+  const body = rel.startsWith("assets/") ? rel.slice("assets/".length) : rel;
+  const parts = body.split("/").filter((part) => part.length > 0);
+  if (parts.length === 0 || parts.some((part) => part === "." || part === "..")) {
+    throw new Error(`stage image ${relFromRoot} cannot be placed under assets/.`);
+  }
+  return `assets/${parts.join("/")}`;
+}
+
+function resolveStageFile(root: string, ref: string): string | undefined {
+  let clean = ref.split(/[?#]/)[0] ?? "";
+  try {
+    clean = decodeURI(clean);
+  } catch {
+    // keep the raw reference
+  }
+  if (clean.includes("\0")) return undefined;
+  if (NodePath.isAbsolute(clean)) return containedFile(root, clean);
+  const normalized = NodePath.posix.normalize(clean.replaceAll("\\", "/"));
+  if (normalized.startsWith("../") || normalized === ".." || normalized.startsWith("/")) {
+    return undefined;
+  }
+  const candidates = [normalized];
+  if (normalized.startsWith("assets/")) {
+    const stripped = normalized.slice("assets/".length);
+    if (stripped) candidates.push(stripped);
+  }
+  for (const rel of candidates) {
+    if (rel.startsWith("../") || rel === ".." || NodePath.isAbsolute(rel)) continue;
+    const hit = containedFile(root, NodePath.resolve(root, rel));
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+/**
+ * Copies image references that live in `assetDir` into bundle `assets/`.
+ * `assets/tile.webp` resolves to that path or to `tile.webp` in the directory.
+ * Absolute paths inside the directory are rewritten to the bundle path.
+ * Paths outside the directory, including `..`, are left untouched.
+ */
+export function stageAssets(assetDir: string, text: string): StagedAssets {
+  const root = assertAssetDir(assetDir);
+  const refs = new Set<string>();
+  for (const match of text.matchAll(/["'`]([^"'`\r\n]+)["'`]/g)) {
+    const value = match[1]!;
+    if (!STAGE_IMAGE.test(value) || value.startsWith("data:") || /^https?:/i.test(value)) continue;
+    refs.add(value);
+  }
+  const files = new Map<string, StageAssetFile>();
+  const replacements = new Map<string, string>();
+  let copied = 0;
+  let inlineBytes = 0;
+  const skippedInline: string[] = [];
+  for (const ref of [...refs].sort((a, b) => b.length - a.length)) {
+    const file = resolveStageFile(root, ref);
+    if (!file) continue;
+    const bundlePath = toBundlePath(NodePath.relative(root, file));
+    let staged = files.get(bundlePath);
+    if (!staged) {
+      const bytes = NodeFs.readFileSync(file);
+      if (bytes.length > MAX_ONE_ASSET_BYTES) {
+        throw new Error(
+          `${ref} is ${bytes.length} bytes; a stage image must be at most ${MAX_ONE_ASSET_BYTES}.`,
+        );
+      }
+      copied += bytes.length;
+      if (copied > ASSET_BUDGET_BYTES) {
+        throw new Error(
+          `Stage images are over the ${ASSET_BUDGET_BYTES} byte budget (stopped at ${ref}).`,
+        );
+      }
+      const encoded = dataUri(file);
+      let dataUriValue: string | undefined;
+      if (encoded && inlineBytes + encoded.length <= ASSET_BUDGET_BYTES) {
+        dataUriValue = encoded;
+        inlineBytes += encoded.length;
+      } else {
+        skippedInline.push(bundlePath);
+      }
+      staged = { bundlePath, bytes, mapKey: bundlePath, dataUri: dataUriValue };
+      files.set(bundlePath, staged);
+    }
+    if (ref !== bundlePath) replacements.set(ref, bundlePath);
+  }
+  let rewritten = text;
+  for (const [from, to] of [...replacements.entries()].sort((a, b) => b[0].length - a[0].length)) {
+    for (const quote of [`"`, `'`, "`"]) {
+      rewritten = rewritten.replaceAll(`${quote}${from}${quote}`, `${quote}${to}${quote}`);
+    }
+  }
+  return { text: rewritten, files: [...files.values()], skippedInline };
+}
+
+/** Merges staged data URIs into `#nf-assets` so the page resolves them without a file server. */
+export function inlineStageAssets(html: string, files: readonly StageAssetFile[]): string {
+  const inlined = files.filter((file) => file.dataUri);
+  if (inlined.length === 0) return html;
+  const pattern = /<script type="application\/json" id="nf-assets">([\s\S]*?)<\/script>/;
+  const match = pattern.exec(html);
+  if (!match) return html;
+  let map: Record<string, string> = {};
+  try {
+    const parsed = JSON.parse(match[1]!) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      map = parsed as Record<string, string>;
+    }
+  } catch {
+    map = {};
+  }
+  for (const file of inlined) map[file.mapKey] = file.dataUri!;
+  const json = JSON.stringify(map).replace(/</g, "\\u003c");
+  return html.replace(pattern, `<script type="application/json" id="nf-assets">${json}</script>`);
+}
+
 // The same pattern T3's HtmlRender uses to find local images to inline.
 const IMAGE_EXTENSIONS = "png|jpg|jpeg|gif|webp|avif|svg|bmp|ico";
 const ABSOLUTE_PATH = String.raw`(?:/(?!/)|[a-z]:[\\/])`;
