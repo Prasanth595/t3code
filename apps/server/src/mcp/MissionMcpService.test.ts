@@ -7,7 +7,9 @@ import {
   TeamId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -416,3 +418,140 @@ it.effect("denies the retired manager on replay after a committed rotation", () 
     }),
   ),
 );
+
+/** Strict fake: commits only when the service supplies the matching decoded proposal. */
+const strictProposalAuthority = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
+  resolve: (request: MissionMcpService.MissionMcpAuthorityRequest) => {
+    if (request.operation !== "commit") return Effect.succeed(verifiedFacts(request.scope));
+    const proposed = request.proposedMission;
+    if (
+      proposed === undefined ||
+      proposed.id !== request.missionId ||
+      proposed.teamId !== "nofun" ||
+      !proposed.bindings.some((binding) => binding.projectId === "test-project")
+    ) {
+      return Effect.fail(
+        new MissionMcpService.MissionMcpFailure({
+          code: "scope_denied",
+          message: "The proposed mission bindings are not authorized.",
+        }),
+      );
+    }
+    return Effect.succeed(verifiedFacts(request.scope));
+  },
+});
+
+it.effect("supplies the strictly decoded proposed mission on execute but not on get", () => {
+  const seen: Array<MissionMcpService.MissionMcpAuthorityRequest> = [];
+  const capture = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
+    resolve: (request: MissionMcpService.MissionMcpAuthorityRequest) =>
+      Effect.sync(() => {
+        seen.push(request);
+        return verifiedFacts(request.scope);
+      }),
+  });
+  return provideTest(
+    Effect.gen(function* () {
+      const service = yield* MissionMcpService.MissionMcpService;
+      const scope = scopeFor("test-root");
+      yield* service.execute(scope, create());
+      yield* service.get(scope, { id: fixture().id });
+      assert.strictEqual(seen.length, 2);
+      assert.strictEqual(seen[0]!.operation, "commit");
+      assert.strictEqual(seen[0]!.missionId, fixture().id);
+      assert.deepStrictEqual(seen[0]!.proposedMission, fixture());
+      assert.strictEqual(seen[1]!.operation, "read");
+      assert.strictEqual(seen[1]!.proposedMission, undefined);
+    }),
+    capture,
+  );
+});
+
+it.effect("denies a forbidden proposal before execute, events, or receipts", () =>
+  provideTest(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const before = yield* sql`SELECT COUNT(*) AS count FROM orchestration_events
+        UNION ALL SELECT COUNT(*) AS count FROM orchestration_command_receipts`;
+      const service = yield* MissionMcpService.MissionMcpService;
+      const evil = decodeCommand({
+        type: "mission.create",
+        commandId: "evil-bindings",
+        mission: {
+          ...fixture(),
+          bindings: [
+            {
+              projectId: "evil-project",
+              workspaceRoot: "/tmp/evil",
+              baseCommit: "base",
+              ancestry: ["base"],
+            },
+          ],
+        },
+      });
+      const failure = yield* Effect.flip(service.execute(scopeFor("test-root"), evil));
+      assert.strictEqual(failure.code, "scope_denied");
+      assert.deepStrictEqual(
+        yield* sql`SELECT COUNT(*) AS count FROM orchestration_events
+          UNION ALL SELECT COUNT(*) AS count FROM orchestration_command_receipts`,
+        before,
+      );
+    }),
+    strictProposalAuthority,
+  ),
+);
+
+it.effect("commits a replace with the snapshotted mission through a strict proposal check", () =>
+  provideTest(
+    Effect.gen(function* () {
+      const service = yield* MissionMcpService.MissionMcpService;
+      const scope = scopeFor("test-root");
+      const created = yield* service.execute(scope, create());
+      assert.strictEqual(created.committed, true);
+      const replaced = yield* service.execute(scope, revise("replace-mission"));
+      assert.strictEqual(replaced.committed, true);
+      const result = yield* service.get(scope, { id: fixture().id });
+      assert.strictEqual(result.status, "found");
+      assert.strictEqual(result.mission?.revision, 1);
+    }),
+    strictProposalAuthority,
+  ),
+);
+
+it.effect("commits the snapshotted bindings when the caller mutates input mid-flight", () => {
+  const entered = Deferred.makeUnsafe<void>();
+  const resume = Deferred.makeUnsafe<void>();
+  const seen: Array<unknown> = [];
+  const gate = Layer.succeed(MissionMcpService.MissionMcpAuthorityPort, {
+    resolve: (request: MissionMcpService.MissionMcpAuthorityRequest) =>
+      Effect.gen(function* () {
+        seen.push(request.proposedMission);
+        yield* Deferred.succeed(entered, undefined);
+        yield* Deferred.await(resume);
+        return verifiedFacts(request.scope);
+      }),
+  });
+  return provideTest(
+    Effect.gen(function* () {
+      const service = yield* MissionMcpService.MissionMcpService;
+      const scope = scopeFor("test-root");
+      const input = create();
+      const fiber = yield* Effect.forkChild(service.execute(scope, input));
+      yield* Deferred.await(entered);
+      (input.mission.bindings as unknown as Array<unknown>).push({
+        projectId: "evil-project",
+        workspaceRoot: "/tmp/evil",
+        baseCommit: "base",
+        ancestry: ["base"],
+      });
+      yield* Deferred.succeed(resume, undefined);
+      const executed = yield* Fiber.join(fiber);
+      assert.strictEqual(executed.committed, true);
+      assert.deepStrictEqual(seen[0], fixture());
+      const result = yield* service.get(scope, { id: fixture().id });
+      assert.strictEqual(result.mission?.bindings.length, 1);
+      assert.strictEqual(result.mission?.bindings[0]?.projectId, "test-project");
+    }),
+    gate,
+  );
+});

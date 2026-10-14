@@ -51,6 +51,21 @@ const decodePolicy = Schema.decodeUnknownEffect(TrustedNoFunMissionPolicy, {
 });
 const decodeMission = Schema.decodeUnknownEffect(Schema.fromJsonString(Mission));
 
+/**
+ * Detach a proposed commit body from caller-mutable memory. Returns undefined
+ * for a missing or malformed proposal so commit resolution can fail closed.
+ */
+const decodeProposedSnapshot = Schema.decodeUnknownSync(Mission);
+
+const snapshotProposedMission = (input: unknown): Mission | undefined => {
+  try {
+    if (input === undefined) return undefined;
+    return decodeProposedSnapshot(JSON.parse(stableStringify(input)));
+  } catch {
+    return undefined;
+  }
+};
+
 interface MissionRow {
   readonly team_id: string;
   readonly authority_environment_id: string;
@@ -111,6 +126,17 @@ const make = Effect.gen(function* () {
       capabilities: new Set(request.scope.capabilities),
     };
     const missionId = request.missionId;
+    const deny = new MissionMcpService.MissionMcpFailure({
+      code: "scope_denied",
+      message: "The current credential, project, or mission controller binding is not authorized.",
+    });
+    // Snapshot the proposed commit body before any I/O: the caller's object
+    // stays mutable while policy, projection, and session reads yield.
+    const proposedMission =
+      request.operation === "commit" ? snapshotProposedMission(request.proposedMission) : undefined;
+    if (request.operation === "commit" && proposedMission === undefined) {
+      return yield* deny;
+    }
     if (!scope.capabilities.has("orchestration")) {
       return yield* new MissionMcpService.MissionMcpFailure({
         code: "capability_denied",
@@ -124,10 +150,6 @@ const make = Effect.gen(function* () {
       });
     }
     const authenticatedScope = { ...scope, thread: scope.thread };
-    const deny = new MissionMcpService.MissionMcpFailure({
-      code: "scope_denied",
-      message: "The current credential, project, or mission controller binding is not authorized.",
-    });
     const assertLive = Effect.gen(function* () {
       if (
         scope.environmentId !== (yield* environment.getEnvironmentId) ||
@@ -176,6 +198,30 @@ const make = Effect.gen(function* () {
       `;
       const currentProject = projects.find((project) => project.project_id === thread.projectId);
       if (currentProject === undefined || currentProject.deleted_at !== null) return yield* deny;
+      if (request.operation === "commit") {
+        // Verify the proposed create/replace bindings against trusted policy
+        // and current project rows. Proposed team, environment, and
+        // controller values are never authority evidence: they are compared
+        // here, never blessed, and the canonical manager checks below stay.
+        if (
+          proposedMission === undefined ||
+          proposedMission.id !== missionId ||
+          proposedMission.teamId !== policy.teamId ||
+          proposedMission.authorityEnvironmentId !== policy.environmentId ||
+          !proposedMission.bindings.some((binding) => binding.projectId === thread.projectId) ||
+          !proposedMission.bindings.every(
+            (binding) =>
+              policy.allowedProjectIds.includes(binding.projectId) &&
+              projects.some(
+                (project) =>
+                  project.project_id === binding.projectId &&
+                  project.deleted_at === null &&
+                  project.workspace_root === binding.workspaceRoot,
+              ),
+          )
+        )
+          return yield* deny;
+      }
       const rows = yield* sql<MissionRow>`
         SELECT team_id, authority_environment_id, revision, snapshot_json
         FROM projection_missions WHERE mission_id = ${missionId}

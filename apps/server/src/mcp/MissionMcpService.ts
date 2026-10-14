@@ -57,6 +57,14 @@ export interface MissionMcpAuthorityRequest {
   readonly scope: McpInvocationContext.McpThreadInvocationScope;
   readonly operation: MissionMcpOperation;
   readonly missionId: MissionId;
+  /**
+   * Strictly decoded proposed mission for commit only. Optional so existing
+   * custom resolvers keep compiling; the real resolver fails closed without
+   * it on commit, and reads never carry it. The proposed team, environment,
+   * and controller are never authority evidence: the resolver compares them
+   * against trusted policy and current project rows instead.
+   */
+  readonly proposedMission?: Mission | undefined;
 }
 
 /**
@@ -153,6 +161,20 @@ const invalidRequest = () =>
     message: "The mission request did not match the expected shape.",
   });
 
+/**
+ * Detach the decoded proposed mission from caller-mutable memory before any
+ * yield point: serialize through the service's own encoding and decode it
+ * back, so later in-place edits to the caller's object cannot change the
+ * bindings the authority verified or the command that commits.
+ */
+const encodeMission = Schema.encodeEffect(Mission);
+const decodeMissionSnapshot = Schema.decodeUnknownEffect(Mission);
+
+const snapshotProposedMission = (
+  mission: Mission,
+): Effect.Effect<Mission, MissionMcpFailure> =>
+  encodeMission(mission).pipe(Effect.flatMap(decodeMissionSnapshot), Effect.mapError(invalidRequest));
+
 const unavailable = () =>
   new MissionMcpFailure({
     code: "unavailable",
@@ -234,6 +256,7 @@ const make = Effect.gen(function* () {
     scope: McpInvocationContext.McpThreadInvocationScope,
     operation: MissionMcpOperation,
     missionId: MissionId,
+    proposedMission?: Mission,
   ): Effect.fn.Return<MissionMcpAuthorityFacts, MissionMcpFailure> {
     const port = yield* Effect.serviceOption(MissionMcpAuthorityPort);
     if (Option.isNone(port)) {
@@ -242,7 +265,7 @@ const make = Effect.gen(function* () {
         message: "No mission authority resolver is installed, so the request stays denied.",
       });
     }
-    const facts = yield* port.value.resolve({ scope, operation, missionId }).pipe(
+    const facts = yield* port.value.resolve({ scope, operation, missionId, proposedMission }).pipe(
       Effect.mapError((error) => new MissionMcpFailure({
         code: error.code,
         message: "The mission authority resolver denied the request.",
@@ -345,19 +368,23 @@ const make = Effect.gen(function* () {
   ): Effect.fn.Return<MissionMcpExecuteResult, MissionMcpFailure> {
     const threadScope = yield* readScope(scope);
     const command = yield* decodeCommand(input).pipe(Effect.mapError(invalidRequest));
-    const facts = yield* resolveFacts(threadScope, "commit", command.mission.id);
-    yield* assertCurrentRole(facts, command.mission.id);
+    // Snapshot the decoded proposal before the first I/O below, then resolve
+    // and commit with that same snapshot: the caller's object stays mutable.
+    const proposedMission = yield* snapshotProposedMission(command.mission);
+    const committedCommand = { ...command, mission: proposedMission };
+    const facts = yield* resolveFacts(threadScope, "commit", proposedMission.id, proposedMission);
+    yield* assertCurrentRole(facts, proposedMission.id);
     const inner = yield* innerService(facts);
     // MissionService.execute already unwraps its transaction Result into the
     // error channel; capture it explicitly so plan failures map to one fixed
     // bounded failure instead of leaking through.
-    const outcome = yield* inner.execute(command).pipe(Effect.result);
+    const outcome = yield* inner.execute(committedCommand).pipe(Effect.result);
     if (Result.isFailure(outcome)) {
       return yield* mapServiceFailure(outcome.failure);
     }
     return {
-      missionId: command.mission.id,
-      commandId: command.commandId,
+      missionId: proposedMission.id,
+      commandId: committedCommand.commandId,
       committed: outcome.success.committed,
       resultSequence: outcome.success.receipt.resultSequence,
       status: "accepted" as const,

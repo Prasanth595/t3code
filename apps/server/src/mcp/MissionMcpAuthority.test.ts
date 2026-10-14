@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
   EventId,
+  Mission,
   MissionId,
   OrchestrationV2AppThread,
   ProjectId,
@@ -72,6 +73,9 @@ const mission = () => ({
   tasks: [],
   updatedAt: now,
 });
+
+const decodeProposed = Schema.decodeUnknownSync(Mission);
+const proposed = (snapshot: unknown = mission()) => decodeProposed(snapshot);
 
 const memory = Layer.mergeAll(ProjectionStore.layer, ProjectStore.layer).pipe(
   Layer.provideMerge(Sqlite.layerMemory),
@@ -199,8 +203,11 @@ const setup = (
             read: options.readPolicy ?? Effect.sync(policy),
           }),
         );
-    const resolve = (caller = scope, operation: MissionMcpService.MissionMcpOperation = "read") =>
-      authority.resolve({ scope: caller, operation, missionId });
+    const resolve = (
+      caller = scope,
+      operation: MissionMcpService.MissionMcpOperation = "read",
+      proposedMission?: MissionMcpService.MissionMcpAuthorityRequest["proposedMission"],
+    ) => authority.resolve({ scope: caller, operation, missionId, proposedMission });
     return {
       registry,
       scope,
@@ -240,8 +247,11 @@ it.effect(
     Effect.gen(function* () {
       const h = yield* setup();
       const before = yield* counts;
-      for (const operation of ["read", "commit"] as const) {
-        assert.deepStrictEqual(yield* h.resolve(h.scope, operation), {
+      for (const facts of [
+        yield* h.resolve(h.scope, "read"),
+        yield* h.resolve(h.scope, "commit", proposed()),
+      ]) {
+        assert.deepStrictEqual(facts, {
           company: "nofun",
           companyVerified: true,
           bindingVerified: true,
@@ -264,7 +274,10 @@ it.effect(
       yield* saveMission();
       const before = yield* counts;
       assert.strictEqual((yield* h.resolve()).controllerThreadId, threadId);
-      assert.strictEqual((yield* h.resolve(h.scope, "commit")).teamId, "explicit-nofun-team");
+      assert.strictEqual(
+        (yield* h.resolve(h.scope, "commit", proposed())).teamId,
+        "explicit-nofun-team",
+      );
       assert.deepStrictEqual(yield* counts, before);
     }).pipe(Effect.provide(memory)),
 );
@@ -511,5 +524,165 @@ it.effect("rechecks policy disablement immediately before returning verified fac
     enabled = false;
     yield* Deferred.succeed(resume, undefined);
     assert.strictEqual((yield* Fiber.join(fiber)).code, "authority_unavailable");
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("authorizes a commit carrying a valid proposed bootstrap or replace mission", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const before = yield* counts;
+    const bootstrap = yield* h.resolve(h.scope, "commit", proposed());
+    assert.strictEqual(bootstrap.controllerThreadId, threadId);
+    assert.strictEqual(bootstrap.teamId, "explicit-nofun-team");
+    yield* saveMission();
+    const replace = yield* h.resolve(h.scope, "commit", proposed());
+    assert.strictEqual(replace.controllerThreadId, threadId);
+    assert.deepStrictEqual(yield* counts, before);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("rejects commit proposals with a forbidden project or workspace root", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const before = yield* counts;
+    const forbiddenProject = proposed({
+      ...mission(),
+      bindings: [
+        {
+          projectId: ProjectId.make("unlisted-project"),
+          workspaceRoot: "/tmp/authority-fixture",
+          baseCommit: "base",
+          ancestry: ["base"],
+        },
+      ],
+    });
+    yield* denied(h.resolve(h.scope, "commit", forbiddenProject));
+    const wrongRoot = proposed({
+      ...mission(),
+      bindings: [{ ...mission().bindings[0]!, workspaceRoot: "/tmp/other-workspace" }],
+    });
+    yield* denied(h.resolve(h.scope, "commit", wrongRoot));
+    assert.deepStrictEqual(yield* counts, before);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("rejects commit proposals touching a deleted project", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE projection_projects SET deleted_at = ${now} WHERE project_id = ${projectId}`;
+    yield* denied(h.resolve(h.scope, "commit", proposed()));
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("rejects commit proposals that omit the caller's current project", () =>
+  Effect.gen(function* () {
+    const other = ProjectId.make("authority-other-project");
+    const h = yield* setup({
+      readPolicy: Effect.sync(() => ({ ...policy(), allowedProjectIds: [projectId, other] })),
+    });
+    const projects = yield* ProjectStore.ProjectStoreV2;
+    yield* projects.apply({
+      sequence: 2,
+      eventId: EventId.make("authority-other-project-created"),
+      aggregateKind: "project",
+      aggregateId: other,
+      occurredAt: now,
+      commandId: null,
+      causationEventId: null,
+      correlationId: null,
+      metadata: {},
+      type: "project.created",
+      payload: {
+        projectId: other,
+        title: "Authority other fixture",
+        workspaceRoot: "/tmp/authority-other",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const withoutCaller = proposed({
+      ...mission(),
+      bindings: [
+        {
+          projectId: other,
+          workspaceRoot: "/tmp/authority-other",
+          baseCommit: "base",
+          ancestry: ["base"],
+        },
+      ],
+    });
+    yield* denied(h.resolve(h.scope, "commit", withoutCaller));
+    const withCaller = proposed({
+      ...mission(),
+      bindings: [
+        ...mission().bindings,
+        {
+          projectId: other,
+          workspaceRoot: "/tmp/authority-other",
+          baseCommit: "base",
+          ancestry: ["base"],
+        },
+      ],
+    });
+    assert.strictEqual(
+      (yield* h.resolve(h.scope, "commit", withCaller)).controllerThreadId,
+      threadId,
+    );
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("rejects commit proposals with id, team, or environment mismatch", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    const variants = [
+      { ...mission(), id: MissionId.make("other-mission") },
+      { ...mission(), teamId: "foreign-team" },
+      { ...mission(), authorityEnvironmentId: EnvironmentId.make("foreign-env") },
+    ];
+    for (const snapshot of variants) yield* denied(h.resolve(h.scope, "commit", proposed(snapshot)));
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("rejects a commit without a proposed body while reads stay unchanged", () =>
+  Effect.gen(function* () {
+    const h = yield* setup();
+    yield* denied(h.resolve(h.scope, "commit"));
+    assert.strictEqual((yield* h.resolve(h.scope, "read")).controllerThreadId, threadId);
+  }).pipe(Effect.provide(memory)),
+);
+
+it.effect("uses the snapshotted proposal when the caller mutates it during I/O", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const resume = yield* Deferred.make<void>();
+    let reads = 0;
+    const h = yield* setup({
+      projections: (actual) => ({
+        ...actual,
+        getThread: (id) =>
+          Effect.gen(function* () {
+            const result = yield* actual.getThread(id);
+            if (++reads === 1) {
+              yield* Deferred.succeed(entered, undefined);
+              yield* Deferred.await(resume);
+            }
+            return result;
+          }),
+      }),
+    });
+    const proposal = proposed();
+    const fiber = yield* Effect.forkChild(h.resolve(h.scope, "commit", proposal));
+    yield* Deferred.await(entered);
+    (proposal.bindings as unknown as Array<unknown>).push({
+      projectId: ProjectId.make("unlisted-project"),
+      workspaceRoot: "/tmp/evil",
+      baseCommit: "base",
+      ancestry: ["base"],
+    });
+    yield* Deferred.succeed(resume, undefined);
+    assert.strictEqual((yield* Fiber.join(fiber)).controllerThreadId, threadId);
   }).pipe(Effect.provide(memory)),
 );
