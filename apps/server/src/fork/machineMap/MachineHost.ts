@@ -10,10 +10,12 @@ import {
   type MachineClientSession,
   type MachineCommand,
   type MachineCommandKind,
+  type MachineScheduledTask,
   type MachineStatus,
   type OrchestrationV2ThreadShell,
   ProjectId,
   ScheduledTaskId,
+  type ScheduledTask,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Clock from "effect/Clock";
@@ -63,11 +65,48 @@ const SERVER_COMMAND_KINDS: ReadonlyArray<MachineCommandKind> = [
   "stopAllAgents",
   "pauseScheduledTasks",
   "resumeScheduledTasks",
+  "setScheduledTaskEnabled",
+  "runScheduledTask",
   "startThread",
   "revokeClient",
   "collectDiagnostics",
   "testArrow",
 ];
+
+const WEEKDAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/** MM-1601: the schedule of a task in words, for the portal. */
+function scheduleText(schedule: ScheduledTask["schedule"]): string {
+  switch (schedule.type) {
+    case "interval": {
+      const minutes = Math.round(schedule.everyMs / 60_000);
+      if (minutes % 1440 === 0) return `Every ${minutes / 1440} d`;
+      if (minutes % 60 === 0) return `Every ${minutes / 60} h`;
+      return `Every ${minutes} min`;
+    }
+    case "fixed_time": {
+      const days = schedule.weekdays;
+      const when =
+        !days || days.length === 0 || days.length === 7
+          ? "Every day"
+          : days.map((day) => WEEKDAY[day] ?? String(day)).join(", ");
+      return `${when} at ${schedule.timeOfDay}`;
+    }
+    case "webhook":
+      return "On webhook";
+  }
+}
+
+const portalTask = (task: ScheduledTask): MachineScheduledTask => ({
+  id: task.id,
+  title: task.title,
+  enabled: task.enabled,
+  schedule: scheduleText(task.schedule),
+  nextRunAt: task.nextRunAt,
+  lastRunAt: task.lastRunAt,
+  lastRunStatus: task.lastRunStatus,
+  lastRunError: task.lastRunError,
+});
 
 /** Host load changes every second; the status reads it at most once a minute. */
 const RESOURCE_SAMPLE_MAX_AGE = Duration.minutes(1);
@@ -279,6 +318,10 @@ const make = Effect.gen(function* () {
         memoryPercent: resources.memory,
         commands: supportedCommands(input),
         clients,
+        tasks: Option.match(tasks, {
+          onNone: () => [],
+          onSome: (result) => result.tasks.map(portalTask),
+        }),
       } satisfies MachineStatus;
     });
 
@@ -432,6 +475,14 @@ const make = Effect.gen(function* () {
           return yield* pauseScheduledTasks;
         case "resumeScheduledTasks":
           return yield* resumeScheduledTasks;
+        case "setScheduledTaskEnabled":
+          yield* scheduledTasks.setEnabled({
+            id: ScheduledTaskId.make(input.taskId),
+            enabled: input.enabled,
+          });
+          return succeed({ taskId: input.taskId, enabled: input.enabled });
+        case "runScheduledTask":
+          return succeed(yield* scheduledTasks.runNow({ id: ScheduledTaskId.make(input.taskId) }));
         case "startThread":
           return yield* startThread(command, input);
         case "revokeClient":

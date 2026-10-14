@@ -333,14 +333,6 @@ export function App() {
   );
   const counts: Partial<Record<View, number>> = { queue: queued, inbox: proposals };
   const hasPanel = route.selection._tag !== "none";
-  const lockdown = () =>
-    setDialog({
-      _tag: "confirm",
-      title: "Lock down every machine?",
-      body: "Every arrow and every map role becomes none. Your own access through Cloudflare Access stays.",
-      confirmLabel: "Lock down",
-      action: () => call(() => callApi<WriteResult>("POST", "/api/lockdown"), "Locked down."),
-    });
 
   const view = (() => {
     switch (route.view) {
@@ -446,9 +438,6 @@ export function App() {
             </button>
           </span>
           <span className="spacer" />
-          <button type="button" className="btn danger" onClick={lockdown}>
-            Lockdown
-          </button>
           <button type="button" className="btn" onClick={() => setPalette(true)}>
             Search <kbd>{SHORTCUT}</kbd>
           </button>

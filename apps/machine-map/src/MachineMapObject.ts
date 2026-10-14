@@ -102,7 +102,6 @@ import {
 } from "./rules/map.ts";
 import {
   applyPresetChanges,
-  LOCKDOWN_SUMMARY,
   cutArrows,
   lockdownChanges,
   PAUSE_SUMMARY,
@@ -1005,15 +1004,9 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   #presetChanges(
-    action: "save" | "apply" | "lockdown",
-    name: string | undefined,
+    action: "save" | "apply",
+    name: string,
   ): { summary: string; changes: ReadonlyArray<MapChange> } {
-    if (action === "lockdown") {
-      const changes = lockdownChanges(this.#map);
-      if (changes.length === 0) throw new PortalError(409, "The map is already locked down.");
-      return { summary: LOCKDOWN_SUMMARY, changes };
-    }
-    if (!name) throw new PortalError(400, `The preset action ${action} needs a name.`);
     if (action === "save") {
       return {
         summary: `Saved preset ${name}`,
@@ -1599,17 +1592,6 @@ export class MachineMapObject extends DurableObject<Env> {
   applyPreset(owner: OwnerContext, name: string) {
     return this.#run(owner, (): WriteResult => {
       const preset = this.#presetChanges("apply", name);
-      return {
-        _tag: "applied",
-        revision: this.#commit(ownerActor(owner), preset.summary, preset.changes).revision,
-      };
-    });
-  }
-
-  /** MM-706. */
-  lockdown(owner: OwnerContext) {
-    return this.#run(owner, (): WriteResult => {
-      const preset = this.#presetChanges("lockdown", undefined);
       return {
         _tag: "applied",
         revision: this.#commit(ownerActor(owner), preset.summary, preset.changes).revision,

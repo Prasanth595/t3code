@@ -25,6 +25,7 @@ import {
 } from "./map.ts";
 
 /** Summaries that the portal writes itself. The history reads them to tell what a revision did. */
+/** MM-706 (removed): old revisions keep this summary, so the history still names them. */
 export const LOCKDOWN_SUMMARY = "Lockdown";
 export const PAUSE_SUMMARY = "Emergency pause";
 export const RESUME_SUMMARY = "Resume after emergency pause";

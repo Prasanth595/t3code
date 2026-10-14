@@ -39,6 +39,8 @@ export const COMMAND_LABEL: Record<MachineCommandInput["_tag"], string> = {
   stopAllAgents: "Stop all agents",
   pauseScheduledTasks: "Pause scheduled tasks",
   resumeScheduledTasks: "Resume scheduled tasks",
+  setScheduledTaskEnabled: "Pause or resume a task",
+  runScheduledTask: "Run a task now",
   reloadWindows: "Reload windows",
   startThread: "Start thread",
   revokeClient: "Revoke client",
