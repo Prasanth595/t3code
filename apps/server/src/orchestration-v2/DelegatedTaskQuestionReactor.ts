@@ -41,8 +41,8 @@ const make = Effect.gen(function* () {
       // Keyed by the request, so a request updated while still pending wakes the parent once.
       const key = `${parentThreadId}:${event.payload.id}`;
       const messageId = MessageId.make(`message:delegated-task-question:${key}`);
-      const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents", "runs"]);
       if (event.payload.status !== "pending" || request?.status !== "pending") {
+        const parent = yield* projections.getThreadRecords(parentThreadId, ["runs"]);
         const queued = parent.runs.find(
           (run) => run.status === "queued" && run.userMessageId === messageId,
         );
@@ -56,21 +56,11 @@ const make = Effect.gen(function* () {
         }
         return;
       }
-      const controls = yield* projections.getThreadRecords(child.id, [
-        "runs",
-        "nodes",
-        "providerTurns",
-      ]);
-      const turnNodeId = controls.providerTurns.find(
-        (turn) => turn.id === request.providerTurnId,
-      )?.nodeId;
-      const runId =
-        event.runId ??
-        controls.nodes.find((node) => node.id === request.nodeId)?.runId ??
-        controls.nodes.find((node) => node.id === turnNodeId)?.runId;
+      const parent = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
+      const { runs } = yield* projections.getThreadRecords(child.id, ["runs"]);
       const run =
-        controls.runs.find((run) => run.id === runId) ??
-        controls.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        runs.find((run) => run.id === event.runId) ??
+        runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
       const taskId =
         run?.delegatedTaskId ??
         (child.forkedFrom?.type === "node" ? child.forkedFrom.nodeId : undefined);
