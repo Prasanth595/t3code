@@ -50,6 +50,7 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | Cancel a queued command | `machines_queue_cancel` with the command id. |
 | Join a new machine | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine. |
 | Install the fork on a new machine | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork". |
+| Move a server to the upstream service | Follow [fork-migration.md](fork-migration.md). Only the owner runs it. |
 
 ## Updates and deploys
 

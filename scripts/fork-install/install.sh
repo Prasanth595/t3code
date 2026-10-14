@@ -5,9 +5,9 @@
 #   curl -fsSL .../install.sh | bash -s -- --join <code>
 #
 # Linux with a display: the script installs the newest nightly AppImage from the fork releases.
-# Linux without a display: the script installs the newest server archive from the fork releases,
-#   the command `t3` in ~/.local/bin and a systemd user service that runs the server on loopback.
-#   Run it again to update.
+# Linux without a display: the script runs scripts/install.sh (the upstream installer, pointed at
+#   the fork releases) and the upstream background service `t3 service install`, on loopback.
+#   The server then updates itself (docs/fork.md "Server updates").
 # macOS: the script installs the newest nightly app from the fork releases.
 # --from-source builds the server from a fork checkout instead. On macOS it installs no service.
 set -euo pipefail
@@ -15,9 +15,11 @@ set -euo pipefail
 readonly REPO=Yarden-zamir/t3code
 readonly REPO_URL="https://github.com/$REPO.git"
 readonly RELEASES_API="https://api.github.com/repos/$REPO/releases?per_page=20"
+# The unit of earlier fork installers. --from-source still uses it.
 readonly SERVICE=t3code-fork.service
+# The unit of upstream `t3 service install`.
+readonly UPSTREAM_SERVICE=t3code.service
 readonly DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
-readonly SERVER_DIR="$DATA_DIR/t3code-fork-server"
 readonly LINUX_APP="$HOME/Applications/T3-Code.AppImage"
 # Minimal server images can lack these packages.
 # libatomic1: the server binary needs it, and minimal arm64 images lack it.
@@ -171,56 +173,59 @@ EOF
   nohup "$LINUX_APP" >/dev/null 2>&1 &
 }
 
-# Installs the newest server archive into $SERVER_DIR/<version> and points $SERVER_DIR/current at
-# it. The archive holds the `t3` single-executable, so the machine needs no Node.
+# Installs the newest fork release with scripts/install.sh, the upstream installer: the runtime in
+# <T3 home>/runtime/versions/<version> and the link ~/.local/bin/t3. The upstream background service
+# (`t3 service install`) runs it and updates it (docs/fork.md "Server updates"). The machine needs
+# no Node.
 install_linux_server() {
   need curl "Install it with your package manager, for example: $APT_HINT"
   need tar "Install it with your package manager, for example: $APT_HINT"
   need sha256sum "Install coreutils with your package manager."
-  local arch url archive version
-  arch="$(linux_arch)"
-  url="$(newest_asset_url "-linux-$arch.tar.gz")"
-  [[ -n "$url" ]] || die "no Linux server archive found. Open https://github.com/$REPO/releases"
-  archive="$(basename "$url")"
-  version="${archive#t3-}"
-  version="${version%-linux-"$arch".tar.gz}"
-  if [[ "$(cat "$SERVER_DIR/$version/.install-complete" 2>/dev/null)" == "$version" ]]; then
-    log "the server $version is already downloaded"
-  else
-    mkdir -p "$SERVER_DIR"
-    local staging
-    staging="$(mktemp -d "$SERVER_DIR/.staging-XXXXXX")"
-    # shellcheck disable=SC2064 # Expand $staging now: it is local.
-    trap "rm -rf '$staging'" EXIT
-    log "downloading $url"
-    curl -fL --progress-bar -o "$staging/$archive" "$url"
-    curl -fsSL -o "$staging/$archive.sha256" "$url.sha256"
-    (cd "$staging" && sha256sum --check --quiet "$archive.sha256") ||
-      die "the download of $archive is damaged. Run the installer again."
-    tar -xzf "$staging/$archive" -C "$staging" --strip-components=1
-    rm -f "$staging/$archive" "$staging/$archive.sha256"
-    if ! "$staging/t3" --version >/dev/null; then
-      local missing
-      missing="$(ldd "$staging/t3" 2>/dev/null | awk '/not found/ {print $1}' | paste -sd ' ' -)"
-      [[ -z "$missing" ]] || die "t3 needs these system libraries: $missing. For example: $APT_HINT"
-      die "the downloaded t3 does not run on this machine."
-    fi
-    # The marker shows a complete extraction, like the pinned runtime of `t3 service install`.
-    printf '%s\n' "$version" >"$staging/.install-complete"
-    rm -rf "${SERVER_DIR:?}/$version"
-    mv "$staging" "$SERVER_DIR/$version"
-    trap - EXIT
+  curl -fsSL "https://raw.githubusercontent.com/$REPO/main/scripts/install.sh" | sh ||
+    die "the upstream installer failed. For missing system libraries, try: $APT_HINT"
+  local t3="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}/t3"
+  if ! "$t3" --version >/dev/null; then
+    local missing
+    missing="$(ldd "$(readlink -f "$t3")" 2>/dev/null | awk '/not found/ {print $1}' | paste -sd ' ' -)"
+    [[ -z "$missing" ]] || die "t3 needs these system libraries: $missing. For example: $APT_HINT"
+    die "the installed t3 does not run on this machine."
   fi
-  # Keep the version that ran before, because a server without the service can still run from it.
-  local previous old
-  previous="$(readlink "$SERVER_DIR/current" 2>/dev/null || true)"
-  ln -sfn "$version" "$SERVER_DIR/current"
-  for old in "$SERVER_DIR"/*/; do
-    old="$(basename "$old")"
-    [[ "$old" == current || "$old" == "$version" || "$old" == "$previous" ]] || rm -rf "${SERVER_DIR:?}/$old"
-  done
-  server=("$SERVER_DIR/current/t3")
-  start_server
+  server=("$t3")
+  local running=false
+  if [[ "$service" == true ]] && install_upstream_service; then
+    running=true
+  fi
+  join_map "$running"
+}
+
+# The upstream unit file belongs to `t3 service install` and `t3 update`, which rewrite it. The fork
+# settings go into a drop-in file, which they keep.
+install_upstream_service() {
+  if ! systemctl --user show-environment >/dev/null 2>&1; then
+    log "no systemd user session. Log in as this user over SSH, not with sudo or su, and run the installer again."
+    return 1
+  fi
+  local unit_dir="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+  mkdir -p "$unit_dir/$UPSTREAM_SERVICE.d"
+  # The server starts provider CLIs (claude, codex), so it gets the PATH of this shell.
+  # Run the installer again after a PATH change.
+  cat >"$unit_dir/$UPSTREAM_SERVICE.d/fork.conf" <<EOF
+# Written by the T3 Code fork installer. Loopback only: publish it with a tunnel (docs/fork.md).
+[Service]
+Environment=PATH=$PATH
+Environment=T3CODE_HOST=127.0.0.1
+Environment=T3CODE_PORT=$port
+EOF
+  # An install from an earlier fork installer runs the same data with its own unit.
+  if systemctl --user is-enabled --quiet "$SERVICE" 2>/dev/null; then
+    log "stopping the earlier fork service $SERVICE; its files stay for a way back (docs/fork.md)"
+    systemctl --user disable --now --quiet "$SERVICE"
+  fi
+  systemctl --user daemon-reload
+  # A restart stops running agent turns of this server.
+  "${server[0]}" service install || return 1
+  systemctl --user restart "$UPSTREAM_SERVICE"
+  log "the server runs as the systemd user service $UPSTREAM_SERVICE on http://127.0.0.1:$port"
 }
 
 # From source ------------------------------------------------------------------------------------
@@ -354,7 +359,7 @@ wait_for_server() {
     fi
     sleep 2
   done
-  die "the server did not answer on port $port. Read its log: journalctl --user -u $SERVICE -n 50"
+  die "the server did not answer on port $port. Check it with: ${server[0]} service status"
 }
 
 install_from_source() {
@@ -374,11 +379,16 @@ start_server() {
   if [[ "$service" == true ]] && install_service; then
     running=true
   fi
+  join_map "$running"
+}
+
+# $1: true when the server runs.
+join_map() {
   if [[ -z "$join_code" ]]; then
     log "next: t3 machine-map join <code>   (the code comes from Add machine in the portal)"
-  elif [[ "$running" == true ]]; then
+  elif [[ "$1" == true ]]; then
     wait_for_server
-    "$HOME/.local/bin/t3" machine-map join "$join_code"
+    "${server[0]}" machine-map join "$join_code"
   else
     log "next: start the server, then run: t3 machine-map join $join_code"
   fi
