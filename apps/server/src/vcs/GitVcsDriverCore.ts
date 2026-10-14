@@ -1927,65 +1927,73 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.catchTags({ GitCommandError: () => Effect.succeed(null) }),
     );
     const statusCacheKey = repositoryPaths?.gitCommonDir;
+    // Clean checkouts and untracked-only changes have no tracked line totals.
+    // Avoid a second index/worktree scan (and process launch) on every poll.
+    // Unknown porcelain records still take the conservative diff path.
+    const needsNumstat = statusResult.stdout
+      .split(/\r?\n/g)
+      .some((line) => line.length > 0 && !line.startsWith("#") && !line.startsWith("? "));
     const [numstatStdout, defaultBranch, hasPrimaryRemote] = yield* Effect.all(
       [
         // Plumbing, because porcelain `git diff` rewrites the index even with
         // GIT_OPTIONAL_LOCKS=0. -M keeps porcelain's rename detection.
-        executeGitWithStableDiagnostics(
-          "GitVcsDriver.statusDetails.numstat",
-          cwd,
-          ["diff-index", "-M", "--numstat", "HEAD", "--"],
-          { allowNonZeroExit: true },
-        ).pipe(
-          Effect.flatMap((result) => {
-            if (result.exitCode === 0) return Effect.succeed(result.stdout);
-            if (isUnbornHeadStderr(result.stderr)) {
-              return Effect.map(
-                Effect.all([
-                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
-                    "diff-files",
-                    "--numstat",
-                  ]),
-                  runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
-                    "diff",
-                    "--cached",
-                    "--numstat",
-                  ]),
-                ]),
-                ([unstagedStdout, stagedStdout]) => {
-                  const staged = parseNumstatEntries(stagedStdout);
-                  const unstaged = parseNumstatEntries(unstagedStdout);
-                  const map = new Map<string, { insertions: number; deletions: number }>();
-                  for (const entry of [...staged, ...unstaged]) {
-                    const existing = map.get(entry.path) ?? {
-                      insertions: 0,
-                      deletions: 0,
-                    };
-                    existing.insertions += entry.insertions;
-                    existing.deletions += entry.deletions;
-                    map.set(entry.path, existing);
-                  }
-                  return Array.from(map.entries())
-                    .map(([p, s]) => `${s.insertions}\t${s.deletions}\t${p}`)
-                    .join("\n");
-                },
-              );
-            }
-            return Effect.fail(
-              new GitCommandError({
-                ...gitCommandContext({
-                  operation: "GitVcsDriver.statusDetails.numstat",
-                  cwd,
-                  args: ["diff-index", "-M", "--numstat", "HEAD", "--"],
-                }),
-                detail: "git diff-index HEAD --numstat failed.",
-                exitCode: result.exitCode,
-                stdoutLength: result.stdout.length,
-                stderrLength: result.stderr.length,
+        needsNumstat
+          ? executeGitWithStableDiagnostics(
+              "GitVcsDriver.statusDetails.numstat",
+              cwd,
+              ["diff-index", "-M", "--numstat", "HEAD", "--"],
+              { allowNonZeroExit: true },
+            ).pipe(
+              Effect.flatMap((result) => {
+                if (result.exitCode === 0) return Effect.succeed(result.stdout);
+                if (isUnbornHeadStderr(result.stderr)) {
+                  return Effect.map(
+                    Effect.all([
+                      runGitStdout("GitVcsDriver.statusDetails.numstat.unborn", cwd, [
+                        "diff-files",
+                        "--numstat",
+                      ]),
+                      runGitStdout("GitVcsDriver.statusDetails.numstat.unborn.staged", cwd, [
+                        "diff",
+                        "--cached",
+                        "--numstat",
+                      ]),
+                    ]),
+                    ([unstagedStdout, stagedStdout]) => {
+                      const staged = parseNumstatEntries(stagedStdout);
+                      const unstaged = parseNumstatEntries(unstagedStdout);
+                      const map = new Map<string, { insertions: number; deletions: number }>();
+                      for (const entry of [...staged, ...unstaged]) {
+                        const existing = map.get(entry.path) ?? {
+                          insertions: 0,
+                          deletions: 0,
+                        };
+                        existing.insertions += entry.insertions;
+                        existing.deletions += entry.deletions;
+                        map.set(entry.path, existing);
+                      }
+                      return Array.from(map.entries())
+                        .map(([p, s]) => `${s.insertions}\t${s.deletions}\t${p}`)
+                        .join("\n");
+                    },
+                  );
+                }
+                return Effect.fail(
+                  new GitCommandError({
+                    ...gitCommandContext({
+                      operation: "GitVcsDriver.statusDetails.numstat",
+                      cwd,
+                      args: ["diff-index", "-M", "--numstat", "HEAD", "--"],
+                    }),
+                    detail: "git diff-index HEAD --numstat failed.",
+                    exitCode: result.exitCode,
+                    stdoutLength: result.stdout.length,
+                    stderrLength: result.stderr.length,
+                  }),
+                );
               }),
-            );
-          }),
-        ),
+            )
+          : Effect.succeed(""),
         statusCacheKey
           ? Cache.get(defaultBranchCache, statusCacheKey).pipe(Effect.orElseSucceed(() => null))
           : resolveDefaultBranchName(cwd, "origin").pipe(Effect.orElseSucceed(() => null)),

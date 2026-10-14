@@ -339,6 +339,71 @@ it.effect("uses stable diagnostics for every parsed non-repository command", () 
   }).pipe(Effect.provide(layer));
 });
 
+it.effect(
+  "skips tracked diffs for clean and untracked-only status, then reports tracked edits",
+  () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const commands: ReadonlyArray<string>[] = [];
+        const countingSpawner = ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) commands.push(command.args);
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, countingSpawner),
+        );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const runGit = (args: ReadonlyArray<string>) =>
+          driver.execute({ operation: "GitVcsDriver.test.statusDiffs", cwd, args });
+        yield* runGit(["init", "--initial-branch=main"]);
+        yield* runGit(["config", "user.email", "test@test.com"]);
+        yield* runGit(["config", "user.name", "Test"]);
+        yield* writeTextFile(cwd, "tracked.txt", "one\n");
+        yield* runGit(["add", "."]);
+        yield* runGit(["commit", "-m", "initial"]);
+        commands.length = 0;
+
+        const clean = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
+        assert.isFalse(clean.hasWorkingTreeChanges);
+        assert.deepStrictEqual(clean.workingTree.files, []);
+        yield* writeTextFile(cwd, "untracked.txt", "untracked\n");
+        const untracked = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
+        assert.deepStrictEqual(untracked.workingTree.files, [
+          { path: "untracked.txt", insertions: 0, deletions: 0 },
+        ]);
+        assert.isFalse(
+          commands.some((args) => args.includes("diff-index") || args.includes("diff-files")),
+        );
+
+        yield* writeTextFile(cwd, "tracked.txt", "one\ntwo\n");
+        const edited = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
+        assert.deepInclude(edited.workingTree.files, {
+          path: "tracked.txt",
+          insertions: 1,
+          deletions: 0,
+        });
+        assert.equal(commands.filter((args) => args.includes("diff-index")).length, 1);
+        yield* runGit(["add", "tracked.txt"]);
+        const staged = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
+        assert.deepInclude(staged.workingTree.files, {
+          path: "tracked.txt",
+          insertions: 1,
+          deletions: 0,
+        });
+        yield* fs.remove(path.join(cwd, "tracked.txt"));
+        const removed = yield* driver.statusDetailsLocal(cwd, { includeDivergence: false });
+        assert.deepInclude(removed.workingTree.files, {
+          path: "tracked.txt",
+          insertions: 0,
+          deletions: 1,
+        });
+      }),
+    ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
 it.effect("invalidates origin remote cache when a driver mutation adds origin", () =>
   Effect.gen(function* () {
     const driver = yield* GitVcsDriver.GitVcsDriver;
