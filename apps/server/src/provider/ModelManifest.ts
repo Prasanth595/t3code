@@ -30,7 +30,6 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { ServerConfig } from "../config.ts";
-import * as ServerSettings from "../serverSettings.ts";
 import { hasValidClaudeManifestAdapters } from "./ClaudeModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
@@ -220,7 +219,6 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const config = yield* ServerConfig;
-  const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const serviceScope = yield* Effect.scope;
 
@@ -265,15 +263,9 @@ export const make = Effect.gen(function* () {
     if (!force && isWithin(fetchedAtMs, MANIFEST_TTL_MS)) return manifest;
     if (!force && isWithin(lastAttemptMs, MANIFEST_RETRY_MS)) return manifest;
 
-    // The same switch that gates provider CLI update checks. It stops network
-    // fetches only: a manifest already cached on disk from an earlier fetch
-    // stays in effect, since the setting is about phoning home, not about
-    // discarding data the server already holds.
-    const settings = yield* settingsService.getSettings.pipe(
-      Effect.catchCause(() => Effect.succeed(null)),
-    );
-    if (settings !== null && !settings.enableProviderUpdateChecks) return manifest;
-
+    // Deliberately not gated by `enableProviderUpdateChecks`. That switch only
+    // stops CLI version lookups; this catalog is how new models reach the
+    // picker between releases (#13244).
     lastAttemptMs = now;
     const fetched = yield* httpClient.get(MODEL_MANIFEST_URL).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
