@@ -10436,7 +10436,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const childControls = yield* projectionStore.getThreadRecords(
         childThreadId,
-        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
+        [
+          "runs",
+          "messages",
+          "subagents",
+          "providerThreads",
+          "providerTurns",
+          "attempts",
+          "runtimeRequests",
+        ],
         { messageRoles: ["user"] },
       );
       const parentThreadId = childControls.thread.lineage.parentThreadId;
@@ -10469,6 +10477,35 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           taskId: task.id,
           ...(progress.resultRun === undefined ? {} : { resultRun: progress.resultRun }),
         });
+      }
+
+      const { resultRun } = progress;
+      if (progress.state !== "result_available" || resultRun === undefined) return;
+      const status = delegatedTaskTerminalStatus(runOutcome(resultRun));
+      if (status !== "cancelled" && status !== "interrupted") return;
+      if (
+        yield* childAwaitsRestartContinuation(
+          childControls.runs,
+          resultRun,
+          options?.settledContinuationOf,
+        )
+      )
+        return;
+      // Completed or failed tasks keep async questions: answering resumes the child.
+      // Callers hold the parent lock; dismiss takes the child lock, as follow-up intake does.
+      for (const request of childControls.runtimeRequests) {
+        if (
+          request.status === "pending" &&
+          request.kind === "user_input" &&
+          request.responseCapability.type === "message"
+        ) {
+          yield* dispatchWithReceipt({
+            type: "thread.user-input.dismiss",
+            commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
+            threadId: childThreadId,
+            requestId: request.id,
+          });
+        }
       }
     });
 
@@ -11252,85 +11289,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : threadDispatch.withLock(parentThreadId, dispatch);
     });
 
-  const delegatedTaskResultPending = (
-    childThreadId: ThreadId,
-    taskId?: NodeId,
-    settledContinuationOf?: RunId,
-  ) =>
-    Effect.gen(function* () {
-      const child = yield* projectionStore.getThreadRecords(
-        childThreadId,
-        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
-        { messageRoles: ["user"] },
-      );
-      if (taskId !== undefined) {
-        const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
-        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
-        if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
-        return yield* childAwaitsRestartContinuation(runs, run, settledContinuationOf);
-      }
-      const progress = delegatedTaskProgress(child);
-      // A caller's older read saw a result; newer work since then means it is not final.
-      if (progress.state !== "result_available") return true;
-      if (progress.resultRun === undefined) return false;
-      return yield* childAwaitsRestartContinuation(
-        child.runs,
-        progress.resultRun,
-        settledContinuationOf,
-      );
-    }).pipe(
-      Effect.mapError(
-        (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
-      ),
-    );
-
-  // Async questions do not stop a delegated child's run. A cancelled or
-  // interrupted task's questions close, since nobody wants that work anymore.
-  // A finished task keeps them: answering one resumes the child. The parent
-  // lock is held throughout, so a follow-up run cannot start between the
-  // check and the dismissal.
-  const finishAppOwnedSubagent = (
-    parentThreadId: ThreadId,
-    childThreadId: ThreadId,
-    options?: { readonly settledContinuationOf?: RunId },
-  ) =>
-    threadDispatch.withLock(
-      parentThreadId,
-      Effect.gen(function* () {
-        yield* finalizeAppOwnedSubagent(childThreadId, options);
-        const settledContinuationOf = options?.settledContinuationOf;
-        if (yield* delegatedTaskResultPending(childThreadId, undefined, settledContinuationOf))
-          return;
-        const child = yield* projectionStore.getThreadRecords(
-          childThreadId,
-          ["runtimeRequests", "runs", "messages", "subagents", "providerThreads"],
-          { messageRoles: ["user"] },
-        );
-        const { resultRun } = delegatedTaskProgress(child);
-        const status =
-          resultRun === undefined ? null : delegatedTaskTerminalStatus(runOutcome(resultRun));
-        if (status !== "cancelled" && status !== "interrupted") return;
-        for (const request of child.runtimeRequests) {
-          if (
-            request.status !== "pending" ||
-            request.kind !== "user_input" ||
-            request.responseCapability.type !== "message"
-          )
-            continue;
-          // Takes the child lock inside the parent's, the order follow-up intake uses.
-          yield* threadDispatch.withLock(
-            childThreadId,
-            dispatchWithReceiptEffect({
-              type: "thread.user-input.dismiss",
-              commandId: CommandId.make(`command:system:delegated-task-question:${request.id}`),
-              threadId: childThreadId,
-              requestId: request.id,
-            }),
-          );
-        }
-      }),
-    );
-
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -11370,7 +11328,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // wakes, and only then is the failed run the task's result.
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId !== undefined) {
-        yield* finishAppOwnedSubagent(parentThreadId, threadId);
+        yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
       }
     }).pipe(
       Effect.catchCause((cause) =>
@@ -11420,7 +11378,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               const thread = yield* projectionStore.getThreadShell(threadId);
               const parentThreadId = thread?.lineage.parentThreadId;
               if (parentThreadId === undefined || parentThreadId === null) return;
-              yield* finishAppOwnedSubagent(parentThreadId, threadId);
+              yield* threadDispatch.withLock(parentThreadId, finalizeAppOwnedSubagent(threadId));
             }).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("Failed to recover terminal app-owned subagent", {
@@ -11499,13 +11457,38 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  const delegatedTaskResultPending = (childThreadId: ThreadId, taskId?: NodeId) =>
+    Effect.gen(function* () {
+      const child = yield* projectionStore.getThreadRecords(
+        childThreadId,
+        ["runs", "messages", "subagents", "providerThreads", "providerTurns", "attempts"],
+        { messageRoles: ["user"] },
+      );
+      if (taskId !== undefined) {
+        const runs = child.runs.filter((run) => run.delegatedTaskId === taskId);
+        const run = runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+        if (run === undefined || delegatedTaskTerminalStatus(run.status) === null) return true;
+        return yield* childAwaitsRestartContinuation(runs, run);
+      }
+      const progress = delegatedTaskProgress(child);
+      // A caller's older read saw a result; newer work since then means it is not final.
+      if (progress.state !== "result_available") return true;
+      if (progress.resultRun === undefined) return false;
+      return yield* childAwaitsRestartContinuation(child.runs, progress.resultRun);
+    }).pipe(
+      Effect.mapError(
+        (cause) => new OrchestratorProjectionError({ threadId: childThreadId, cause }),
+      ),
+    );
+
   const recoverDelegatedTask = (threadId: ThreadId, sourceRunId: RunId) =>
     Effect.gen(function* () {
       const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
       if (parentThreadId === undefined) return;
-      yield* finishAppOwnedSubagent(parentThreadId, threadId, {
-        settledContinuationOf: sourceRunId,
-      });
+      yield* threadDispatch.withLock(
+        parentThreadId,
+        finalizeAppOwnedSubagent(threadId, { settledContinuationOf: sourceRunId }),
+      );
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Failed to recover delegated task after restart", {

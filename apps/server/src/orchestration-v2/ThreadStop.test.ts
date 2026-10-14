@@ -542,31 +542,30 @@ it.effect.each(["thread.stop", "run.interrupt"] as const)(
 
 it.effect.each([
   { ending: "cancelled", question: "resolved" },
+  { ending: "interrupted", question: "resolved" },
   { ending: "completed", question: "pending" },
+  { ending: "failed", question: "pending" },
 ] as const)(
   "a $ending delegated task leaves its async question $question",
   ({ ending, question }) =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
       const parentThreadId = ThreadId.make(`thread:stop-question-parent:${ending}`);
       yield* createWatchingThread(parentThreadId, 20);
       yield* send(parentThreadId, "first", "start_immediately");
       const childThreadId = yield* delegate(parentThreadId, `question task ${ending}`);
       const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
-      // A Codex async question, which does not end the run that asked it.
-      const requestId = RuntimeRequestId.make("request:stop-question");
-      const nodeId = NodeId.make("node:stop-question");
       const now = yield* DateTime.now;
-      yield* (yield* ProjectionStore.ProjectionStoreV2).apply({
+      yield* projections.apply({
         id: EventId.make("event:stop-question:request"),
         type: "runtime-request.updated",
         threadId: childThreadId,
         runId: childRun.id,
-        nodeId,
         occurredAt: now,
         payload: {
-          id: requestId,
-          nodeId,
+          id: RuntimeRequestId.make("request:stop-question"),
+          nodeId: childRun.rootNodeId!,
           providerTurnId: null,
           nativeRequestRef: null,
           kind: "user_input",
@@ -592,13 +591,13 @@ it.effect.each([
           threadId: childThreadId,
         });
       } else {
-        yield* (yield* ProjectionStore.ProjectionStoreV2).apply({
-          id: EventId.make("event:stop-question:completed"),
+        yield* projections.apply({
+          id: EventId.make(`event:stop-question:${ending}`),
           type: "run.updated",
           threadId: childThreadId,
           runId: childRun.id,
           occurredAt: now,
-          payload: { ...childRun, status: "completed", startedAt: now, completedAt: now },
+          payload: { ...childRun, status: ending, startedAt: now, completedAt: now },
         });
       }
       yield* orchestrator.recoverDelegatedTask(childThreadId, childRun.id);
