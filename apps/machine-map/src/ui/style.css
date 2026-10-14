@@ -1618,6 +1618,10 @@ td .stickers,
   outline: 3px solid var(--accent);
   outline-offset: 2px;
 }
+/* A row without a main button: its text takes a full line on a phone, and the actions wrap below. */
+.item.static > .grow {
+  flex: 1 1 280px;
+}
 .item .btn,
 .item > .actions {
   position: relative;

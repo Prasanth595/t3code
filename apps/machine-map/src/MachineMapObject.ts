@@ -417,7 +417,10 @@ export class MachineMapObject extends DurableObject<Env> {
     }));
   }
 
-  /** MM-713: stores the pause, so it survives a restart, and shows it on every page. */
+  /**
+   * MM-713: stores the pause, so it survives a restart, and shows it on every page.
+   * MM-718: every connected machine gets the new `paused` flag, also when the pause made no revision.
+   */
   #savePause(record: PauseRecord | null): void {
     if (record) {
       this.#sql(
@@ -429,6 +432,7 @@ export class MachineMapObject extends DurableObject<Env> {
     }
     this.#pause = record;
     this.#broadcast(this.#pauseEvent());
+    for (const machine of this.#map.machines) this.#sendDesired(machine.id);
   }
 
   #pauseEvent(): PauseEvent {
@@ -466,7 +470,7 @@ export class MachineMapObject extends DurableObject<Env> {
   }
 
   #sendDesired(machineId: MachineId): void {
-    const state = desiredState(this.#map, machineId);
+    const state = desiredState(this.#map, machineId, this.#pause !== null);
     if (state) this.#sendTo(machineId, { _tag: "desired", state });
   }
 
@@ -850,7 +854,7 @@ export class MachineMapObject extends DurableObject<Env> {
     actor: MapActor,
     summary: string,
     changes: ReadonlyArray<MapChange>,
-    purpose: "change" | "resume" = "change",
+    purpose: "change" | "pause" | "resume" = "change",
   ): MapRevision {
     if (changes.length === 0) throw new PortalError(409, "Nothing changes.");
     if (this.#pause && purpose !== "resume" && raisesAnyAccess(this.#map, changes)) {
@@ -880,6 +884,8 @@ export class MachineMapObject extends DurableObject<Env> {
     });
     this.#map = map;
     this.#broadcast({ _tag: "revision", revision, map });
+    // MM-719: pause and resume push the desired state to every machine after the pause flag changes.
+    if (purpose !== "change") return revision;
     const touched = machinesTouched(revision);
     for (const machine of map.machines) {
       if (touched === "all" || touched.has(machine.id)) this.#sendDesired(machine.id);
@@ -1610,7 +1616,7 @@ export class MachineMapObject extends DurableObject<Env> {
       const before = pausedAccess(this.#map);
       const changes = lockdownChanges(this.#map);
       const revision =
-        changes.length > 0 ? this.#commit(actor, PAUSE_SUMMARY, changes).revision : null;
+        changes.length > 0 ? this.#commit(actor, PAUSE_SUMMARY, changes, "pause").revision : null;
       const record: PauseRecord = { state: { pausedAt: nowIso(), by: actor, revision }, before };
       this.#savePause(record);
       // MM-709: every machine that joined, also one that did not report the command yet (no MM-502

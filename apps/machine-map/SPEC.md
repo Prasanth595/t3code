@@ -116,6 +116,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-716** The history filters by machine, by kind, by actor and "important only". Important kinds are access raised or lowered, pause, resume, lockdown, expiries and machines added or removed.
 - **MM-717** While paused, the map keeps the lines and pair cards of the arrows that the pause cut. A cut line is a red broken line. A cut pair card has a dashed red border and red stripes. Each cut row shows its level from before the pause, struck through, and a "cut" sticker. The machine panel and the arrow panel show the same. Resume restores the levels, so the lines return to normal.
 - **MM-718** While paused, the desired state of every machine says `paused`. The machine saves it, so the lock survives a restart. The machine then locks T3 Code for every client except its own desktop app, which the server knows by its desktop bootstrap session. It refuses their HTTP and WebSocket auth and closes their open sockets at once. Browsers get a lock screen and no data until Resume. The mobile app and desktop apps of other machines show the pause as their connection error and retry. This stops an agent that drives a browser. Agent MCP sessions follow the map rules of MM-711. A saved state that the machine cannot read locks until the next desired state.
+- **MM-719** Emergency pause and Resume send the new desired state to every connected machine at once, also when they make no revision. A machine that connects later gets `paused` in its first desired state.
 
 ## 8. Agents
 
@@ -155,7 +156,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 11. Portal UI
 
 - **MM-1101** The portal uses the tick3d style in light and dark mode, as in the `neo-brutalism` skill. It works on a phone and on a desktop.
-- **MM-1102** Views: Map, Table, Health, Settings, Queue, History, Inbox, Clients. The selected item opens in a side panel, or in a bottom sheet on a phone.
+- **MM-1102** Views: Map, Table, Health, Settings, Queue, Tasks, History, Inbox, Clients. The selected item opens in a side panel, or in a bottom sheet on a phone.
 - **MM-1103** The Map view draws one line per pair of machines that has an arrow other than the default: a level above `none`, agent tools or an expiry. A pair with no access either way has no line and no card, except a pair that the pause cut (MM-717). The Table and the command palette still list its arrows. A card on each line shows both directions in words. Each row reads "<source> uses <target>" with the level, so the text says the direction in every layout. A small glyph after the target shows where the target sits on the map, rounded to the four directions. The table, the arrow panel, the history and the command palette use the same "uses" wording. Pair cards in their automatic place stay off machine cards and notes. Tapping a machine focuses it and fades the lines that do not touch it. Tapping it again, tapping the empty map, "Show all" or Escape ends the focus.
 - **MM-1104** Each machine card has a connection handle on each edge. The handles show on hover and focus, and always on a touch screen. Dragging from a handle draws a line that follows the pointer. A drop on another machine sets the arrow from the source to the target to `standard` as one revision when it is `none`, and opens the arrow. During a pause the drop only opens the arrow (MM-711). A drop on empty map cancels. A tap on a handle opens the machine. "Connect to" in the machine panel does the same without a pointer. Dragging a machine only moves it.
 - **MM-1105** The command palette, opened with Cmd+K or Ctrl+K, finds every action and every machine.
@@ -208,6 +209,9 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 
 - **MM-1601** Each machine reports its scheduled tasks in its status: id, title, on or paused, the schedule in words, the next run, the last run and the last result.
 - **MM-1602** The Tasks view lists the tasks of every machine, grouped by machine. Each task has Pause or Resume and "Run now". They are the commands `setScheduledTaskEnabled` and `runScheduledTask`, so an offline machine gets them from its queue. The machine panel links to the tasks of its machine.
+- **MM-1603** Each task row shows the title, the schedule in words, an "on" or "paused" sticker, the next run, the last run and the last result. A failed run shows its error text.
+- **MM-1604** The portal offers Pause, Resume and "Run now" only when the machine reports the command (MM-502). A machine without tasks in its status shows "This machine does not report its tasks yet. Update T3 on it."
+- **MM-1605** "Tasks N scheduled" in the Overview of the machine panel opens the Tasks view with only that machine. "Show all machines" ends the filter.
 
 ## 17. Machines panel in T3 Code
 
