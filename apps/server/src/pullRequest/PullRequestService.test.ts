@@ -6073,8 +6073,11 @@ it.effect("host viewed write errors discard cached marks after a partial mutatio
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
-        fakeProvider("github", {
-          capabilities: { ...fakeProvider("github").capabilities, viewedFiles: "host" },
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          capabilities: {
+            ...fakeProvider(SourceControlProviderKind.make("github")).capabilities,
+            viewedFiles: "host",
+          },
           getFilesViewed: () =>
             Effect.sync(() => ({
               files: [...states].map(([path, state]) => ({ path, state })),
@@ -6084,7 +6087,7 @@ it.effect("host viewed write errors discard cached marks after a partial mutatio
             Effect.gen(function* () {
               states.set("a.ts", "viewed");
               return yield* new PullRequestProviderError({
-                provider: "github",
+                provider: SourceControlProviderKind.make("github"),
                 operation: "setFilesViewed",
                 reason: "failed",
                 detail: "Second mutation refused",
