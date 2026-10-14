@@ -313,7 +313,13 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<void>;
   /** Batch launches without child completion signals become idle when the root turn ends. */
   readonly subagentsIdleOnTurnCompletion?: boolean;
-  readonly supportsCompaction?: boolean;
+  /**
+   * Enables the bare `/compact` run, which sends `/compact` as the prompt.
+   * `"marker"`: the agent compacts silently, so a completed run gets T3's
+   * "Context compacted" row. `"native"`: only the agent's compaction_update
+   * reports compaction; an agent without the command just replies.
+   */
+  readonly compaction?: "marker" | "native";
   readonly runtimeHarness?: string;
   readonly registerExtensions?: (
     context: AcpAdapterV2ExtensionContext,
@@ -6559,7 +6565,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, flavor)) continue;
-            yield* emitTool(context, tool, "completed");
+            // Only the agent's own completed compaction_update means the context
+            // was compacted (and resets usage); an unfinished one did not finish.
+            yield* emitTool(
+              context,
+              tool,
+              tool.toolCallId.startsWith("acp-compaction:") ? "interrupted" : "completed",
+            );
           }
         });
 
@@ -6617,11 +6629,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* emitProviderRetry(context, settledStatus);
           }
           const now = yield* DateTime.now;
+          // Marker agents compact without compaction_update, so T3 records it;
+          // one reported natively already has its own row (with the summary).
           if (
-            flavor.supportsCompaction === true &&
+            flavor.compaction === "marker" &&
             context.input.message.text.trim() === "/compact" &&
             context.input.message.attachments.length === 0 &&
-            settledStatus === "completed"
+            settledStatus === "completed" &&
+            !Array.from(context.tools.keys()).some((id) => id.startsWith("acp-compaction:"))
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;
             yield* emitProviderEvent({
@@ -7456,7 +7471,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
           ),
           startTurn,
-          ...(flavor.supportsCompaction === true
+          ...(flavor.compaction !== undefined
             ? {
                 compactThread: (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
                   startTurn({

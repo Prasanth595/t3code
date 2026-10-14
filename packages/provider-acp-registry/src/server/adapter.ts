@@ -201,6 +201,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     driver: ACP_REGISTRY_PROVIDER,
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
+    // ACP slash commands are prompt text, so a bare `/compact` reaches any
+    // agent as a plain session/prompt. Registry agents vary, so only their
+    // own compaction_update counts as compacted.
+    compaction: "native",
     // Per-agent exceptions (Mistral Vibe, Devin, Copilot): see the note above
     // registerMistralVibeAcpExtensions before adding any more.
     ...(registryAgentId === "mistral-vibe"

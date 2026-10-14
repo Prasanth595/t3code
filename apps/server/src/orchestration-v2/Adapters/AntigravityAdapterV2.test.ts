@@ -87,7 +87,7 @@ describe("AntigravityAdapterV2 flavor", () => {
   });
 
   it("exposes Antigravity's /compact command through the v2 compaction path", () => {
-    assert.isTrue(flavor.supportsCompaction);
+    assert.equal(flavor.compaction, "marker");
   });
 
   it("routes interaction_* permission requests to the question card", () => {
