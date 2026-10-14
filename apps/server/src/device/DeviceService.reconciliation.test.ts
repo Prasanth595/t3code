@@ -6,6 +6,7 @@ import {
   type SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Deferred from "effect/Deferred";
@@ -38,6 +39,9 @@ it.effect(
         ),
       );
       const removedFiles: string[] = [];
+      const removalStarted = yield* Deferred.make<void>();
+      const finishRemoval = yield* Deferred.make<void>();
+      let pauseRemoval = false;
       let localSummaryReads = 0;
       const localHost: DeviceHost.DeviceHost["Service"] = {
         id: LOCAL_DEVICE_HOST_ID,
@@ -69,8 +73,12 @@ it.effect(
           FileSystem.FileSystem,
           FileSystem.makeNoop({
             remove: (file) =>
-              Effect.sync(() => {
+              Effect.gen(function* () {
                 removedFiles.push(file);
+                if (pauseRemoval) {
+                  yield* Deferred.succeed(removalStarted, undefined);
+                  yield* Deferred.await(finishRemoval);
+                }
               }),
           }),
         ),
@@ -135,10 +143,17 @@ it.effect(
 
       yield* service.setHostStatus(host.id, { status: "failed", detail: "remove me" });
       const beforeRemoval = yield* service.state;
-      const removed = yield* update([]);
+      pauseRemoval = true;
+      const removing = yield* update([]).pipe(Effect.forkChild);
+      yield* Deferred.await(removalStarted);
+      const duringRemoval = yield* service.state;
+      expect(duringRemoval.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID]);
+      expect(duringRemoval.revision).toBe(beforeRemoval.revision + 1);
+      yield* Deferred.succeed(finishRemoval, undefined);
+      const removed = yield* Fiber.join(removing);
       expect(removed.hosts.map((entry) => entry.id)).toEqual([LOCAL_DEVICE_HOST_ID]);
       expect(removed.hostStatuses[host.id]).toBeUndefined();
-      expect(removed.revision).toBe(beforeRemoval.revision + 1);
+      expect(removed.revision).toBe(beforeRemoval.revision + 2);
       expect(removedFiles).toHaveLength(2);
       expect(yield* update([])).toEqual(removed);
     }).pipe(

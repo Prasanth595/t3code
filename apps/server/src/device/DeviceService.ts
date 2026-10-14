@@ -1134,7 +1134,7 @@ export const make = Effect.gen(function* () {
             configured.set(host.id, { config: host, scope: hostScope });
             added = true;
           }
-          if (added) {
+          if (added || removed.length > 0) {
             yield* service.refreshHosts;
           }
         }),
