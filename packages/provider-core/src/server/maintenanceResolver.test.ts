@@ -442,6 +442,12 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
       real: "C:\\Work\\WinGet\\Links\\claude.exe",
     },
     {
+      name: "a WinGet-named folder inside another directory",
+      definition: claudeUpdate,
+      resolved: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
+      real: "C:\\Work\\Microsoft\\WinGet\\Links\\claude.exe",
+    },
+    {
       name: "another provider in WinGet",
       definition: otherProviderUpdate,
       resolved: userWinGetLink,

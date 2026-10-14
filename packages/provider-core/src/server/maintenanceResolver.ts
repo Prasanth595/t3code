@@ -233,12 +233,12 @@ function isMiseCommandPath(commandPath: string): boolean {
 }
 
 /**
- * WinGet's Claude Code install under its user root (`%LOCALAPPDATA%\Microsoft\WinGet`) or machine
- * root (`%ProgramFiles%\WinGet`): the `Links\claude.exe` link or the binary in the
+ * WinGet's Claude Code install under its user root (`<drive>:\Users\<name>\AppData\Local\Microsoft\WinGet`)
+ * or machine root (`<drive>:\Program Files\WinGet`): the `Links\claude.exe` link or the binary in the
  * `Packages\Anthropic.ClaudeCode_…` directory.
  */
 const winGetClaudeCommandPath =
-  /\/(?:microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
+  /^[a-z]:\/(?:users\/[^/]+\/appdata\/local\/microsoft|program files(?: \(x86\))?)\/winget\/(?:links|packages\/anthropic\.claudecode_[^/]+)\/claude\.exe$/;
 
 function isWinGetClaudeCommandPath(commandPath: string): boolean {
   return winGetClaudeCommandPath.test(normalizeCommandPath(commandPath));
