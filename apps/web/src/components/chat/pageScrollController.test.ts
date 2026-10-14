@@ -264,33 +264,38 @@ describe("createPageScrollController", () => {
     expect(container.scrollTop).toBeCloseTo(pageDistance * 2, 5);
   });
 
-  test("continues scrolling on hold without repeated keydown events and stops on keyup", () => {
-    const clock = new TestClock();
-    const container = {
-      clientHeight: 600,
-      scrollHeight: 4_000,
-      scrollTop: 0,
-      getBoundingClientRect: () => ({ height: 600 }),
-    };
-    const controller = createPageScrollController({
-      getContainer: () => container,
-      getScrollPaddingBottomPx: () => 24,
-      env: clock.env,
-    });
-    controller.handleKeyDown("PageDown");
-    clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + 50);
+  // Holding the key is the user moving the page, so it stays continuous under reduced motion.
+  test.each([false, true])(
+    "continues scrolling on hold without repeated keydown events and stops on keyup (reduced motion: %s)",
+    (reducedMotion) => {
+      const clock = new TestClock();
+      clock.reducedMotion = reducedMotion;
+      const container = {
+        clientHeight: 600,
+        scrollHeight: 4_000,
+        scrollTop: 0,
+        getBoundingClientRect: () => ({ height: 600 }),
+      };
+      const controller = createPageScrollController({
+        getContainer: () => container,
+        getScrollPaddingBottomPx: () => 24,
+        env: clock.env,
+      });
+      controller.handleKeyDown("PageDown");
+      clock.advanceBy(PAGE_SCROLL_ANIMATION_MS + 50);
 
-    const afterHoldStarts = container.scrollTop;
-    clock.advanceBy(200);
+      const afterHoldStarts = container.scrollTop;
+      clock.advanceBy(200);
 
-    expect(container.scrollTop).toBeGreaterThan(afterHoldStarts);
+      expect(container.scrollTop).toBeGreaterThan(afterHoldStarts);
 
-    const stoppedAt = container.scrollTop;
-    controller.handleKeyUp("PageDown");
-    clock.advanceBy(250);
+      const stoppedAt = container.scrollTop;
+      controller.handleKeyUp("PageDown");
+      clock.advanceBy(250);
 
-    expect(container.scrollTop).toBe(stoppedAt);
-  });
+      expect(container.scrollTop).toBe(stoppedAt);
+    },
+  );
 
   test("notifies once when a page scroll starts", () => {
     const clock = new TestClock();
