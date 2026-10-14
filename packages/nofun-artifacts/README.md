@@ -29,6 +29,10 @@ node src/cli.ts compile \
 side 16–4096), and `--out`. `--background` is `transparent` (the default), `match`, or lowercase
 `#rrggbb`. `--name` overrides the title.
 
+`--linked --runtime-sha <sha>` writes a linked bundle instead of a self-contained page. `<sha>` is
+the runtime folder under `dist/nofun-ui-runtime/<sha>/` (`pnpm runtime:build`). The HTML loads
+`nofun-ui://runtime/<sha>/`. `stamp.json` gains `linked`. `--page` cannot be linked.
+
 The output directory is a Canvas bundle:
 
 | Path               | Role                                                                                                                                                                            |

@@ -13,6 +13,10 @@
     "./catalog": {
       "types": "./src/catalog.ts",
       "import": "./src/catalog.ts"
+    },
+    "./linked": {
+      "types": "./src/linked.ts",
+      "import": "./src/linked.ts"
     }
   },
   "scripts": {

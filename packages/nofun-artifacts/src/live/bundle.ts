@@ -307,7 +307,9 @@ const BRACKETED_CLASS = /[\w:!@/.-]*\[[^\]\s]*['"][^\]\s]*\][\w/:.%-]*/g;
 export function candidatesOf(source: string): string[] {
   const tokens = source.split(/[\s"'`]+/);
   for (const match of source.matchAll(BRACKETED_CLASS)) tokens.push(match[0]);
-  return tokens.filter((token) => token.length > 0 && token.length < 300);
+  // Minified JS yields bracketed tokens with braces. Tailwind emits them as a rule
+  // that swallows the rest of the sheet.
+  return tokens.filter((token) => token.length > 0 && token.length < 300 && !/[{}]/.test(token));
 }
 
 export function candidatesOfFiles(files: Iterable<string>): Set<string> {

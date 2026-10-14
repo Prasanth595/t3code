@@ -6,10 +6,12 @@ import { pathToFileURL } from "node:url";
 
 import { parseCanvasBackground, parseCanvasSize, writeCanvasBundle } from "./canvas-bundle.ts";
 import { compileArtifact, compilePage } from "./compiler.ts";
-import { readStamp } from "./stamp.ts";
+import { compileLinked } from "./linked.ts";
+import { componentsCommit } from "./live/source.ts";
+import { compilerVersion, readStamp, stampInstant, type ArtifactStamp } from "./stamp.ts";
 
 const USAGE =
-  "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) --theme <id> --size WxH [--background transparent|match|#rrggbb] [--name <name>] --out <dir>";
+  "nofun-artifacts compile (--spec <file> | --tsx <file> | --page <file>) --theme <id> --size WxH [--background transparent|match|#rrggbb] [--name <name>] [--linked --runtime-sha <sha>] --out <dir>";
 
 interface Flags {
   spec?: string;
@@ -20,6 +22,19 @@ interface Flags {
   background?: string;
   name?: string;
   out?: string;
+  linked?: boolean;
+  runtimeSha?: string;
+}
+
+function specTitle(text: string): string | undefined {
+  try {
+    const parsed = JSON.parse(text) as { title?: unknown };
+    return typeof parsed.title === "string" && parsed.title.trim()
+      ? parsed.title.trim()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseFlags(argv: readonly string[]): Flags {
@@ -27,7 +42,7 @@ function parseFlags(argv: readonly string[]): Flags {
   for (let i = 0; i < argv.length; i += 1) {
     const flag = argv[i];
     const value = argv[i + 1];
-    const take = (name: keyof Flags) => {
+    const take = (name: Exclude<keyof Flags, "linked">) => {
       if (!value || value.startsWith("--")) throw new Error(`${flag} needs a value.`);
       if (flags[name]) throw new Error(`${flag} was passed twice.`);
       flags[name] = value;
@@ -58,6 +73,13 @@ function parseFlags(argv: readonly string[]): Flags {
       case "--out":
         take("out");
         break;
+      case "--linked":
+        if (flags.linked) throw new Error("--linked was passed twice.");
+        flags.linked = true;
+        break;
+      case "--runtime-sha":
+        take("runtimeSha");
+        break;
       default:
         throw new Error(`Unknown argument ${JSON.stringify(flag)}. ${USAGE}`);
     }
@@ -73,31 +95,57 @@ async function compile(argv: readonly string[]): Promise<void> {
   if (!flags.theme) throw new Error(`--theme is required. ${USAGE}`);
   if (!flags.size) throw new Error(`--size is required. ${USAGE}`);
   if (!flags.out) throw new Error(`--out is required. ${USAGE}`);
+  if (flags.linked && !flags.runtimeSha) {
+    throw new Error(`--linked needs --runtime-sha <sha>. ${USAGE}`);
+  }
+  if (flags.runtimeSha && !flags.linked) {
+    throw new Error(`--runtime-sha needs --linked. ${USAGE}`);
+  }
   const file = chosen[0]!;
   const lane = flags.spec ? "spec" : flags.tsx ? "tsx" : "page";
+  if (flags.linked && lane === "page") {
+    throw new Error(`--linked supports --spec and --tsx, not --page. ${USAGE}`);
+  }
   const bytes = NodeFs.readFileSync(file);
   const text = bytes.toString("utf8");
   const theme = flags.theme;
-  const title = flags.name;
-  const compiled =
-    lane === "page"
+  const title = flags.name?.trim() || (lane === "spec" ? specTitle(text) : undefined);
+  const size = parseCanvasSize(flags.size);
+  const background = parseCanvasBackground(flags.background ?? "transparent");
+  const compiled = flags.linked
+    ? await compileLinked({
+        lane: lane === "tsx" ? "tsx" : "spec",
+        source: text,
+        theme,
+        size,
+        runtimeSHA: flags.runtimeSha!,
+        ...(title ? { title } : {}),
+      })
+    : lane === "page"
       ? await compilePage({ spec: text, brand: theme, ...(title ? { title } : {}) })
       : await compileArtifact(
           lane === "tsx"
             ? { tsx: text, theme, ...(title ? { title } : {}) }
             : { spec: text, theme, ...(title ? { title } : {}) },
         );
-  const stamp = readStamp(compiled.html);
+  const stamp: ArtifactStamp | undefined = flags.linked
+    ? {
+        components: componentsCommit(),
+        compiler: compilerVersion(),
+        lane: compiled.lane,
+        theme: compiled.theme,
+        at: stampInstant(),
+      }
+    : readStamp(compiled.html);
   if (!stamp) throw new Error("Compiled HTML is missing the nofun-artifact stamp.");
-  const size = parseCanvasSize(flags.size);
-  const background = parseCanvasBackground(flags.background ?? "transparent");
   const manifest = writeCanvasBundle({
     outDir: flags.out,
     html: compiled.html,
-    name: title?.trim() || compiled.title,
+    name: "title" in compiled ? compiled.title : title || "No Fun artifact",
     size,
     background,
     stamp,
+    ...(flags.runtimeSha ? { linked: flags.runtimeSha } : {}),
     sourceFile: { name: NodePath.basename(file), bytes },
   });
   console.log(

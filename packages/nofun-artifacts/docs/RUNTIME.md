@@ -42,6 +42,9 @@ is 26.17 MiB. Tabler icons (2.9 MiB) and Recharts (0.6 MiB) are the largest pack
 
 ## Linked artifacts
 
+The CLI is `nofun-artifacts compile --linked --runtime-sha <sha>` (with `--spec` or `--tsx`). It
+calls `compileLinked` and writes a Canvas bundle whose `stamp.json` includes `linked`.
+
 `compileLinked({ lane, source, theme, size, runtimeSHA })` in `src/linked.ts` returns HTML that
 loads `nofun-ui://runtime/<sha>/runtime.js`, `runtime.css` and the theme's brand sheet, then mounts:
 

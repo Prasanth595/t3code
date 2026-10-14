@@ -229,7 +229,7 @@ function topLevel(css: string): string[] {
  */
 async function userCss(dir: string, tsx: string, runtimeCss: string | undefined): Promise<string> {
   const candidates = candidatesOf(tsx).filter(
-    (token) => !/[{}]/.test(token) && !(runtimeCss && runtimeHasClass(runtimeCss, token)),
+    (token) => !(runtimeCss && runtimeHasClass(runtimeCss, token)),
   );
   if (candidates.length === 0) return "";
   const css = await buildCss(dir, { brand: null, candidates, cssImports: [] });
