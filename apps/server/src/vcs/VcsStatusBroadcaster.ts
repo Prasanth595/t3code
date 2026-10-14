@@ -1,5 +1,6 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -478,24 +479,78 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
-    "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd) {
-    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+  const runRefreshStatus = (cwd: string, policyCwds: ReadonlyArray<string>) =>
     // invalidateStatus (not the two partial invalidations) so an explicit
     // refresh also bypasses GitManager's slow PR-lookup cache.
-    return yield* withRemoteWriteLock(
+    withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
         yield* workflow.invalidateStatus(cwd);
         // Local after remote: the fetch can move the base that the Changes totals compare with.
         const remote = yield* workflow.remoteStatus({ cwd });
         const local = yield* workflow.localStatus({ cwd });
-        const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
+        const pulled = yield* maybeAutoPull(cwd, remote, policyCwds);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         return yield* updateCachedStatus(cwd, local, remote, { publish: true });
       }),
     );
+
+  // Focus, visibility and the branch menu each ask for a refresh, often in a
+  // burst. Per cwd, one refresh runs and the requests that arrive meanwhile
+  // share a single next one, which starts after them so it sees their changes.
+  interface QueuedRefresh {
+    readonly result: Deferred.Deferred<VcsStatusResult, GitManagerServiceError>;
+    readonly policyCwds: ReadonlySet<string>;
+  }
+  type ActiveRefreshes = Map<string, { readonly queued: QueuedRefresh | null }>;
+  const refreshesRef = yield* Ref.make<ActiveRefreshes>(new Map());
+  const takeQueuedRefresh = (cwd: string) =>
+    Ref.modify(refreshesRef, (refreshes) => {
+      const queued = refreshes.get(cwd)?.queued ?? null;
+      const next = new Map(refreshes);
+      if (queued === null) next.delete(cwd);
+      else next.set(cwd, { queued: null });
+      return [queued, next] as const;
+    });
+  const runQueuedRefreshes = (cwd: string, first: QueuedRefresh) =>
+    Effect.gen(function* () {
+      let current: QueuedRefresh | null = first;
+      while (current !== null) {
+        const refresh: QueuedRefresh = current;
+        const exit = yield* Effect.exit(runRefreshStatus(cwd, [...refresh.policyCwds]));
+        yield* Deferred.done(refresh.result, exit);
+        current = yield* takeQueuedRefresh(cwd);
+      }
+    });
+
+  const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
+    "VcsStatusBroadcaster.refreshStatus",
+  )(function* (rawCwd) {
+    const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+    const request: QueuedRefresh = {
+      result: yield* Deferred.make<VcsStatusResult, GitManagerServiceError>(),
+      policyCwds: new Set([rawCwd]),
+    };
+    const [joined, start] = yield* Ref.modify(
+      refreshesRef,
+      (refreshes): readonly [readonly [QueuedRefresh, boolean], ActiveRefreshes] => {
+        const active = refreshes.get(cwd);
+        if (active === undefined) {
+          return [[request, true], new Map(refreshes).set(cwd, { queued: null })];
+        }
+        if (active.queued !== null) {
+          const queued = {
+            ...active.queued,
+            policyCwds: new Set(active.queued.policyCwds).add(rawCwd),
+          };
+          return [[queued, false], new Map(refreshes).set(cwd, { queued })];
+        }
+        return [[request, false], new Map(refreshes).set(cwd, { queued: request })];
+      },
+    );
+    // The refresh outlives a caller that stops waiting, so the others still get its result.
+    if (start) yield* runQueuedRefreshes(cwd, request).pipe(Effect.forkIn(broadcasterScope));
+    return yield* Deferred.await(joined.result);
   });
 
   const refreshPullRequestStatus: VcsStatusBroadcaster["Service"]["refreshPullRequestStatus"] =

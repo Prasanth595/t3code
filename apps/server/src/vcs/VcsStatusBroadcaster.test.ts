@@ -70,7 +70,10 @@ const baseStatus: VcsStatusResult = {
   ...baseRemoteStatus,
 };
 
-function layerTestFor(state: {
+// Keep fake cwd normalization synchronous so the concurrency tests control the only suspension.
+const layerTestFileSystem = FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) });
+
+interface VcsStatusTestState {
   currentLocalStatus: VcsStatusLocalResult;
   currentRemoteStatus: VcsStatusRemoteResult | null;
   localStatusCalls: number;
@@ -81,17 +84,26 @@ function layerTestFor(state: {
   backgroundWorkEnabled?: boolean;
   /** Runs before each remote status read, e.g. to hold a fetch open. */
   beforeRemoteStatus?: Effect.Effect<void>;
-}) {
+  /** Runs before each local status read, e.g. to hold a refresh after its remote snapshot. */
+  beforeLocalStatus?: Effect.Effect<void>;
+}
+
+function layerTestFor(state: VcsStatusTestState) {
   return VcsStatusBroadcaster.layer.pipe(
+    Layer.provide(layerTestFileSystem),
     Layer.provideMerge(NodeServices.layer),
     Layer.provide(layerBackgroundPolicy(() => state.backgroundWorkEnabled !== false)),
     Layer.provide(
       Layer.mock(GitWorkflowService.GitWorkflowService)({
         localStatus: () =>
-          Effect.sync(() => {
-            state.localStatusCalls += 1;
-            return state.currentLocalStatus;
-          }),
+          Effect.suspend(() => state.beforeLocalStatus ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                state.localStatusCalls += 1;
+                return state.currentLocalStatus;
+              }),
+            ),
+          ),
         remoteStatus: (_input, options) =>
           Effect.suspend(() => state.beforeRemoteStatus ?? Effect.void).pipe(
             Effect.andThen(
@@ -280,6 +292,7 @@ describe("VcsStatusBroadcaster", () => {
     const firstPollStarted = Deferred.makeUnsafe<void>();
     let remoteReads = 0;
     const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provide(layerTestFileSystem),
       Layer.provideMerge(NodeServices.layer),
       Layer.provide(layerBackgroundPolicy(() => true)),
       Layer.provide(
@@ -492,6 +505,155 @@ describe("VcsStatusBroadcaster", () => {
       assert.isTrue(Exit.isFailure(refreshExit));
       assert.deepStrictEqual(cached, baseStatus);
     }).pipe(Effect.provide(layerTest));
+  });
+
+  it.effect("refresh requests made during a refresh share one follow-up refresh", () => {
+    const firstFetchStarted = Deferred.makeUnsafe<void>();
+    const releaseFirstFetch = Deferred.makeUnsafe<void>();
+    const firstLocalStatusStarted = Deferred.makeUnsafe<void>();
+    const releaseFirstLocalStatus = Deferred.makeUnsafe<void>();
+    const state: VcsStatusTestState = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    state.beforeRemoteStatus = Effect.suspend(() =>
+      state.remoteStatusCalls === 0
+        ? Deferred.succeed(firstFetchStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirstFetch)),
+          )
+        : Effect.void,
+    );
+    state.beforeLocalStatus = Effect.suspend(() =>
+      state.localStatusCalls === 0
+        ? Deferred.succeed(firstLocalStatusStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirstLocalStatus)),
+          )
+        : Effect.void,
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(firstFetchStarted);
+      yield* Deferred.succeed(releaseFirstFetch, undefined);
+      // The first run has captured the old remote status but has not published its snapshot.
+      yield* Deferred.await(firstLocalStatusStarted);
+      // Focus, visibility and the branch menu while the first fetch is still running.
+      const burst = yield* Effect.all(
+        [
+          broadcaster.refreshStatus("/repo"),
+          broadcaster.refreshStatus("/repo"),
+          broadcaster.refreshStatus("/repo"),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.zero);
+      // The shared follow-up must see this after the first run publishes its older remote status.
+      state.currentRemoteStatus = { ...baseRemoteStatus, aheadCount: 4 };
+      yield* Deferred.succeed(releaseFirstLocalStatus, undefined);
+
+      assert.equal((yield* Fiber.join(first)).aheadCount, 0);
+      const results = yield* Fiber.join(burst);
+      assert.deepStrictEqual(
+        results.map((result) => result.aheadCount),
+        [4, 4, 4],
+      );
+      assert.equal(state.remoteStatusCalls, 2);
+      assert.equal(state.remoteInvalidationCalls, 2);
+      assert.equal(state.localStatusCalls, 2);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect("a request that stops waiting leaves the shared refresh to the others", () => {
+    const firstFetchStarted = Deferred.makeUnsafe<void>();
+    const releaseFirstFetch = Deferred.makeUnsafe<void>();
+    const state: VcsStatusTestState = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+    state.beforeRemoteStatus = Effect.suspend(() =>
+      state.remoteStatusCalls === 0
+        ? Deferred.succeed(firstFetchStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseFirstFetch)),
+          )
+        : Effect.void,
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(firstFetchStarted);
+      const abandoned = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      const waiting = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.zero);
+      yield* Fiber.interrupt(abandoned);
+      yield* Deferred.succeed(releaseFirstFetch, undefined);
+
+      yield* Fiber.join(first);
+      assert.deepStrictEqual(yield* Fiber.join(waiting), baseStatus);
+      assert.equal(state.remoteStatusCalls, 2);
+    }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+  });
+
+  it.effect("a failed shared refresh fails every request in it and the next one runs", () => {
+    const firstFetchStarted = Deferred.makeUnsafe<void>();
+    const releaseFirstFetch = Deferred.makeUnsafe<void>();
+    let remoteReads = 0;
+    const layer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(layerBackgroundPolicy(() => true)),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.succeed(baseLocalStatus),
+          remoteStatus: () =>
+            Effect.gen(function* () {
+              remoteReads += 1;
+              if (remoteReads === 1) {
+                yield* Deferred.succeed(firstFetchStarted, undefined);
+                yield* Deferred.await(releaseFirstFetch);
+              }
+              if (remoteReads === 2) {
+                return yield* new GitManagerError({
+                  operation: "VcsStatusBroadcaster.test",
+                  cwd: "/repo",
+                  detail: "remote status failed",
+                });
+              }
+              return baseRemoteStatus;
+            }),
+          invalidateStatus: () => Effect.void,
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const first = yield* broadcaster.refreshStatus("/repo").pipe(Effect.forkScoped);
+      yield* Deferred.await(firstFetchStarted);
+      const shared = yield* Effect.all(
+        [
+          broadcaster.refreshStatus("/repo").pipe(Effect.exit),
+          broadcaster.refreshStatus("/repo").pipe(Effect.exit),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.zero);
+      yield* Deferred.succeed(releaseFirstFetch, undefined);
+
+      yield* Fiber.join(first);
+      const exits = yield* Fiber.join(shared);
+      assert.isTrue(exits.every(Exit.isFailure));
+      assert.deepStrictEqual(yield* broadcaster.refreshStatus("/repo"), baseStatus);
+      assert.equal(remoteReads, 3);
+    }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
   it.effect("refreshes only the cached local snapshot when requested", () => {
