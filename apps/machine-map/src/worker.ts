@@ -169,8 +169,6 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
     }
     case "POST /presets/:id/apply":
       return toResponse(await stub.applyPreset(owner, id));
-    case "POST /lockdown":
-      return toResponse(await stub.lockdown(owner));
     case "POST /pause":
       return toResponse(await stub.pause(owner));
     case "POST /resume":

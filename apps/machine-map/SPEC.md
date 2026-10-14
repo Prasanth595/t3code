@@ -57,7 +57,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-305** The target machine enforces an arrow. A lower level ends the sessions of the source machine on the target at once, including open connections. The source then connects again with the new level, or not at all for `none`.
 - **MM-306** The source machine uses an arrow. Its desktop app adds each machine it can reach, with its machine token as request headers. No pairing code is needed.
 - **MM-307** "Test" on an arrow makes the source machine connect to the target and report the result: reachable or not, the round trip time, and the scopes it got.
-- **MM-308** The owner always keeps full access to every machine through Cloudflare Access. No arrow, preset or lockdown removes it.
+- **MM-308** The owner always keeps full access to every machine through Cloudflare Access. No arrow, preset or emergency pause removes it.
 
 ## 4. Settings
 
@@ -83,7 +83,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
   - **Rotate token.** See MM-207.
 - **MM-502** Each machine reports which commands it supports. The portal offers only those.
 - **MM-503** Each command shows its result in the portal and in the history: who sent it, when, and the outcome.
-- **MM-504** Dangerous commands ask for confirmation in the portal: restart server, stop all agents, remove machine, lockdown.
+- **MM-504** Dangerous commands ask for confirmation in the portal: restart server, stop all agents, remove machine.
 
 ## 6. Queue and offline machines
 
@@ -103,11 +103,11 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-703** "Undo" on any revision makes a new revision that reverses it. The history keeps both.
 - **MM-704** The history has a time slider. Moving it shows the map at that revision, read only. "Restore" asks for confirmation, then makes a new revision that returns the map to it, with its pair card places and notes.
 - **MM-705** A preset is a named copy of all arrows. "Save as preset" stores the current arrows. "Apply" makes one revision.
-- **MM-706** "Lockdown" is a built-in preset: every arrow becomes `none` and every map role becomes `none`. It is one click with a confirmation.
+- **MM-706** Removed. The emergency pause (MM-708) replaces "Lockdown". The history still names old lockdown revisions.
 - **MM-707** "Hold changes" collects changes as a draft. "Apply" makes one revision from the draft. "Discard" drops it.
 - **MM-708** "Emergency pause" is a big red button under a flip-up cover. Lifting the cover is the confirmation. One press then does MM-709 and MM-710 in one step. The command palette also opens the button. An "i" button on its frame lists what one press does, from MM-709 to MM-712, with the counts of the current map: the machines that get a stop and the arrows and map roles that drop. While paused, it also shows who paused and when. It opens as a popover, and as a bottom sheet on a phone. It never moves the button. The cover, the press and Resume play short sounds. A press also flashes the page red, slams a "stopped" stamp and shakes the page once. Reduced motion keeps only the flash.
 - **MM-709** Emergency pause sends "stop all agents" to every machine that joined, with delivery "when online" and an expiry of 7 days. An offline machine stops its agents when it connects again. A machine that never connected gets no stop, because it has no agents yet. The pause skips the check of MM-502: a machine without the command reports a failure.
-- **MM-710** Emergency pause makes one revision with the summary "Emergency pause": every arrow and every map role becomes `none`, as in lockdown. The portal keeps the arrows and map roles from before the pause. If the map is already locked down, the pause makes no revision. Owner access through Cloudflare Access stays (MM-308).
+- **MM-710** Emergency pause makes one revision with the summary "Emergency pause": every arrow and every map role becomes `none`. The portal keeps the arrows and map roles from before the pause. If the map is already locked down, the pause makes no revision. Owner access through Cloudflare Access stays (MM-308).
 - **MM-711** While paused, the portal refuses every agent tool call, `machines_read` too. It also refuses every change that raises an arrow or a map role, from any actor. Changes that lower access, settings and commands still work.
 - **MM-712** "Resume" is for the owner only and asks for confirmation. It makes one revision that returns the arrows and map roles from before the pause, and ends the pause. It does not start agents again, and queued stop commands stay in the queue. A machine that joined during the pause keeps `none`.
 - **MM-713** Every open page shows the pause at once: a hazard frame, the banner "Everything is paused" with who paused and when, and "Resume". The Durable Object stores the pause, so it survives a restart.
@@ -115,6 +115,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-715** Each history entry has a colour and a sticker of one or two words by its meaning: access raised (up), access lowered (down), emergency pause and resume (hazard stripes), lockdown, settings, machines added or removed, joins and hostnames, expiries (clock), moves, notes, presets and health alerts (MM-1505). A change by an agent also shows an "agent" sticker. Each entry shows the actor, the time since it happened with the exact time on hover, a short summary, and an expandable before and after of each change. Day headings separate the days.
 - **MM-716** The history filters by machine, by kind, by actor and "important only". Important kinds are access raised or lowered, pause, resume, lockdown, expiries and machines added or removed.
 - **MM-717** While paused, the map keeps the lines and pair cards of the arrows that the pause cut. A cut line is a red broken line. A cut pair card has a dashed red border and red stripes. Each cut row shows its level from before the pause, struck through, and a "cut" sticker. The machine panel and the arrow panel show the same. Resume restores the levels, so the lines return to normal.
+- **MM-718** While paused, the desired state of every machine says `paused`. The machine then locks T3 Code for every client except its own desktop app, which the server knows by its desktop bootstrap session. Browsers, the mobile app and desktop apps of other machines get a lock screen and no data until Resume. This stops an agent that drives a browser. Agent MCP sessions follow the map rules of MM-711.
 
 ## 8. Agents
 
@@ -202,6 +203,15 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-1506** The machine card shows CPU and memory bars. The machine panel shows charts of CPU, memory, disk and agent processes for the last hour, 24 hours and 30 days, the top processes now, the thresholds, and a link to the "Collect diagnostics" command. The Health view compares all machines side by side and lists the alerts with their start time. Bars and charts change only when a sample arrives.
 - **MM-1507** `machines_read` returns the latest sample, the thresholds and the active alerts of each machine. `machines_resources` with a machine id and a range (`hour`, `day` or `month`) returns the history and the alerts of that machine. Both are read only and need the map role `read`.
 - **MM-1508** Charts are SVG polylines from a small helper in the portal. A missing step breaks the line instead of drawing a guess.
+
+## 16. Scheduled tasks
+
+- **MM-1601** Each machine reports its scheduled tasks in its status: id, title, on or paused, the schedule in words, the next run, the last run and the last result.
+- **MM-1602** The Tasks view lists the tasks of every machine, grouped by machine. Each task has Pause or Resume and "Run now". They are the commands `setScheduledTaskEnabled` and `runScheduledTask`, so an offline machine gets them from its queue. The machine panel links to the tasks of its machine.
+
+## 17. Machines panel in T3 Code
+
+- **MM-1701** T3 Code has a Machines panel, opened like the pull requests panel. It shows the machine map natively from the data of `machines_read`: the machines, their presence and work, the arrows, the queue and the tasks. It works in the web, desktop and mobile clients.
 
 ## Later
 

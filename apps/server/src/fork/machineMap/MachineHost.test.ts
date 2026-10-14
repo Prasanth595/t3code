@@ -119,7 +119,17 @@ const makeLayer = (input: {
             Ref.get(input.enabledTasks).pipe(
               Effect.map((enabled) => ({
                 tasks: ["task:a", "task:b"].map(
-                  (id) => ({ id: ScheduledTaskId.make(id), enabled: enabled.has(id) }) as never,
+                  (id) =>
+                    ({
+                      id: ScheduledTaskId.make(id),
+                      title: id,
+                      enabled: enabled.has(id),
+                      schedule: { type: "interval", everyMs: 3_600_000 },
+                      nextRunAt: null,
+                      lastRunAt: null,
+                      lastRunStatus: "never",
+                      lastRunError: null,
+                    }) as never,
                 ),
               })),
             ),
@@ -242,6 +252,11 @@ it.layer(NodeServices.layer)("MachineHost", (it) => {
         cpuPercent: 25,
         memoryPercent: 40,
       });
+      // MM-1601: every task, with its schedule in words.
+      expect(status.tasks).toEqual([
+        expect.objectContaining({ id: "task:a", enabled: false, schedule: "Every 1 h" }),
+        expect.objectContaining({ id: "task:b", enabled: true, schedule: "Every 1 h" }),
+      ]);
     }),
   );
 });

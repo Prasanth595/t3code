@@ -722,19 +722,6 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
             run: () => portal.open({ _tag: "emergency" }),
           },
     );
-    out.push({
-      label: "Lockdown",
-      kind: "action",
-      run: () =>
-        portal.open({
-          _tag: "confirm",
-          title: "Lock down every machine?",
-          body: "Every arrow and every map role becomes none. Your own access through Cloudflare Access stays.",
-          confirmLabel: "Lock down",
-          action: () =>
-            portal.call(() => callApi<WriteResult>("POST", "/api/lockdown"), "Locked down."),
-        }),
-    });
     for (const preset of map.presets) {
       out.push({
         label: `Apply preset ${preset.name}`,

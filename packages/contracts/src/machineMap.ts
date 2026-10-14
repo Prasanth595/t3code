@@ -251,6 +251,22 @@ export const MachineCommandInput = Schema.Union([
   Schema.TaggedStruct("resumeScheduledTasks", {}).annotate({
     description: "Resume the scheduled tasks of the machine.",
   }),
+  Schema.TaggedStruct("setScheduledTaskEnabled", {
+    taskId: TrimmedNonEmptyString.annotate({
+      description: "Task id from presence.<machineId>.status.tasks in machines_read.",
+    }),
+    enabled: Schema.Boolean.annotate({ description: "False pauses the task. True resumes it." }),
+  }).annotate({
+    description:
+      "Pause or resume one scheduled task on the machine. taskId comes from presence.<machineId>.status.tasks in machines_read.",
+  }),
+  Schema.TaggedStruct("runScheduledTask", {
+    taskId: TrimmedNonEmptyString.annotate({
+      description: "Task id from presence.<machineId>.status.tasks in machines_read.",
+    }),
+  }).annotate({
+    description: "Run one scheduled task on the machine now, like its Run now button.",
+  }),
   Schema.TaggedStruct("reloadWindows", {}).annotate({
     description: "Reload the desktop app windows. Desktop machines only.",
   }),
@@ -292,6 +308,8 @@ export const MachineCommandKindSchema = Schema.Literals([
   "stopAllAgents",
   "pauseScheduledTasks",
   "resumeScheduledTasks",
+  "setScheduledTaskEnabled",
+  "runScheduledTask",
   "reloadWindows",
   "startThread",
   "revokeClient",
@@ -341,6 +359,20 @@ export const MachineClientSession = Schema.Struct({
 });
 export type MachineClientSession = typeof MachineClientSession.Type;
 
+/** MM-1601: one scheduled task as the portal shows it. */
+export const MachineScheduledTask = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  title: Schema.String,
+  enabled: Schema.Boolean,
+  /** The schedule in words, for example "Every 1 hour" or "Weekdays at 09:00". */
+  schedule: Schema.String,
+  nextRunAt: Schema.NullOr(MapTime),
+  lastRunAt: Schema.NullOr(MapTime),
+  lastRunStatus: Schema.NullOr(Schema.String),
+  lastRunError: Schema.NullOr(Schema.String),
+});
+export type MachineScheduledTask = typeof MachineScheduledTask.Type;
+
 /** MM-1002. */
 export const MachineStatus = Schema.Struct({
   t3Version: Schema.String,
@@ -357,6 +389,8 @@ export const MachineStatus = Schema.Struct({
   memoryPercent: Schema.NullOr(Schema.Number),
   commands: Schema.Array(MachineCommandKindSchema),
   clients: Schema.Array(MachineClientSession),
+  /** MM-1601: absent on machines that do not report their tasks yet. */
+  tasks: Schema.optionalKey(Schema.Array(MachineScheduledTask)),
 });
 export type MachineStatus = typeof MachineStatus.Type;
 
@@ -386,6 +420,8 @@ export const MachineDesiredState = Schema.Struct({
   arrowsOut: Schema.Array(ArrowRecord),
   /** The shared values with this machine's overrides on top, for managed settings only. */
   settings: ScopedSettingValues,
+  /** MM-718: true while the emergency pause is on. The machine then locks every client except its own desktop app. Absent means false. */
+  paused: Schema.optionalKey(Schema.Boolean),
 });
 export type MachineDesiredState = typeof MachineDesiredState.Type;
 
@@ -553,15 +589,11 @@ export const MapToolInputs = {
     }),
   }),
   machines_preset: Schema.Struct({
-    action: Schema.Literals(["save", "apply", "lockdown"]).annotate({
+    action: Schema.Literals(["save", "apply"]).annotate({
       description:
-        "save: store the current arrows as preset `name`. apply: set every arrow from preset `name`. lockdown: set every arrow and map role to none.",
+        "save: store the current arrows as preset `name`. apply: set every arrow from preset `name`.",
     }),
-    name: Schema.optionalKey(
-      TrimmedNonEmptyString.annotate({
-        description: "Preset name. Required for save and apply. Ignored for lockdown.",
-      }),
-    ),
+    name: TrimmedNonEmptyString.annotate({ description: "Preset name." }),
   }),
   /** MM-1507: the resource history of one machine. The range defaults to `hour`. */
   machines_resources: Schema.Struct({
