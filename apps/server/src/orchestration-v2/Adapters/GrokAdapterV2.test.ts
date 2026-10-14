@@ -14,13 +14,16 @@ import { xAiRateLimitedErrorCode } from "@t3tools/provider-grok/testing";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as ProjectStore from "../ProjectStore.ts";
 import { buildInitialGrokProviderSnapshot } from "@t3tools/provider-grok/testing";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
@@ -434,9 +437,11 @@ describe("Grok launch permission mode", () => {
           RuntimePolicy.layerFromProjectStore.pipe(
             Layer.provide(
               Layer.mock(ProjectStore.ProjectStoreV2)({
-                get: () => Effect.die("the thread has a worktree"),
+                get: () => Effect.succeed(Option.none()),
               }),
             ),
+            Layer.provide(Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({})),
+            Layer.provide(Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({}))),
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                 getInstance: () =>

@@ -44,6 +44,22 @@ describe("resolveTerminalOpenLocation", () => {
     });
   });
 
+  it("opens a subdirectory project's terminal in that directory of the worktree", () => {
+    expect(
+      resolveTerminalOpenLocation({
+        terminalLocation: null,
+        activeSessionLocation: null,
+        workspaceRoot: "/repo/ios",
+        repositoryRoot: "/repo",
+        threadShellWorktreePath: null,
+        threadDetailWorktreePath: "/worktrees/feature",
+      }),
+    ).toEqual({
+      cwd: "/worktrees/feature/ios",
+      worktreePath: "/worktrees/feature",
+    });
+  });
+
   it("preserves the running terminal snapshot cwd when attaching to an existing session", () => {
     expect(
       resolveTerminalOpenLocation({

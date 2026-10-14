@@ -291,7 +291,7 @@ function ThreadRouteContent(
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const { selectedThreadCwd, selectedThreadWorkingDirectory } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -577,9 +577,9 @@ function ThreadRouteContent(
   );
   const FilesInspector = useCallback(
     () =>
-      selectedThread !== null && selectedThreadCwd !== null ? (
+      selectedThread !== null && selectedThreadWorkingDirectory !== null ? (
         <ThreadFileNavigatorPane
-          cwd={selectedThreadCwd}
+          cwd={selectedThreadWorkingDirectory}
           environmentId={selectedThread.environmentId}
           headerInset={inspectorHeaderInset}
           projectName={selectedThreadProject?.title ?? "Files"}
@@ -591,8 +591,8 @@ function ThreadRouteContent(
       handleSelectInspectorFile,
       inspectorHeaderInset,
       selectedThread,
-      selectedThreadCwd,
       selectedThreadProject?.title,
+      selectedThreadWorkingDirectory,
     ],
   );
   const RouteInspector = useCallback(
@@ -743,7 +743,10 @@ function ThreadRouteContent(
         threadDetailWorktreePath: selectedThreadDetailWorktreePath,
       });
       const cwd = projectScriptCwd({
-        project: { cwd: selectedThreadProject.workspaceRoot },
+        project: {
+          cwd: selectedThreadProject.workspaceRoot,
+          repositoryRoot: selectedThreadProject.repositoryIdentity?.rootPath,
+        },
         worktreePath: preferredWorktreePath,
       });
       const env = projectScriptRuntimeEnv({
@@ -1050,7 +1053,7 @@ function ThreadRouteContent(
           onRemoveQueuedEditAttachment={composer.onRemoveQueuedEditAttachment}
           environmentId={selectedThread.environmentId}
           projectWorkspaceRoot={selectedThreadProject?.workspaceRoot ?? null}
-          threadCwd={selectedThreadCwd}
+          threadCwd={selectedThreadWorkingDirectory}
           selectedThreadQueueCount={composer.selectedThreadQueueCount}
           queuedMessages={composer.selectedThreadQueuedMessages}
           dispatchingMessageId={composer.dispatchingQueuedMessageId}

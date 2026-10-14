@@ -231,4 +231,42 @@ describe("projectScripts helpers", () => {
       }),
     ).toBe("/repo");
   });
+
+  it("keeps a subdirectory project's directory inside its worktree", () => {
+    const ios = { cwd: "/repo/apps/ios", repositoryRoot: "/repo" };
+    expect(projectScriptCwd({ project: ios, worktreePath: "/worktrees/feature" })).toBe(
+      "/worktrees/feature/apps/ios",
+    );
+    expect(projectScriptCwd({ project: ios, worktreePath: "/worktrees/feature/" })).toBe(
+      "/worktrees/feature/apps/ios",
+    );
+    // Local threads and root projects work where they did before.
+    expect(projectScriptCwd({ project: ios, worktreePath: null })).toBe("/repo/apps/ios");
+    expect(
+      projectScriptCwd({
+        project: { cwd: "/repo", repositoryRoot: "/repo/" },
+        worktreePath: "/worktrees/feature",
+      }),
+    ).toBe("/worktrees/feature");
+  });
+
+  it("uses the worktree when the project is not below a known repository root", () => {
+    for (const repositoryRoot of [undefined, null, "", "/other", "/repo-other"]) {
+      expect(
+        projectScriptCwd({
+          project: { cwd: "/repo/ios", repositoryRoot },
+          worktreePath: "/worktrees/feature",
+        }),
+      ).toBe("/worktrees/feature");
+    }
+  });
+
+  it("matches Windows paths regardless of separators and drive case", () => {
+    expect(
+      projectScriptCwd({
+        project: { cwd: "C:\\Code\\Repo\\Apps\\iOS", repositoryRoot: "c:/code/repo" },
+        worktreePath: "D:\\Worktrees\\Feature",
+      }),
+    ).toBe("D:\\Worktrees\\Feature\\Apps\\iOS");
+  });
 });

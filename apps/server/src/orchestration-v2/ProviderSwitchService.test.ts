@@ -343,3 +343,39 @@ it.effect("distinguishes compatible and incompatible instances of the same drive
     ),
   ),
 );
+
+it.effect("keeps a session that runs inside the thread's worktree when the model changes", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    const thread = projection();
+    const transitionFor = (worktreePath: string, sessionCwd: string) =>
+      service
+        .plan({
+          projection: {
+            ...thread,
+            thread: { ...thread.thread, worktreePath },
+            providerSessions: [{ ...thread.providerSessions[0]!, cwd: sessionCwd }],
+          },
+          targetModelSelection: { instanceId: currentInstanceId, model: "gpt-5.2-codex" },
+        })
+        .pipe(Effect.map((result) => result.transition.type));
+
+    // A project rooted in `ios` runs in that directory of its worktree.
+    assert.equal(yield* transitionFor("/repo", "/repo/ios"), "switch_model_in_session");
+    // The same worktree spelled differently is still the same workspace.
+    assert.equal(yield* transitionFor("/repo/", "/repo/ios"), "switch_model_in_session");
+    assert.equal(
+      yield* transitionFor("C:\\Worktrees\\Feature", "c:/worktrees/feature\\ios"),
+      "switch_model_in_session",
+    );
+    // A session in another checkout, or a sibling sharing the prefix, moves.
+    assert.equal(yield* transitionFor("/repo", "/elsewhere/ios"), "restart_and_resume");
+    assert.equal(yield* transitionFor("/repo", "/repo-other/ios"), "restart_and_resume");
+  }).pipe(
+    Effect.provide(
+      layerTest({ [currentInstanceId]: { continuationKey: "codex:account:primary" } }, () =>
+        Effect.succeed({ type: "apply_on_next_turn" }),
+      ),
+    ),
+  ),
+);

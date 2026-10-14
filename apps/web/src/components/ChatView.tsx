@@ -1142,7 +1142,10 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       launchContext?.cwd ??
       (project
         ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+            project: {
+              cwd: project.workspaceRoot,
+              repositoryRoot: project.repositoryIdentity?.rootPath,
+            },
             worktreePath: effectiveWorktreePath,
           })
         : null),
@@ -1431,7 +1434,10 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
       activeSummary?.cwd ??
       (project
         ? projectScriptCwd({
-            project: { cwd: project.workspaceRoot },
+            project: {
+              cwd: project.workspaceRoot,
+              repositoryRoot: project.repositoryIdentity?.rootPath,
+            },
             worktreePath,
           })
         : null),
@@ -1477,7 +1483,10 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
         summary?.cwd ??
         (project
           ? projectScriptCwd({
-              project: { cwd: project.workspaceRoot },
+              project: {
+                cwd: project.workspaceRoot,
+                repositoryRoot: project.repositoryIdentity?.rootPath,
+              },
               worktreePath: terminalWorktreePath,
             })
           : null);
@@ -4137,7 +4146,10 @@ export default function ChatView(props: ChatViewProps) {
 
   const gitCwd = activeProject
     ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
+        project: {
+          cwd: activeProject.workspaceRoot,
+          repositoryRoot: activeProject.repositoryIdentity?.rootPath,
+        },
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
@@ -4238,8 +4250,11 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const activeProjectRepositoryRoot = activeProject?.repositoryIdentity?.rootPath ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
-  const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  // Where the thread works: the project's directory, inside its worktree when
+  // it has one. Git status reads the checkout root instead (gitStatusCwd).
+  const activeWorkspaceRoot = gitCwd ?? activeThreadWorktreePath ?? undefined;
   useLayoutEffect(() => {
     if (
       threadDetailLoading ||
@@ -7995,7 +8010,7 @@ export default function ChatView(props: ChatViewProps) {
         return current;
       }
       const settledCwd = projectScriptCwd({
-        project: { cwd: activeProjectCwd },
+        project: { cwd: activeProjectCwd, repositoryRoot: activeProjectRepositoryRoot },
         worktreePath: activeThreadWorktreePath,
       });
       if (
@@ -8006,7 +8021,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return current;
     });
-  }, [activeProjectCwd, activeThreadId, activeThreadWorktreePath]);
+  }, [activeProjectCwd, activeProjectRepositoryRoot, activeThreadId, activeThreadWorktreePath]);
 
   useEffect(() => {
     if (terminalUiState.terminalOpen) {

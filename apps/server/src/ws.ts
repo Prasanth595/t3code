@@ -103,6 +103,7 @@ import {
   WsRpcGroup,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import {
   HttpRouter,
   HttpServerRequest,
@@ -2811,7 +2812,15 @@ const layerWsRpc = (
             }
             return yield* issueAssetUrl({
               resource: input.resource,
-              workspaceRoot: thread.thread.worktreePath ?? project.value.workspaceRoot,
+              // Relative paths are relative to where the thread works, which
+              // is the project's directory inside a worktree, as clients see it.
+              workspaceRoot: projectScriptCwd({
+                project: {
+                  cwd: project.value.workspaceRoot,
+                  repositoryRoot: project.value.repositoryIdentity?.rootPath,
+                },
+                worktreePath: thread.thread.worktreePath,
+              }),
             });
           }),
         [WS_METHODS.assetsPersistChatAttachments]: (input) =>

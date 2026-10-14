@@ -10,16 +10,26 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 
+// The repository at /repo holds a project rooted in its `ios` directory and
+// one rooted at the repository itself.
 const projectId = ProjectId.make("project:runtime-policy");
+const rootProjectId = ProjectId.make("project:runtime-policy-root");
+const workspaceRoots = new Map<ProjectId, string>([
+  [projectId, "/repo/ios"],
+  [rootProjectId, "/repo"],
+]);
 const providerInstanceId = ProviderInstanceId.make("codex");
 const modelSelection = {
   instanceId: providerInstanceId,
@@ -30,13 +40,14 @@ function makeThread(input: {
   readonly now: DateTime.Utc;
   readonly worktreePath: string | null;
   readonly runtimeMode?: RuntimeMode;
+  readonly projectId?: ProjectId;
 }): OrchestrationV2AppThread {
   const threadId = ThreadId.make("thread:runtime-policy");
   return {
     createdBy: "user",
     creationSource: "web",
     id: threadId,
-    projectId,
+    projectId: input.projectId ?? projectId,
     title: "Runtime policy",
     providerInstanceId,
     modelSelection,
@@ -76,7 +87,43 @@ const providerInstanceFor = (instanceId: ProviderInstanceId) =>
     },
   }) as ProviderInstance;
 
+// Only /repo-worktree has the `ios` directory. /file-worktree has a regular
+// file there, /blocked-worktree has a file where a parent directory belongs,
+// and /denied-worktree cannot be searched. Any other path does not exist.
+const directories = new Set(["/repo-worktree/ios"]);
+const files = new Set(["/file-worktree/ios"]);
+const statErrors = new Map<string, PlatformError.SystemErrorTag>([
+  ["/blocked-worktree/ios", "BadResource"],
+  ["/denied-worktree/ios", "PermissionDenied"],
+]);
+const statOf = (path: string) =>
+  directories.has(path) || files.has(path)
+    ? Effect.succeed({ type: directories.has(path) ? "Directory" : "File" } as FileSystem.File.Info)
+    : Effect.fail(
+        PlatformError.systemError({
+          _tag: statErrors.get(path) ?? "NotFound",
+          module: "FileSystem",
+          method: "stat",
+          pathOrDescriptor: path,
+        }),
+      );
+
 const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
+  Layer.provide(
+    Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+      resolve: () =>
+        Effect.succeed({
+          canonicalKey: "github.com/t3/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "git@github.com:t3/repo.git",
+          },
+          rootPath: "/repo",
+        }),
+    }),
+  ),
+  Layer.provide(Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({ stat: statOf }))),
   Layer.provide(
     Layer.succeed(ProviderInstanceRegistry.ProviderInstanceRegistry, {
       getInstance: (instanceId) => Effect.succeed(providerInstanceFor(instanceId)),
@@ -88,12 +135,12 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
   ),
   Layer.provide(
     Layer.mock(ProjectStore.ProjectStoreV2)({
-      get: () =>
+      get: (id) =>
         Effect.succeed(
           Option.some({
-            projectId,
+            projectId: id,
             title: "Project",
-            workspaceRoot: "/project-root",
+            workspaceRoot: workspaceRoots.get(id) ?? "/missing",
             defaultModelSelection: null,
             defaultThreadEnvMode: null,
             autoPull: false,
@@ -110,27 +157,51 @@ const layerTest = RuntimePolicy.layerFromProjectStore.pipe(
 );
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
-  it.effect("uses the project root for local-checkout threads", () =>
+  const cwdFor = (worktreePath: string | null, project = projectId) =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
       const resolved = yield* policy.resolve({
-        thread: makeThread({ now, worktreePath: null }),
+        thread: makeThread({ now, worktreePath, projectId: project }),
         modelSelection,
       });
-      assert.equal(resolved.cwd, "/project-root");
+      return resolved.cwd;
+    });
+
+  it.effect("uses the project root for local-checkout threads", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* cwdFor(null), "/repo/ios");
+      assert.equal(yield* cwdFor(null, rootProjectId), "/repo");
     }),
   );
 
-  it.effect("prefers a provisioned worktree over the project root", () =>
+  it.effect("runs a worktree thread in the project's directory inside the worktree", () =>
     Effect.gen(function* () {
-      const policy = yield* RuntimePolicy.RuntimePolicyV2;
-      const now = yield* DateTime.now;
-      const resolved = yield* policy.resolve({
-        thread: makeThread({ now, worktreePath: "/project-worktree" }),
-        modelSelection,
-      });
-      assert.equal(resolved.cwd, "/project-worktree");
+      assert.equal(yield* cwdFor("/repo-worktree"), "/repo-worktree/ios");
+      // A project at the repository root runs at the worktree root.
+      assert.equal(yield* cwdFor("/repo-worktree", rootProjectId), "/repo-worktree");
+    }),
+  );
+
+  it.effect("runs at the worktree root when its branch lacks the project's directory", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* cwdFor("/older-worktree"), "/older-worktree");
+    }),
+  );
+
+  it.effect("never runs in a regular file at the project's path", () =>
+    Effect.gen(function* () {
+      assert.equal(yield* cwdFor("/file-worktree"), "/file-worktree");
+      // A file where a parent directory belongs fails the same way.
+      assert.equal(yield* cwdFor("/blocked-worktree"), "/blocked-worktree");
+    }),
+  );
+
+  it.effect("keeps the project's path when it cannot be read", () =>
+    Effect.gen(function* () {
+      // The session reports the permission error, as it would for a local
+      // thread, instead of the agent silently starting at the worktree root.
+      assert.equal(yield* cwdFor("/denied-worktree"), "/denied-worktree/ios");
     }),
   );
 
