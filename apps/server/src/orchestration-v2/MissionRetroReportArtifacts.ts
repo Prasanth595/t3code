@@ -27,7 +27,8 @@ import {
  * Filesystem source backing for the accepted `MissionRetroReportArtifactPort`.
  *
  * Layout: `<artifactDirectory>/<namespace>/<sha>.json` with namespaces
- * `retro-original`, `retro-normalized`, and `retro-coverage`. Files are
+ * `retro-original`, `retro-normalized`, `retro-coverage`, `retro-source`,
+ * and `retro-source-chunk`. Files are
  * private (`0600`) under a private root (`0700`). Commits are immutable:
  * bytes are written to an exclusive temp file and hard-linked into place,
  * so concurrent retries reuse matching bytes and conflicting bytes fail
@@ -51,6 +52,8 @@ const REF_PATTERNS = {
   "retro-original": new RegExp(`^retro-original:(${SHA_HEX})$`),
   "retro-normalized": new RegExp(`^retro-normalized:(${SHA_HEX})$`),
   "retro-coverage": new RegExp(`^retro-coverage:(${SHA_HEX})$`),
+  "retro-source": new RegExp(`^retro-source:(${SHA_HEX})$`),
+  "retro-source-chunk": new RegExp(`^retro-source-chunk:(${SHA_HEX})$`),
 } as const;
 export type MissionRetroReportArtifactNamespace = keyof typeof REF_PATTERNS;
 
@@ -144,7 +147,7 @@ const decodeReportValue = Schema.decodeUnknownEffect(MissionRetroReport, {
 export const parseArtifactRef = (
   ref: string,
   namespace: MissionRetroReportArtifactNamespace,
-): string | null => REF_PATTERNS[namespace].exec(ref)?.[1] ?? null;
+): string | null => Object.hasOwn(REF_PATTERNS, namespace) ? REF_PATTERNS[namespace].exec(ref)?.[1] ?? null : null;
 
 /** Filesystem path for a canonical ref, or null when the ref is not strict. Never resolves caller paths. */
 export const artifactPathForRef = (
@@ -183,11 +186,11 @@ const resolveControlledRoot = async (root: string, create: boolean): Promise<str
     });
   }
   const status = await NodeFSP.lstat(root);
-  if (status.isSymbolicLink() || !status.isDirectory())
+  if (status.isSymbolicLink() || !status.isDirectory() || (status.mode & 0o077) !== 0)
     throw new Error("Artifact root is not a directory.");
   const resolved = await NodeFSP.realpath(root);
   const resolvedStatus = await NodeFSP.lstat(resolved);
-  if (resolvedStatus.isSymbolicLink() || !resolvedStatus.isDirectory())
+  if (resolvedStatus.isSymbolicLink() || !resolvedStatus.isDirectory() || (resolvedStatus.mode & 0o077) !== 0)
     throw new Error("Artifact root is not a directory.");
   return resolved;
 };
@@ -204,7 +207,7 @@ const ensureNamespace = async (
     });
   }
   const status = await NodeFSP.lstat(directory);
-  if (status.isSymbolicLink() || !status.isDirectory())
+  if (status.isSymbolicLink() || !status.isDirectory() || (status.mode & 0o077) !== 0)
     throw new Error("Stored artifact destination is not a regular file.");
   const resolved = await NodeFSP.realpath(directory);
   if (resolved !== directory)
@@ -231,7 +234,7 @@ const syncDirectory = async (directory: string): Promise<void> => {
  * existing differing bytes fail closed without overwriting the accepted
  * file. The link into place is atomic, so parallel retries cannot truncate
  * or partially overwrite. Symlink destinations are rejected, never followed.
- * For `retro-original`/`retro-coverage`, `sha` is the whole-byte SHA. For
+ * For byte-addressed namespaces, `sha` is the whole-byte SHA. For
  * `retro-normalized`, `sha` is the semantic report hash (the filename key);
  * the whole-byte SHA is returned separately by `prepareNormalized`.
  */
@@ -248,7 +251,7 @@ const commitBytesAsync = async (input: {
     isMissing(cause) ? null : Promise.reject(cause),
   );
   if (existing !== null) {
-    if (existing.isSymbolicLink() || !existing.isFile())
+    if (existing.isSymbolicLink() || !existing.isFile() || (existing.mode & 0o077) !== 0)
       throw new Error("Stored artifact destination is not a regular file.");
     const current = await NodeFSP.readFile(destination);
     if (Buffer.compare(current, input.bytes) !== 0)
@@ -276,7 +279,7 @@ const commitBytesAsync = async (input: {
     }
     if (!linked) {
       const raced = await NodeFSP.lstat(destination);
-      if (raced.isSymbolicLink() || !raced.isFile())
+      if (raced.isSymbolicLink() || !raced.isFile() || (raced.mode & 0o077) !== 0)
         throw new Error("Stored artifact destination is not a regular file.");
       const current = await NodeFSP.readFile(destination);
       if (Buffer.compare(current, input.bytes) !== 0)
@@ -304,6 +307,17 @@ export const commitArtifactBytes = Effect.fn("MissionRetroReportArtifacts.commit
       !/^[0-9a-f]{64}$/.test(input.sha)
     )
       return yield* storeError("invalid_command", new Error("Artifact directory must be absolute."));
+    if (input.namespace === "retro-source" || input.namespace === "retro-source-chunk") {
+      // A serialized collector chunk can exceed its 64 KiB entry target.
+      // Both source forms fit the collector's complete-export hard ceiling.
+      const maxBytes = 2_097_152;
+      if (
+        input.bytes.length > maxBytes || sha256Hex(input.bytes) !== input.sha ||
+        !strictUtf8(input.bytes.toString("utf8")) ||
+        !Buffer.from(input.bytes.toString("utf8"), "utf8").equals(input.bytes)
+      )
+        return yield* storeError("invalid_command", new Error("Source bytes exceed their bound or digest."));
+    }
     return yield* Effect.tryPromise({
       try: () => commitBytesAsync(input),
       catch: (cause) => storeError("persistence", cause),
@@ -340,7 +354,7 @@ const readRawAsync = async (input: {
     isMissing(cause) ? null : Promise.reject(cause),
   );
   if (status === null) throw new Error("Stored artifact is missing.");
-  if (status.isSymbolicLink() || !status.isFile())
+  if (status.isSymbolicLink() || !status.isFile() || (status.mode & 0o077) !== 0)
     throw new Error("Stored artifact destination is not a regular file.");
   const realDestination = await NodeFSP.realpath(destination);
   if (realDestination !== NodePath.join(resolvedRoot, input.namespace, `${refHash}.json`))
@@ -361,7 +375,7 @@ const validateNormalized = (raw: RawBytes): void => {
 
 /**
  * Exact byte read for one canonical ref. For byte-addressed namespaces
- * (`retro-original`, `retro-coverage`) the ref hash must equal the whole-byte
+ * (`retro-original`, `retro-coverage`, `retro-source`, `retro-source-chunk`) the ref hash must equal the whole-byte
  * SHA. For `retro-normalized` the ref hash is the semantic report hash: the
  * decoded report is validated against it and `sha` returns the distinct
  * whole-byte SHA. Missing, oversized, non-UTF-8, or mismatched files fail.
@@ -373,13 +387,22 @@ export const readArtifactBytes = Effect.fn("MissionRetroReportArtifacts.read")(
     readonly ref: string;
     readonly maxBytes: number;
   }): Effect.fn.Return<ReadBytes, MissionRetroReportStoreError> {
-    if (checkRoot(input.artifactDirectory) === null || parseArtifactRef(input.ref, input.namespace) === null)
+    if (
+      checkRoot(input.artifactDirectory) === null || !Object.hasOwn(REF_PATTERNS, input.namespace) ||
+      !Number.isSafeInteger(input.maxBytes) || input.maxBytes <= 0 ||
+      parseArtifactRef(input.ref, input.namespace) === null
+    )
       return yield* storeError(
         "invalid_command",
         new Error("Artifact ref is not a strict canonical content address."),
       );
     const raw = yield* Effect.tryPromise({
-      try: () => readRawAsync(input),
+      try: () => readRawAsync({
+        ...input,
+        maxBytes: Math.min(input.maxBytes,
+          (input.namespace === "retro-source" || input.namespace === "retro-source-chunk")
+            ? 2_097_152 : input.maxBytes),
+      }),
       catch: (cause) => storeError("persistence", cause),
     });
     if (input.namespace === "retro-normalized") {

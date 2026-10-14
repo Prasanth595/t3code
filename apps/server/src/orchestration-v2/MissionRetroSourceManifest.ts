@@ -26,7 +26,7 @@ import type { MissionRetroSourceRef as MissionRetroSourceRefValue } from "../../
  * performs no filesystem, SQL, git, network, or outbox work of any kind.
  *
  * Authority rules, all fail-closed:
- * - The trusted scope (canonical team/env/mission/checkpoint, log root,
+ * - The trusted scope (canonical team/env/mission, preparation identity, source root,
  *   allowed source thread IDs, and range) is root-provided and revalidated;
  *   caller JSON, persona labels, and paths never authorize anything.
  * - `authorize` is an explicit root-supplied gate with no default success.
@@ -81,8 +81,9 @@ export interface MissionRetroSourceTrustedScope {
   readonly teamId: string;
   readonly environmentId: string;
   readonly missionId: string;
-  readonly checkpointId: string;
-  /** Authorized log root every chunk ref binds to. */
+  /** Preparation identity, independent of the eventual canonical checkpoint ID and fingerprint. */
+  readonly captureBoundaryId: string;
+  /** Authorized supported-thread source identity every chunk ref binds to. */
   readonly sourceRoot: string;
   /**
    * Primary source thread: the only thread whose window is read. It anchors
@@ -306,7 +307,7 @@ const normalizeScope = (scope: MissionRetroSourceTrustedScope): NormalizedScope 
     !nonEmpty(scope.teamId) ||
     !nonEmpty(scope.environmentId) ||
     !nonEmpty(scope.missionId) ||
-    !nonEmpty(scope.checkpointId) ||
+    !nonEmpty(scope.captureBoundaryId) ||
     !nonEmpty(scope.sourceRoot) ||
     !nonEmpty(scope.sourceThreadId)
   ) {
@@ -328,7 +329,7 @@ const normalizeScope = (scope: MissionRetroSourceTrustedScope): NormalizedScope 
     teamId: scope.teamId,
     environmentId: scope.environmentId,
     missionId: scope.missionId,
-    checkpointId: scope.checkpointId,
+    captureBoundaryId: scope.captureBoundaryId,
     sourceRoot: scope.sourceRoot,
     sourceThreadId: scope.sourceThreadId,
     allowedSourceThreadIds: allowed,
@@ -1086,7 +1087,7 @@ export const collectRetroSources: (
       };
       const chunkBytes = stableStringify(payload);
       const hash = sha256Hex(chunkBytes);
-      const ref = `retro-src-${payload.coveredFromInclusive}-${payload.coveredToExclusive}-${hash.slice(0, 12)}`;
+      const ref = `retro-source-chunk:${hash}`;
       return { chunkRef: ref, chunkHash: hash, chunkBytes, ...payload };
     });
     const uncovered = mergeRanges(state.uncovered);
@@ -1099,7 +1100,7 @@ export const collectRetroSources: (
         teamId: scope.teamId,
         environmentId: scope.environmentId,
         missionId: scope.missionId,
-        checkpointId: scope.checkpointId,
+        captureBoundaryId: scope.captureBoundaryId,
         sourceRoot: scope.sourceRoot,
         sourceThreadId: scope.sourceThreadId,
         fromInclusive: scope.fromInclusive,
@@ -1125,7 +1126,7 @@ export const collectRetroSources: (
       teamId: scope.teamId,
       environmentId: scope.environmentId,
       missionId: scope.missionId,
-      checkpointId: scope.checkpointId,
+      captureBoundaryId: scope.captureBoundaryId,
       sourceRoot: scope.sourceRoot,
       sourceThreadId: scope.sourceThreadId,
       fromInclusive: scope.fromInclusive,

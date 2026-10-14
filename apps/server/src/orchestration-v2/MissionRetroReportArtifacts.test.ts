@@ -1125,3 +1125,227 @@ it.effect("store.receive persists pointers through real filesystem artifacts", (
     }),
   ),
 );
+
+it.effect.each(["retro-source", "retro-source-chunk"] as const)(
+  "%s commits and reopens exact private UTF-8 bytes",
+  (namespace) =>
+    scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "retro-source-bytes-" });
+        const bytes = Buffer.from('{"text":"é🧪"}', "utf8");
+        const hash = sha(bytes);
+        const input = { artifactDirectory: dir, namespace, sha: hash, bytes };
+        // Collector chunks target 64 KiB of entries; exact serialized bytes can exceed it.
+        const large = Buffer.from(stableStringify({ text: "é".repeat(40000) }));
+        const largeHash = sha(large);
+        yield* Artifacts.commitArtifactBytes({ artifactDirectory: dir, namespace, sha: largeHash, bytes: large });
+        assert.strictEqual((yield* Artifacts.readArtifactBytes({ artifactDirectory: dir, namespace, ref: `${namespace}:${largeHash}`, maxBytes: 2097152 })).text, large.toString("utf8"));
+        assert.isFalse((yield* Artifacts.commitArtifactBytes(input)).reused);
+        assert.isTrue((yield* Artifacts.commitArtifactBytes(input)).reused);
+        const read = yield* Artifacts.readArtifactBytes({
+          artifactDirectory: dir,
+          namespace,
+          ref: `${namespace}:${hash}`,
+          maxBytes: bytes.length,
+        });
+        assert.strictEqual(read.text, bytes.toString("utf8"));
+        assert.strictEqual(read.sha, hash);
+        assert.strictEqual(
+          (yield* runNode(() => NodeFSP.stat(NodePath.join(dir, namespace, `${hash}.json`)))).mode &
+            0o777,
+          0o600,
+        );
+        assert.strictEqual(
+          failCategory(
+            yield* Artifacts.readArtifactBytes({
+              artifactDirectory: dir,
+              namespace,
+              ref: `${namespace}:${hash}`,
+              maxBytes: bytes.length - 1,
+            }).pipe(Effect.flip),
+          ),
+          "persistence",
+        );
+        assert.strictEqual(
+          failCategory(
+            yield* Artifacts.commitArtifactBytes({
+              ...input,
+              bytes: Buffer.from("different"),
+            }).pipe(Effect.flip),
+          ),
+          "invalid_command",
+        );
+        assert.strictEqual(
+          (yield* Artifacts.readArtifactBytes({
+            artifactDirectory: dir,
+            namespace,
+            ref: `${namespace}:${hash}`,
+            maxBytes: 100,
+          })).text,
+          bytes.toString("utf8"),
+        );
+      }),
+    ),
+);
+
+it.effect(
+  "source namespaces reject malformed refs, nonprivate paths, invalid UTF-8 and oversized chunk bytes",
+  () =>
+    scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "source-ref-guards-" });
+        const namespace = "retro-source-chunk";
+        const bytes = Buffer.from("{}");
+        const hash = sha(bytes);
+        for (const ref of [
+          `retro-source:${hash}`,
+          `${namespace}:../${hash}`,
+          `${namespace}:${hash.toUpperCase()}`,
+          `${namespace}:${hash}/extra`,
+        ]) {
+          assert.isNull(Artifacts.artifactPathForRef(dir, ref, namespace));
+          assert.strictEqual(
+            failCategory(
+              yield* Artifacts.readArtifactBytes({
+                artifactDirectory: dir,
+                namespace,
+                ref,
+                maxBytes: 100,
+              }).pipe(Effect.flip),
+            ),
+            "invalid_command",
+          );
+        }
+        for (const bad of [Buffer.from([0xff]), Buffer.alloc(2097153, "x")]) {
+          assert.strictEqual(
+            failCategory(
+              yield* Artifacts.commitArtifactBytes({
+                artifactDirectory: dir,
+                namespace,
+                sha: sha(bad),
+                bytes: bad,
+              }).pipe(Effect.flip),
+            ),
+            "invalid_command",
+          );
+        }
+        yield* Artifacts.commitArtifactBytes({
+          artifactDirectory: dir,
+          namespace,
+          sha: hash,
+          bytes,
+        });
+        const dest = NodePath.join(dir, namespace, `${hash}.json`);
+      const oversized = Buffer.alloc(2097153, "x");
+      const oversizedHash = sha(oversized);
+      yield* runNode(() => NodeFSP.writeFile(NodePath.join(dir, namespace, `${oversizedHash}.json`), oversized, { mode: 0o600 }));
+      assert.strictEqual(failCategory(yield* Artifacts.readArtifactBytes({ artifactDirectory: dir, namespace, ref: `${namespace}:${oversizedHash}`, maxBytes: 1048576 }).pipe(Effect.flip)), "persistence");
+      yield* runNode(() => NodeFSP.unlink(NodePath.join(dir, namespace, `${oversizedHash}.json`)));
+      yield* runNode(() => NodeFSP.writeFile(dest, "tampered"));
+      assert.strictEqual(failCategory(yield* Artifacts.commitArtifactBytes({ artifactDirectory: dir, namespace, sha: hash, bytes }).pipe(Effect.flip)), "persistence");
+      assert.strictEqual(yield* runNode(() => NodeFSP.readFile(dest, "utf8")), "tampered");
+      yield* runNode(() => NodeFSP.writeFile(dest, bytes));
+      yield* runNode(() => NodeFSP.chmod(dir, 0o755));
+      assert.strictEqual(failCategory(yield* Artifacts.commitArtifactBytes({ artifactDirectory: dir, namespace, sha: hash, bytes }).pipe(Effect.flip)), "persistence");
+      yield* runNode(() => NodeFSP.chmod(dir, 0o700));
+        yield* runNode(() => NodeFSP.chmod(dest, 0o644));
+        assert.strictEqual(
+          failCategory(
+            yield* Artifacts.readArtifactBytes({
+              artifactDirectory: dir,
+              namespace,
+              ref: `${namespace}:${hash}`,
+              maxBytes: 100,
+            }).pipe(Effect.flip),
+          ),
+          "persistence",
+        );
+        yield* runNode(() => NodeFSP.chmod(dest, 0o600));
+        const genuine = NodePath.join(dir, "genuine");
+        yield* runNode(() => NodeFSP.rename(dest, genuine));
+        yield* runNode(() => NodeFSP.symlink(genuine, dest));
+        assert.strictEqual(
+          failCategory(
+            yield* Artifacts.commitArtifactBytes({
+              artifactDirectory: dir,
+              namespace,
+              sha: hash,
+              bytes,
+            }).pipe(Effect.flip),
+          ),
+          "persistence",
+        );
+        assert.strictEqual(
+          failCategory(
+            yield* Artifacts.readArtifactBytes({
+              artifactDirectory: dir,
+              namespace,
+              ref: `${namespace}:${hash}`,
+              maxBytes: 100,
+            }).pipe(Effect.flip),
+          ),
+          "persistence",
+        );
+        yield* runNode(() => NodeFSP.unlink(dest));
+        yield* runNode(() => NodeFSP.rmdir(NodePath.join(dir, namespace)));
+        const target = yield* fs.makeTempDirectoryScoped({ prefix: "source-external-" });
+        yield* runNode(() => NodeFSP.symlink(target, NodePath.join(dir, namespace)));
+        assert.strictEqual(
+          failCategory(
+            yield* Artifacts.commitArtifactBytes({
+              artifactDirectory: dir,
+              namespace,
+              sha: hash,
+              bytes,
+            }).pipe(Effect.flip),
+          ),
+          "persistence",
+        );
+        assert.deepStrictEqual(yield* runNode(() => NodeFSP.readdir(target)), []);
+      }),
+    ),
+);
+
+it.effect("source chunk fsync failure preserves immutable bytes and requires durable retry", () =>
+  scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "source-sync-" });
+      const directory = NodePath.join(dir, "retro-source-chunk");
+      yield* runNode(() => NodeFSP.mkdir(directory, { mode: 0o700 }));
+      yield* Effect.acquireRelease(
+        runNode(() => NodeFSP.chmod(directory, 0o300)),
+        () => runNode(() => NodeFSP.chmod(directory, 0o700)).pipe(Effect.orDie),
+      );
+      const bytes = Buffer.from('{"text":"durable source"}');
+      const input = {
+        artifactDirectory: dir,
+        namespace: "retro-source-chunk" as const,
+        sha: sha(bytes),
+        bytes,
+      };
+      assert.strictEqual(
+        failCategory(yield* Artifacts.commitArtifactBytes(input).pipe(Effect.flip)),
+        "persistence",
+      );
+      assert.strictEqual(
+        failCategory(yield* Artifacts.commitArtifactBytes(input).pipe(Effect.flip)),
+        "persistence",
+      );
+      yield* runNode(() => NodeFSP.chmod(directory, 0o700));
+      assert.isTrue((yield* Artifacts.commitArtifactBytes(input)).reused);
+      const stored = yield* Artifacts.readArtifactBytes({
+        artifactDirectory: dir,
+        namespace: "retro-source-chunk",
+        ref: `retro-source-chunk:${input.sha}`,
+        maxBytes: 65536,
+      });
+      assert.strictEqual(stored.text, bytes.toString("utf8"));
+      assert.deepStrictEqual(yield* runNode(() => NodeFSP.readdir(directory)), [
+        `${input.sha}.json`,
+      ]);
+    }),
+  ),
+);

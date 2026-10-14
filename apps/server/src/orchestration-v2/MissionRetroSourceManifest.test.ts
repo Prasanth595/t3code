@@ -45,7 +45,7 @@ const scopeFor = (
   teamId: "team:nofun",
   environmentId: "env:mac-1",
   missionId: "mission:one",
-  checkpointId: "retro-ck-1",
+  captureBoundaryId: "capture-preparation-1",
   sourceRoot: "log:root-400",
   sourceThreadId: ORIGIN,
   allowedSourceThreadIds: [ORIGIN],
