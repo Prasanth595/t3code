@@ -20,6 +20,7 @@ const COLON = 58;
 const DASH = 45;
 const UNDERSCORE = 95;
 const CODEX_FILE_CITATION_NAME = "codex-file-citation";
+const CODEX_FOLLOW_UP_NAME = "codex-followup";
 const CODEX_ARTIFACT_TEMPLATE_NAME = "artifact-template";
 
 export const CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES = [
@@ -46,6 +47,7 @@ interface MarkdownAstNode {
   data?: {
     codexArtifactTemplate?: CodexArtifactTemplate;
     codexFileCitationMarkdown?: string;
+    codexFollowUp?: true;
     hName?: string;
     hProperties?: Record<string, unknown>;
   };
@@ -132,7 +134,10 @@ function codexDirectiveSyntax(): Extension {
 
   return {
     text: {
-      [COLON]: restrictedDirective(textDirective, 1, CODEX_FILE_CITATION_NAME),
+      [COLON]: [
+        restrictedDirective(textDirective, 1, CODEX_FILE_CITATION_NAME),
+        restrictedDirective(textDirective, 1, CODEX_FOLLOW_UP_NAME),
+      ],
     },
     flow: {
       [COLON]: restrictedDirective(leafDirective, 2, CODEX_ARTIFACT_TEMPLATE_NAME),
@@ -199,6 +204,22 @@ function renderFileCitation(node: MarkdownAstNode, source: string, insideLink: b
   delete node.value;
 }
 
+function hasVisibleText(node: MarkdownAstNode): boolean {
+  return (node.value?.trim() ?? "") !== "" || (node.children ?? []).some(hasVisibleText);
+}
+
+/** Shows only the label. T3 has no suggestion UI, so the hidden prompt is not shown. */
+function renderFollowUp(node: MarkdownAstNode, source: string): void {
+  if (!node.attributes?.prompt?.trim() || !node.children?.some(hasVisibleText)) {
+    restoreTextDirective(node, source);
+    return;
+  }
+
+  node.data = { codexFollowUp: true, hName: "span" };
+  delete node.name;
+  delete node.attributes;
+}
+
 function renderArtifactTemplate(node: MarkdownAstNode, source: string): void {
   const template = resolveCodexArtifactTemplate(node.attributes);
   if (!template) {
@@ -231,6 +252,9 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
     renderFileCitation(node, source, insideLink);
     return;
   }
+  if (node.type === "textDirective" && node.name === CODEX_FOLLOW_UP_NAME) {
+    renderFollowUp(node, source);
+  }
   if (node.type === "leafDirective" && node.name === CODEX_ARTIFACT_TEMPLATE_NAME) {
     renderArtifactTemplate(node, source);
     return;
@@ -242,7 +266,7 @@ function transformCodexDirectives(node: MarkdownAstNode, source: string, insideL
   }
 }
 
-/** Adds grammar only for the two directives emitted by Codex, then renders them as mdast. */
+/** Adds grammar only for the directives emitted by Codex, then renders them as mdast. */
 function attachCodexDirectives(this: Processor) {
   const data = this.data();
   const micromarkExtensions = data.micromarkExtensions ?? (data.micromarkExtensions = []);
@@ -270,6 +294,7 @@ interface DirectiveMatch {
   readonly end: number;
   readonly markdown?: string;
   readonly template?: CodexArtifactTemplate;
+  readonly labelRange?: readonly [start: number, end: number];
 }
 
 function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[]): void {
@@ -284,6 +309,12 @@ function collectDirectiveMatches(node: MarkdownAstNode, matches: DirectiveMatch[
       matches.push({ start, end, template: node.data.codexArtifactTemplate });
       return;
     }
+    const labelStart = node.children?.[0]?.position?.start.offset;
+    const labelEnd = node.children?.at(-1)?.position?.end.offset;
+    if (node.data?.codexFollowUp && labelStart !== undefined && labelEnd !== undefined) {
+      matches.push({ start, end, labelRange: [labelStart, labelEnd] });
+      return;
+    }
   }
   for (const child of node.children ?? []) collectDirectiveMatches(child, matches);
 }
@@ -296,7 +327,9 @@ function renderDirectiveMatches(
   collectDirectiveMatches(parseCodexMarkdown(markdown), matches);
   let rendered = markdown;
   for (const match of matches.sort((left, right) => right.start - left.start)) {
-    const replacement = replacementFor(match);
+    const replacement = match.labelRange
+      ? markdown.slice(...match.labelRange)
+      : replacementFor(match);
     if (replacement !== undefined) {
       rendered = rendered.slice(0, match.start) + replacement + rendered.slice(match.end);
     }
@@ -305,8 +338,13 @@ function renderDirectiveMatches(
 }
 
 /** Native Markdown renderers use this adapter because they cannot consume a Remark tree. */
-export function renderCodexFileCitationsAsMarkdown(markdown: string): string {
-  if (!markdown.includes(`:${CODEX_FILE_CITATION_NAME}`)) return markdown;
+export function renderCodexInlineDirectivesAsMarkdown(markdown: string): string {
+  if (
+    !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
+    !markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`)
+  ) {
+    return markdown;
+  }
 
   return renderDirectiveMatches(markdown, (match) => match.markdown);
 }
@@ -315,6 +353,7 @@ export function renderCodexFileCitationsAsMarkdown(markdown: string): string {
 export function renderCodexDirectivesForCopy(markdown: string): string {
   if (
     !markdown.includes(`:${CODEX_FILE_CITATION_NAME}`) &&
+    !markdown.includes(`:${CODEX_FOLLOW_UP_NAME}`) &&
     !markdown.includes(`::${CODEX_ARTIFACT_TEMPLATE_NAME}`)
   ) {
     return markdown;
