@@ -56,6 +56,7 @@ import {
 } from "./history.ts";
 import { ClockIcon, RobotIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
+import { NO_SELECTION } from "./route.ts";
 
 /** An empty list: a short title, what fills it, and a stamp when the empty state is good news. */
 function Empty({
@@ -384,9 +385,13 @@ type QueueItem =
 export function QueueView() {
   const portal = usePortalContext();
   const { map, snapshot, now } = portal;
+  const selected = portal.route.selection;
+  // MM-1113: a "queued" sticker opens the Queue of one machine.
+  const only =
+    selected._tag === "machine" ? map.machines.find((m) => m.id === selected.id) : undefined;
   const items: Array<QueueItem> = [];
   const byRevision = new Map<number, Extract<QueueItem, { _tag: "revision" }>>();
-  for (const machine of map.machines) {
+  for (const machine of only ? [only] : map.machines) {
     const queue = machineQueue(snapshot, portal.rotations, machine);
     // MM-602, MM-603: a machine that never joined gets the current map when it joins.
     for (const revision of queue.waitingToJoin ? [] : queue.revisions) {
@@ -413,15 +418,23 @@ export function QueueView() {
   }
   items.push(...byRevision.values());
   items.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  const finished = snapshot.commands.filter((c) => c.status !== "queued").slice(0, 30);
-  const selected = portal.route.selection;
+  const finished = snapshot.commands
+    .filter((c) => c.status !== "queued" && (!only || c.machineId === only.id))
+    .slice(0, 30);
   const names = (ids: ReadonlyArray<string>) => ids.map((id) => machineName(map, id)).join(", ");
   return (
     <div className="card view stack">
-      <h2>Waiting</h2>
+      <div className="view-head">
+        <h2>{only ? `Waiting for ${only.name}` : "Waiting"}</h2>
+        {only && (
+          <button type="button" className="btn small" onClick={() => portal.select(NO_SELECTION)}>
+            Show all machines
+          </button>
+        )}
+      </div>
       {items.length === 0 ? (
         <Empty title="Nothing waits" settled>
-          Every machine has the current map.
+          {only ? `${only.name} has the current map.` : "Every machine has the current map."}
         </Empty>
       ) : (
         <ul className="list">

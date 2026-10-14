@@ -33,6 +33,7 @@ import {
   timeAgo,
 } from "./format.ts";
 import { KindIcon } from "./icons.tsx";
+import { StickerLink } from "./StickerLink.tsx";
 
 const RANGE_LABEL: Record<ResourceRange, string> = {
   hour: "1 hour",
@@ -111,15 +112,27 @@ export function CardMeters({ machineId }: { machineId: MachineId }) {
 }
 
 /** MM-1505: one sticker per active alert. */
-export function AlertStickers({ machineId }: { machineId: MachineId }) {
+/** With `href`, each alert links there. The Health view leaves it out: its card is a button. */
+export function AlertStickers({ machineId, href }: { machineId: MachineId; href?: string }) {
   const { health } = usePortalContext();
   return (
     <>
-      {activeAlerts(health.alerts, machineId).map((alert) => (
-        <span key={alert.id} className="sticker warn" aria-label={ALERT_TEXT[alert.kind]}>
-          {ALERT_STICKER[alert.kind]}
-        </span>
-      ))}
+      {activeAlerts(health.alerts, machineId).map((alert) =>
+        href === undefined ? (
+          <span key={alert.id} className="sticker warn" aria-label={ALERT_TEXT[alert.kind]}>
+            {ALERT_STICKER[alert.kind]}
+          </span>
+        ) : (
+          <StickerLink
+            key={alert.id}
+            className="sticker warn"
+            href={href}
+            label={ALERT_TEXT[alert.kind]}
+          >
+            {ALERT_STICKER[alert.kind]}
+          </StickerLink>
+        ),
+      )}
     </>
   );
 }

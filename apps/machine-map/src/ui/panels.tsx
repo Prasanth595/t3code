@@ -57,7 +57,8 @@ import {
   valueText,
 } from "./format.ts";
 import { CloseIcon, KindIcon, UndoIcon } from "./icons.tsx";
-import { AlertStickers, ResourcesSection } from "./resources.tsx";
+import { MachineStickers } from "./MachineStickers.tsx";
+import { ResourcesSection } from "./resources.tsx";
 import { NO_SELECTION, type Selection } from "./route.ts";
 import { settingControl, settingProblem } from "./settingControls.ts";
 
@@ -496,8 +497,6 @@ function MachinePanel({ id }: { id: string }) {
   if (!machine) return <Missing what="machine" />;
   const presence = snapshot.presence[machine.id];
   const state = presenceState(presence);
-  const status = presence?.status ?? null;
-  const queue = machineQueue(snapshot, portal.rotations, machine);
 
   return (
     <>
@@ -513,19 +512,7 @@ function MachinePanel({ id }: { id: string }) {
       </p>
       <div className="stickers-row">
         <span className={`sticker ${PRESENCE_STICKER[state]}`}>{state}</span>
-        <AlertStickers machineId={machine.id} />
-        {status && status.runningTurns > 0 && (
-          <span className="sticker ok">{status.runningTurns} running</span>
-        )}
-        {status && status.waitingThreads > 0 && (
-          <span className="sticker wait">
-            {status.waitingThreads} {status.waitingThreads === 1 ? "needs" : "need"} you
-          </span>
-        )}
-        {status?.updateWaiting && <span className="sticker info">update</span>}
-        {!queue.waitingToJoin && queue.count > 0 && (
-          <span className="sticker wait">{queue.count} queued</span>
-        )}
+        <MachineStickers machine={machine} />
       </div>
       <div className="actions spaced">
         {machine.hostname ? (
