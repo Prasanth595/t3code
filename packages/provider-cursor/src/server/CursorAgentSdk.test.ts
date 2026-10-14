@@ -106,7 +106,7 @@ vi.mock("./sdk.ts", () => {
     },
     createAgentPlatform: vi.fn(),
   };
-  return { loadCursorSdk: () => sdk };
+  return { loadCursorSdk: () => sdk, loadCursorSdkSqlite: vi.fn() };
 });
 
 const layerTest = CursorAgentSdk.layer.pipe(

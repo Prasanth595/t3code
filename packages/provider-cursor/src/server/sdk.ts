@@ -11,3 +11,7 @@ const requireCursorSdk = NodeModule.createRequire(import.meta.url);
  * should never call this.
  */
 export const loadCursorSdk = () => requireCursorSdk("@cursor/sdk") as typeof import("@cursor/sdk");
+
+/** Loads the SDK's SQLite agent store, about 6 MB more heap, on the same terms. */
+export const loadCursorSdkSqlite = () =>
+  requireCursorSdk("@cursor/sdk/sqlite") as typeof import("@cursor/sdk/sqlite");
