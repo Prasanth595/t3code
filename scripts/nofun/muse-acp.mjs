@@ -28,7 +28,9 @@ import {
   buildPromptFile,
   createEventTranslator,
   mergeRequired,
+  measurePrompt,
   requiredReceipts,
+  resolveRequiredReferences,
   splitPrompt,
 } from "./muse-acp.logic.mjs";
 
@@ -127,7 +129,36 @@ function runPrompt(id, params) {
   }
   const { request: text, required: delivered, problems } = splitPrompt(params.prompt);
   if (problems.length > 0) return fail(id, -32000, problems.join(" "));
-  const merged = mergeRequired(session.required, delivered);
+  const references = resolveRequiredReferences({
+    request: text,
+    delivered,
+    readPath: (path) => {
+      const root = NodeFS.realpathSync(session.cwd);
+      const resolved = NodeFS.realpathSync(NodePath.resolve(root, path));
+      const relative = NodePath.relative(root, resolved);
+      const name = NodePath.basename(resolved);
+      if (
+        relative === ".." ||
+        relative.startsWith(`..${NodePath.sep}`) ||
+        NodePath.isAbsolute(relative)
+      )
+        throw new Error("Reference escapes workspace");
+      if (
+        /^(?:\.env(?:\.|$)|\.npmrc$|\.netrc$|auth\.json$|credentials(?:\.|$))|\.(?:pem|key)$/i.test(
+          name,
+        )
+      )
+        throw new Error("Sensitive reference path");
+      const stat = NodeFS.statSync(resolved);
+      if (!stat.isFile() || stat.size > 480_000)
+        throw new Error("Reference must be a bounded regular file");
+      return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+        NodeFS.readFileSync(resolved),
+      );
+    },
+  });
+  if (references.error) return fail(id, -32000, references.error);
+  const merged = mergeRequired(session.required, [...delivered, ...references.required]);
   if (merged.error) return fail(id, -32000, merged.error);
   session.required = merged.required;
   const taskId = `t3-${accountId}-${NodeCrypto.randomUUID().slice(0, 8)}`;
@@ -158,6 +189,12 @@ function runPrompt(id, params) {
     { cwd: session.cwd, env, stdio: ["ignore", "pipe", "pipe"], detached: true },
   );
   const run = { child, cancelled: false, settled: false, answer: "", streamed: "", stderr: "" };
+  const readEvents = [];
+  const measurements = measurePrompt({
+    required: session.required,
+    history: session.history,
+    request: text,
+  });
   session.run = run;
   const translator = createEventTranslator();
   const lines = NodeReadline.createInterface({ input: child.stdout });
@@ -177,6 +214,21 @@ function runPrompt(id, params) {
         });
       } else if (action.type === "final") {
         run.answer = action.text;
+      } else if (action.type === "read") {
+        readEvents.push({ ...action.read, childTaskId: taskId });
+        update(params.sessionId, {
+          sessionUpdate: "tool_call_update",
+          toolCallId: action.read.taskId,
+          content: [
+            {
+              type: "content",
+              content: {
+                type: "text",
+                text: "Read-tool event observed; file identity and application are unknown.",
+              },
+            },
+          ],
+        });
       } else {
         update(params.sessionId, action.body);
       }
@@ -220,7 +272,14 @@ function runPrompt(id, params) {
     const receipts = requiredReceipts(session.required);
     reply(id, {
       stopReason: "end_turn",
-      ...(receipts.length > 0 ? { _meta: { museAcp: { requiredContext: receipts } } } : {}),
+      _meta: {
+        museAcp: {
+          requiredContext: receipts,
+          requiredReferences: references.references,
+          readEvents,
+          measurements,
+        },
+      },
     });
   });
 }

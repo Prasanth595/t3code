@@ -51,7 +51,9 @@ import {
   buildRecap,
   createEventTranslator,
   mergeRequired,
+  measurePrompt,
   requiredReceipts,
+  resolveRequiredReferences,
   splitPrompt,
 } from "./muse-acp.logic.mjs";
 
@@ -274,6 +276,41 @@ const reference = entryOf(
 );
 
 describe("required context and recap", () => {
+  test("required_references uses the exact path/delivery/step fields and refuses missing content", () => {
+    const request =
+      'required_references: [{"path":"docs/a.md","delivery":"inline","step":"check"}]\n';
+    assert.match(
+      resolveRequiredReferences({
+        request,
+        delivered: [],
+        readPath: () => assert.fail("no file access for inline"),
+      }).error,
+      /^BLOCKED reference docs\/a.md: inline content is missing or truncated/,
+    );
+    assert.match(
+      resolveRequiredReferences({
+        request: "required_references:\n  - docs/a.md | path | check\n",
+        delivered: [],
+        readPath: () => {
+          throw Object.assign(new Error("not emitted"), { code: "ENOENT" });
+        },
+      }).error,
+      /^BLOCKED reference docs\/a.md: ENOENT$/,
+    );
+  });
+
+  test("recap measurements count code units and UTF-8 bytes, never inferred tokens", () => {
+    const measured = measurePrompt({
+      required: new Map(),
+      history: [{ prompt: "old", answer: "😀".repeat(20_000) }],
+      request: "latest",
+    });
+    assert.equal(measured.recapLimitCodeUnits, 20_000);
+    assert.ok(measured.recapCodeUnits <= 20_000);
+    assert.ok(measured.recapUtf8Bytes > measured.recapCodeUnits);
+    assert.equal(measured.tokenCount, null);
+    assert.equal(measured.tokenLimitVerified, false);
+  });
   test("plain text stays the request; only an explicit embedded resource becomes required", () => {
     const { request, required, problems } = splitPrompt([
       { type: "text", text: "Use the fee-check skill. $fee-check" },
@@ -680,6 +717,84 @@ describe("bridge process", () => {
     return bridge;
   }
   const textBlock = (text) => ({ type: "text", text });
+
+  test("the canonical inline/path envelope refuses launch until the reference opens and changes the task result", async () => {
+    const bridge = startBridge();
+    const sessionId = await bridge.newSession();
+    const packet =
+      "required_references:\n  - docs/fee/SKILL.md | inline | compute fee\n  - docs/rates.md | path | fee constants\ngoal: compute fee\n## Reference: docs/fee/SKILL.md\nfee = units * RATE + BASE\n## End reference: docs/fee/SKILL.md\nunits=6 [[scenario:consequence]]";
+    const missing = await bridge.prompt(sessionId, [textBlock(packet)]);
+    assert.equal(runs().length, 0, "a missing required reference must prevent spawn");
+    assert.match(missing.error.message, /^BLOCKED reference docs\/rates.md: ENOENT$/);
+    mkdirSync(join(workspace, "docs"), { recursive: true });
+    writeFileSync(join(workspace, "docs/rates.md"), "RATE=7\nBASE=3\n");
+    const response = await bridge.prompt(sessionId, [textBlock(packet)]);
+    assert.equal(lastAnswer(bridge), "FEE=45");
+    const meta = response.result._meta.museAcp;
+    assert.equal(meta.requiredReferences.length, 2);
+    assert.equal(meta.requiredReferences[1].source, "bridge_workspace_read");
+    assert.equal(meta.requiredReferences[1].childRead, "unknown");
+    assert.equal(meta.requiredReferences[1].bytes, 14);
+    assert.equal(meta.measurements.tokenCount, null);
+    writeFileSync(join(workspace, "docs/rates.md"), "RATE=9\nBASE=3\n");
+    const next = await bridge.prompt(sessionId, [textBlock(packet)]);
+    assert.equal(lastAnswer(bridge), "FEE=57");
+    assert.notEqual(
+      next.result._meta.museAcp.requiredReferences[1].sha256,
+      meta.requiredReferences[1].sha256,
+    );
+    await bridge.close();
+  });
+
+  test("truncated inline and escaping path references refuse launch with the BLOCKED line", async () => {
+    const bridge = startBridge();
+    const sessionId = await bridge.newSession();
+    const missing = await bridge.prompt(sessionId, [
+      textBlock(
+        "required_references:\n  - docs/truncated.md | inline | check\n## Reference: docs/truncated.md\nnot complete",
+      ),
+    ]);
+    assert.match(
+      missing.error.message,
+      /^BLOCKED reference docs\/truncated.md: inline content is missing or truncated/,
+    );
+    writeFileSync(join(root, "outside.md"), "outside fixture");
+    const escape = await bridge.prompt(sessionId, [
+      textBlock(
+        `required_references: ${JSON.stringify([{ path: join(root, "outside.md"), delivery: "path", step: "check" }])}`,
+      ),
+    ]);
+    assert.match(escape.error.message, /^BLOCKED reference .*outside\.md: /);
+    assert.equal(runs().length, 0);
+    await bridge.close();
+  });
+
+  test("read events are attributed to the child without inventing file identity or application", async () => {
+    const bridge = startBridge();
+    const sessionId = await bridge.newSession();
+    const response = await bridge.prompt(sessionId, [textBlock("inspect [[scenario:tools]]")]);
+    const reads = response.result._meta.museAcp.readEvents;
+    assert.ok(reads.length >= 2);
+    for (const read of reads) {
+      assert.match(read.childTaskId, /^t3-test-/);
+      assert.ok(["read_skill", "read_file"].includes(read.tool));
+      assert.equal(read.path, null);
+      assert.equal(read.skill_state, "unknown");
+      assert.match(read.state_evidence, /file identity\/heading\/bytes unavailable/);
+    }
+    assert.equal(new Set(reads.map((read) => read.callId)).size, reads.length);
+    assert.equal(
+      toolNotes(bridge).filter((note) =>
+        note.content?.some(
+          (part) =>
+            part.content?.text ===
+            "Read-tool event observed; file identity and application are unknown.",
+        ),
+      ).length,
+      reads.length,
+    );
+    await bridge.close();
+  });
   const toolNotes = (bridge) =>
     bridge.notes
       .map((note) => note.update)
@@ -703,7 +818,17 @@ describe("bridge process", () => {
     const response = await bridge.prompt(sessionId, [textBlock("inspect [[scenario:tools]]")]);
     assert.equal(response.result.stopReason, "end_turn");
     const expected = toolUpdates(translateAll(fixtureEvents()));
-    assert.deepEqual(toolNotes(bridge), expected);
+    assert.deepEqual(
+      toolNotes(bridge).filter(
+        (note) =>
+          !note.content?.some(
+            (part) =>
+              part.content?.text ===
+              "Read-tool event observed; file identity and application are unknown.",
+          ),
+      ),
+      expected,
+    );
     const answer = bridge.notes
       .filter((note) => note.update.sessionUpdate === "agent_message_chunk")
       .map((note) => note.update.content.text)
@@ -717,7 +842,27 @@ describe("bridge process", () => {
     const bridge = startBridge();
     const sessionId = await bridge.newSession();
     await bridge.prompt(sessionId, [textBlock("[[scenario:tools-twice]]")]);
-    assert.deepEqual(toolNotes(bridge), toolUpdates(translateAll(fixtureEvents())));
+    assert.deepEqual(
+      toolNotes(bridge).filter(
+        (note) =>
+          !note.content?.some(
+            (part) =>
+              part.content?.text ===
+              "Read-tool event observed; file identity and application are unknown.",
+          ),
+      ),
+      toolUpdates(translateAll(fixtureEvents())),
+    );
+    assert.equal(
+      toolNotes(bridge).filter((note) =>
+        note.content?.some(
+          (part) =>
+            part.content?.text ===
+            "Read-tool event observed; file identity and application are unknown.",
+        ),
+      ).length,
+      translateAll(fixtureEvents()).filter((action) => action.type === "read").length,
+    );
     const answer = bridge.notes
       .filter((note) => note.update.sessionUpdate === "agent_message_chunk")
       .map((note) => note.update.content.text)

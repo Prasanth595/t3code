@@ -7,7 +7,9 @@
  */
 
 import * as NodeCrypto from "node:crypto";
+import * as NodeBuffer from "node:buffer";
 
+/** This build's configured bound in UTF-16 code units, NOT a measured token limit. */
 export const RECAP_LIMIT = 20_000;
 /** Total characters of required context kept per session. Over it, the prompt fails rather than truncating. */
 export const REQUIRED_CONTEXT_LIMIT = 120_000;
@@ -181,6 +183,139 @@ export function requiredReceipts(required) {
   }));
 }
 
+/** Read the 40fd581 task-envelope declaration, not arbitrary prose paths. */
+export function resolveRequiredReferences({ request, delivered, readPath }) {
+  const lines = request.split(/\r?\n/);
+  const index = lines.findIndex((line) => line.startsWith("required_references:"));
+  if (index < 0) return { required: [], references: [] };
+  const tail = lines[index].slice("required_references:".length).trim();
+  if (tail === "none") return { required: [], references: [] };
+  const blocked = (path, reason) => ({ error: `BLOCKED reference ${path}: ${reason}` });
+  let declarations;
+  if (tail.startsWith("[")) {
+    try {
+      declarations = JSON.parse(tail);
+    } catch {
+      return blocked("<declaration>", "required_references JSON is malformed");
+    }
+  } else if (tail) {
+    return blocked(
+      "<declaration>",
+      "use path | inline or path | step entries, a JSON array, or none",
+    );
+  } else {
+    declarations = [];
+    for (const line of lines.slice(index + 1)) {
+      if (!line.trim()) continue;
+      const match = /^\s+-\s+(.+)$/.exec(line);
+      if (!match) break;
+      const fields = match[1].split("|").map((field) => field.trim());
+      if (fields.length < 3)
+        return blocked(fields[0] || "<declaration>", "expected path | delivery | step");
+      declarations.push({
+        path: fields[0],
+        delivery: fields[1],
+        step: fields.slice(2).join(" | "),
+      });
+    }
+  }
+  if (!Array.isArray(declarations) || declarations.length === 0 || declarations.length > 64) {
+    return blocked("<declaration>", "expected between 1 and 64 required references, or none");
+  }
+  const required = [];
+  const references = [];
+  const seen = new Set();
+  for (const item of declarations) {
+    const path = item?.path;
+    if (typeof path !== "string" || !path.trim() || path.length > 2048 || /[\r\n\0]/.test(path)) {
+      return blocked("<declaration>", "invalid reference path");
+    }
+    if (
+      !["inline", "path"].includes(item.delivery) ||
+      typeof item.step !== "string" ||
+      !item.step.trim()
+    ) {
+      return blocked(path, "delivery must be inline or path and step must be named");
+    }
+    if (seen.has(path)) return blocked(path, "duplicate required reference declaration");
+    seen.add(path);
+    let text;
+    let source;
+    const embedded = delivered.find((entry) => entry.uri === normalizeUri(path));
+    if (embedded) {
+      text = embedded.text;
+      source = "caller_inline";
+    } else if (item.delivery === "inline") {
+      const escape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const start = new RegExp(`^## Reference: ${escape(path)}\\r?\\n`, "m").exec(request);
+      const end =
+        start &&
+        new RegExp(`^## End reference: ${escape(path)}\\r?$`, "m").exec(
+          request.slice(start.index + start[0].length),
+        );
+      if (!start || !end)
+        return blocked(
+          path,
+          "inline content is missing or truncated (matching end marker required)",
+        );
+      text = request.slice(
+        start.index + start[0].length,
+        start.index + start[0].length + end.index,
+      );
+      source = "caller_inline";
+    } else {
+      try {
+        text = readPath(path);
+      } catch (error) {
+        return blocked(
+          path,
+          typeof error?.code === "string"
+            ? error.code
+            : "path is not readable in the bound workspace; inline it",
+        );
+      }
+      source = "bridge_workspace_read";
+    }
+    if (typeof text !== "string" || !text.length)
+      return blocked(path, "reference content is empty or unreadable");
+    const entry =
+      embedded ??
+      makeEntry({
+        kind: isSkillEntry(path) ? "skill-entry" : "reference",
+        uri: path,
+        text,
+      });
+    required.push(entry);
+    references.push({
+      path,
+      delivery: item.delivery,
+      step: item.step,
+      source,
+      bytes: NodeBuffer.Buffer.byteLength(text),
+      sha256: entry.sha256,
+      childRead: "unknown",
+      state_evidence: "delivered content; child file-open/application not established",
+    });
+  }
+  return { required, references };
+}
+
+/** Assembly measurements only. Token count and model consumption remain unknown. */
+export function measurePrompt({ required, history, request }) {
+  const recap = buildRecap(history);
+  const prompt = buildPromptFile({ required, history, request });
+  return {
+    recapLimitCodeUnits: RECAP_LIMIT,
+    recapCodeUnits: recap.length,
+    recapUtf8Bytes: NodeBuffer.Buffer.byteLength(recap),
+    promptCodeUnits: prompt.length,
+    promptUtf8Bytes: NodeBuffer.Buffer.byteLength(prompt),
+    tokenCount: null,
+    tokenLimitVerified: false,
+    unit: "UTF-16 code units",
+  };
+}
+
 /** Newest whole turns that fit `limit`, with a note for what was dropped. */
 export function buildRecap(history, limit = RECAP_LIMIT) {
   const blocks = history.map(
@@ -334,7 +469,7 @@ export function createEventTranslator() {
           "other",
           /^[A-Za-z0-9_.:-]{1,48}$/.test(tool) ? `Tool: ${tool}` : "Tool",
         ];
-        tasks.set(taskId, { status: "pending", locationSent: false });
+        tasks.set(taskId, { status: "pending", locationSent: false, tool, readReported: false });
         return [
           {
             type: "update",
@@ -382,6 +517,26 @@ export function createEventTranslator() {
         else if (outcome === "failure") actions.push(...settle(id, "failed", undefined, "Failed"));
         else if (outcome === "cancelled")
           actions.push(...settle(id, "failed", undefined, "Cancelled"));
+        if (
+          !task.readReported &&
+          ["read_file", "read_skill"].includes(task.tool) &&
+          payload.correlation_facts?.tool_name === task.tool
+        ) {
+          task.readReported = true;
+          actions.push({
+            type: "read",
+            read: {
+              taskId: id,
+              callId: payload.call_id,
+              tool: task.tool,
+              outcome: ["success", "failure", "cancelled"].includes(outcome) ? outcome : "unknown",
+              path: null,
+              skill_state: "unknown",
+              state_evidence:
+                "tool.result observed; file identity/heading/bytes unavailable; application unknown",
+            },
+          });
+        }
         const facts = payload.edit_facts;
         if (!task.locationSent && typeof facts?.path === "string" && facts.path) {
           task.locationSent = true;
