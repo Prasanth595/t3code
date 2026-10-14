@@ -17,6 +17,14 @@ import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullR
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
 
+/**
+ * Pages of the most recently updated pull requests a branch lookup reads when the server ignores
+ * the `head` filter (Gitea, Forgejo before 16). Without a cap, a branch with no pull request reads
+ * every pull request in the repository. On those servers, a branch whose pull request is older than
+ * these pages is not found.
+ */
+const UNFILTERED_PULL_REQUEST_PAGES = 2;
+
 export const discovery = {
   type: "cli",
   kind: SourceControlProviderKind.make("forgejo"),
@@ -298,6 +306,7 @@ export const make = Effect.gen(function* () {
         const branch = SourceControlProvider.sourceBranch(input);
         const results: ReturnType<typeof toForgejoChangeRequest>[] = [];
         const limit = input.limit ?? 20;
+        let unfiltered = false;
         for (let page = 1; results.length < limit; page++) {
           const items = yield* request(
             {
@@ -307,6 +316,7 @@ export const make = Effect.gen(function* () {
             Schema.Array(ForgejoPullRequestSchema),
           );
           for (const item of items) {
+            if (item.head.ref !== branch) unfiltered = true;
             if (
               item.head.ref !== branch ||
               (source?.repository && item.head.repo?.full_name !== source.repository) ||
@@ -316,7 +326,7 @@ export const make = Effect.gen(function* () {
             const normalized = toForgejoChangeRequest(item);
             if (input.state === "all" || normalized.state === input.state) results.push(normalized);
           }
-          if (items.length === 0) break;
+          if (items.length === 0 || (unfiltered && page >= UNFILTERED_PULL_REQUEST_PAGES)) break;
         }
         return results.slice(0, limit);
       }).pipe(mapError("listChangeRequests", input.cwd)),

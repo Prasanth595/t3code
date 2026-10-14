@@ -363,6 +363,68 @@ it.effect("loads Forgejo pull request references from files and commits views", 
   ),
 );
 
+it.effect.each([
+  [
+    "ignores",
+    (page: number, branch: string) =>
+      page === 2 ? [`other-${page}`, branch] : page <= 5 ? [`other-${page}`] : [],
+  ],
+  ["honors", (page: number, branch: string) => (page <= 3 ? [branch] : [])],
+] as const)(
+  "reads Forgejo branch pull requests when the server %s the head filter",
+  ([filter, heads]) => {
+    const pages: number[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* ForgejoSourceControlProvider.make;
+      const pullRequests = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "feature",
+        state: "all",
+        limit: 20,
+      });
+      assert.deepStrictEqual(
+        pullRequests.map((pullRequest) => pullRequest.headRefName),
+        filter === "ignores" ? ["feature"] : ["feature", "feature", "feature"],
+      );
+      assert.deepStrictEqual(pages, filter === "ignores" ? [1, 2] : [1, 2, 3, 4]);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+          TestSourceControlHost.layer({ process: {} }),
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            resolveRepository: () =>
+              Effect.succeed({
+                login: "work",
+                repository: "maria/project",
+                baseUrl: "https://forgejo.test",
+              }),
+            api: (input) => {
+              const [path, query] = input.path.split("?");
+              const params = new URLSearchParams(query);
+              assert.strictEqual(path, "repos/maria/project/pulls");
+              assert.strictEqual(params.get("head"), "feature");
+              const page = Number(params.get("page"));
+              pages.push(page);
+              return encodeJsonEffect(
+                heads(page, "feature").map((ref, index) => ({
+                  number: page * 100 + index,
+                  title: ref,
+                  html_url: `https://forgejo.test/maria/project/pulls/${page * 100 + index}`,
+                  state: "closed",
+                  merged: true,
+                  base: { ref: "main", sha: "base", repo: null },
+                  head: { ref, sha: "head", repo: null },
+                })),
+              ).pipe(Effect.orDie, Effect.map(processOutput));
+            },
+          }),
+        ),
+      ),
+    );
+  },
+);
+
 it.effect(
   "loads Forgejo reactions on comments, reviews and inline threads and resolves review mutations",
   () => {
