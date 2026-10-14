@@ -1,11 +1,14 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
+  type MessageId,
   type ModelSelection,
   repositoryGroupingKeyOf,
+  type ScopedThreadRef,
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
   buildNewThreadLink,
+  buildThreadMessageLink,
   parsePromptLinkRepository,
   PROMPT_LINK_MAX_PROMPT_LENGTH,
   type PromptLinkRepository,
@@ -72,15 +75,27 @@ export function composerPromptLink(input: {
 }
 
 /** Copies a prompt link and says so. */
-export async function copyPromptLink(link: string): Promise<void> {
+export function copyPromptLink(link: string): Promise<void> {
+  return copyLink(link, "Prompt link");
+}
+
+/** Copies a link that opens the thread at one of its messages, and says so. */
+export function copyMessageLink(threadRef: ScopedThreadRef, messageId: MessageId): Promise<void> {
+  return copyLink(
+    buildThreadMessageLink({ ...threadRef, messageId, origin: configuredHostedAppUrl() }),
+    "Message link",
+  );
+}
+
+async function copyLink(link: string, name: string): Promise<void> {
   try {
     if (!(await writeTextToClipboard(link))) return;
-    toastManager.add({ type: "success", title: "Prompt link copied" });
+    toastManager.add({ type: "success", title: `${name} copied` });
   } catch (error) {
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not copy the prompt link",
+        title: `Could not copy the ${name.toLowerCase()}`,
         description: error instanceof Error ? error.message : "An error occurred.",
       }),
     );

@@ -1,4 +1,8 @@
-import { buildNewThreadLink, type LinkedPrompt } from "@t3tools/shared/promptLinks";
+import {
+  buildNewThreadLink,
+  buildThreadMessageLink,
+  type LinkedPrompt,
+} from "@t3tools/shared/promptLinks";
 import { Alert } from "react-native";
 
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -45,6 +49,17 @@ export async function applyLinkedPromptToThreadDraft(
 /** Copies a shareable link that opens a new task with this prompt. Used by sent user messages. */
 export async function copyPromptLink(prompt: string): Promise<void> {
   if (!(await tryCopyTextWithHaptic(buildNewThreadLink({ prompt }), { target: "prompt link" }))) {
+    Alert.alert("Could not copy", "Try again.");
+  }
+}
+
+/** Copies a shareable link that opens this thread at one of its messages. */
+export async function copyMessageLink(target: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly messageId: string;
+}): Promise<void> {
+  if (!(await tryCopyTextWithHaptic(buildThreadMessageLink(target), { target: "message link" }))) {
     Alert.alert("Could not copy", "Try again.");
   }
 }

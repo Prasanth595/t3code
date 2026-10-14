@@ -186,7 +186,7 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
-import { promptLinkFor } from "../promptLinks/copyPromptLink";
+import { copyMessageLink, promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
@@ -197,6 +197,8 @@ import {
   type AssistantCitationTarget,
 } from "./AssistantCitationSource";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
+import { useLinkedMessageTarget } from "./useLinkedMessageTarget";
+import type { LinkedMessageRequest } from "../promptLinks/ThreadLinkParams";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
@@ -451,6 +453,8 @@ export interface MessagesTimelineHistoryControls {
 
 interface MessagesTimelineProps {
   citationRequest?: AssistantCitationRequest | null;
+  /** A thread link's message, scrolled to the top once it is found. */
+  linkedMessage?: LinkedMessageRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
     citation: AssistantCitation,
@@ -570,6 +574,7 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 
 const ConversationTimeline = memo(function ConversationTimeline({
   citationRequest = null,
+  linkedMessage = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
   isWorking,
@@ -966,7 +971,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (!restoringThreadPosition || rows.length === 0) return;
     const list = listRef.current;
     if (!list) return;
-    if (citationRequest !== null) {
+    if (citationRequest !== null || linkedMessage !== null) {
       setPositionedThreadKey(listIdentityKey);
       return;
     }
@@ -1068,6 +1073,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, [
     citationRequest,
+    linkedMessage,
     cancelPositionRestoreRef,
     listIdentityKey,
     listRef,
@@ -1099,6 +1105,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation,
   });
   const [findListReady, setFindListReady] = useState(false);
+  const {
+    positioning: linkedMessagePositioning,
+    pinnedRowId: linkedMessageRowId,
+    alwaysRender: linkedMessageAlwaysRender,
+  } = useLinkedMessageTarget({
+    request: linkedMessage,
+    entries: timelineEntries,
+    rows,
+    listRef,
+    listReady: findListReady,
+    viewport: timelineViewportElement,
+    historyLoading: citationHistoryLoading,
+    historyControls,
+    onExpandTurn: expandCitedRun,
+    onManualNavigation,
+  });
   const handleListLoad = useCallback(() => {
     onCitationListLoad();
     setFindListReady(true);
@@ -1116,6 +1138,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     const indices = restoringAlwaysRender?.indices ?? [];
     const keys = [
       ...(citationAlwaysRender?.keys ?? []),
+      ...(linkedMessageAlwaysRender?.keys ?? []),
       ...(fullscreenAppRowId === null ? [] : [fullscreenAppRowId]),
     ];
     if (indices.length === 0 && keys.length === 0) return undefined;
@@ -1123,7 +1146,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ...(indices.length === 0 ? {} : { indices }),
       ...(keys.length === 0 ? {} : { keys }),
     };
-  }, [citationAlwaysRender, restoringAlwaysRender, fullscreenAppRowId]);
+  }, [citationAlwaysRender, linkedMessageAlwaysRender, restoringAlwaysRender, fullscreenAppRowId]);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
   const handleAnchorReady = useCallback(
@@ -1648,16 +1671,20 @@ const ConversationTimeline = memo(function ConversationTimeline({
               renderItem={renderItem}
               estimatedItemSize={90}
               initialScrollAtEnd={
-                !findActive && citationRequest === null && rememberedPosition?.atEnd !== false
+                !findActive &&
+                citationRequest === null &&
+                linkedMessage === null &&
+                rememberedPosition?.atEnd !== false
               }
               // Legend needs a data refresh to mount new pins without a scroll event.
-              dataVersion={readyCitationRequest?.key ?? listIdentityKey}
+              dataVersion={readyCitationRequest?.key ?? linkedMessageRowId ?? listIdentityKey}
               {...(alwaysRender ? { alwaysRender } : {})}
               onLoad={handleListLoad}
               {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
               contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
               maintainScrollAtEnd={
                 citationPositioning ||
+                linkedMessagePositioning ||
                 (restoringThreadPosition && rememberedPosition?.atEnd === false) ||
                 anchoredEndSpace ||
                 !liveFollowEnabled ||
@@ -1671,6 +1698,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               maintainVisibleContentPosition={
                 findActive ||
                 citationPositioning ||
+                linkedMessagePositioning ||
                 (restoringThreadPosition && rememberedPosition?.atEnd === false)
                   ? false
                   : maintainVisibleContentPosition
@@ -2607,14 +2635,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       ) : null}
       <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
         <div className="flex shrink-0 items-center gap-2">
-          <Tooltip>
-            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-              {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipTrigger>
-            <TooltipPopup>
-              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-            </TooltipPopup>
-          </Tooltip>
+          <MessageTimestamp messageId={row.message.id} time={row.message.createdAt} />
           <div className="flex items-center gap-0.5">
             {typeof revertTurnCount === "number" && (
               <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
@@ -2985,17 +3006,37 @@ function AssistantMessageMeta({
       {projectedItem?.item.type === "assistant_message" ? (
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
-      {!message.streaming && (
-        <Tooltip>
-          <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-            {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat)}
-          </TooltipPopup>
-        </Tooltip>
-      )}
+      {!message.streaming && <MessageTimestamp messageId={message.id} time={message.updatedAt} />}
     </div>
+  );
+}
+
+/** A message's time. Clicking it copies a link that opens the thread at this message. */
+function MessageTimestamp({ messageId, time }: { messageId: MessageId; time: string }) {
+  const ctx = use(TimelineRowCtx);
+  const threadRef = ctx.threadRef;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          threadRef ? (
+            <button
+              type="button"
+              className="text-muted-foreground text-xs tabular-nums hover:text-foreground hover:underline"
+              onClick={() => void copyMessageLink(threadRef, messageId)}
+            />
+          ) : (
+            <p className="text-muted-foreground text-xs tabular-nums" />
+          )
+        }
+      >
+        {formatDayAwareTimestamp(time, ctx.timestampFormat)}
+      </TooltipTrigger>
+      <TooltipPopup>
+        {formatChatTimestampTooltip(time, ctx.timestampFormat)}
+        {threadRef ? <p className="text-muted-foreground">Click to copy a link</p> : null}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 

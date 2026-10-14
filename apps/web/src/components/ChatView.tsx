@@ -62,7 +62,7 @@ import {
   type ChatAttachment as ContractChatAttachment,
   EnvironmentAuthorizationError,
   type EnvironmentId,
-  type MessageId,
+  MessageId,
   type ModelSelection,
   type ProjectScript,
   type ProjectId,
@@ -168,6 +168,7 @@ import {
 import { flushSync } from "react-dom";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import { assistantCitationFromLocation } from "../lib/assistantCitationNavigation";
+import type { LinkedMessageRequest } from "./promptLinks/ThreadLinkParams";
 import { isMacPlatform } from "../lib/utils";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { useShallow } from "zustand/react/shallow";
@@ -1787,6 +1788,17 @@ export default function ChatView(props: ChatViewProps) {
       key: location.state.assistantCitationActivation ?? location.state.__TSR_key,
     }),
   });
+  const linkedMessageState = useLocation({ select: (location) => location.state.linkedMessage });
+  const linkedMessageRequest = useMemo<LinkedMessageRequest | null>(
+    () =>
+      linkedMessageState
+        ? {
+            messageId: MessageId.make(linkedMessageState.messageId),
+            key: linkedMessageState.activation,
+          }
+        : null,
+    [linkedMessageState],
+  );
   const citationRequest = useMemo<AssistantCitationRequest | null>(() => {
     const citation = assistantCitationFromLocation(citationLocation.href);
     return citation && citation.environmentId === environmentId && citation.threadId === threadId
@@ -11556,6 +11568,7 @@ export default function ChatView(props: ChatViewProps) {
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
+                linkedMessage={paintOnlyDisplayedTimeline ? null : linkedMessageRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline
                   ? {

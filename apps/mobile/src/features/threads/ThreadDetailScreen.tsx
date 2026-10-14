@@ -199,6 +199,9 @@ export interface ThreadDetailScreenProps {
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   /** Progressive history controls for oversized mobile thread opens. */
   readonly historyControls?: ThreadFeedHistoryControls;
+  /** A message link's target. See ThreadFeed. */
+  readonly linkedMessageId?: string | null;
+  readonly onLinkedMessageHandled?: () => void;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
   /** Set while a queued message is open in the composer for editing. */
@@ -1187,6 +1190,9 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               }
               contentMaxWidth={contentMaxWidth}
               historyControls={props.historyControls}
+              linkedMessageId={props.linkedMessageId}
+              onLinkedMessageHandled={props.onLinkedMessageHandled}
+              threadSynced={props.threadSyncStatus === "live"}
               contentSideInsets={nativeMetrics?.safeArea}
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}

@@ -1,0 +1,31 @@
+import { describe, expect, it } from "vite-plus/test";
+
+import { resolveLinkedMessageStep } from "./thread-feed-message-link";
+
+const absent = {
+  presented: false,
+  foldedRunId: null,
+  synced: true,
+  historyLoading: false,
+  canLoadEarlier: true,
+};
+
+describe("resolveLinkedMessageStep", () => {
+  it("scrolls to a message the feed shows, even before the thread syncs", () => {
+    expect(resolveLinkedMessageStep({ ...absent, presented: true, synced: false })).toBe("scroll");
+  });
+
+  it("expands the turn that hides the message", () => {
+    expect(resolveLinkedMessageStep({ ...absent, foldedRunId: "run-1" })).toBe("expand");
+  });
+
+  it("waits for the sync and any history load before deciding the message is older", () => {
+    expect(resolveLinkedMessageStep({ ...absent, synced: false })).toBe("wait");
+    expect(resolveLinkedMessageStep({ ...absent, historyLoading: true })).toBe("wait");
+  });
+
+  it("loads earlier history until it runs out, then reports the message missing", () => {
+    expect(resolveLinkedMessageStep(absent)).toBe("load");
+    expect(resolveLinkedMessageStep({ ...absent, canLoadEarlier: false })).toBe("missing");
+  });
+});

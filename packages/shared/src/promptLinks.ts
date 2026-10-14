@@ -12,6 +12,9 @@ import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
  *   https://app.t3.codes/new?pr=owner/name/123&prompt=…
  *   https://app.t3.codes/<environmentId>/<threadId>?prompt=…
  *   t3code://new?…   t3code://threads/<environmentId>/<threadId>?…
+ *
+ * A thread link with `message` opens the thread at that message instead, and can be copied from
+ * any message: https://app.t3.codes/<environmentId>/<threadId>?message=<messageId>
  */
 
 /** URLs stay well under the limits browsers and link shorteners apply. */
@@ -186,10 +189,15 @@ export function parseThreadLinkPrompt(search: string): PromptLinkResult<LinkedPr
   return readPrompt(new URLSearchParams(search));
 }
 
+/** The message a thread link opens at. Null when the link carries none. */
+export function threadLinkMessageId(search: string): string | null {
+  return optionalParam(new URLSearchParams(search), "message");
+}
+
 /** Drops the link's own parameters from a query, keeping anything else the route uses. */
 export function withoutPromptLinkParams(search: string): string {
   const params = new URLSearchParams(search);
-  for (const key of ["prompt", "repo", "pr", "provider", "model"]) params.delete(key);
+  for (const key of ["prompt", "repo", "pr", "provider", "model", "message"]) params.delete(key);
   const rest = params.toString();
   return rest ? `?${rest}` : "";
 }
@@ -209,6 +217,21 @@ export function buildNewThreadLink(input: {
   }
   if (input.provider) url.searchParams.set("provider", input.provider);
   if (input.provider && input.model) url.searchParams.set("model", input.model);
+  return url.toString();
+}
+
+/** A shareable link to a message in a thread, on the hosted app. */
+export function buildThreadMessageLink(input: {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly messageId: string;
+  readonly origin?: string;
+}): string {
+  const url = new URL(
+    `/${encodeURIComponent(input.environmentId)}/${encodeURIComponent(input.threadId)}`,
+    input.origin ?? DEFAULT_HOSTED_APP_URL,
+  );
+  url.searchParams.set("message", input.messageId);
   return url.toString();
 }
 
@@ -235,9 +258,12 @@ export function promptLinkAppPath(
   }
   if (!URL.canParse(hostedAppUrl) || url.origin !== new URL(hostedAppUrl).origin) return null;
   if (url.pathname === "/new") return `/new${url.search}`;
-  // Hosted thread links only open in the app when they carry a prompt. A plain one is just a
-  // page on the hosted app.
-  const thread = url.searchParams.has("prompt") ? THREAD_PATH.exec(url.pathname) : null;
+  // Hosted thread links only open in the app when they carry a prompt or a message. A plain one
+  // is just a page on the hosted app.
+  const thread =
+    url.searchParams.has("prompt") || url.searchParams.has("message")
+      ? THREAD_PATH.exec(url.pathname)
+      : null;
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
 }
 

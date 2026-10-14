@@ -26,6 +26,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
+import { threadLinkMessageId } from "@t3tools/shared/promptLinks";
 import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useConnectionsReady } from "../../state/workspace";
@@ -86,6 +87,10 @@ import {
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
 import { threadRouteIsHydrating } from "./thread-route-hydration";
+import {
+  clearedPromptLinkParams,
+  promptLinkSearchFromParams,
+} from "../prompt-links/prompt-link-model";
 import { useThreadPromptLink } from "../prompt-links/useThreadPromptLink";
 import { ThreadHeader } from "./ThreadHeader";
 import {
@@ -102,6 +107,8 @@ function InspectorPaneRoleActivation() {
   useAdaptiveWorkspacePaneRole("inspector");
   return null;
 }
+
+const MESSAGE_LINK_KEYS = ["message"];
 
 // A blank param (a hand-typed deep link) is treated as missing, since branded
 // IDs reject whitespace-only values.
@@ -154,6 +161,8 @@ type ThreadRouteScreenRouteProps = StaticScreenProps<{
   readonly threadId: string;
   /** A prompt link's draft text. See useThreadPromptLink. */
   readonly prompt?: string | string[];
+  /** A message link's target, which the feed opens at. */
+  readonly message?: string | string[];
 }>;
 
 interface ThreadRouteScreenProps extends ThreadRouteScreenRouteProps {
@@ -313,12 +322,14 @@ function ThreadRouteContent(
       hasMoreHistory: history.hasMoreHistory,
       loading: history.loading,
       error: history.error,
-      onLoadEarlier: () => {
-        void loadEarlierHistory({
+      onLoadEarlier: (throughEntryId?: string) =>
+        loadEarlierHistory({
           environmentId: selectedThread.environmentId,
-          input: { threadId: selectedThread.id },
-        });
-      },
+          input: {
+            threadId: selectedThread.id,
+            ...(throughEntryId === undefined ? {} : { throughEntryId }),
+          },
+        }),
     };
   }, [loadEarlierHistory, selectedThread, selectedThreadDetailState.history]);
   const navigation = useNavigation();
@@ -361,6 +372,14 @@ function ThreadRouteContent(
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const threadId = firstRouteParam(params.threadId);
+  const linkedMessageId = threadLinkMessageId(
+    promptLinkSearchFromParams(params, MESSAGE_LINK_KEYS) ?? "",
+  );
+  // The feed reports a message link handled once it reaches the message or gives up.
+  const handleLinkedMessageHandled = useCallback(
+    () => navigation.setParams(clearedPromptLinkParams(MESSAGE_LINK_KEYS)),
+    [navigation],
+  );
   const routeThreadIdentity =
     environmentIdRaw !== null && threadId !== null ? `${environmentIdRaw}:${threadId}` : null;
   const [inspectorSelection, setInspectorSelection] = useState<ThreadInspectorSelection | null>(
@@ -1039,6 +1058,8 @@ function ThreadRouteContent(
           connectionStateLabel={routeConnectionState}
           threadSyncStatus={selectedThreadDetailState.status}
           historyControls={historyControls}
+          linkedMessageId={linkedMessageId}
+          onLinkedMessageHandled={handleLinkedMessageHandled}
           activeThreadBusy={composer.activeThreadBusy}
           canStopThread={awaitingBootstrapTurn || composer.interruptibleRunId !== null}
           queuedRunEdit={composer.queuedRunEdit}
