@@ -664,6 +664,8 @@ describe("CodexAdapterV2 process spawning", () => {
         model: "gpt-5.4",
         config: {
           "tools.update_plan.enabled": true,
+          // Codex waits for every MCP server, not 1 s, before the first request (#13437).
+          mcp_optional_startup_grace_ms: 0,
           mcp_servers: {
             "t3-code": {
               url: "http://127.0.0.1:43123/mcp",

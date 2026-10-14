@@ -1310,10 +1310,20 @@ export class CodexAppServerClientFactory extends Context.Service<
 
 /**
  * Config overrides sent with every `thread/start`, `thread/resume` and `thread/fork`.
- * Codex 0.152 made the `update_plan` checklist tool opt-in; T3 renders it as the
- * todo list. Codex layers these above the user's and project's `config.toml`.
+ * Codex layers these above the user's and project's `config.toml`.
+ *
+ * - Codex 0.152 made the `update_plan` checklist tool opt-in; T3 renders it as
+ *   the todo list.
+ * - By default Codex waits only 1 s for MCP servers before the first model
+ *   request and leaves out any server still starting. `0` makes it wait for each
+ *   server to be ready or fail, as the Claude CLI does. Each startup phase of a
+ *   server is bounded by its `startup_timeout_sec` (30 s by default). Later
+ *   turns do not wait again.
  */
-export const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
+export const CODEX_THREAD_CONFIG = {
+  "tools.update_plan.enabled": true,
+  mcp_optional_startup_grace_ms: 0,
+} as const;
 
 export function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
