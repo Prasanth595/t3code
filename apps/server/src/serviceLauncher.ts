@@ -303,6 +303,30 @@ async function markDatabaseRestorePending(backupDir: string): Promise<void> {
   }
 }
 
+/**
+ * The file a restore writes for `path`: where its symlinks lead, even when the
+ * last target is missing, as after a crash between `cp -c` removing a file
+ * and cloning over it.
+ */
+async function restoreTarget(path: string): Promise<string> {
+  let current = path;
+  for (let hops = 0; hops < 40; hops++) {
+    try {
+      return await NodeFSP.realpath(current);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+    }
+    const link = await NodeFSP.readlink(current).catch((cause: unknown) => {
+      const code = (cause as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "EINVAL") return undefined;
+      throw cause;
+    });
+    if (link === undefined) return current;
+    current = NodePath.resolve(NodePath.dirname(current), link);
+  }
+  throw new Error(`Too many symbolic links resolving ${path}.`);
+}
+
 /** Restore is retryable after any process crash while the backup directory remains. */
 async function restoreDatabaseBackup(
   baseDir: string,
@@ -319,10 +343,7 @@ async function restoreDatabaseBackup(
     if (await pathExists(source)) {
       // A clone replaces its destination, so restore into the file a symlinked
       // database resolves to and keep the link itself.
-      const target = await NodeFSP.realpath(livePath).catch((cause: unknown) => {
-        if ((cause as NodeJS.ErrnoException).code === "ENOENT") return livePath;
-        throw cause;
-      });
+      const target = await restoreTarget(livePath);
       await copyDatabaseFile(source, target);
       await syncFile(target);
       directories.add(NodePath.dirname(target));

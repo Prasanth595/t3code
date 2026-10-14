@@ -325,7 +325,7 @@ if (context.update?.status === "pending") {
     }),
   );
 
-  it.effect.each(["file", "symlink"] as const)(
+  it.effect.each(["file", "symlink", "dangling symlink"] as const)(
     "restores the database when a migrating trial exits, with the database a %s",
     (kind) =>
       Effect.gen(function* () {
@@ -334,22 +334,24 @@ if (context.update?.status === "pending") {
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-db-" });
         const statePath = path.join(root, "runtime", "service-state.json");
         const databasePath = path.join(root, "userdata", "state.sqlite");
-        // A symlinked database keeps its link: rollback restores the file it points to.
+        // A symlinked database keeps its link: rollback restores the file it points to,
+        // even one the trial left missing, as a crash during a macOS clone restore can.
         const databaseFile =
-          kind === "symlink" ? path.join(root, "elsewhere", "state.sqlite") : databasePath;
+          kind === "file" ? databasePath : path.join(root, "elsewhere", "state.sqlite");
         const original = "database before migration";
         yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
         yield* fs.makeDirectory(path.dirname(databaseFile), { recursive: true });
         yield* fs.writeFileString(databaseFile, original);
-        if (kind === "symlink") yield* fs.symlink(databaseFile, databasePath);
+        if (kind !== "file") yield* fs.symlink(databaseFile, databasePath);
         const encodedDatabasePath = JSON.stringify(databasePath);
         const childSource = `
-import { writeFileSync } from "node:fs";
+import { realpathSync, unlinkSync, writeFileSync } from "node:fs";
 const context = JSON.parse(process.env.T3_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
   writeFileSync(context.update.dbPath, "database after migration");
   writeFileSync(context.update.dbPath + "-wal", "trial wal");
   writeFileSync(context.update.dbPath + "-shm", "trial shm");
+  ${kind === "dangling symlink" ? "unlinkSync(realpathSync(context.update.dbPath));" : ""}
   process.exit(1);
 } else if (context.update === undefined) {
   process.send({ type: "request-update", targetVersion: "1.1.0", dbPath: ${encodedDatabasePath} });
@@ -388,7 +390,7 @@ if (context.update?.status === "pending") {
         assert.equal(state.activeVersion, "1.0.0");
         assert.equal(state.update?.status, "rolled-back");
         assert.equal(yield* fs.readFileString(databaseFile), original);
-        if (kind === "symlink") assert.equal(yield* fs.readLink(databasePath), databaseFile);
+        if (kind !== "file") assert.equal(yield* fs.readLink(databasePath), databaseFile);
         assert.isFalse(yield* fs.exists(`${databasePath}-wal`));
         assert.isFalse(yield* fs.exists(`${databasePath}-shm`));
         const updateId = state.update?.id;
